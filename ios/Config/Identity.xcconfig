@@ -1,0 +1,6 @@
+// Who signs the phone app. A fork building with its own Apple team changes
+// these two lines and nothing else: every bundle id, the App Group and the
+// background task id are derived from DARK_ARMY_BUNDLE_ID.
+
+DARK_ARMY_BUNDLE_ID = com.robertandrosz.bobphone
+DEVELOPMENT_TEAM = KURWX5TYSZ

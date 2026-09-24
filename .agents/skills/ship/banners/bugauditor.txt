@@ -1,0 +1,20 @@
+BUG AUDITOR -- bc-bug-auditor  |  Phase 6.7  |  default model  |  DARK ARMY    
+
+  .---------------------------------------------------.
+  |  [dark army // adversarial]         [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > YOUR TESTS ARE GREEN. SO WHAT._                 |
+  |                                                    |
+  |  hermetic tests cannot see AppKit, the bundle,     |
+  |  the clock, or a monitor that quietly lies.        |
+  |                                                    |
+  |  $ ./audit.sh --func --req --ux                    |
+  |  ##############################  100%              |
+  |  scoring. one FUNC blocker is enough.              |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent bc-bug-auditor - Bug scan (Dark Army)    
+    default model

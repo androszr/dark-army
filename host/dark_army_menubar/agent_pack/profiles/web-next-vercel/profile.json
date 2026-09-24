@@ -1,0 +1,33 @@
+{
+  "name": "web-next-vercel",
+  "summary": "Next.js app on Vercel with a Postgres database (Neon), pnpm, Vitest.",
+  "src_dir": "src/",
+  "gates": [
+    ["lint_gate", "pnpm lint"],
+    ["typecheck_gate", "pnpm typecheck"],
+    ["test_gate", "pnpm test"],
+    ["build_gate", "pnpm build"]
+  ],
+  "reviewers": [
+    ["{{P}}-security-reviewer", "auth|proxy|middleware|/api/|next\\.config|\\.env|env\\.ts|package\\.json|drizzle/|schema\\.ts"],
+    ["{{P}}-integration-reviewer", "package\\.json|pnpm-lock\\.yaml|next\\.config|vercel\\.json|\\.github/workflows/|drizzle/|migrations/|schema\\.ts|env\\.ts|instrumentation"]
+  ],
+  "areas": ["backbone", "gate", "ledger", "universal"],
+  "primary_reviewer": "{{P}}-security-reviewer",
+  "skill_rows": [
+    "| `/security-pass [url]` | dependency audit, secret scan, bundle leak, headers, then the security reviewer | a verdict |",
+    "| `/deploy-web` | runbook for CI, preview and production deploys (push to main = deploy) | confirmation the deploy landed |"
+  ],
+  "settings_allow": [
+    "Bash(pnpm lint)",
+    "Bash(pnpm typecheck)",
+    "Bash(pnpm test:*)",
+    "Bash(pnpm build)",
+    "Bash(pnpm audit:*)"
+  ],
+  "one_time_steps": [
+    "Vercel: set VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID as GitHub repo secrets; set the app's env vars in the Vercel project for Production AND Preview.",
+    "Neon: set NEON_API_KEY as a repo secret and NEON_PROJECT_ID as a repo variable; set DATABASE_URL as a repo secret for the production migrate step.",
+    "Mirror every required env-schema field into the placeholder block of .github/workflows/ci.yml."
+  ]
+}

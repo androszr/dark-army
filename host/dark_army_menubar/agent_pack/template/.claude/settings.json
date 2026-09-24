@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(grep:*)",
+      "Bash(awk:*)",
+      "Bash(bash .claude/skills/ship/preflight.sh:*)",
+      "Bash(bash .claude/skills/ship/close-out.sh)",
+      "Bash(bash .claude/skills/ship/close-out.sh --close)",
+      "Bash(bash .claude/skills/ship/close-out.sh --plan)",
+      "Bash(bash .claude/skills/ship/gate.sh:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(python3 .claude/skills/shunt/bulk_read.py:*)",
+      "Bash(python3 .claude/skills/shunt/code_write.py:*)",
+      "Bash(python3 .claude/skills/shunt/exempt.py:*)",
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(swift build:*)",
+      "Bash(swift test:*)",
+      "Bash(npm run build:*)",
+      "Bash(ruff check:*)",
+      "mcp__dark-army",
+      "mcp__bob"{{ALLOW_ROWS}}
+    ],
+    "deny": [
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)"
+    ]
+  }
+}

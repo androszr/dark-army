@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Embedded into the executable's __TEXT,__info_plist section by the
+	     linker flags in Package.swift, because BobPanel ships as a bare
+	     Mach-O at Contents/Resources/BobPanel with no bundle around it —
+	     CFBundle only walks up from Contents/MacOS, so Bundle.main had no
+	     identifier at all. A section is how a single-file executable gets
+	     one without becoming a nested .app.
+
+	     What it buys: an app with no bundle identity is a process the
+	     window server will happily put in front, but not one every system
+	     client can resolve as *the* focused application — which is what an
+	     outside dictation app asks for before it looks for a caret. -->
+	<key>CFBundleIdentifier</key>
+	<string>com.bob-companion.panel</string>
+	<key>CFBundleName</key>
+	<string>Dark Army</string>
+	<key>CFBundleDisplayName</key>
+	<string>Dark Army</string>
+	<key>CFBundleExecutable</key>
+	<string>BobPanel</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<!-- Dock / Cmd-Tab / Finder. The nested BobPanel.app gets AppIcon.icns
+	     copied next to this plist by host/build.sh; without the file the
+	     key is inert and the tile stays the generic executable. -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<!-- The panel flips to .regular at runtime; declaring it here as well
+	     means the identity and the policy agree from the first instant
+	     rather than from the first AppKit tick. -->
+	<key>LSUIElement</key>
+	<false/>
+</dict>
+</plist>

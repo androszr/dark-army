@@ -1,0 +1,13 @@
+{
+  // Heavy generated trees this checkout keeps on disk. Gitignore is not a
+  // watcher exclude — without these, VS Code watches ~29k extra files and
+  // the editor hitches. Changing watcherExclude needs a window reload.
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/host/.venv/**": true,
+    "**/host/dist/**": true,
+    "**/host/build/**": true,
+    "**/panel/.build/**": true,
+    "**/.gitnexus/**": true
+  }
+}

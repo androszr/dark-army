@@ -1,0 +1,9 @@
+{"type":"system","content":"You are Grok."}
+{"type":"user","content":[{"type":"text","text":"<user_info>OS: macos</user_info>"}]}
+{"type":"user","content":[{"type":"text","text":"<user_query>Read the file and summarise it.</user_query>"}]}
+{"type":"reasoning","content":"I should read the file first."}
+{"type":"assistant","content":"I will read it.","tool_calls":[{"id":"call_read1","name":"read_file","arguments":{"file_path":"README.md"}}]}
+{"type":"tool_result","tool_call_id":"call_read1","content":"# Hello\nThis is the readme."}
+{"type":"tool_result","tool_call_id":"call_old","content":"[Tool result omitted — too old]"}
+{"type":"assistant","content":"Here is the summary:\n\n1. It greets the reader\n2. It names the project"}
+{"type":"backend_tool_call","name":"search"}

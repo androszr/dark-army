@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Once the App ID lists the communication capability, signing
+	     switches to the sibling BobPhoneNotification.communication.entitlements.
+	     This file stays empty: no App Group, no keychain, no push, and
+	     not that capability, so a build still ships before the grant. -->
+</dict>
+</plist>

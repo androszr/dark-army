@@ -1,0 +1,21 @@
+REVIEWER -- Watch         |  Phase 6.8  |  default model  |  {{PROJECT_UPPER}}
+
+  .---------------------------------------------------.
+  |  [dark army // review]              [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > THE TESTS ARE GREEN. THAT IS NOT THE QUESTION._ |
+  |                                                    |
+  |  the part the test suite cannot see: the deploy,   |
+  |  the device, the secret, the file on disk written  |
+  |  by a version that no longer exists.               |
+  |                                                    |
+  |  $ ./review.sh --domain --blind --diff            |
+  |  ##############################  100%              |
+  |  the verdict is BLOCK, WARN, or CLEAN.             |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent Watch - Domain pass ({{PROJECT}})
+    default model

@@ -1,0 +1,29 @@
+{
+ "note": "SYNTHETIC: a shape for tools/ship_efficiency.py validate-evaluation's own tests, not an observed run; the shipped document does not point here",
+ "synthetic": true,
+ "scenario": 5,
+ "arm": "baseline",
+ "title": "resource referenced from source but absent from the package",
+ "source": "synthetic://evaluation/5/baseline",
+ "redacted": true,
+ "verdict": "ITERATE",
+ "seeded_faults": [
+  "F5-missing-resource"
+ ],
+ "caught": [
+  "F5-missing-resource",
+  "W5-resource-note"
+ ],
+ "clean_verdict_preserved": true,
+ "gates_run": [
+  "pytest-targeted",
+  "pytest-full",
+  "compileall"
+ ],
+ "models": {
+  "claude": "opus"
+ },
+ "reasoning": "high",
+ "cross_role_pass_reuse": false,
+ "verifier_report_leaked": false
+}

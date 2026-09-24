@@ -1,0 +1,21 @@
+IMPLEMENTER -- bc-implementer  |  Phase 6  |  default model  |  DARK ARMY    
+
+  .---------------------------------------------------.
+  |  [dark army // build]               [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > HEAD DOWN. ONE PASS._                           |
+  |                                                    |
+  |  the plan is the scope. the scope is the plan.     |
+  |                                                    |
+  |  $ pytest -q && swift build -c release             |
+  |  ##############################  100%              |
+  |                                                    |
+  |  $ git commit                                      |
+  |  > permission denied. that is not my call.         |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent bc-implementer - Implementing (Dark Army)    
+    default model

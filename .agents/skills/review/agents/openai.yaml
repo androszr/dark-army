@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Dark Army Change"
+  short_description: "Graded, plain-language review of a change via the code graph"
+  default_prompt: "Use $review to review this change and grade what could break."

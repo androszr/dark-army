@@ -1,0 +1,467 @@
+"""Who is at the top of Needs you right now — the phone's Live Activity subject.
+
+Pure, stdlib only. The buzz (`alerts.py`) is a *transition*: it fires at the
+moment an alert is raised and knows nothing about the standing state. A Live
+Activity is the opposite — a standing picture on the phone's Lock Screen that
+must be **updated on change and ended on empty** — so the daemon needs a
+second, pure reading of "who is waiting on a person at this instant", taken
+from the buckets it already publishes and nothing else.
+
+The rule restates the phone's own (`PhoneInbox.items(from:)`, restricted to
+session entries of the three kinds it can draw a face for):
+
+* a row from the live buckets — ``running``, ``waiting``, ``sleeping``, the
+  phone's ``liveBuckets`` and the Mac's ``Category.live``; a finished or
+  abandoned row is never a subject whatever it still carries;
+* admitted by membership of ``waiting``, an open permission prompt, or an
+  active notification card naming the session — the phone's ``waiting``,
+  ``prompts`` and ``notifyIds``, the Mac's ``needsHuman``; a non-empty
+  ``questions`` list decides the *kind* and admits nothing by itself (a
+  stale list on a row that went quiet would otherwise push a question card
+  for an agent nobody lists);
+* its kind decided prompt → question → attention (`KINDS`, most urgent
+  first — the phone's ``permission = 0``, ``question``, ``waiting`` order);
+* **one entry per subject**, the phone's ``oneEntryPerSubject``: a board
+  card that needs a person (``needs_you``) or awaits its manual check
+  (``manual_check_due``) and names the session (``session_id``) outranks
+  the session's own *attention* entry — a card entry is a ``LOOK AT``, an
+  agent that merely stopped a ``STOPPED`` — so that session is no subject;
+  a prompt or a question outranks the card and the session stays;
+* ranked exactly as the phone sorts its list (`PhoneInbox.before`): kind,
+  then the row's title — nickname, else name, else session id, compared as
+  `localizedStandardCompare` does for the cast's plain names (case-folded,
+  digit runs by value) — then ``session_id``. Never by idle time: the phone
+  starts the card for the head of *its* list, and a Mac that ranked a tie
+  differently would flip the card to the other agent on its first update.
+
+What rides the wire for a face-only card (shape 1, an older phone) is
+`content_state`'s six keys and nothing else. A shape-2 card — the phone
+said so when it registered — carries those six plus the fleet: `working`,
+`needs_you`, `standing_by`, and `cost_usd` / `tokens_k` only when the Mac
+measured them. Absent is not zero. The closed set is the contract
+(`docs/transport-contract.md`, *The buzz has a live-card leg*). The ask's
+own words never travel.
+
+``since`` is the row's own ``quiet_since`` — the moment it went quiet,
+stamped once by the daemon when the snapshot was built (`_collect_agent_stubs`)
+and read verbatim by the phone (`Agent.quietSince`), so the two ends agree to
+the second and the Mac's first update never rewrites the clock the phone
+started. A row from an older daemon carries no stamp, and ``now -
+idle_seconds`` stands in.
+"""
+
+from __future__ import annotations
+
+import re
+
+from . import cast
+
+#: The kind words a live card may wear, most urgent first. A subset of
+#: `alerts.KINDS` / `relay_client.PUSH_KINDS` minus the two that have no
+#: standing subject: `security` is about the machine, `finished` waits on
+#: nobody. `relay_client.ACTIVITY_KINDS` restates it at the wire.
+KINDS = ("permission", "question", "attention")
+
+#: The buckets a subject may come from — the phone's `liveBuckets`.
+LIVE_BUCKETS = ("running", "waiting", "sleeping")
+
+#: The face, in the order `push.js` writes it. Shape 1's whole state.
+FACE_KEYS = ("nickname", "slug", "kind", "work", "since", "session_id")
+
+#: The three bucket counts. `needs_you` is `counts["attention"]`,
+#: `standing_by` is `counts["idle"]` — the strip's own numbers.
+COUNT_KEYS = ("working", "needs_you", "standing_by")
+
+#: Present only when measured. Absent is not zero. The two `_hour` keys
+#: are the fleet's burn over the last hour (`fleet_figures.BurnMeter`),
+#: absent until the Mac has watched long enough to say one.
+FIGURE_KEYS = ("cost_usd", "tokens_k", "cost_usd_hour", "tokens_k_hour")
+
+#: The wire shape, in the order `push.js` writes it: the face, the counts,
+#: then the figures.
+STATE_KEYS = FACE_KEYS + COUNT_KEYS + FIGURE_KEYS
+
+#: Which card a phone draws. 1 is the face-only card (an older phone, and
+#: the default for an entry that never said); 2 is the fleet card.
+SHAPES = (1, 2)
+
+#: A clock tick alone never sends: two states whose `since` differ by less
+#: than this are the same picture.
+SINCE_TOLERANCE_SECONDS = 2.0
+
+
+def _as_int(value, default: int = 0) -> int:
+    """A count as an int, or `default` where the value is missing or not a
+    number. A bool is not a count."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    number = float(value)
+    if number != number or number in (float("inf"), float("-inf")):
+        return default
+    return int(number)
+
+
+def is_up(counts) -> bool:
+    """Whether the fleet card should be up: someone working or waiting.
+
+    A fleet of only standing-by agents is not up — a session left open for
+    hours would otherwise pin a card until the eight-hour cap. A missing
+    key is zero, not an error.
+    """
+    if not isinstance(counts, dict):
+        return False
+    return _as_int(counts.get("working")) + _as_int(counts.get("attention")) > 0
+
+
+def empty_face(now: float) -> dict:
+    """The six face keys when nobody is waiting.
+
+    ``since`` is 0, not ``now``: an empty face has no clock, and a tick
+    must not look like a new card. ``now`` is accepted so the call matches
+    `content_state`'s clock.
+    """
+    del now
+    return {
+        "nickname": "",
+        "slug": "",
+        "kind": "attention",
+        "work": "",
+        "since": 0,
+        "session_id": "",
+    }
+
+
+def fleet_state(counts, figures, face) -> dict:
+    """One shape-2 content state: the face, the three counts, the figures.
+
+    Exactly `STATE_KEYS`. ``needs_you`` is ``counts["attention"]`` and
+    ``standing_by`` is ``counts["idle"]``. ``cost_usd`` is the figure
+    rounded to the cent **only when it is not None** — the key is absent
+    otherwise, never ``0``. ``tokens_k`` likewise, and the two per-hour
+    rates ``cost_usd_hour`` / ``tokens_k_hour`` on the same rules. ``face`` is a subject's
+    `content_state`, or `empty_face` when nobody waits.
+    """
+    counts = counts if isinstance(counts, dict) else {}
+    figures = figures if isinstance(figures, dict) else {}
+    base = face if isinstance(face, dict) else empty_face(0)
+    state = {
+        "nickname": str(base.get("nickname") or ""),
+        "slug": str(base.get("slug") or ""),
+        "kind": str(base.get("kind") or "attention"),
+        "work": str(base.get("work") or ""),
+        "since": base.get("since", 0),
+        "session_id": str(base.get("session_id") or ""),
+        "working": _as_int(counts.get("working")),
+        "needs_you": _as_int(counts.get("attention")),
+        "standing_by": _as_int(counts.get("idle")),
+    }
+    # `FIGURE_KEYS` order, so the wire order is the contract's.
+    for key in FIGURE_KEYS:
+        value = figures.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        if key.startswith("cost_usd"):
+            try:
+                state[key] = round(float(value), 2)
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(value, int):
+            state[key] = value
+    return state
+
+
+def _has_question(row: dict) -> bool:
+    questions = row.get("questions")
+    if not isinstance(questions, list):
+        return False
+    for question in questions:
+        if isinstance(question, dict) and str(question.get("text") or "").strip():
+            return True
+    return False
+
+
+def listed_sessions(snapshot: dict, prompts: dict, notified=None) -> set[str]:
+    """The session ids the phone's Needs you list admits — `PhoneInbox`'s
+    `sessionItems` (`docs/phone-contract.md`, *One decision list*) and
+    `waiters`' admission line.
+
+    A row in a live bucket (`LIVE_BUCKETS`) is listed when it is in the
+    ``waiting`` bucket, holds a truthy open prompt in ``prompts``
+    (`BobDaemon._prompts_by_session()`) or is named by ``notified`` (the
+    sessions of the published notification cards). A row in any other
+    bucket — finished, abandoned — is never listed. A prompt whose session
+    has **no row at all** is listed (the phone's read-only item); a card
+    with no row is not. The phone leg reads this set so it never sends what
+    the phone would sweep away (`docs/transport-contract.md`).
+    """
+    snapshot = snapshot or {}
+    prompts = prompts or {}
+    notified_ids = {str(sid) for sid in (notified or ()) if str(sid or "")}
+    live: set[str] = set()
+    present: set[str] = set()
+    for bucket, rows in snapshot.items():
+        for row in rows if isinstance(rows, list) else ():
+            if isinstance(row, dict):
+                sid = str(row.get("session_id") or "")
+                if sid:
+                    present.add(sid)
+                    if bucket in LIVE_BUCKETS:
+                        live.add(sid)
+    waiting_ids = {str(row.get("session_id") or "")
+                   for row in snapshot.get("waiting") or []
+                   if isinstance(row, dict)}
+    prompted = {str(sid) for sid, prompt in prompts.items()
+                if str(sid or "") and prompt}
+    listed = {sid for sid in live
+              if sid in waiting_ids or sid in prompted or sid in notified_ids}
+    return listed | (prompted - present)
+
+
+def waiters(snapshot: dict, prompts: dict, notified=None,
+            cards=None) -> list[dict]:
+    """The whole of Needs you's session half, in the phone's order; `subject`
+    is its head.
+
+    ``snapshot`` is the published agents snapshot (bucket name → rows);
+    ``prompts`` is `BobDaemon._prompts_by_session()`'s answer, session id →
+    the oldest open prompt; ``notified`` the session ids holding an active
+    notification card (`BobDaemon._active_notifications`' keys, the
+    phone's ``snapshot.notifications``); ``cards`` the published board's
+    cards (`_board_state["cards"]`, the phone's ``snapshot.board.cards``).
+    Each item is ``{"session_id", "nickname", "name", "kind", "idle_seconds",
+    "quiet_since"}`` — the row's own figures, re-derived from nothing.
+    """
+    snapshot = snapshot or {}
+    prompts = prompts or {}
+    carded_ids = carded_sessions(cards)
+    listed = listed_sessions(snapshot, prompts, notified)
+    seen: set[str] = set()
+    candidates: list[tuple[int, tuple, str, dict]] = []
+    for bucket in LIVE_BUCKETS:
+        for row in snapshot.get(bucket) or []:
+            if not isinstance(row, dict):
+                continue
+            sid = str(row.get("session_id") or "")
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            has_prompt = bool(prompts.get(sid))
+            if sid not in listed:
+                continue
+            if has_prompt:
+                kind = "permission"
+            elif _has_question(row):
+                kind = "question"
+            elif sid in carded_ids:
+                # The card's entry wins the phone's one-entry rule over a
+                # row that merely stopped; the card draws no face, so
+                # nobody is the subject for this session.
+                continue
+            else:
+                kind = "attention"
+            try:
+                idle = float(row.get("idle_seconds") or 0.0)
+            except (TypeError, ValueError):
+                idle = 0.0
+            if idle != idle or idle < 0:  # NaN or negative: undated
+                idle = 0.0
+            nickname = str(row.get("nickname") or "")
+            name = str(row.get("name") or "")
+            candidates.append((KINDS.index(kind), title_key(nickname or name or sid), sid, {
+                "session_id": sid,
+                "nickname": nickname,
+                "name": name,
+                "kind": kind,
+                "idle_seconds": idle,
+                "quiet_since": _finite_stamp(row.get("quiet_since")),
+            }))
+    return [item[3] for item in sorted(candidates, key=lambda item: item[:3])]
+
+
+def subject(snapshot: dict, prompts: dict, notified=None,
+            cards=None) -> dict | None:
+    """The top session waiter, or ``None`` when nobody needs a person.
+
+    ``snapshot`` is the published agents snapshot (bucket name → rows);
+    ``prompts`` is `BobDaemon._prompts_by_session()`'s answer, session id →
+    the oldest open prompt; ``notified`` the session ids holding an active
+    notification card (`BobDaemon._active_notifications`' keys, the
+    phone's ``snapshot.notifications``); ``cards`` the published board's
+    cards (`_board_state["cards"]`, the phone's ``snapshot.board.cards``).
+    Returns ``{"session_id", "nickname", "name", "kind", "idle_seconds",
+    "quiet_since"}`` — the row's own figures, re-derived from nothing.
+    """
+    ranked = waiters(snapshot, prompts, notified, cards)
+    return ranked[0] if ranked else None
+
+
+def fleet_face(snapshot: dict, prompts: dict, notified=None,
+               cards=None) -> dict | None:
+    """The face on the fleet card (shape 2): `subject`, else the head of the
+    published ``waiting`` bucket as an ``attention`` face.
+
+    The fleet card's "need you" number is `_activity_counts()["attention"]`
+    — every waiting row — while `subject` skips a waiter whose Needs-you
+    entry is a board card (a hand-check due, a card needing you). Without
+    this fallback the card read "1 need you" with no face at all. The
+    face-only card (shape 1) keeps `subject` alone; the phone's
+    `NeedsYouActivityRule.fleetState` restates this rule.
+    """
+    head = subject(snapshot, prompts, notified, cards)
+    if head is not None:
+        return head
+    for row in (snapshot or {}).get("waiting") or []:
+        if not isinstance(row, dict):
+            continue
+        sid = str(row.get("session_id") or "")
+        if not sid:
+            continue
+        try:
+            idle = float(row.get("idle_seconds") or 0.0)
+        except (TypeError, ValueError):
+            idle = 0.0
+        if idle != idle or idle < 0:
+            idle = 0.0
+        return {
+            "session_id": sid,
+            "nickname": str(row.get("nickname") or ""),
+            "name": str(row.get("name") or ""),
+            "kind": "attention",
+            "idle_seconds": idle,
+            "quiet_since": _finite_stamp(row.get("quiet_since")),
+        }
+    return None
+
+
+def carded_sessions(cards) -> set[str]:
+    """The session ids a board card entry would name on the phone's
+    decision list — `PhoneInbox.cardItems`: a card with ``needs_you`` or
+    ``manual_check_due`` set, keyed on its ``session_id`` alone (never
+    ``refine_session_id``, which the phone's card entry does not carry)."""
+    out: set[str] = set()
+    for card in cards or ():
+        if not isinstance(card, dict):
+            continue
+        if not (card.get("needs_you") or card.get("manual_check_due")):
+            continue
+        sid = str(card.get("session_id") or "")
+        if sid:
+            out.add(sid)
+    return out
+
+
+def _finite_stamp(value) -> float:
+    """A row's ``quiet_since`` as a float ≥ 0, or 0.0 where the row carries
+    none (an older daemon) or nonsense."""
+    try:
+        stamp = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if stamp != stamp or stamp in (float("inf"), float("-inf")) or stamp < 0:
+        return 0.0
+    return stamp
+
+
+_DIGITS = re.compile(r"(\d+)")
+
+
+def title_key(title: str) -> tuple:
+    """The phone's ``localizedStandardCompare`` for the titles a row can
+    wear: case-insensitive, with a run of digits ordered by its value
+    (``Vex2`` before ``Vex10``), a case-only tie broken lowercase
+    first as ICU does, so the order is total. Cast nicknames are plain
+    ASCII words, which is the whole of what the two ends need to agree on."""
+    parts = _DIGITS.split(str(title or ""))
+    key = []
+    for index, part in enumerate(parts):
+        if index % 2:
+            key.append((1, int(part), ""))
+        elif part:
+            key.append((0, 0, part.casefold()))
+    return (tuple(key), str(title or "").swapcase())
+
+
+def content_state(subject: dict, work: str, now: float) -> dict:
+    """The wire dict for one subject — exactly the six face keys.
+
+    ``slug`` is `cast.character_for`, the phone's `Cast.character(for:)`
+    rung for rung, so the face on the Lock Screen is the face on the row.
+    ``since`` is the moment the row went quiet — the row's own
+    ``quiet_since`` stamp where the daemon wrote one, else ``now -
+    idle_seconds`` — whole seconds, the number the phone read off the same
+    row. ``work`` is the caller's clamped line
+    (`BobDaemon._compose_push_work`'s rule) and may be ``""``.
+    """
+    sid = str(subject.get("session_id") or "")
+    nickname = str(subject.get("nickname") or "")
+    kind = str(subject.get("kind") or "")
+    if kind not in KINDS:
+        kind = "attention"
+    try:
+        idle = float(subject.get("idle_seconds") or 0.0)
+    except (TypeError, ValueError):
+        idle = 0.0
+    stamp = _finite_stamp(subject.get("quiet_since"))
+    if stamp > 0:
+        since = int(round(stamp))
+    else:
+        since = int(round(max(0.0, float(now) - max(0.0, idle))))
+    return {
+        "nickname": nickname,
+        "slug": cast.character_for(nickname, sid),
+        "kind": kind,
+        "work": str(work or ""),
+        "since": since,
+        "session_id": sid,
+    }
+
+
+def same(a: dict | None, b: dict | None) -> bool:
+    """Whether two content states draw the same card.
+
+    Equality on every key but ``since``, which may drift by
+    `SINCE_TOLERANCE_SECONDS` — the two ends compute it from a clock and an
+    idle figure that are each a snapshot old, so a tick alone must never
+    cost a push. A changed nickname, slug, kind, work, session id, count
+    or figure is a different card. A key absent on one side and present on
+    the other is a difference — nil is not zero.
+    """
+    if not a or not b:
+        return (not a) and (not b)
+    for key in STATE_KEYS:
+        if key == "since":
+            continue
+        if a.get(key) != b.get(key):
+            return False
+    try:
+        drift = abs(float(a.get("since") or 0) - float(b.get("since") or 0))
+    except (TypeError, ValueError):
+        return False
+    return drift < SINCE_TOLERANCE_SECONDS
+
+
+def figures_only_change(a: dict | None, b: dict | None) -> bool:
+    """True when two states differ, and only in the figures (or `since`).
+
+    Equal on every key but ``since`` and `FIGURE_KEYS`, and not `same`.
+    A count, the face or the event is not this — those send at once. A
+    dime of cost, or a quantised token step, is.
+    """
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    if same(a, b):
+        return False
+    figures = set(FIGURE_KEYS)
+    for key in STATE_KEYS:
+        if key == "since" or key in figures:
+            continue
+        if a.get(key) != b.get(key):
+            return False
+    return True
+
+
+__all__ = ["KINDS", "LIVE_BUCKETS", "FACE_KEYS", "COUNT_KEYS", "FIGURE_KEYS",
+           "STATE_KEYS", "SHAPES", "SINCE_TOLERANCE_SECONDS",
+           "listed_sessions", "waiters", "subject", "carded_sessions", "content_state", "same",
+           "title_key", "is_up", "empty_face", "fleet_state",
+           "figures_only_change"]

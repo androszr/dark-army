@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- `development` is what goes in the file; automatic signing flips it
+	     to `production` at app-store export, so TestFlight builds land on
+	     the prod APNs host and Xcode device runs on the sandbox one. The
+	     phone tells the Mac which host its token is valid against (`env`
+	     on register_push_token). -->
+	<key>aps-environment</key>
+	<string>development</string>
+	<!-- The widget reads the app's last-heard fleet summary from this
+	     container; nothing else is shared. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.$(DARK_ARMY_BUNDLE_ID)</string>
+	</array>
+	<!-- Not what the build signs. Point CODE_SIGN_ENTITLEMENTS here only
+	     once the App ID lists the communication capability. -->
+	<key>com.apple.developer.usernotifications.communication</key>
+	<true/>
+</dict>
+</plist>

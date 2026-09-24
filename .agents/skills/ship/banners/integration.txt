@@ -1,0 +1,21 @@
+INTEGRATION -- bc-integration-reviewer  |  Phase 6.8  |  default model  |  DARK ARMY    
+
+  .---------------------------------------------------.
+  |  [dark army // integration]         [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > IT RUNS FROM SOURCE. THAT IS NOT THE QUESTION._ |
+  |                                                    |
+  |  the frozen bundle. the installed hook.            |
+  |  the loopback token. the file on disk written      |
+  |  by a version that no longer exists.               |
+  |                                                    |
+  |  $ ./integration.sh --bundle --hooks --api         |
+  |  ##############################  100%              |
+  |  the verdict is BLOCK, WARN, or CLEAN.             |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent bc-integration-reviewer - Integration review (Dark Army)    
+    default model

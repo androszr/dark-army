@@ -1,0 +1,5 @@
+#include "Base.xcconfig"
+
+// Debug is the cable-to-phone loop. The shipping Info.plist already allows
+// local networking (the whole product is LAN HTTP to the Mac), so Debug
+// does not need a second plist the way an HTTPS-only client would.

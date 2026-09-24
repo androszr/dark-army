@@ -1,0 +1,12 @@
+{"timestamp":"2026-09-21T11:00:00.000Z","type":"session_meta","payload":{"id":"t1"}}
+{"timestamp":"2026-09-21T11:00:01.000Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"Be concise."}]}}
+{"timestamp":"2026-09-21T11:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for dark-army\nFollow the brief."}]}}
+{"timestamp":"2026-09-21T11:00:03.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Spawn a helper and run exec."}]}}
+{"timestamp":"2026-09-21T11:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will call exec, then spawn."}]}}
+{"timestamp":"2026-09-21T11:00:05.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"call_exec1","input":{"command":"pwd"}}}
+{"timestamp":"2026-09-21T11:00:06.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_exec1","output":[{"type":"output_text","text":"ok: listed 3 files"}]}}
+{"timestamp":"2026-09-21T11:00:07.000Z","type":"response_item","payload":{"type":"function_call","name":"spawn_agent","call_id":"call_spawn1","arguments":"{\"prompt\":\"look around\"}"}}
+{"timestamp":"2026-09-21T11:00:08.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_spawn1","output":"spawned helper h1"}}
+{"timestamp":"2026-09-21T11:00:09.000Z","type":"response_item","payload":{"type":"reasoning","encrypted":true}}
+{"timestamp":"2026-09-21T11:00:10.000Z","type":"response_item","payload":{"type":"agent_message","author":"lead","recipient":"h1","text":"please inspect the tree"}}
+{"timestamp":"2026-09-21T11:00:11.000Z","type":"event_msg","payload":{"type":"token_count","input":12,"output":4}}

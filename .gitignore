@@ -1,0 +1,136 @@
+.superpowers/
+.worktrees/
+
+# The host's Python: its virtualenvs, direnv state and bytecode, anywhere.
+host/.envrc
+host/venv/
+host/.venv/
+host/.direnv/
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# What `host/build.sh` leaves behind: py2app's build tree and the .app.
+host/build/
+host/dist/
+host/.eggs/
+
+# Node dependencies and locally generated lockfiles
+node_modules/
+package-lock.json
+# ...except the extension's, which is the pin a release installs from.
+!vscode-extension/package-lock.json
+# ...and the socket relay's, which its CI step installs from with npm ci.
+!relay-ws/package-lock.json
+
+# Screenshots
+shots/
+
+# Debug / scratch
+.debug/
+
+# Asset sources (binary, not code)
+*.piskel
+bob0.png
+
+# Finder's folder metadata
+.DS_Store
+
+# Grok local state — same class as .claude/*: tool scratch, not source.
+# Ignore the folder anywhere; at the repo root, un-ignore agents/ so the
+# preparer twin can be tracked. Nested `.grok/` (the pack template, tool
+# output) stays ignored — `.grok/` matches in every directory, so the root
+# directory has to be un-ignored before its agents/ can be.
+.grok/
+!/.grok/
+/.grok/*
+!/.grok/agents/
+
+# Misc
+firebase-debug.log
+host/dark_army_menubar/_version_info.py
+
+# GitNexus index — ~480 MB of graph DB and parse caches, rewritten wholesale on
+# every `analyze`, and derived entirely from the source already in this repo.
+# Regenerate locally (`node .gitnexus/run.cjs analyze`); the skills that drive
+# it are tracked, see below.
+.gitnexus
+
+# Codex's project skills and custom roles are tracked in .agents/ and
+# .codex/agents/. .codex/config.toml is per-machine (an absolute `node` and
+# this checkout's regenerated .gitnexus/run.cjs, never `npx`): copy it from the
+# tracked .codex/config.example.toml and fill in the launcher.
+.codex/config.toml
+
+# Claude Code local state — ignore worktrees and settings, but track authored
+# project skills and agent role specifications, so a fresh clone can follow
+# the instructions referenced by CLAUDE.md and .codex/agents/.
+.claude/*
+!.claude/skills/
+!.claude/agents/
+!.claude/leads/
+!.claude/settings.json
+# The review profile is authored, read by /review, and travels with the code.
+!.claude/review.md
+.claude/agents/*
+!.claude/agents/
+!.claude/leads/bc-bug-auditor.md
+!.claude/agents/
+!.claude/leads/bc-card-preparer.md
+!.claude/agents/
+!.claude/leads/bc-implementer.md
+!.claude/agents/
+!.claude/leads/bc-integration-reviewer.md
+!.claude/agents/
+!.claude/leads/bc-planner.md
+!.claude/agents/
+!.claude/leads/bc-security-reviewer.md
+!.claude/agents/
+!.claude/leads/bc-verifier.md
+
+# Planning / AI-scaffolding docs — kept locally, not synced to remote.
+# `/ship` still writes plans to `plans/` and cards point at them by path; they
+# are this machine's working notes, not part of the published source.
+/plans/
+# Scout reports and one-off investigations: same reasoning as plans/.
+/docs/research/
+docs/superpowers/
+docs/pr-analysis/
+
+# One-off / personal docs
+gifs/
+docs/master/
+docs/posts/
+docs/claude_hooks_integration_plan.md
+docs/hooks_reference.md
+local/
+
+# Design proposals — every mock-up, source drawing, photo and audit lives under
+# assets/proposals/ and stays on this machine. What ships is what the ingest
+# tools bake out of it (assets/cast, assets/portraits, assets/brand, the icon
+# set), and those are tracked.
+assets/proposals/
+
+# Local secrets — never commit
+.env
+
+# Swift package build output for the native panel. 2,400+ files and ~160 MB of
+# object code and module caches; the binary is produced by host/build.sh.
+panel/.build/
+
+# iOS client (Xcode's usual ignore set)
+ios/DerivedData/
+ios/build/
+**/xcuserdata/
+*.xcuserstate
+.bob-companion/
+.dark-army/
+.vercel
+
+# Per-directory agent tooling installed into relay/ (skills, lockfile)
+relay/.claude/
+relay/.agents/
+relay/skills-lock.json
+
+# Personal working files (slides, drafts), never committed
+user-data/

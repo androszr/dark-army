@@ -1,0 +1,26 @@
+{
+ "note": "SYNTHETIC: a shape for tools/ship_efficiency.py validate-evaluation's own tests, not an observed run; the shipped document does not point here",
+ "synthetic": true,
+ "scenario": 2,
+ "arm": "candidate",
+ "title": "clean implementation with a duplicate pytest criterion",
+ "source": "synthetic://evaluation/2/candidate",
+ "redacted": true,
+ "verdict": "SHIP",
+ "seeded_faults": [],
+ "caught": [
+  "W2-duplicate-pytest-row"
+ ],
+ "clean_verdict_preserved": true,
+ "gates_run": [
+  "pytest-targeted",
+  "pytest-full",
+  "compileall"
+ ],
+ "models": {
+  "claude": "opus"
+ },
+ "reasoning": "high",
+ "cross_role_pass_reuse": false,
+ "verifier_report_leaked": false
+}

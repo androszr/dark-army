@@ -1,0 +1,249 @@
+name: TestFlight
+
+# Ship the phone build on every push to `main` under `ios/**`, and the
+# thing that runs on the device updates itself.
+#
+# Internal testers get a build as soon as App Store Connect finishes
+# processing — usually a few minutes, and with NO Beta App Review.
+#
+# The phone still talks to the Mac on the LAN. TestFlight is only how the
+# binary arrives; pairing is unchanged.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/testflight.yml'
+  workflow_dispatch:
+
+# Read-only by default: no job here writes to the repository, and a pinned
+# commit (not a moving tag) is what every `uses:` names, so a re-pointed
+# tag upstream cannot change what runs.
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Archive and upload to TestFlight
+    # Only the private repository holds the App Store Connect key. A copy of
+    # this file anywhere else (the public repository, a fork) skips the job
+    # instead of failing on a secret it was never given.
+    if: github.repository == 'androszr/bob-companion'
+    # macos-15 still ships the iOS 18 SDK. App Store Connect now refuses
+    # uploads not built with the iOS 26 SDK (Xcode 26).
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Use the newest Xcode on the image
+        run: |
+          set -euo pipefail
+          newest=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$newest"
+          xcodebuild -version
+
+      - name: Take the App Store Connect key
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc/key.p8"
+          chmod 600 "$RUNNER_TEMP/asc/key.p8"
+
+      # The archive is built UNSIGNED, and that is deliberate: automatic
+      # signing's archive step wants an Apple Development identity, and
+      # `-allowProvisioningUpdates` mints a new one for the empty runner
+      # keychain on every run until the team cap ("Choose a certificate to
+      # revoke", run 33331047992); pinning `CODE_SIGN_IDENTITY=Apple
+      # Distribution` conflicts with automatic-for-development (run
+      # 33331472421). exportArchive signs for distribution with the ASC API
+      # key (cloud-managed Apple Distribution cert).
+      #
+      # The cost of an unsigned archive, learned from run 33558520765: no
+      # signature means NO entitlements blob, and exportArchive carries
+      # forward only what the archive's signature declares. The export then
+      # "succeeded" with neither `aps-environment` nor the App Group — push
+      # silently dead and the widget reading a container that did not exist.
+      # The step after this one ad-hoc signs both bundles with their own
+      # entitlements files so the export has something to preserve; the
+      # export re-signs for distribution and flips aps-environment to
+      # `production` itself. Verified locally 1 Sep 2026 against a real
+      # app-store export.
+      # `-skipPackagePluginValidation`: SwiftTerm ships a build-tool plugin
+      # (`SwiftTermBuildInfoPlugin`), and Xcode refuses to run an unvalidated
+      # package plugin — on a desk that is a trust dialog, and on a runner it
+      # is `** ARCHIVE FAILED **` with `Validate plug-in "…"` as the only
+      # line. There is nobody here to press Trust, so the archive says so up
+      # front. The flag is the same one the local build and test invocations
+      # carry.
+      - name: Archive
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project ios/BobPhone.xcodeproj \
+            -scheme BobPhone \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/BobPhone.xcarchive" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=- \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }}
+
+      # The app and the notification appex are signed WITH the
+      # communication capability (the `.communication.entitlements`
+      # siblings): without it `updating(from:)` throws and a buzz shows the
+      # app icon with the portrait as a thumbnail, never the agent's face in
+      # the icon's place (23 Sep 2026). If the App ID will not take the
+      # capability, the export step re-signs with the plain files and ships
+      # the thumbnail build with a warning rather than no build.
+      #
+      # The entitlements files spell the App Group as
+      # `group.$(DARK_ARMY_BUNDLE_ID)`. Xcode expands that when it signs;
+      # `codesign` does not, and would embed the literal `$(…)`. So every
+      # file is rendered into $RUNNER_TEMP/ent with the bundle id from
+      # ios/Config/Identity.xcconfig first, and the render refuses to leave
+      # a `$(` behind. The export options get the team from the same file.
+      - name: Render the identity
+        run: |
+          set -euo pipefail
+          bundle=$(sed -n 's/^DARK_ARMY_BUNDLE_ID *= *//p' ios/Config/Identity.xcconfig)
+          team=$(sed -n 's/^DEVELOPMENT_TEAM *= *//p' ios/Config/Identity.xcconfig)
+          if [ -z "$bundle" ] || [ -z "$team" ]; then
+            echo '::error::ios/Config/Identity.xcconfig must set DARK_ARMY_BUNDLE_ID and DEVELOPMENT_TEAM.' >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ent"
+          for f in ios/BobPhone/*.entitlements ios/BobPhoneWidget/*.entitlements ios/BobPhoneNotification/*.entitlements; do
+            out="$RUNNER_TEMP/ent/$(basename "$f")"
+            sed "s/\$(DARK_ARMY_BUNDLE_ID)/$bundle/g" "$f" > "$out"
+            if grep -q '\$(' "$out"; then
+              echo "::error::$f still holds an unexpanded build setting after rendering." >&2
+              exit 1
+            fi
+          done
+          cp ios/Config/ExportOptions.plist "$RUNNER_TEMP/ExportOptions.plist"
+          plutil -insert teamID -string "$team" "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: Embed the entitlements with an ad-hoc signature
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/BobPhone.xcarchive/Products/Applications/BobPhone.app"
+          ent="$RUNNER_TEMP/ent"
+          # Rendered copies of ios/BobPhoneNotification/BobPhoneNotification.communication.entitlements,
+          # ios/BobPhoneWidget/BobPhoneWidget.entitlements and ios/BobPhone/BobPhone.communication.entitlements.
+          codesign -s - -f --entitlements "$ent/BobPhoneNotification.communication.entitlements" \
+            "$app/PlugIns/BobPhoneNotification.appex"
+          codesign -s - -f --entitlements "$ent/BobPhoneWidget.entitlements" \
+            "$app/PlugIns/BobPhoneWidget.appex"
+          codesign -s - -f --entitlements "$ent/BobPhone.communication.entitlements" "$app"
+          codesign -d --entitlements :- "$app" 2>&1 | grep -q 'aps-environment'
+
+      - name: Export a distribution build
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          export_build() {
+            xcodebuild -exportArchive \
+              -archivePath "$RUNNER_TEMP/BobPhone.xcarchive" \
+              -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+              -exportPath "$RUNNER_TEMP/export" \
+              -allowProvisioningUpdates \
+              -authenticationKeyPath "$RUNNER_TEMP/asc/key.p8" \
+              -authenticationKeyID "$ASC_KEY_ID" \
+              -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          }
+          if ! export_build; then
+            echo '::warning::The export refused the communication capability; shipping without it — buzzes show the portrait as a thumbnail beside the app icon.'
+            app="$RUNNER_TEMP/BobPhone.xcarchive/Products/Applications/BobPhone.app"
+            # Rendered copies of ios/BobPhoneNotification/BobPhoneNotification.entitlements
+            # and ios/BobPhone/BobPhone.entitlements (the Render the identity step).
+            codesign -s - -f --entitlements "$RUNNER_TEMP/ent/BobPhoneNotification.entitlements" \
+              "$app/PlugIns/BobPhoneNotification.appex"
+            codesign -s - -f --entitlements "$RUNNER_TEMP/ent/BobPhone.entitlements" "$app"
+            rm -rf "$RUNNER_TEMP/export"
+            export_build
+          fi
+
+      # Makes a push-less export loud, and checks each appex on its own
+      # path. One shared tee file used to require the App Group of whichever
+      # appex the glob wrote last, so a second appex without the group failed
+      # the job or hid the widget. The widget keeps the group. The
+      # notification appex must not have it, nor a keychain group; whether
+      # it carries the communication capability is reported, not required.
+      - name: Verify the entitlements survived the export
+        run: |
+          set -euo pipefail
+          ipa=$(ls "$RUNNER_TEMP"/export/*.ipa | head -1)
+          unzip -q "$ipa" -d "$RUNNER_TEMP/ipa-check"
+          app=$(ls -d "$RUNNER_TEMP"/ipa-check/Payload/*.app | head -1)
+          widget="$app/PlugIns/BobPhoneWidget.appex"
+          note="$app/PlugIns/BobPhoneNotification.appex"
+          echo "--- app entitlements ($app)"
+          codesign -d --entitlements :- "$app" | tee "$RUNNER_TEMP/app-entitlements.plist"
+          echo "--- widget entitlements ($widget)"
+          codesign -d --entitlements :- "$widget" | tee "$RUNNER_TEMP/widget-entitlements.plist"
+          echo "--- notification entitlements ($note)"
+          codesign -d --entitlements :- "$note" | tee "$RUNNER_TEMP/notification-entitlements.plist"
+          if ! grep -q 'aps-environment' "$RUNNER_TEMP/app-entitlements.plist"; then
+            echo '::error::The exported app carries NO aps-environment entitlement — push would be silently broken. See the archive-step comment.' >&2
+            exit 1
+          fi
+          if ! grep -qF "group.$(sed -n 's/^DARK_ARMY_BUNDLE_ID *= *//p' ios/Config/Identity.xcconfig)" "$RUNNER_TEMP/widget-entitlements.plist"; then
+            echo '::error::The widget carries NO App Group — it would read an empty container. See the archive-step comment.' >&2
+            exit 1
+          fi
+          if grep -qF "group.$(sed -n 's/^DARK_ARMY_BUNDLE_ID *= *//p' ios/Config/Identity.xcconfig)" "$RUNNER_TEMP/notification-entitlements.plist"; then
+            echo '::error::The notification appex carries the App Group. It must not.' >&2
+            exit 1
+          fi
+          if grep -q 'keychain-access-groups' "$RUNNER_TEMP/notification-entitlements.plist"; then
+            echo '::error::The notification appex carries a keychain group. It must not.' >&2
+            exit 1
+          fi
+          if grep -q 'com.apple.developer.usernotifications.communication' "$RUNNER_TEMP/notification-entitlements.plist"; then
+            echo '::notice::The notification appex carries the communication capability: buzzes wear the agent portrait.'
+          else
+            echo '::warning::The notification appex has no communication capability: buzzes show the app icon with a portrait thumbnail.'
+          fi
+
+      - name: Upload
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/UploadOptions.plist"
+          plutil -replace destination -string upload "$RUNNER_TEMP/UploadOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/BobPhone.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/UploadOptions.plist" \
+            -exportPath "$RUNNER_TEMP/upload" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/key.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Shred the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"
+
+      - name: Say what shipped
+        if: success()
+        run: |
+          echo "### Uploaded to TestFlight" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Build \`${{ github.run_number }}\` from \`${{ github.sha }}\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "It reaches the phone once App Store Connect finishes processing — internal testing needs no review." >> "$GITHUB_STEP_SUMMARY"

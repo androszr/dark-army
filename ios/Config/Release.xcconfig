@@ -1,0 +1,4 @@
+#include "Base.xcconfig"
+
+// TestFlight / distribution. The API host is not baked in: pairing carries
+// host and port in the QR, because Dark Army lives on the Mac, not on Vercel.

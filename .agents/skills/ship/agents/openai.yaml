@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ship Dark Army Change"
+  short_description: "Plan, implement, verify, and audit Dark Army changes"
+  default_prompt: "Use $ship to plan and deliver this Dark Army change safely."

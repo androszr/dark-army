@@ -1,0 +1,23 @@
+# Runtime dependencies for the daemon and menu bar app.
+#
+# Dark Army is macOS-only. The hook handler (dark-army-notify) is
+# deliberately stdlib-only and needs none of these.
+
+# rumps — macOS menu-bar UI (pulls in pyobjc).
+rumps>=0.4.0
+# Process introspection (session liveness, kill-by-name).
+psutil>=5.9
+# Single-instance file lock.
+filelock>=3.12
+# Sealed envelopes for the phone's away path (relay.py): ChaCha20-Poly1305 +
+# HKDF. Daemon/menu-bar venv only — the hook handler stays stdlib-only.
+cryptography>=42
+# The WebSocket client for the away link's socket lane (relay_ws.py is its
+# only importer): asyncio-native, RFC 6455 framing, ping/pong and max_size
+# built in. Daemon venv only — the hook handler stays stdlib-only.
+websockets>=14
+# Quartz — keyboard events for dictation (`app.post_dictation_key`) and the
+# idle probe in `buzz_ledger`, both lazy imports; `host/setup.py` `includes`
+# names it. Declared so the frozen app never depends on what else the build
+# venv happens to hold.
+pyobjc-framework-Quartz>=10

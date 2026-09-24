@@ -1,0 +1,37 @@
+{
+  "name": "ios-swift-testflight",
+  "summary": "SwiftUI iOS app built with xcodebuild, shipped to TestFlight from GitHub Actions with an App Store Connect API key.",
+  "src_dir": "ios/",
+  "gates": [
+    ["ios_build_gate", "xcodebuild build -project ios/{{APP}}.xcodeproj -scheme {{APP}} -destination 'generic/platform=iOS Simulator' -quiet"],
+    ["ios_test_gate", "xcodebuild test -project ios/{{APP}}.xcodeproj -scheme {{APP}} -destination 'platform=iOS Simulator,name=iPhone 16' -quiet"],
+    ["entitlements_gate", "python3 scripts/check-entitlements.py"],
+    ["privacy_gate", "python3 scripts/check-privacy-strings.py"],
+    ["guards_test_gate", "python3 -m unittest discover -s scripts/tests -p 'test_*.py'"]
+  ],
+  "reviewers": [
+    ["{{P}}-app-reviewer", "ios/Config/|\\.entitlements$|Info[A-Za-z-]*\\.plist$|\\.xcconfig$|Keychain|Push|Notification|Background|BGTask|ExportOptions|testflight\\.yml|ios\\.yml"],
+    ["{{P}}-integration-reviewer", "\\.xcodeproj/|project\\.yml$|Package\\.(swift|resolved)$|\\.github/workflows/|^scripts/|Migration|Schema|Codable|UserDefaults|SwiftData|CoreData"],
+    ["{{P}}-security-reviewer", "Keychain|Auth|Login|Token|Secret|Credential|URLSession|WebSocket|OpenURL|onOpenURL|DeepLink|UniversalLink|WKWebView|\\.entitlements$|Info[A-Za-z-]*\\.plist$"]
+  ],
+  "areas": ["pocket", "backbone", "gate", "universal"],
+  "primary_reviewer": "{{P}}-app-reviewer",
+  "skill_rows": [
+    "| `/app-audit` | entitlement drift, privacy strings, ATS, money-as-Double, background registration, then the app reviewer | a verdict |",
+    "| `/release-ios` | runbook for the TestFlight upload a push to main sets in motion, and the one-time App Store Connect setup | confirmation the build reached the phone |"
+  ],
+  "settings_allow": [
+    "Bash(xcodebuild:*)",
+    "Bash(python3 scripts/check-entitlements.py)",
+    "Bash(python3 scripts/check-privacy-strings.py)",
+    "Bash(python3 scripts/check-keychain-group.py)",
+    "Bash(python3 -m unittest discover -s scripts/tests -p 'test_*.py')",
+    "Bash(plutil:*)",
+    "Bash(codesign -d:*)"
+  ],
+  "one_time_steps": [
+    "App Store Connect: create an API key (Users and Access → Integrations → App Store Connect API) with App Manager access; store its .p8 as the ASC_PRIVATE_KEY repo secret, plus ASC_KEY_ID and ASC_ISSUER_ID; store the 10-character team id as APPLE_TEAM_ID (the archive step refuses to run without it).",
+    "Register the bundle id and create the app record in App Store Connect; add yourself as an internal TestFlight tester.",
+    "Fill ios/Config/ExportOptions.plist with the team id, and set {{APP}} to the real scheme name in docs/context.md gates and the workflows."
+  ]
+}

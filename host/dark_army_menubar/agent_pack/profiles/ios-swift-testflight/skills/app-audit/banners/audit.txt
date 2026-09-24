@@ -1,0 +1,23 @@
+APP AUDIT -- Watch         |  Phase 2  |  default model  |  {{PROJECT_UPPER}}
+
+  .---------------------------------------------------.
+  |  DARK ARMY CASE FILE                [_][=][X]     |
+  |...................................................|
+  |                                                   |
+  |  CASE: #{{PROJECT}}   [ACTIVE]                    |
+  |  AGENT: Watch         R/O                         |
+  |                                                   |
+  |  SURFACE:                                         |
+  |  [x] entitlements     -- twins in step            |
+  |  [x] privacy strings  -- declared                 |
+  |  [ ] distribution     -- reading the .ipa         |
+  |  [ ] background       -- scanning                 |
+  |                                                   |
+  |  > run audit.sh --plists --archive --bg           |
+  |  ############################..  working          |
+  |                                                   |
+  '---------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent Watch - App Audit ({{PROJECT}})       
+    default model

@@ -1,0 +1,21 @@
+# Development + test dependencies. Installing this file also installs the
+# runtime dependencies, so this is the one to use when working on the project:
+#   cd host && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+-r requirements.txt
+
+# Test suite. pytest-asyncio 1.x requires pytest >= 8.2.
+pytest>=8.2
+pytest-asyncio>=0.21
+# The full suite runs across workers (`-n auto`, 9 min -> 3) and every test
+# carries the ceiling host/pytest.ini sets.
+pytest-xdist>=3.5
+pytest-timeout>=2.3
+
+# Needed by host/build.sh to produce the .app bundle.
+py2app>=0.28
+
+# tools/app_icon_bake.py and its test; tools/menubar_cast_icons.py.
+Pillow>=10
+
+# The lint CI runs and CLAUDE.md names: `ruff check .` from the repository root.
+ruff>=0.15

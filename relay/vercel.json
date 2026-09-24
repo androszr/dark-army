@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "api/box.js": {
+      "maxDuration": 25
+    },
+    "api/push.js": {
+      "maxDuration": 10
+    }
+  }
+}

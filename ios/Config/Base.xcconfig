@@ -1,0 +1,10 @@
+// Settings shared by every configuration of the Dark Army phone app.
+//
+// The team and the bundle id live in Identity.xcconfig rather than in
+// project.pbxproj, so Signing & Capabilities does not rewrite the project
+// file and a fork edits one file. Not a secret — the same values are in
+// every signed build.
+
+#include "Identity.xcconfig"
+
+CODE_SIGN_STYLE = Automatic

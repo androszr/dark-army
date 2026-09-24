@@ -1,0 +1,228 @@
+name: TestFlight
+
+# Ship the phone build the same way the web ships: push to `main`, and the
+# thing that runs on the device updates itself. The cable was only ever there
+# because nothing else was wired up.
+#
+# Internal testers get a build as soon as App Store Connect finishes processing
+# it — usually a few minutes, and with NO Beta App Review. Review applies to
+# external testers only, which a single-user app never needs.
+#
+# Two facts worth knowing before reading the steps:
+#   * A TestFlight build expires 90 days after upload. So does the API contract
+#     it speaks, if the server has one — bake the production host into the
+#     Release xcconfig for the same reason.
+#   * The build number must strictly increase per (bundle id, marketing
+#     version). `github.run_number` does that and stays traceable to a run.
+
+on:
+  push:
+    branches: [main]
+    # Server-only commits do not change the binary, and a macOS runner is the
+    # most expensive minute in this repo.
+    paths:
+      - 'ios/**'
+      - '.github/workflows/testflight.yml'
+  workflow_dispatch:
+
+# Never cancel an upload in flight: a half-sent binary still consumes its build
+# number, and the next run would then collide with it.
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Archive and upload to TestFlight
+    # macos-15 ships Xcode 16.4, and this app does not compile there: it
+    # relies on Swift 6.2's default MainActor isolation, so on 6.0 every
+    # UIKit touch and every `@Observable` store becomes a concurrency error. The runner image is a real dependency of the source,
+    # not a detail of the CI setup.
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail on the toolchain rather than on forty confusing concurrency
+      # errors five minutes later. An image can quietly change what its
+      # default Xcode is; this notices in one line and says what it wanted.
+      - name: Demand a toolchain this app compiles on
+        run: |
+          set -euo pipefail
+          newest=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$newest"
+          xcodebuild -version
+          swift_version=$(xcrun swift -version | sed -n 's/.*Swift version \([0-9][0-9.]*\).*/\1/p' | head -1)
+          echo "Swift $swift_version from $newest"
+          major=${swift_version%%.*}
+          minor=$(echo "$swift_version" | cut -d. -f2)
+          if [ "$major" -lt 6 ] || { [ "$major" -eq 6 ] && [ "${minor:-0}" -lt 2 ]; }; then
+            echo "::error::Need Swift 6.2+ (default MainActor isolation); this image's newest is $swift_version"
+            exit 1
+          fi
+
+      # `-allowProvisioningUpdates` downloads the provisioning profiles on the
+      # runner using this key, so no profile has to be stored as a secret. The
+      # key is written outside the workspace so it cannot be picked up by
+      # anything that archives the checkout.
+      - name: Take the App Store Connect key
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc/key.p8"
+          chmod 600 "$RUNNER_TEMP/asc/key.p8"
+
+      # The signing identities are IMPORTED, never minted. A runner is a
+      # blank Mac, and left to itself `-allowProvisioningUpdates` asked Apple
+      # for a fresh certificate on every run until the account hit its cap
+      # ("Choose a certificate to revoke", 2026-09-21, for the third time).
+      # IOS_DIST_P12 is one base64 .p12 exported from the owner's Keychain
+      # holding BOTH identities: Apple Development, which automatic signing
+      # insists on for the archive (it refuses a Distribution override on an
+      # automatically signed target), and Apple Distribution, which the
+      # export re-signs with. It goes into a throwaway keychain only this job
+      # can see; profiles are still fetched through the API key above.
+      - name: Import the signing certificates
+        env:
+          IOS_DIST_P12: ${{ secrets.IOS_DIST_P12 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$IOS_DIST_P12" ] || [ -z "$IOS_DIST_P12_PASSWORD" ]; then
+            echo "::error::IOS_DIST_P12 and IOS_DIST_P12_PASSWORD must both be set — export the Apple Development AND Apple Distribution certificates from Keychain Access as one .p12 and store it base64-encoded."
+            exit 1
+          fi
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
+          printf '%s' "$IOS_DIST_P12" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/dist.p12" -k "$KEYCHAIN" -P "$IOS_DIST_P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          # Lets codesign use the key without a UI prompt there is nobody to answer.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/dist.p12"
+          identities=$(security find-identity -v -p codesigning "$KEYCHAIN")
+          echo "$identities"
+          for want in "Apple Development" "Apple Distribution"; do
+            if ! echo "$identities" | grep -q "\"$want:"; then
+              echo "::error::IOS_DIST_P12 holds no '$want' identity. In Keychain Access select both the Apple Development and the Apple Distribution certificate, export them as ONE .p12, and store it again."
+              exit 1
+            fi
+          done
+
+      # Automatic signing archives with the Development identity and would
+      # mint one if the keychain had none — it now has the imported one, so
+      # nothing is created. (A CODE_SIGN_IDENTITY override to Distribution
+      # is refused on an automatically signed target; tried 2026-09-21.)
+      # The team id lives in the gitignored Local.xcconfig on the owner's Mac,
+      # so the runner is handed it as a secret instead.
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::error::APPLE_TEAM_ID must be set — the 10-character team id from developer.apple.com > Account > Membership details."
+            exit 1
+          fi
+          xcodebuild archive \
+            -project ios/{{APP}}.xcodeproj \
+            -scheme {{APP}} \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/{{APP}}.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/key.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }}
+
+      # Re-signs for distribution and produces the .ipa. The archive above is
+      # signed with the DEVELOPMENT identity — that is what automatic signing
+      # does for an archive — and it is this step that swaps in the imported
+      # distribution certificate and, with it, `aps-environment=production`.
+      - name: Export a distribution build
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/{{APP}}.xcarchive" \
+            -exportOptionsPlist ios/Config/ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/key.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      # Read back from the .ipa that is about to be uploaded, not from the
+      # source that was supposed to produce it. A build signed with the
+      # sandbox APNs entitlement uploads fine and then silently receives no
+      # pushes, which is a bad thing to discover from the device.
+      - name: Refuse a sandbox APNs entitlement in a distribution build
+        run: |
+          set -euo pipefail
+          IPA=$(ls "$RUNNER_TEMP/export"/*.ipa)
+          rm -rf "$RUNNER_TEMP/verify"
+          unzip -q "$IPA" -d "$RUNNER_TEMP/verify"
+          APP=$(ls -d "$RUNNER_TEMP/verify/Payload"/*.app)
+          # An app with no push capability declares no APNs environment at
+          # all, and there is nothing to check.
+          if ! plutil -extract aps-environment raw -o - ios/Config/{{APP}}-Release.entitlements >/dev/null 2>&1; then
+            echo "No push capability in the Release entitlements — skipping."
+            exit 0
+          fi
+          ENV=$(codesign -d --entitlements :- "$APP" 2>/dev/null \
+                | plutil -extract aps-environment raw -o - - || echo MISSING)
+          echo "aps-environment: $ENV"
+          if [ "$ENV" != "production" ]; then
+            echo "::error::The exported app claims aps-environment=$ENV. A distribution build must claim production — see ios/Config/{{APP}}-Release.entitlements."
+            exit 1
+          fi
+
+      # The same archive through the same options, with `destination` flipped
+      # on a copy — so what goes up is what was just checked, and the
+      # committed plist stays the one description of how this is exported.
+      - name: Upload
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          cp ios/Config/ExportOptions.plist "$RUNNER_TEMP/UploadOptions.plist"
+          plutil -replace destination -string upload "$RUNNER_TEMP/UploadOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/{{APP}}.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/UploadOptions.plist" \
+            -exportPath "$RUNNER_TEMP/upload" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/key.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      # Runners are ephemeral, but a failed run that leaves a private key on a
+      # reusable disk is not a risk worth taking on trust.
+      - name: Shred the key and the keychain
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/dist.p12"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+
+      - name: Say what shipped
+        if: success()
+        run: |
+          echo "### Uploaded to TestFlight" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Build \`${{ github.run_number }}\` from \`${{ github.sha }}\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "It reaches the phone once App Store Connect finishes processing — internal testing needs no review." >> "$GITHUB_STEP_SUMMARY"

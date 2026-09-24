@@ -1,0 +1,21 @@
+INTEGRATION PASS -- Watch         |  Phase 2  |  default model  |  DARK ARMY    
+
+  .---------------------------------------------------.
+  |  [dark army // integration]         [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > I DO NOT CARE THAT IT WORKS ON YOUR MACHINE_    |
+  |                                                    |
+  |  the frozen bundle. the installed hook.            |
+  |  the loopback token. the file on disk written      |
+  |  by a version that no longer exists.               |
+  |                                                    |
+  |  $ ./integration.sh --deterministic --then-judge   |
+  |  ##############################  100%              |
+  |  the verdict is BLOCK, WARN, or CLEAN.             |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent Watch - Integration pass (Dark Army)    
+    default model

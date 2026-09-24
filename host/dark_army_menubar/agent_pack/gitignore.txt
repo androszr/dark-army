@@ -1,0 +1,41 @@
+# The starter ignore list the agent pack offers every project it is
+# installed into (pack_install._offer_gitignore). Pattern lines only; these
+# comments and blank lines are dropped on read. Each line is offered to a
+# project once: a line somebody deletes from the managed block stays
+# deleted, and a line added here later reaches every project on its next
+# resync. Profile folders may add their own gitignore.txt.
+
+# Secrets. The example file stays tracked, so the negation comes after .env.*
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+
+# Operating system and editor junk
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*~
+.claude/settings.local.json
+
+# Build output and caches
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+build/
+.build/
+DerivedData/
+
+# Dark Army's enrolment key folder, and what the crew writes
+.dark-army/
+plans/
+docs/research/

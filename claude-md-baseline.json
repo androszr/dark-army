@@ -1,0 +1,866 @@
+{
+ "source": "CLAUDE.md as the working tree held it when the ship of plans/2026-09-19-ship-token-efficiency.md began (the saved pre-ship copy, 140,021 bytes: HEAD 5f02fd9 plus the uncommitted working-tree edits then present). This copy is the authority; HEAD plus the pre-ship patch reapplied by hand does not reproduce it, so the fixture is regenerated only from a saved copy of the file itself, by tools/ship_efficiency.py baseline-paragraphs.",
+ "bytes": 140021,
+ "paragraphs": [
+  {
+   "digest": "cd8285a58210",
+   "section": "# CLAUDE.md",
+   "head": "Project guidance for coding agents."
+  },
+  {
+   "digest": "7222001e5826",
+   "section": "# CLAUDE.md",
+   "head": "**Keep this file under 140,000 UTF-8 bytes** (`host/tests/test_claude_"
+  },
+  {
+   "digest": "6493eadfcdb8",
+   "section": "## Project Overview",
+   "head": "**The product is called `Dark Army`.** A bare proper noun, no article "
+  },
+  {
+   "digest": "f89ec2ae1817",
+   "section": "## Project Overview",
+   "head": "Bob Companion monitors Claude Code sessions: a Python daemon reads hoo"
+  },
+  {
+   "digest": "cfb4d0b112d3",
+   "section": "## Project Overview",
+   "head": "Two active components: **host** (Python daemon, Claude Code hook handl"
+  },
+  {
+   "digest": "af163777a480",
+   "section": "## Project Overview",
+   "head": "**No rendering surface:** the platform draws what it can."
+  },
+  {
+   "digest": "3fc05a2f95b4",
+   "section": "## Project Overview",
+   "head": "The Kanban **board** is ordinary SwiftUI inside the `BobPanel` process"
+  },
+  {
+   "digest": "e152c6d53fae",
+   "section": "## Project Overview",
+   "head": "**macOS only.** No `sys.platform` branches in `host/` without an expli"
+  },
+  {
+   "digest": "dbd2798a76b4",
+   "section": "### Panel",
+   "head": "Requires Xcode. The menu bar launches the binary over stdin."
+  },
+  {
+   "digest": "24d42b03d713",
+   "section": "### Panel",
+   "head": "```bash cd panel && swift build -c release ```"
+  },
+  {
+   "digest": "f67313e5ece0",
+   "section": "### Menu Bar App (.app bundle)",
+   "head": "```bash # Build panel + py2app + bundle and install. # Releases omit -"
+  },
+  {
+   "digest": "a448c508b07c",
+   "section": "# Releases omit --allow-untagged and require a clean vX.Y.Z tag.",
+   "head": "**Strict build:** `build_check.py` (build-only subprocess, never impor"
+  },
+  {
+   "digest": "09d9af449624",
+   "section": "# Releases omit --allow-untagged and require a clean vX.Y.Z tag.",
+   "head": "| Flag | Effect | |---|---| | `--install` | Replace `/Applications/Bob"
+  },
+  {
+   "digest": "d87f40572036",
+   "section": "# Releases omit --allow-untagged and require a clean vX.Y.Z tag.",
+   "head": "Extension dependencies use `npm ci` and committed `package-lock.json`,"
+  },
+  {
+   "digest": "d8dc25fe23c8",
+   "section": "# Releases omit --allow-untagged and require a clean vX.Y.Z tag.",
+   "head": "Every app carries `Contents/Resources/build-manifest.json` (schema, bu"
+  },
+  {
+   "digest": "184597b10778",
+   "section": "### Tests",
+   "head": "Host dependencies (`rumps`, `psutil`, etc.) live in `host/.venv`, Pyth"
+  },
+  {
+   "digest": "6611c6b0b977",
+   "section": "### Tests",
+   "head": "```bash # Python tests (host daemon) cd host && .venv/bin/pytest -v # "
+  },
+  {
+   "digest": "c9f6912ee3d4",
+   "section": "# Venv: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt",
+   "head": "**SwiftPM builds only the panel.** `tests.yml`'s phone job runs `BobPh"
+  },
+  {
+   "digest": "54785d73681c",
+   "section": "# Venv: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt",
+   "head": "**The phone does not clip prose** — no `.lineLimit(` on a line that wr"
+  },
+  {
+   "digest": "d6c7057236ac",
+   "section": "### Cast Pipeline",
+   "head": "**Panel art resolves off the installed app**: `PanelResources` tries `"
+  },
+  {
+   "digest": "73a633db9cf2",
+   "section": "### Cast Pipeline",
+   "head": "**Two art trees, one roster.** **Twenty** nickname characters in `iden"
+  },
+  {
+   "digest": "68f8526827aa",
+   "section": "### Cast Pipeline",
+   "head": "**`cast.character_for` is the panel's `Cast.character(for:)` rung for "
+  },
+  {
+   "digest": "39c21aa5042d",
+   "section": "### Cast Pipeline",
+   "head": "**Elliot is chief of staff; the other nineteen lead eight areas.** `ar"
+  },
+  {
+   "digest": "3a47448626a1",
+   "section": "### Cast Pipeline",
+   "head": "**The app icon and the top-bar mark are two pictures, on purpose.** Th"
+  },
+  {
+   "digest": "681bcab59880",
+   "section": "### Cast Pipeline",
+   "head": "**Every proposal goes under `assets/proposals/`, git-ignored**: only t"
+  },
+  {
+   "digest": "8c7abaa2a11f",
+   "section": "### Cast Pipeline",
+   "head": "```bash # Strip: snap the hand-drawn GIFs onto their pixel grid python"
+  },
+  {
+   "digest": "130d1aa9bad7",
+   "section": "### Data Flow",
+   "head": "``` Claude Code hooks (SessionStart/PreToolUse/PreCompact/Stop/StopFai"
+  },
+  {
+   "digest": "462277a7bf44",
+   "section": "### Data Flow",
+   "head": "**The board's two write paths**, both from a person:"
+  },
+  {
+   "digest": "390f28c44216",
+   "section": "### Data Flow",
+   "head": "- **Refine** (a Prep card) → `refine_card` → `dispatch.spawn_local` or"
+  },
+  {
+   "digest": "aee5a611d5c2",
+   "section": "### Data Flow",
+   "head": "- **Start** (armed, then confirmed) or a card **dropped into In progre"
+  },
+  {
+   "digest": "6cb1e04effd6",
+   "section": "### Data Flow",
+   "head": "**A card may hold a standing instruction to take the second path by it"
+  },
+  {
+   "digest": "514b3ced68b0",
+   "section": "### Data Flow",
+   "head": "**How many agents may work at once in one project is a number you set,"
+  },
+  {
+   "digest": "c789627ddbf0",
+   "section": "### Data Flow",
+   "head": "**One press gets a whole project moving.** `board_start_project` → `Bo"
+  },
+  {
+   "digest": "ea1597ef2abb",
+   "section": "### Data Flow",
+   "head": "The slot count (`slot_head` over `_parallel_limit_for`) is the only ru"
+  },
+  {
+   "digest": "140c71e6f1c9",
+   "section": "### Data Flow",
+   "head": "**A queued card says why in the daemon's words.** `_queue_reason(count"
+  },
+  {
+   "digest": "a6940c4394e4",
+   "section": "### Data Flow",
+   "head": "**A claim ends when the work does, not when the terminal closes.** It "
+  },
+  {
+   "digest": "87a6fa8164e0",
+   "section": "### Data Flow",
+   "head": "The gate lives inside `_dispatch_card_locked` — one function, both ges"
+  },
+  {
+   "digest": "173ed4d685d0",
+   "section": "### Data Flow",
+   "head": "**A queued card is a confirmed card.** The drain's replay (`queued_rep"
+  },
+  {
+   "digest": "a0cda1a78752",
+   "section": "### Data Flow",
+   "head": "**A card reaches Done only because somebody said so** — a human drag, "
+  },
+  {
+   "digest": "c71aacfefc02",
+   "section": "### Panel (`panel/`)",
+   "head": "A SwiftUI/AppKit executable (`BobPanel`). Reads `~/.bob-companion/api-"
+  },
+  {
+   "digest": "96c75879b53b",
+   "section": "### Panel (`panel/`)",
+   "head": "**The workspace is a wide pane beside a rail, in one window** (`PanelV"
+  },
+  {
+   "digest": "d0c2d8e32680",
+   "section": "### Panel (`panel/`)",
+   "head": "**Inside the rail, projects are tabs and the fleet is an htop table.**"
+  },
+  {
+   "digest": "087f61c816e8",
+   "section": "### Panel (`panel/`)",
+   "head": "**Order is `byStart` and status is not a term in it** (the daemon's `s"
+  },
+  {
+   "digest": "6d0674c31f24",
+   "section": "### Panel (`panel/`)",
+   "head": "**\"Needs you\" is a property carried on the row, not a place above it.*"
+  },
+  {
+   "digest": "4e8667646457",
+   "section": "### Panel (`panel/`)",
+   "head": "**Everything waiting on a person is one list** (`Inbox.swift`, `InboxV"
+  },
+  {
+   "digest": "899e989df0ea",
+   "section": "### Panel (`panel/`)",
+   "head": "**Which side decided each.** The daemon decides `endedWork` (`needs_yo"
+  },
+  {
+   "digest": "01f77691b8b4",
+   "section": "### Panel (`panel/`)",
+   "head": "**A turn that ends on a work report is waiting on nobody, and the daem"
+  },
+  {
+   "digest": "b40865bf2b54",
+   "section": "### Panel (`panel/`)",
+   "head": "**At most one item per row and one per card, and a card bound to a ses"
+  },
+  {
+   "digest": "602f3af9a2c4",
+   "section": "### Panel (`panel/`)",
+   "head": "**The inbox routes; it does not answer, on both surfaces.** The whole "
+  },
+  {
+   "digest": "989ed746ac93",
+   "section": "### Panel (`panel/`)",
+   "head": "**The rail is a CRT** (`Theme.swift`). Phosphor green on near-black, t"
+  },
+  {
+   "digest": "3429cecc2fc5",
+   "section": "### Panel (`panel/`)",
+   "head": "**The panel is an ordinary macOS window, and it can leave**, stated in"
+  },
+  {
+   "digest": "52502ad3235f",
+   "section": "### Panel (`panel/`)",
+   "head": "**A button only where the agent named a choice.** `<!-- bob-actions: A"
+  },
+  {
+   "digest": "d2fdb422a543",
+   "section": "### Panel (`panel/`)",
+   "head": "**And a way to finish reading.** `WrapUpBar` closes the terminal tab —"
+  },
+  {
+   "digest": "81e740756c3a",
+   "section": "### Panel (`panel/`)",
+   "head": "**And a way to carry on past a usage limit.** `low_priority_session` i"
+  },
+  {
+   "digest": "a95084cf761c",
+   "section": "### Panel (`panel/`)",
+   "head": "**Asking for the board opens the workspace**: `installBoardObserver`'s"
+  },
+  {
+   "digest": "2b0f099f586e",
+   "section": "### Panel (`panel/`)",
+   "head": "**A banner can aim the panel** (`FocusRouter`, `PanelView.show(_:)`). "
+  },
+  {
+   "digest": "43b3b222d567",
+   "section": "### Panel (`panel/`)",
+   "head": "**The board** (`BoardView.swift`, with `BoardState.swift`, `BoardLanes"
+  },
+  {
+   "digest": "8dfe52ea92c8",
+   "section": "### Panel (`panel/`)",
+   "head": "**The drop is the dispatch.** `.draggable(card.id)` on the card, `.dro"
+  },
+  {
+   "digest": "57bdfa7e207c",
+   "section": "### Panel (`panel/`)",
+   "head": "The detail sheet gains a first-class **Plan** section when `plan_path`"
+  },
+  {
+   "digest": "3b72522bd9ed",
+   "section": "### Panel (`panel/`)",
+   "head": "**A card leads with its summary.** `summary` is its own field end to e"
+  },
+  {
+   "digest": "29a9177fe2b9",
+   "section": "### Panel (`panel/`)",
+   "head": "**Clearing Done is a bulk destruction, so it is confirmed against an e"
+  },
+  {
+   "digest": "3a2cc71a589f",
+   "section": "### Panel (`panel/`)",
+   "head": "**Prepare writes a card's fields from plain words** (`card_prepare.py`"
+  },
+  {
+   "digest": "846bdb9820b0",
+   "section": "### Panel (`panel/`)",
+   "head": "**Prepare also offers an opinion about *which project* the card belong"
+  },
+  {
+   "digest": "64bda82b7bfb",
+   "section": "### Panel (`panel/`)",
+   "head": "**`BoardCardSheet` is one surface for reading and editing, and a windo"
+  },
+  {
+   "digest": "b79ba37518fe",
+   "section": "### Panel (`panel/`)",
+   "head": "The composer is the same view with `card == nil`, plus three things a "
+  },
+  {
+   "digest": "3494e2ad7aac",
+   "section": "### Panel (`panel/`)",
+   "head": "**A half-typed composer survives its own close** (`Drafts.swift`, `Dra"
+  },
+  {
+   "digest": "ec32208975d6",
+   "section": "### Panel (`panel/`)",
+   "head": "**A `.md` file is drawn as a document, not as its bytes** (`Markdown.s"
+  },
+  {
+   "digest": "d46331c22687",
+   "section": "### Panel (`panel/`)",
+   "head": "**A card can name its area** (`Areas.swift`, byte-equal on Mac and pho"
+  },
+  {
+   "digest": "e4d8c73fad3c",
+   "section": "### Panel (`panel/`)",
+   "head": "`Specialists.swift` keeps seven stage descriptions, byte-pinned below "
+  },
+  {
+   "digest": "59f446d87b63",
+   "section": "### Panel (`panel/`)",
+   "head": "**Bob talks while it waits; nothing spins** (`AgentChatter.swift`, the"
+  },
+  {
+   "digest": "4a16e136909b",
+   "section": "### Panel (`panel/`)",
+   "head": "Three rules in the API layer (`Models.swift` — envelope and fleet — wi"
+  },
+  {
+   "digest": "a258cd9e62e7",
+   "section": "### Host (`host/`)",
+   "head": "- **Codex observation and control** — `docs/codex-contract.md` is the "
+  },
+  {
+   "digest": "b9c8624f1beb",
+   "section": "### Host (`host/`)",
+   "head": "- **bob-companion-notify** — Standalone hook handler (installed to `~/"
+  },
+  {
+   "digest": "67b511833b04",
+   "section": "### Host (`host/`)",
+   "head": "**The pid walk is memoised per session.** `_session_pid_cached` keeps "
+  },
+  {
+   "digest": "3171734ffe6d",
+   "section": "### Host (`host/`)",
+   "head": "> **It carries two standing hints into every Claude session.** On > `s"
+  },
+  {
+   "digest": "61e33fa6fa29",
+   "section": "### Host (`host/`)",
+   "head": "- **bob_companion_daemon/** — Async Python daemon (asyncio): session s"
+  },
+  {
+   "digest": "4088b45f3aef",
+   "section": "### Host (`host/`)",
+   "head": "**`ptyhost.py` and `pty_broker.py` keep a hosted terminal across a res"
+  },
+  {
+   "digest": "7241dbd2b0fb",
+   "section": "### Host (`host/`)",
+   "head": "**`channel_server.py`** is the one route that reaches *into* a session"
+  },
+  {
+   "digest": "413b39a0ca65",
+   "section": "### Host (`host/`)",
+   "head": "**Seven tools, the only inbound verbs here**, each scoped so that winn"
+  },
+  {
+   "digest": "ae654eeeee34",
+   "section": "### Host (`host/`)",
+   "head": "Both card verbs ask for a `summary` beside the notes. A channel proces"
+  },
+  {
+   "digest": "9474c08e9d7e",
+   "section": "### Host (`host/`)",
+   "head": "**Collaboration** lists task/agent evidence on Mac and phone. `collabo"
+  },
+  {
+   "digest": "d76179495c41",
+   "section": "### Host (`host/`)",
+   "head": "- **`api_server.py`** — the loopback HTTP + SSE the panel reads. **A r"
+  },
+  {
+   "digest": "aefb499e503f",
+   "section": "### Host (`host/`)",
+   "head": "**A frame that says nothing is not sent.** `_broadcast` is a **trailin"
+  },
+  {
+   "digest": "118846449ed7",
+   "section": "### Host (`host/`)",
+   "head": "**`?sections=changed` is the opt-in that keeps an unchanged *section* "
+  },
+  {
+   "digest": "bb512c236907",
+   "section": "### Host (`host/`)",
+   "head": "Panel side, `Snapshot.carried` marks the absent sections and `DaemonCl"
+  },
+  {
+   "digest": "cc83b1808503",
+   "section": "### Host (`host/`)",
+   "head": "**`?done=review` is the second opt-in, and it keeps the *finished* car"
+  },
+  {
+   "digest": "4d0321430695",
+   "section": "### Host (`host/`)",
+   "head": "**Refused knocks on the phone doors are logged and a burst alerts** (`"
+  },
+  {
+   "digest": "62d471b527bd",
+   "section": "### Host (`host/`)",
+   "head": "**The per-frame log pair is behind a switch**: `_log_broadcast` is DEB"
+  },
+  {
+   "digest": "3bc874381db8",
+   "section": "### Host (`host/`)",
+   "head": "**The LAN door and the relay are two sealed doors under one contract**"
+  },
+  {
+   "digest": "7e3c27c40067",
+   "section": "### Host (`host/`)",
+   "head": "Phone sheets, detents, the terminal cover, the 4s/8s cadence (`noteAtt"
+  },
+  {
+   "digest": "9a7ecdd64f41",
+   "section": "### Host (`host/`)",
+   "head": "- **`event_log.py`** — the Mac's diary, for the phone to read *later*:"
+  },
+  {
+   "digest": "12b0deee60fe",
+   "section": "### Host (`host/`)",
+   "head": "- **`enrollment.py`** — **which projects Bob is allowed to watch at al"
+  },
+  {
+   "digest": "347b12b81587",
+   "section": "### Host (`host/`)",
+   "head": "**The key travels on every message, not once per session**, so un-enro"
+  },
+  {
+   "digest": "b21323c80b45",
+   "section": "### Host (`host/`)",
+   "head": "**The most damaging bug available here is the walk-up.** Bob's own sta"
+  },
+  {
+   "digest": "6b05f9d006e1",
+   "section": "### Host (`host/`)",
+   "head": "**Two of the three assistants knock; one is filtered.** The gate is `B"
+  },
+  {
+   "digest": "9e08aa01f70c",
+   "section": "### Host (`host/`)",
+   "head": "**Filtering the records is enough, and a second gate is forbidden.** T"
+  },
+  {
+   "digest": "46ac20be2379",
+   "section": "### Host (`host/`)",
+   "head": "**A quiet machine says why.** `enrollment_snapshot()` feeds both `ApiS"
+  },
+  {
+   "digest": "3aad295e9317",
+   "section": "### Host (`host/`)",
+   "head": "**Bob's own checkout enrols itself on upgrade, and nothing else does**"
+  },
+  {
+   "digest": "91bca2b35cb8",
+   "section": "### Host (`host/`)",
+   "head": "**A newcomer sees three steps first** — Enrol a folder → Open it in VS"
+  },
+  {
+   "digest": "929bbe62b430",
+   "section": "### Host (`host/`)",
+   "head": "- **`paths.py`** — `ensure_state_dir` is the seam every read and write"
+  },
+  {
+   "digest": "6640b9eb9f83",
+   "section": "### Host (`host/`)",
+   "head": "- **`board.py`** — the Kanban store, and nothing else: it knows nothin"
+  },
+  {
+   "digest": "cc6f02a04e07",
+   "section": "### Host (`host/`)",
+   "head": "**Who may write what is the design of this file.** Three rings:"
+  },
+  {
+   "digest": "69e00bc67248",
+   "section": "### Host (`host/`)",
+   "head": "| Field | Written by | Why not wider | |---|---|---| | `title`, `summa"
+  },
+  {
+   "digest": "bc38244bf2ab",
+   "section": "### Host (`host/`)",
+   "head": "The single-writer verbs share `declare_done`'s shape — the guard ridin"
+  },
+  {
+   "digest": "59180d68faf7",
+   "section": "### Host (`host/`)",
+   "head": "**Two splits are deliberate and both say declared-vs-observed.** `work"
+  },
+  {
+   "digest": "23c8974d9c19",
+   "section": "### Host (`host/`)",
+   "head": "**A card's timeline rides the on-open card read only** — `_card_collec"
+  },
+  {
+   "digest": "4056d44de344",
+   "section": "### Host (`host/`)",
+   "head": "**Bounds are refused at the store**: `MAX_CARDS` (500), `MAX_PROMPT_CH"
+  },
+  {
+   "digest": "ad0d0a6af80e",
+   "section": "### Host (`host/`)",
+   "head": "**How important a card is, is the third helper of the same family** (`"
+  },
+  {
+   "digest": "9a38cdce7bc4",
+   "section": "### Host (`host/`)",
+   "head": "**Outcomes are explicit human decisions, separate from Done and Review"
+  },
+  {
+   "digest": "0a59f229f29d",
+   "section": "### Host (`host/`)",
+   "head": "Every observed Done arrival after a bound implementation, and every ex"
+  },
+  {
+   "digest": "5ae52505c5ca",
+   "section": "### Host (`host/`)",
+   "head": "The ledger survives delete, Clear Done and archival, as their Mac conf"
+  },
+  {
+   "digest": "397599bd0eff",
+   "section": "### Host (`host/`)",
+   "head": "Accepted outcomes count distinct **currently** accepted cards whose fi"
+  },
+  {
+   "digest": "3698506c2f36",
+   "section": "### Host (`host/`)",
+   "head": "**What Bob observed a run do is a fifth writer ring, and it is a table"
+  },
+  {
+   "digest": "4577b76a0050",
+   "section": "### Host (`host/`)",
+   "head": "**Every card carries a change number, and it is the store's own.** `re"
+  },
+  {
+   "digest": "a85d1eeef27d",
+   "section": "### Host (`host/`)",
+   "head": "`board.db` and its `-wal`/`-shm` siblings are in `paths._PRIVATE_FILES"
+  },
+  {
+   "digest": "268ea9d4e385",
+   "section": "### Host (`host/`)",
+   "head": "- **`dispatch.py`** — Bob as launcher, in one file so the capability i"
+  },
+  {
+   "digest": "5390d3970fe7",
+   "section": "### Host (`host/`)",
+   "head": "1. **Only a deliberate human gesture puts work in front of it** — Star"
+  },
+  {
+   "digest": "f02da1dba3ba",
+   "section": "### Host (`host/`)",
+   "head": "2. **A preference removes it entirely** — `board_dispatch`, checked at"
+  },
+  {
+   "digest": "8159d716d328",
+   "section": "### Host (`host/`)",
+   "head": "3. **State is re-checked at the instant of dispatch** out of `board.db"
+  },
+  {
+   "digest": "e7202dcecf54",
+   "section": "### Host (`host/`)",
+   "head": "4. **It refuses a directory that is not a known project** — `_known_pr"
+  },
+  {
+   "digest": "d7b7c5e6cd98",
+   "section": "### Host (`host/`)",
+   "head": "5. **argv only, and that is not enough.** The executable comes from a "
+  },
+  {
+   "digest": "5a2e75388331",
+   "section": "### Host (`host/`)",
+   "head": "6. **Bounded and enforced, not computed**: `MAX_CONCURRENT_DISPATCH` ("
+  },
+  {
+   "digest": "b15238b891f6",
+   "section": "### Host (`host/`)",
+   "head": "Above the guard sits the **plan gate** (`daemon._plan_gate_refusal`, a"
+  },
+  {
+   "digest": "c531624135b8",
+   "section": "### Host (`host/`)",
+   "head": "**The gate has a second rung**: a card whose `plan_approved` digest no"
+  },
+  {
+   "digest": "c79af5f046f6",
+   "section": "### Host (`host/`)",
+   "head": "**Start's prompt is `dispatch.start_prompt`.** `attach_plan` writes `p"
+  },
+  {
+   "digest": "88620543ce52",
+   "section": "### Host (`host/`)",
+   "head": "**Refinement is `dispatch_card`'s sibling** (`refine_card`, `dispatch."
+  },
+  {
+   "digest": "7d1fd4e9af60",
+   "section": "### Host (`host/`)",
+   "head": "**`resolve_executable` is not bare `shutil.which`**: the LaunchAgent s"
+  },
+  {
+   "digest": "fe576598d895",
+   "section": "### Host (`host/`)",
+   "head": "**Binding is by elimination, narrowed to pipeline mains and proven whe"
+  },
+  {
+   "digest": "ef8c55b1ccd8",
+   "section": "### Host (`host/`)",
+   "head": "Deliberately **not** passed: `--no-session-persistence`, `--setting-so"
+  },
+  {
+   "digest": "2f8029f1db92",
+   "section": "### Host (`host/`)",
+   "head": "**A card may name the model** its assistant runs on, chosen from `disp"
+  },
+  {
+   "digest": "04a6c347a220",
+   "section": "### Host (`host/`)",
+   "head": "**A Default card runs on the model chosen for its assistant**: two pre"
+  },
+  {
+   "digest": "30335a2130cf",
+   "section": "### Host (`host/`)",
+   "head": "**A card is never moved to Done by the daemon.** The bound session may"
+  },
+  {
+   "digest": "dbcfa3643416",
+   "section": "### Host (`host/`)",
+   "head": "**The return leg** — a card *arriving* in Done — is close-only, throug"
+  },
+  {
+   "digest": "2a7838738357",
+   "section": "### Host (`host/`)",
+   "head": "- **`workspace.py`** — which project a session belongs to; the unit a "
+  },
+  {
+   "digest": "dccf23073986",
+   "section": "### Host (`host/`)",
+   "head": "**The enrolment rungs are one rule with no exceptions**: a project tab"
+  },
+  {
+   "digest": "ad232a6f9f92",
+   "section": "### Host (`host/`)",
+   "head": "**Cards follow the rename, and they must**: the board joins card to se"
+  },
+  {
+   "digest": "c0edeaae6851",
+   "section": "### Host (`host/`)",
+   "head": "- **`terminal_title.py`** — the agent's badge on its own VS Code / Ter"
+  },
+  {
+   "digest": "45762d689958",
+   "section": "### Host (`host/`)",
+   "head": "- **`session_title.py`** — the name a row wears when Claude Code write"
+  },
+  {
+   "digest": "38c4fb148689",
+   "section": "### Host (`host/`)",
+   "head": "- **bob_companion_menubar/** — macOS status bar app (rumps). **The sta"
+  },
+  {
+   "digest": "2f22193dbb3f",
+   "section": "### Session State Model",
+   "head": "**What the daemon tracks about a session, and the three things it does"
+  },
+  {
+   "digest": "387a53d2fbc0",
+   "section": "### Session State Model",
+   "head": "- **One source of truth for the buckets.** `BobDaemon._activity_counts"
+  },
+  {
+   "digest": "a55e92a6b4c9",
+   "section": "### Session State Model",
+   "head": "- **A turn nobody is waiting on is parked**, suppressing **both** card"
+  },
+  {
+   "digest": "89151e3518e5",
+   "section": "### Session State Model",
+   "head": "- **Four evictions, and a tombstone after all of them.** Wall-clock st"
+  },
+  {
+   "digest": "624fde40351a",
+   "section": "### Session State Model",
+   "head": "- **The daemon acts on a session in exactly three places**, each decid"
+  },
+  {
+   "digest": "9d240e931e6b",
+   "section": "## Key Constraints",
+   "head": "- **Menu-bar width**: `STRIP_BUDGET_PT` (300pt), and **kerning after a"
+  },
+  {
+   "digest": "b772522344c7",
+   "section": "## Key Constraints",
+   "head": "- **Notification limit**: 8 at once (oldest dropped)."
+  },
+  {
+   "digest": "1fcccf69db95",
+   "section": "## Key Constraints",
+   "head": "- **Cast art**: two trees, stated under *Cast Pipeline* and `docs/menu"
+  },
+  {
+   "digest": "f09c6def7fda",
+   "section": "## How a request becomes work",
+   "head": "**The crew is `docs/agents.md`** — the `.claude/agents/*.md` files are"
+  },
+  {
+   "digest": "9ca0c1ed7e6a",
+   "section": "## How a request becomes work",
+   "head": "**Any request for a change to this codebase goes through `/ship`, whet"
+  },
+  {
+   "digest": "b2c01b42c8e6",
+   "section": "## How a request becomes work",
+   "head": "- **Do not implement in the same breath as planning.** The card is the"
+  },
+  {
+   "digest": "4d925876cccc",
+   "section": "## How a request becomes work",
+   "head": "- **Do not end the turn on \"shall I build it?\"** A turn that ends in a"
+  },
+  {
+   "digest": "70a13ec1fd8e",
+   "section": "## How a request becomes work",
+   "head": "- **Close out afterwards** — `bash .claude/skills/ship/close-out.sh` f"
+  },
+  {
+   "digest": "5954c0889294",
+   "section": "## How a request becomes work",
+   "head": "**Both ship entries require a callable canonical roster, independent v"
+  },
+  {
+   "digest": "1f5ad9d2b175",
+   "section": "## How a request becomes work",
+   "head": "Three exceptions only. A **preflight BLOCK** means the plan is not fit"
+  },
+  {
+   "digest": "47bfe5c79b1b",
+   "section": "## TODO Tracking",
+   "head": "Read `TODO.md` at the start of a session. Sections older than a week m"
+  },
+  {
+   "digest": "ac1e783183f6",
+   "section": "## Reviewing a change",
+   "head": "`/review` reviews a commit (`/review <sha>`), a branch or a pull reque"
+  },
+  {
+   "digest": "cf994d2145e0",
+   "section": "## Reviewing a change",
+   "head": "<!-- gitnexus:start --> # GitNexus — Code Intelligence"
+  },
+  {
+   "digest": "c49bd0cd3165",
+   "section": "# GitNexus — Code Intelligence",
+   "head": "This project is indexed by GitNexus as **bob-companion** (30696 symbol"
+  },
+  {
+   "digest": "4f68d53deb5e",
+   "section": "# GitNexus — Code Intelligence",
+   "head": "> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from "
+  },
+  {
+   "digest": "55b6a74fa169",
+   "section": "## Always Do",
+   "head": "- **MUST run impact before editing.** Use `impact({target: \"symbolName"
+  },
+  {
+   "digest": "beca796bc978",
+   "section": "## Always Do",
+   "head": "- **MUST analyze graph changes before committing.** Use `detect_change"
+  },
+  {
+   "digest": "24efa1cfad19",
+   "section": "## Always Do",
+   "head": "- MUST warn on HIGH/CRITICAL `risk` pre-edit; never use `riskSharedAxe"
+  },
+  {
+   "digest": "e90c55a520e5",
+   "section": "## Always Do",
+   "head": "- **MUST treat `risk: UNKNOWN` as unresolved, not as low.** An empty c"
+  },
+  {
+   "digest": "7abbb86d7b6e",
+   "section": "## Always Do",
+   "head": "- **MUST use `query({search_query: \"concept\"})` for concepts/flows, `c"
+  },
+  {
+   "digest": "ef0ca6e23b55",
+   "section": "## Always Do",
+   "head": "- For security review, `explain({target: \"fileOrSymbol\"})` lists taint"
+  },
+  {
+   "digest": "fdb55632ccb4",
+   "section": "## Never Do",
+   "head": "- NEVER edit a function, class, or method before MCP/CLI impact analys"
+  },
+  {
+   "digest": "1b5d259b2d60",
+   "section": "## Never Do",
+   "head": "- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis, an"
+  },
+  {
+   "digest": "7be4bd66b770",
+   "section": "## Never Do",
+   "head": "- NEVER rename symbols with find-and-replace — use `rename` which unde"
+  },
+  {
+   "digest": "96146118dfc3",
+   "section": "## Never Do",
+   "head": "- NEVER commit before MCP/CLI graph change analysis."
+  },
+  {
+   "digest": "b738f1813304",
+   "section": "## Resources",
+   "head": "| Resource | Use for | | --- | --- | | `gitnexus://repo/bob-companion/"
+  },
+  {
+   "digest": "d90352092611",
+   "section": "## CLI",
+   "head": "| Task | Read this skill file | | --- | --- | | Understand architectur"
+  },
+  {
+   "digest": "7cf9f4c3c667",
+   "section": "## CLI",
+   "head": "<!-- gitnexus:end -->"
+  }
+ ]
+}

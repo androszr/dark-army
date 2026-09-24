@@ -1,0 +1,21 @@
+# What the frozen app carries, read off a built bundle by
+# `host/.venv/bin/python tools/frozen_components.py manifest`.
+# Refresh after a dependency change; THIRD_PARTY_NOTICES.md must credit
+# every line (test_third_party_notices.py).
+python	cffi	2.1.1
+python	cryptography	50.0.1
+python	filelock	4.0.1
+python	psutil	7.2.2
+python	pyobjc-core	12.2.2
+python	pyobjc-framework-Cocoa	12.2.2
+python	pyobjc-framework-Quartz	12.2.2
+python	rumps	0.4.0
+python	typing_extensions	4.16.0
+python	websockets	17.1
+native	libcrypto.3.dylib
+native	liblzma.5.dylib
+native	libmpdec.4.0.1.dylib
+native	libsqlite3.3.53.4.dylib
+native	libssl.3.dylib
+runtime	Python	3.12.13
+bootstrap	py2app

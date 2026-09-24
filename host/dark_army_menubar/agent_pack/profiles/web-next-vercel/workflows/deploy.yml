@@ -1,0 +1,126 @@
+name: Deploy
+
+# `ios/**` is excluded for a blunt reason: a deploy triggered by a commit that
+# only touches the iOS client (if this project has one) would build and ship a byte-identical web app.
+# That is a no-op that costs Vercel minutes and a Neon branch .
+#
+# The filter applies to `closed` too, which is safe rather than an oversight: a
+# PR filtered out here never ran the preview job, so there is no Neon branch for
+# the cleanup job to reclaim. A PR touching both trees is not filtered at all —
+# `paths-ignore` only skips when EVERY changed file matches.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths-ignore: ['ios/**']
+  push:
+    branches: [main]
+    paths-ignore: ['ios/**']
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false # never cancel a half-finished production deploy
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # PR preview: an isolated Neon branch DB + a Vercel preview URL.
+  # Neon branching is the concrete reason Neon beats a generic Postgres here —
+  # every PR gets a real database, copy-on-write, for effectively nothing.
+  # ---------------------------------------------------------------------------
+  preview:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Create Neon branch
+        id: neon
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: preview/pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Migrate preview database
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_with_pooler }}
+
+      - name: Deploy preview
+        id: vercel
+        run: |
+          npm i -g vercel@latest
+          vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+          vercel build --token="$VERCEL_TOKEN"
+          url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Comment preview URL
+        uses: actions/github-script@v8
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `Preview: ${{ steps.vercel.outputs.url }}`
+            })
+
+  # Reclaim the branch DB when the PR closes, so free-tier storage doesn't creep.
+  cleanup-preview:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: preview/pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+  # ---------------------------------------------------------------------------
+  # Production. Migrations run BEFORE the deploy, so the schema is always a
+  # superset of what the currently-live code expects. That ordering only stays
+  # safe if migrations are additive — no dropping a column in the same PR that
+  # stops writing to it. Split those across two deploys.
+  # ---------------------------------------------------------------------------
+  production:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Migrate production database
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Deploy to production
+        run: |
+          npm i -g vercel@latest
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          vercel build --prod --token="$VERCEL_TOKEN"
+          vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

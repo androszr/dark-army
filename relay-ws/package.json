@@ -1,0 +1,17 @@
+{
+  "name": "bob-relay-ws",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dark Army's socket relay: one live sealed line per paired phone, beside the mailbox.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ws": "^8"
+  }
+}

@@ -1,0 +1,22 @@
+PLANNER -- Overwatch, Cipher's alter ego — chief of staff  |  Phase 3  |  default model  |  DARK ARMY    
+
+  .---------------------------------------------------.
+  |  [dark army // plan]                [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > NOTHING MOVES WITHOUT A PLAN_                   |
+  |                                                    |
+  |  we plan before we touch the daemon. always.       |
+  |                                                    |
+  |  $ git status                                      |
+  |  > clean. no code touched yet.                     |
+  |                                                    |
+  |  $ ./plan.sh --out=plans/                          |
+  |  ##############################  100%              |
+  |  plan written. waiting for your ok.                |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent Overwatch - Planning (Dark Army)    
+    default model

@@ -1,0 +1,233 @@
+"""Native reply authority: real journals, fake OS/editor boundary, no live input."""
+import asyncio
+from types import MappingProxyType
+
+import pytest
+
+from dark_army_daemon import codex_rollouts, daemon, vscode_reveal
+from tests.test_board_refine import refinement_handoff  # noqa: F401 — fixture dependency
+from tests.test_codex_human_close import stopped_native, _append, _event, _reload, _row  # noqa: F401 — shared fixture
+
+
+@pytest.fixture
+def native_reply(stopped_native, monkeypatch):
+    d, store, card, plan, records, processes, posts = stopped_native
+    d.typed_reply_enabled = True
+    # The bridge at exactly the native-reply gate, whatever it is today.
+    current = '.'.join(str(n) for n in vscode_reveal.NATIVE_REPLY_MIN_VERSION)
+    locks = [dict(l, extensionVersion=current) for l in vscode_reveal._bob_ext_locks()]
+    monkeypatch.setattr(vscode_reveal, '_bob_ext_locks', lambda: locks)
+    async def post(port, token, body, **kwargs):
+        if not await kwargs['before_write']():
+            return None
+        posts.append(body)
+        return {'matched': True, 'sent': True}
+    monkeypatch.setattr(vscode_reveal, '_post_json', post)
+    return stopped_native
+
+
+@pytest.mark.asyncio
+async def test_one_stopped_opted_in_root_submits_once_without_question_or_stop_authority(native_reply):
+    d, store, card, _, records, _, posts = native_reply
+    sid = records[0].session_id
+    row = _row(d, records[0])
+    assert row['channel'] and row['reply_via'] == 'typed'
+    assert not row['can_type'] and not row['can_stop']
+    assert (await d.reply_to_session(sid, 'Continue with the fix')) == (True, '')
+    assert [{k: v for k, v in p.items() if k != 'expires_at_ms'} for p in posts] == [{'op': 'reply_native_terminal', 'pid': 701, 'tty': '/dev/ttys040', 'text': 'Continue with the fix'}]
+    assert type(posts[0]['expires_at_ms']) is int
+    assert not (await d.reply_to_session(sid, 'Again'))[0]
+    assert len(posts) == 1
+    assert not _row(d, records[0])['channel']
+    assert not d._closed_ids and store.get(card['id'])['column_name'] == 'prep'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('text', ['', ' ', 'hello\nworld', '\nhello', 'hi\r', '\x1bhello', 'hi\x7f', '\thi', '\u0085hi', 'hi\u2028there', ' /clear', '\u00a0!shell', '# heading', 'a' * 2001])
+async def test_invalid_plain_text_never_writes(native_reply, text):
+    d, _, _, _, records, _, posts = native_reply
+    assert not (await d.reply_to_session(records[0].session_id, text))[0]
+    assert not posts and not d._codex_reply_attempts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fault', ['preference', 'running', 'question', 'permission', 'pending', 'child', 'orphan', 'collision', 'helper', 'old_bridge', 'no_bridge', 'ambiguous_bridge', 'unverified', 'busy'])
+async def test_ineligible_never_writes(native_reply, monkeypatch, fault):
+    d, _, _, _, records, _, posts = native_reply
+    record, sid = records[0], records[0].session_id
+    if fault == 'preference': d.typed_reply_enabled = False
+    elif fault == 'running': record.turn_active = True
+    elif fault == 'question': record.stats.question = {'text': 'Choose?'}
+    elif fault == 'permission': monkeypatch.setattr(d, '_prompts_by_session', lambda: {sid: {}})
+    elif fault == 'pending': d._pending_questions[sid] = {'text': 'Choose?'}
+    elif fault == 'child': record.parent_thread_id = 'parent'
+    elif fault == 'orphan': record.explicit_subagent = True
+    elif fault == 'collision': d._grok_records[sid] = object()
+    elif fault == 'helper': record.stats.agents['missing'] = codex_rollouts.AgentInfo(agent_id='missing', activity='running')
+    elif fault == 'unverified': d._codex_navigation = MappingProxyType({})
+    elif fault == 'busy': d._answering.add(sid)
+    else:
+        locks = [dict(l) for l in vscode_reveal._bob_ext_locks()]
+        if fault == 'old_bridge': locks[0]['extensionVersion'] = '0.1.16'
+        elif fault == 'no_bridge': locks = []
+        else: locks *= 2
+        monkeypatch.setattr(vscode_reveal, '_bob_ext_locks', lambda: locks)
+    assert not (await d.reply_to_session(sid, 'Continue'))[0]
+    assert not posts and not d._codex_reply_attempts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stage', [1, 2])
+@pytest.mark.parametrize('fault', ['preference', 'turn', 'generation', 'journal', 'pid', 'ctime', 'cwd', 'argv'])
+async def test_each_observation_rejects_identity_and_state_changes(native_reply, monkeypatch, stage, fault):
+    d, _, _, _, records, processes, posts = native_reply
+    original = codex_rollouts.refinement_close_observation
+    calls = 0
+    def observe(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        result = original(*args, **kwargs)
+        if calls == stage:
+            if fault == 'preference': d.typed_reply_enabled = False
+            elif fault == 'turn': records[0].turn_id = 'new-turn'
+            elif fault == 'generation':
+                from copy import deepcopy
+                d._codex_records = deepcopy(d._codex_records)
+            elif fault == 'journal': _append(records[0], _event('task_started', 'next'))
+            else:
+                field = {'pid': 'pid', 'ctime': 'create_time', 'cwd': 'cwd', 'argv': 'cmdline'}[fault]
+                value = {'pid': 999, 'ctime': 999.0, 'cwd': '/different', 'argv': ('other',)}[fault]
+                processes[0].fresh[field] = value
+                processes[0].info[field] = value
+                if fault == 'pid': processes[0].pid = value
+            # A journal/OS change during observation is caught by the real
+            # observation's own final pin; model it before its returned proof.
+            if fault in {'journal', 'pid', 'ctime', 'cwd', 'argv'}:
+                result = original(*args, **kwargs)
+        return result
+    monkeypatch.setattr(codex_rollouts, 'refinement_close_observation', observe)
+    assert not (await d.reply_to_session(records[0].session_id, 'Continue'))[0]
+    assert not posts and not d._codex_reply_attempts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('result', [None, {}, {'matched': True}, {'matched': 'true', 'sent': True}, {'matched': True, 'sent': False}])
+async def test_unconfirmed_submission_is_spent_and_never_retried(native_reply, monkeypatch, result):
+    d, _, _, _, records, _, posts = native_reply
+    async def post(port, token, body, **kwargs):
+        assert await kwargs['before_write']()
+        posts.append(body)
+        return result
+    monkeypatch.setattr(vscode_reveal, '_post_json', post)
+    sid = records[0].session_id
+    assert not (await d.reply_to_session(sid, 'Continue'))[0]
+    assert not (await d.reply_to_session(sid, 'Again'))[0]
+    assert len(posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_double_click_does_not_queue_a_later_turn(native_reply, monkeypatch):
+    d, _, _, _, records, _, posts = native_reply
+    sid = records[0].session_id
+    results = await asyncio.gather(d.reply_to_session(sid, 'One'), d.reply_to_session(sid, 'Two'))
+    assert sum(ok for ok, _ in results) == 1 and len(posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('after_write', [False, True])
+async def test_timeout_has_no_late_write_and_spends_only_started_submission(native_reply, monkeypatch, after_write):
+    d, _, _, _, records, _, posts = native_reply
+    monkeypatch.setattr(daemon, 'REFINEMENT_CLOSE_TIMEOUT', 0.5)
+    async def post(port, token, body, **kwargs):
+        if after_write:
+            assert await kwargs['before_write']()
+            posts.append(body)
+        await asyncio.sleep(0.7)
+        posts.append({'late': True})
+    monkeypatch.setattr(vscode_reveal, '_post_json', post)
+    sid = records[0].session_id
+    assert not (await d.reply_to_session(sid, 'Continue'))[0]
+    await asyncio.sleep(0.75)
+    assert len(posts) == int(after_write)
+    assert bool(d._codex_reply_attempts) is after_write
+    assert sid not in d._answering
+
+
+@pytest.mark.asyncio
+async def test_new_observed_turn_allows_a_new_reply(native_reply):
+    d, _, _, _, records, _, posts = native_reply
+    sid = records[0].session_id
+    assert (await d.reply_to_session(sid, 'First'))[0]
+    _append(records[0], _event('task_started', 'turn-2', '2026-09-12T19:00:03Z'))
+    _append(records[0], _event('task_complete', 'turn-2', '2026-09-12T19:00:04Z'))
+    _reload(d, records)
+    d._codex_navigation = MappingProxyType(codex_rollouts.resolve_navigation_proofs(codex_rollouts.project_title_roots(records)))
+    assert (await d.reply_to_session(sid, 'Second'))[0]
+    assert len(posts) == 2
+
+
+@pytest.mark.asyncio
+async def test_timed_out_observation_worker_cannot_later_authorize_send(native_reply, monkeypatch):
+    import threading
+    d, _, _, _, records, _, posts = native_reply
+    original = codex_rollouts.refinement_close_observation
+    released = threading.Event()
+    def slow(*args, **kwargs):
+        released.wait(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(codex_rollouts, 'refinement_close_observation', slow)
+    monkeypatch.setattr(daemon, 'REFINEMENT_CLOSE_TIMEOUT', 0.03)
+    try:
+        assert not (await d.reply_to_session(records[0].session_id, 'Continue'))[0]
+    finally:
+        released.set()
+    await asyncio.sleep(0.15)
+    assert not posts and not d._codex_reply_attempts
+
+
+@pytest.mark.asyncio
+async def test_waiting_for_dispatch_lock_cannot_retarget_new_turn(native_reply):
+    d, _, _, _, records, _, posts = native_reply
+    await d._dispatch_lock.acquire()
+    task = asyncio.create_task(d.reply_to_session(records[0].session_id, 'Continue'))
+    await asyncio.sleep(0.01)
+    records[0].turn_id = 'next-turn'
+    d._dispatch_lock.release()
+    assert not (await task)[0]
+    assert not posts and not d._codex_reply_attempts
+
+
+@pytest.mark.asyncio
+async def test_native_reply_never_reads_foreign_environment(native_reply, monkeypatch):
+    d, _, _, _, records, _, posts = native_reply
+    def forbidden(*args, **kwargs):
+        pytest.fail('native reply reached legacy foreign-environment inspection')
+    monkeypatch.setattr(vscode_reveal, '_in_vscode', forbidden)
+    monkeypatch.setattr(vscode_reveal, '_session_in_vscode', forbidden)
+    sid = records[0].session_id
+    assert d._codex_reply_candidate(sid)[0] is not None
+    assert (await d.reply_to_session(sid, 'Continue'))[0]
+    assert len(posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('moved', [False, True])
+async def test_replaced_or_moved_journal_does_not_rearm_same_turn(native_reply, moved):
+    from tests.test_codex_rollouts import _native_holder
+    d, _, _, _, records, processes, posts = native_reply
+    sid = records[0].session_id
+    assert (await d.reply_to_session(sid, 'First'))[0]
+    old = records[0].path
+    replacement = old.with_name('replacement.jsonl')
+    replacement.write_bytes(old.read_bytes())
+    if moved:
+        old.unlink()
+        records[0].path = replacement
+    else:
+        replacement.replace(old)
+    _reload(d, records)
+    processes[0] = _native_holder(701, records[0].path, 'ttys040', cwd=records[0].cwd)
+    d._codex_navigation = MappingProxyType(codex_rollouts.resolve_navigation_proofs(codex_rollouts.project_title_roots(records)))
+    assert d._navigation_proof_current(sid) is not None
+    assert not (await d.reply_to_session(sid, 'Second'))[0]
+    assert len(posts) == 1

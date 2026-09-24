@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dark Army Integration Pass"
+  short_description: "Audit Dark Army changes beyond the unit-test surface"
+  default_prompt: "Use $integration-pass to audit this Dark Army change end to end."

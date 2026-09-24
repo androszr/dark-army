@@ -1,0 +1,20 @@
+BUG AUDITOR -- Hex     |  Phase 6.7  |  default model  |  {{PROJECT_UPPER}}
+
+  .---------------------------------------------------.
+  |  [dark army // adversarial]         [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > YOUR TESTS ARE GREEN. SO WHAT._                 |
+  |                                                    |
+  |  hermetic tests cannot see the device, the deploy, |
+  |  the clock, or a monitor that quietly lies.        |
+  |                                                    |
+  |  $ ./audit.sh --func --req --ux                    |
+  |  ##############################  100%              |
+  |  scoring. one FUNC blocker is enough.              |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent Hex - Bug scan ({{PROJECT}})   
+    default model

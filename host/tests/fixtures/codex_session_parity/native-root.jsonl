@@ -1,0 +1,6 @@
+{"timestamp": "2026-09-12T16:51:42.051Z", "type": "session_meta", "payload": {"id": "native-root", "cwd": "/fixture/project", "originator": "codex-tui", "cli_version": "0.154.0", "source": "cli", "thread_source": "user"}}
+{"timestamp": "2026-09-12T16:51:42.052Z", "type": "event_msg", "payload": {"type": "task_started", "turn_id": "native-turn"}}
+{"timestamp": "2026-09-12T16:52:21.714Z", "type": "response_item", "payload": {"type": "function_call", "name": "spawn_agent", "namespace": "collaboration", "arguments": "{\"task_name\": \"implement\", \"agent_type\": \"bc-implementer\", \"message\": \"Implement the parity fixture plan.\"}", "call_id": "spawn-native"}}
+{"timestamp": "2026-09-12T16:52:21.795Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "spawn-native", "output": "{\"task_name\": \"/root/implement\"}"}}
+{"timestamp": "2026-09-12T16:52:57.157Z", "type": "response_item", "payload": {"type": "function_call", "name": "request_user_input_async", "arguments": "{\"questions\": [{\"title\": \"Is a test device available?\", \"options\": [\"Unavailable\", \"Available\"]}]}", "call_id": "ask-native"}}
+{"timestamp": "2026-09-12T16:52:57.211Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "ask-native", "output": "{\"accepted\":true}"}}

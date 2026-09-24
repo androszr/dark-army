@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shunt"
+  short_description: "Keep big files and boilerplate out of the expensive model."
+  default_prompt: "Use $shunt for this task."

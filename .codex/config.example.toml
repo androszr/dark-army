@@ -1,0 +1,16 @@
+# Example of this project's Codex settings. The real file, .codex/config.toml,
+# is per-machine and ignored by git: copy this file to .codex/config.toml, then
+# fill in and uncomment the GitNexus launcher below for this machine.
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 5
+
+# The GitNexus code-index launcher. It runs this checkout's .gitnexus/run.cjs,
+# which is ignored and regenerated locally by `node .gitnexus/run.cjs analyze`.
+# Use an absolute `node`, never `npx` (the npm 11 npx crash, #1939).
+# [mcp_servers.gitnexus]
+# command = "/opt/homebrew/bin/node"  # the output of `which node`
+# args = ["<ABSOLUTE PATH TO THIS CHECKOUT>/.gitnexus/run.cjs", "mcp"]
+# startup_timeout_sec = 60
+# env = { PATH = "/opt/homebrew/bin:/usr/bin:/bin", npm_config_yes = "true" }

@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "about": "Which subject documents a ship role reads beside the always-read core. The rule is the union of what the plan's surfaces select, what every changed or planned path selects and the cross-cutting additions; an unknown surface, an unmapped path or an empty scope selects every reference (the conservative fallback). Read by tools/ship_efficiency.py; pinned by host/tests/test_ship_context.py. The map chooses documents, never paragraphs: a selected document is read whole.",
+  "core": [
+    "CLAUDE.md",
+    "AGENTS.md"
+  ],
+  "references": {
+    "board": {
+      "path": "docs/context-board.md",
+      "with": [],
+      "paths": [
+        "host/dark_army_daemon/board*.py",
+        "host/dark_army_daemon/daemon_board.py",
+        "host/dark_army_daemon/dispatch.py",
+        "host/dark_army_daemon/card_*.py",
+        "host/dark_army_daemon/workspace.py",
+        "host/dark_army_daemon/work_record.py",
+        "host/dark_army_daemon/areas.py",
+        "host/dark_army_daemon/crew.py",
+        "host/dark_army_daemon/origin.py",
+        "host/dark_army_daemon/lifecycle*.py",
+        "host/dark_army_daemon/decision_store.py",
+        "host/tests/test_board*.py",
+        "host/tests/test_card_*.py",
+        "host/tests/test_dispatch*.py",
+        "host/tests/test_outcome*.py",
+        "host/tests/test_lifecycle*.py",
+        "panel/Sources/BobPanel/Board*.swift",
+        "panel/Sources/BobPanel/Card*.swift",
+        "panel/Sources/BobPanel/Drafts*.swift",
+        "panel/Sources/BobPanel/Areas.swift",
+        "panel/Sources/BobPanel/Specialists.swift",
+        "panel/Sources/BobPanel/ProviderSwitch.swift",
+        "panel/Tests/BobPanelTests/Board*.swift",
+        "panel/Tests/BobPanelTests/Card*.swift",
+        "ios/BobPhone/Board*.swift",
+        "ios/BobPhone/Card*.swift",
+        "ios/BobPhone/Areas.swift"
+      ]
+    },
+    "panel": {
+      "path": "docs/context-panel.md",
+      "with": [],
+      "paths": [
+        "panel/",
+        "ios/",
+        "host/dark_army_daemon/inbox*.py",
+        "host/dark_army_daemon/alerts.py",
+        "host/dark_army_daemon/terminal_stream.py",
+        "host/dark_army_menubar/panel_process.py",
+        "host/tests/test_panel_*.py",
+        "host/tests/test_phone_*.py",
+        "host/tests/test_inbox*.py",
+        "host/tests/test_detail_tabs.py",
+        "host/tests/test_agent_detail_pane.py"
+      ]
+    },
+    "host": {
+      "path": "docs/context-host.md",
+      "with": [],
+      "paths": [
+        "host/dark_army_daemon/",
+        "host/dark_army_menubar/",
+        "host/tests/",
+        "host/requirements*.txt",
+        "vscode-extension/",
+        "relay/",
+        "relay-ws/"
+      ]
+    },
+    "development": {
+      "path": "docs/context-development.md",
+      "with": [],
+      "paths": [
+        "tools/",
+        "host/build.sh",
+        "host/setup.py",
+        "host/tests/fixtures/",
+        "assets/",
+        "docs/",
+        "plans/",
+        "README.md",
+        "CONTRIBUTING.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "GEMINI.md",
+        "ruff.toml",
+        ".github/",
+        ".claude/",
+        ".agents/",
+        ".codex/",
+        ".grok/",
+        "host/dark_army_menubar/agent_pack/",
+        "host/dark_army_menubar/pack_*.py",
+        "host/tests/test_agent_pack_*.py",
+        "host/tests/test_ship_*.py",
+        "host/tests/test_agent_briefs.py",
+        "host/tests/test_claude_md_size.py",
+        "host/tests/test_docs_current.py",
+        "host/tests/test_review_skill.py"
+      ]
+    }
+  },
+  "surfaces": {
+    "host": [
+      "host"
+    ],
+    "daemon": [
+      "host"
+    ],
+    "menubar": [
+      "host"
+    ],
+    "hooks": [
+      "host"
+    ],
+    "api": [
+      "host",
+      "panel"
+    ],
+    "transport": [
+      "host",
+      "panel"
+    ],
+    "panel": [
+      "panel"
+    ],
+    "phone": [
+      "panel"
+    ],
+    "ios": [
+      "panel"
+    ],
+    "board": [
+      "board"
+    ],
+    "cards": [
+      "board"
+    ],
+    "dispatch": [
+      "board"
+    ],
+    "extension": [
+      "host",
+      "development"
+    ],
+    "tools": [
+      "development"
+    ],
+    "docs": [
+      "development"
+    ],
+    "build": [
+      "development"
+    ],
+    "packaging": [
+      "development",
+      "host"
+    ],
+    "pack": [
+      "development"
+    ],
+    "agents": [
+      "development"
+    ]
+  },
+  "cross_cutting": [
+    {
+      "why": "A change to the loopback API, the snapshot or the sealed doors is read by the panel's tolerant decoders and the phone.",
+      "paths": [
+        "host/dark_army_daemon/api_server.py",
+        "host/dark_army_daemon/daemon.py",
+        "host/dark_army_daemon/relay*.py",
+        "host/dark_army_daemon/devices.py",
+        "host/dark_army_daemon/lan_hosts.py"
+      ],
+      "add": [
+        "panel",
+        "host"
+      ]
+    },
+    {
+      "why": "The board's verbs, the queue and the plan gate are half daemon, half panel; a change on either side reads the board contract.",
+      "paths": [
+        "host/dark_army_daemon/daemon_board.py",
+        "host/dark_army_daemon/dispatch.py",
+        "host/dark_army_daemon/board.py",
+        "panel/Sources/BobPanel/Board*.swift",
+        "ios/BobPhone/Board*.swift"
+      ],
+      "add": [
+        "board",
+        "host",
+        "panel"
+      ]
+    },
+    {
+      "why": "Packaging and the hook handler are what the frozen bundle and the installed copy run; the host contract states what must survive.",
+      "paths": [
+        "host/setup.py",
+        "host/build.sh",
+        "host/dark_army_menubar/hooks.py"
+      ],
+      "add": [
+        "host",
+        "development"
+      ]
+    },
+    {
+      "why": "The session state model is read by both clients; a change to it reads the panel's drawing of it.",
+      "paths": [
+        "host/dark_army_daemon/session_stats.py",
+        "host/dark_army_daemon/daemon.py"
+      ],
+      "add": [
+        "host",
+        "panel"
+      ]
+    }
+  ],
+  "roles": {
+    "bc-planner": {
+      "mode": "plan",
+      "brief": ".claude/agents/bc-planner.md",
+      "shim": ".codex/agents/bc-planner.toml"
+    },
+    "bc-implementer": {
+      "mode": "implement",
+      "brief": ".claude/agents/bc-implementer.md",
+      "shim": ".codex/agents/bc-implementer.toml"
+    },
+    "bc-verifier": {
+      "mode": "implement",
+      "brief": ".claude/agents/bc-verifier.md",
+      "shim": ".codex/agents/bc-verifier.toml"
+    },
+    "bc-bug-auditor": {
+      "mode": "implement",
+      "brief": ".claude/agents/bc-bug-auditor.md",
+      "shim": ".codex/agents/bc-bug-auditor.toml"
+    },
+    "bc-integration-reviewer": {
+      "mode": "implement",
+      "brief": ".claude/agents/bc-integration-reviewer.md",
+      "shim": ".codex/agents/bc-integration-reviewer.toml"
+    },
+    "bc-security-reviewer": {
+      "mode": "implement",
+      "brief": ".claude/agents/bc-security-reviewer.md",
+      "shim": ".codex/agents/bc-security-reviewer.toml"
+    }
+  },
+  "workflow": {
+    "claude": {
+      "adapter": ".claude/skills/ship/SKILL.md",
+      "common": ".claude/skills/ship/references/common.md",
+      "plan": ".claude/skills/ship/references/plan.md",
+      "implement": ".claude/skills/ship/references/implement.md"
+    },
+    "codex": {
+      "adapter": ".agents/skills/ship/SKILL.md",
+      "common": ".claude/skills/ship/references/common.md",
+      "plan": ".claude/skills/ship/references/plan.md",
+      "implement": ".claude/skills/ship/references/implement.md"
+    }
+  },
+  "fallback": "every reference, read whole"
+}

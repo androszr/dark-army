@@ -1,0 +1,21 @@
+IMPLEMENTER -- Cipher           |  Phase 6  |  default model  |  {{PROJECT_UPPER}}
+
+  .---------------------------------------------------.
+  |  [dark army // build]               [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > HEAD DOWN. ONE PASS._                           |
+  |                                                    |
+  |  the plan is the scope. the scope is the plan.     |
+  |                                                    |
+  |  $ lint && typecheck && test && build            |
+  |  ##############################  100%              |
+  |                                                    |
+  |  $ git commit                                      |
+  |  > permission denied. that is not my call.         |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent Cipher - Implementing ({{PROJECT}})
+    default model

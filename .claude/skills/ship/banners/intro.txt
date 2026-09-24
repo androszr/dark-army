@@ -1,0 +1,20 @@
+SHIP  |  Phase 0  |  default model  |  DARK ARMY    
+
+  .---------------------------------------------------.
+  |  [dark army // ship]                [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > CONNECTION ESTABLISHED_                         |
+  |                                                    |
+  |  a monitor that lies is worse than no monitor.     |
+  |  so we plan before we touch the daemon.            |
+  |                                                    |
+  |  $ ./ship.sh --plan --verify --audit               |
+  |  ##############################  100%              |
+  |  pipeline armed. nobody commits but you.           |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  /ship - Dark Army pipeline    
+    plan -> preflight -> accept -> implement -> verify -> audit

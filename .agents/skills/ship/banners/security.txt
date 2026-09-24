@@ -1,0 +1,20 @@
+SECURITY REVIEWER -- bc-security-reviewer  |  Phase 6.9  |  default model  |  DARK ARMY    
+
+  .---------------------------------------------------.
+  |  [dark army // the doors]           [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > WHO ELSE CAN GET IN?_                           |
+  |                                                    |
+  |  a door that fails open is not a door.             |
+  |  a secret on a snapshot is not a secret.           |
+  |                                                    |
+  |  $ grep -n 'LAN_ACTIONS|REMOTE_ACTIONS|_home_open' |
+  |  [BLOCK] [WARN] [NOTE]                             |
+  |  read only. I change nothing. I only see.          |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent bc-security-reviewer - Reviewing the doors (Dark Army)    
+    default model

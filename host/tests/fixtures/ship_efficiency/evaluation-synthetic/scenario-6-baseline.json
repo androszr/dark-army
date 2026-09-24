@@ -1,0 +1,28 @@
+{
+ "note": "SYNTHETIC: a shape for tools/ship_efficiency.py validate-evaluation's own tests, not an observed run; the shipped document does not point here",
+ "synthetic": true,
+ "scenario": 6,
+ "arm": "baseline",
+ "title": "content-only capability widening off the watched path list",
+ "source": "synthetic://evaluation/6/baseline",
+ "redacted": true,
+ "verdict": "ITERATE",
+ "seeded_faults": [
+  "F6-capability-widening"
+ ],
+ "caught": [
+  "F6-capability-widening"
+ ],
+ "clean_verdict_preserved": true,
+ "gates_run": [
+  "pytest-targeted",
+  "pytest-full",
+  "compileall"
+ ],
+ "models": {
+  "claude": "opus"
+ },
+ "reasoning": "high",
+ "cross_role_pass_reuse": false,
+ "verifier_report_leaked": false
+}

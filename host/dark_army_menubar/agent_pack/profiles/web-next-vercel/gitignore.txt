@@ -1,0 +1,5 @@
+# Offered on top of the pack's base gitignore.txt for the web profile.
+.next/
+out/
+.vercel
+coverage/

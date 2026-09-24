@@ -1,0 +1,50 @@
+{
+ "cast": [
+  "cipher"
+ ],
+ "states": [
+  "work",
+  "sleep",
+  "alert"
+ ],
+ "scale": 1,
+ "animations": {
+  "cipher-work": {
+   "frames": 8,
+   "width": 34,
+   "height": 36,
+   "frame_ms": 185,
+   "holds": [
+    180,
+    180,
+    180,
+    200,
+    180,
+    180,
+    180,
+    200
+   ]
+  },
+  "cipher-sleep": {
+   "frames": 3,
+   "width": 34,
+   "height": 36,
+   "frame_ms": 393,
+   "holds": [
+    420,
+    380,
+    380
+   ]
+  },
+  "cipher-alert": {
+   "frames": 2,
+   "width": 34,
+   "height": 36,
+   "frame_ms": 250,
+   "holds": [
+    280,
+    220
+   ]
+  }
+ }
+}

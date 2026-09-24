@@ -1,0 +1,236 @@
+name: Tests
+
+# The host suite and the panel suite, once per push to any branch. There is
+# deliberately no `pull_request` trigger: every job here is a macOS runner,
+# billed at 10x, and a PR that is opened and then merged ran the whole suite
+# twice. A PR branch is tested when it is pushed; main is tested on the merge.
+# The TestFlight workflow is separate and only ships the phone.
+#
+# `host` and `panel` are deliberately un-gated: they run on every push, with no
+# `needs:` and no `if:`, because between them they carry the whole always-on
+# floor. A workflow-level `paths:` filter would narrow them too, which is why
+# there is none and why `host/tests/test_ci_phone_job.py` pins its absence.
+#
+# `phone` is gated, because it is the one job that is not worth 10x macOS
+# minutes on every push: the `changes` job below computes one boolean off a
+# `git diff` on a 1x `ubuntu-latest` runner, and the phone job runs only when
+# the push touched `ios/**` or this file.
+#
+# A push that touches `panel/` but not `ios/` therefore does not compile the
+# phone — and does not need to. The cross-surface byte-identical pairs
+# (`Theme.swift`, `Markdown.swift`, `Specialists.swift`, `AgentChatter.swift`,
+# `OutcomeViews.swift`) are pinned by `host/tests/test_phone_theme_drift.py`,
+# `test_phone_outcomes.py` and `test_agent_chatter.py` inside the always-on
+# `host` job, so a panel-side edit that must land on the phone is caught there.
+
+on:
+  push:
+
+# Read-only by default: no job here writes to the repository, and a pinned
+# commit (not a moving tag) is what every `uses:` names, so a re-pointed
+# tag upstream cannot change what runs.
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Which surfaces changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      phone: ${{ steps.filter.outputs.phone }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The diff needs both ends of the push. A default shallow checkout
+          # has one commit and cannot resolve `github.event.before`. Cheap
+          # here; never on the macOS jobs.
+          fetch-depth: 0
+      - name: Did this push touch the phone?
+        id: filter
+        run: |
+          set -euo pipefail
+          before="${{ github.event.before }}"
+          sha="${{ github.sha }}"
+          zero="0000000000000000000000000000000000000000"
+          # Fail toward running. A new branch reports the all-zeros sha, a
+          # force push leaves an unresolvable one, and a shallow history has
+          # neither — an undecidable diff must never silently skip the check.
+          if [ -z "$before" ] || [ "$before" = "$zero" ] \
+             || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+            echo "phone=true" >> "$GITHUB_OUTPUT"
+            echo "No resolvable previous commit ($before) — running the phone job." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Take the diff on its own line. Folding `|| true` around the whole
+          # pipeline would swallow a `git diff` failure into an empty match and
+          # skip the job — fail *closed*, the one thing this gate must not do.
+          if ! changed=$(git diff --name-only "$before" "$sha"); then
+            echo "phone=true" >> "$GITHUB_OUTPUT"
+            echo "\`git diff $before $sha\` failed — running the phone job." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          matched=$(printf '%s\n' "$changed" \
+            | grep -E '^ios/|^\.github/workflows/tests\.yml$' || true)
+          if [ -n "$matched" ]; then
+            echo "phone=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "Phone paths touched by this push:"
+              echo '```'
+              echo "$matched"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "phone=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing under \`ios/\` or \`tests.yml\` changed — skipping the phone job." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  host:
+    name: Host (pytest + ruff)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vscode-extension/package-lock.json
+      - name: Build extension for host regression tests
+        working-directory: vscode-extension
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+      - name: Test the socket relay (relay-ws)
+        working-directory: relay-ws
+        run: |
+          set -euo pipefail
+          npm ci
+          node --test tests/*.test.mjs
+      - name: Test the mailbox relay (relay)
+        # No dependencies: the test loads relay/api/push.js into a vm with
+        # node's own modules only, so there is no `npm ci` here.
+        working-directory: relay
+        run: node --test tests/*.test.mjs
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: host/requirements-dev.txt
+      - name: Install
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r host/requirements-dev.txt ruff
+      - name: Lint (error-class rules only)
+        run: ruff check .
+      # The suite runs across workers: `-n auto` here, never in pytest.ini,
+      # so a single-file run stays one process. `--dist loadfile` and the
+      # 300 s per-test ceiling come from host/pytest.ini. A test that fails
+      # only under workers is fixed (its own temp path, no reliance on
+      # order), never marked serial, and `-n` is never dropped for it.
+      # No `| tail`: a failed worker's traceback is in the middle of the log.
+      - name: Test
+        working-directory: host
+        run: python -m pytest -q -n auto -p no:cacheprovider
+
+  panel:
+    name: Panel (swift test)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Use the newest Xcode on the image
+        run: |
+          set -euo pipefail
+          newest=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$newest"
+          swift --version
+      - name: Test
+        working-directory: panel
+        run: swift test 2>&1 | tail -20
+
+  phone:
+    name: Phone (xcodebuild test)
+    needs: changes
+    if: needs.changes.outputs.phone == 'true'
+    # macos-26 rather than macos-15, for SDK parity with the shipping
+    # archive: macos-15 still ships the iOS 18 SDK, and a gate green against
+    # a different SDK than the shipped binary can pass while TestFlight
+    # fails. `testflight.yml` runs on the same image for the same reason.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Use the newest Xcode on the image
+        run: |
+          set -euo pipefail
+          newest=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$newest"
+          xcodebuild -version
+      - name: Pick a simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          # No hardcoded device name: `iPhone 17 Pro` is what a Mac has today
+          # and exactly the string that ages out with the runner image. Take
+          # the highest iOS runtime the machine offers and any available
+          # iPhone inside it.
+          # The JSON goes through the environment rather than a pipe: a
+          # heredoc script and a piped payload cannot share stdin.
+          SIMCTL_JSON="$(xcrun simctl list devices available --json)"
+          export SIMCTL_JSON
+          chosen=$(python3 -c '
+          import json, os, re, sys
+
+          devices = json.loads(os.environ["SIMCTL_JSON"])["devices"]
+          found = []
+          for runtime, entries in devices.items():
+              match = re.search(r"iOS-(\d+)-(\d+)", runtime)
+              if not match:
+                  continue
+              version = tuple(int(part) for part in match.groups())
+              for entry in entries:
+                  if entry.get("isAvailable") and entry["name"].startswith("iPhone"):
+                      found.append(((version, entry["name"]), entry["udid"], runtime))
+          if not found:
+              sys.exit(1)
+          best = sorted(found)[-1]
+          print("\t".join([best[1], best[0][1], best[2]]))
+          ') || {
+            echo "::error::No available iOS Simulator iPhone on this runner."
+            xcrun simctl list devices available
+            exit 1
+          }
+          echo "udid=$(printf '%s' "$chosen" | cut -f1)" >> "$GITHUB_OUTPUT"
+          printf 'Simulator: %s on %s\n' \
+            "$(printf '%s' "$chosen" | cut -f2)" \
+            "$(printf '%s' "$chosen" | cut -f3)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Test
+        run: |
+          set -euo pipefail
+          # -skipPackagePluginValidation is required, not cosmetic: SwiftTerm
+          # ships a build-tool plugin and nobody on a runner can press Trust.
+          # Without it the run dies with `** BUILD FAILED **` and one
+          # `Validate plug-in "…"` line. `testflight.yml`'s Archive step
+          # carries the same flag and the longer note.
+          #
+          # No `-quiet` and no `| tail`: a failed xcodebuild run's interesting
+          # output is in the middle, and the panel job's pipe is safe only
+          # because `swift test` is quiet.
+          xcodebuild test \
+            -project ios/BobPhone.xcodeproj \
+            -scheme BobPhone \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            -resultBundlePath "$RUNNER_TEMP/BobPhone.xcresult"

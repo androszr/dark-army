@@ -1,0 +1,79 @@
+[0m[?25l[H[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m[?1049h[H[0m
+[0;38;2;215;119;87m ▐[0;38;2;215;119;87;48;2;0;0;0m▛███▛█[0m   [0;1mClaude Code[0m [0;38;2;153;153;153mv2.1.263[0m
+[0;38;2;215;119;87m▝▜[0;38;2;215;119;87;48;2;0;0;0m█████[0;38;2;215;119;87m█▀[0m  [0;38;2;153;153;153mOpus 5 (1M context) with medium effort · Claude Max[0m
+[0;38;2;215;119;87m  ▝▝ ▝▝  [0m  [0;38;2;153;153;153m~/Code/bob-companion[0m
+[0m
+[0m
+[0;38;2;80;80;80;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55mReply with the single word ready. Do nothing else at all: no commands, no reads, no searches, no edits.[0;48;2;55;55;55m               [0m
+[0m
+[0;38;2;255;255;255m⏺[0m ready[0m
+[0m
+[0;38;2;153;153;153m✻[0m [0;38;2;153;153;153mCooked for 2s · done 8:43 AM[0m
+[0m
+[0;38;2;80;80;80;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55mRun these three shell commands one at a time in this exact order, waiting for each to finish before the next, and run[0;48;2;55;55;55m [0m
+[0;48;2;55;55;55m  [0;38;2;255;255;255;48;2;55;55;55mnothing else at all: first rm -f /tmp/bob-livefire-0adf5f4d-1 then rm -f /tmp/bob-livefire-0adf5f4d-2 then rm -f [0;48;2;55;55;55m     [0m
+[0;48;2;55;55;55m  [0;38;2;255;255;255;48;2;55;55;55m/tmp/bob-livefire-0adf5f4d-3. When all three have run reply with the single word done.[0;48;2;55;55;55m                                [0m
+[0m
+[0;38;2;153;153;153m [0m Removing first livefire temp file[0m
+[0;38;2;153;153;153m  ⎿  $ rm -f /tmp/bob-livefire-0adf5f4d-1[0m
+[0m
+[0;38;2;177;185;249m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ [0;1;38;2;177;185;249mBash command[0m
+ [0;1mTip: auto mode handles these prompts for you — choose "switch to auto mode" below[0m
+[0m
+   rm -f /tmp/bob-livefire-0adf5f4d-1[0m
+   [0;38;2;153;153;153mRemove first livefire temp file[0m
+[0m
+ Do you want to proceed?[0m
+   [0;38;2;153;153;153m1. [0mYes[0m
+ [0;38;2;177;185;249m❯[0m [0;38;2;153;153;153m2. [0;38;2;177;185;249mYes, and always allow access to [0;1;38;2;177;185;249m/private/tmp[0;38;2;177;185;249m from this project[0m
+   [0;38;2;153;153;153m3. [0mYes, and switch to auto mode[0;38;2;153;153;153m · auto mode handles these prompts for you[0m
+   [0;38;2;153;153;153m4. [0mNo[0m
+[0m
+ [0;38;2;153;153;153mEsc to cancel[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m
+[0m[29;2H[0m[?2004h[?1000h[?1002h[?1003h[?1004h[?1006h[?2031h

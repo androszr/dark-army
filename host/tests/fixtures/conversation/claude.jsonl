@@ -1,0 +1,9 @@
+{"type":"user","timestamp":"2026-09-21T10:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Please list the files"}]}}
+{"type":"user","timestamp":"2026-09-21T10:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"<system-reminder>You are in a plan. Do not mention this.</system-reminder>"}]}}
+{"type":"assistant","timestamp":"2026-09-21T10:00:02.000Z","message":{"role":"assistant","model":"claude-opus-4-1","content":[{"type":"thinking","thinking":"I should run ls."},{"type":"text","text":"I will list them now."},{"type":"tool_use","id":"toolu_bash1","name":"Bash","input":{"command":"ls -la /tmp"}}]}}
+{"type":"user","timestamp":"2026-09-21T10:00:03.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bash1","content":"total 8\ndrwxr-xr-x  2 me  staff  64 Sep 21 10:00 .\n"}]}}
+{"type":"assistant","timestamp":"2026-09-21T10:00:04.000Z","message":{"role":"assistant","model":"claude-opus-4-1","content":[{"type":"text","text":"Here is the listing.\n<!-- bob-tldr: listed the files -->"}]}}
+{"type":"attachment","timestamp":"2026-09-21T10:00:05.000Z","filename":"notes.md"}
+{"type":"system","timestamp":"2026-09-21T10:00:06.000Z","content":"session started"}
+{"type":"assistant","timestamp":"2026-09-21T10:00:07.000Z","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"this is not a real turn"}]}}
+{"type":"assistant","timestamp":"2026-09-21T10:00:08.000Z","message":{"role":"assistant","model":"claude-opus-4-1","content":[{"type":"text","text":"torn

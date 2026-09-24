@@ -1,0 +1,51 @@
+{
+ "menubar-strip.png": {
+  "alt": "The menu-bar strip: three agents working, one waiting on you in red, five cards to do, and three usage meters.",
+  "shows": "The strip alone: working glyph 3 +2, Cipher's face with a red 1, to-do 5, Claude / Grok / Codex meters.",
+  "width_px": 700,
+  "height_px": 128,
+  "scale": 2,
+  "display_width": 350,
+  "bytes": 13917,
+  "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d",
+  "rung": 0
+ },
+ "agent-question.png": {
+  "alt": "An agent waiting on a question, with its three suggested answers as buttons.",
+  "shows": "The Agents tab with Cipher selected: his question and three answers.",
+  "width_px": 2488,
+  "height_px": 1624,
+  "scale": 2,
+  "display_width": 880,
+  "bytes": 261545,
+  "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d",
+  "window_pt": [
+   1180,
+   748
+  ]
+ },
+ "board.png": {
+  "alt": "The board with a card open, showing its plan, and running cards showing what each has cost so far.",
+  "shows": "The board pane with the widget card's window open over it, plan rendered; running cards show cost, time and context.",
+  "width_px": 2368,
+  "height_px": 2128,
+  "scale": 2,
+  "display_width": 880,
+  "bytes": 534379,
+  "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d",
+  "window_pt": [
+   1640,
+   1000
+  ]
+ },
+ "first-run.png": {
+  "alt": "The three-step checklist a new user sees first.",
+  "shows": "The rail's first-run checklist with step one ticked.",
+  "width_px": 1168,
+  "height_px": 722,
+  "scale": 2,
+  "display_width": 584,
+  "bytes": 82568,
+  "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d"
+ }
+}

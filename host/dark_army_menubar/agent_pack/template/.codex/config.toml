@@ -1,0 +1,15 @@
+# Project-scoped Codex configuration. Generated agent shims live in
+# .codex/agents/ (one per .claude/agents/*.md, written by
+# pack_render.shims — never edit them by hand).
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 5
+
+# GitNexus code graph, for /review. `npx gitnexus analyze` must have run once
+# in this project for the server to have anything to answer.
+[mcp_servers.gitnexus]
+# Keep the explicit package selection: bare npx fails with npm Invalid Version.
+command = "npm"
+args = ["exec", "--yes", "--package=gitnexus@1.6.12", "--", "gitnexus", "mcp"]
+startup_timeout_sec = 60

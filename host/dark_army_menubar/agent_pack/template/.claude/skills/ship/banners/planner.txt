@@ -1,0 +1,22 @@
+PLANNER -- Overwatch  |  Phase 3  |  default model  |  {{PROJECT_UPPER}}
+
+  .---------------------------------------------------.
+  |  [dark army // {{PROJECT}}]       [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > NOTHING MOVES WITHOUT A PLAN_                   |
+  |                                                    |
+  |  we plan before we touch the code. always.         |
+  |                                                    |
+  |  $ git status                                      |
+  |  > clean. no code touched yet.                     |
+  |                                                    |
+  |  $ ./plan.sh --out=plans/                          |
+  |  ##############################  100%              |
+  |  plan written. waiting for your ok.                |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent Overwatch - Planning ({{PROJECT}})
+    default model

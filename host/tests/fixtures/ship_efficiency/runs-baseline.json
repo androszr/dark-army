@@ -1,0 +1,454 @@
+{
+ "schema": 1,
+ "label": "baseline (synthetic)",
+ "note": "Synthetic shapes for tools/ship_efficiency.py report; not observations of any real run.",
+ "runs": [
+  {
+   "run_id": "b1",
+   "scenario": 1,
+   "complete": true,
+   "cache_state": "cold",
+   "elapsed_seconds": 600,
+   "roles": [
+    {
+     "role": "parent",
+     "provider": "claude",
+     "session": "b1-sp",
+     "records": [
+      {
+       "provider": "claude",
+       "session": "b1-sp",
+       "turn": 1,
+       "input_tokens": 10000,
+       "output_tokens": 400,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b1-sp",
+       "turn": 2,
+       "input_tokens": 5000,
+       "output_tokens": 300,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b1-sp",
+       "turn": 2,
+       "input_tokens": 5000,
+       "output_tokens": 300,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b1-sp",
+       "turn": 99,
+       "input_tokens": 40000,
+       "output_tokens": 2000,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn",
+       "includes_children": true
+      }
+     ]
+    },
+    {
+     "role": "bc-implementer",
+     "provider": "claude",
+     "session": "b1-sc",
+     "records": [
+      {
+       "provider": "claude",
+       "session": "b1-sc",
+       "turn": 1,
+       "input_tokens": 8000,
+       "output_tokens": 100,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b1-sc",
+       "turn": 2,
+       "input_tokens": 8000,
+       "output_tokens": 120,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn",
+       "incomplete": false
+      }
+     ]
+    }
+   ],
+   "reads": [
+    {
+     "role": "parent",
+     "path": "CLAUDE.md",
+     "bytes": 140000
+    },
+    {
+     "role": "parent",
+     "path": "CLAUDE.md",
+     "bytes": 140000
+    },
+    {
+     "role": "bc-implementer",
+     "path": "CLAUDE.md",
+     "bytes": 140000
+    }
+   ],
+   "commands": [
+    {
+     "owner": "bc-implementer",
+     "argv": [
+      ".venv/bin/pytest",
+      "-q"
+     ],
+     "cwd": "host",
+     "exit": 0,
+     "log": "scratch/log.txt",
+     "input_digest": "d1",
+     "env_id": "venv-3.12",
+     "toolchain_id": "py3.12",
+     "cited": false
+    },
+    {
+     "owner": "bc-verifier",
+     "argv": [
+      ".venv/bin/pytest",
+      "-q"
+     ],
+     "cwd": "host",
+     "exit": 0,
+     "log": "scratch/log.txt",
+     "input_digest": "d1",
+     "env_id": "venv-3.12",
+     "toolchain_id": "py3.12",
+     "cited": false
+    },
+    {
+     "owner": "bc-verifier",
+     "argv": [
+      ".venv/bin/pytest",
+      "-q"
+     ],
+     "cwd": "host",
+     "exit": 0,
+     "log": "scratch/log.txt",
+     "input_digest": "d1",
+     "env_id": "venv-3.12",
+     "toolchain_id": "py3.12",
+     "cited": false
+    }
+   ],
+   "repairs": 0,
+   "cost": null
+  },
+  {
+   "run_id": "b2",
+   "scenario": 2,
+   "complete": true,
+   "cache_state": "cold",
+   "elapsed_seconds": 600,
+   "roles": [
+    {
+     "role": "parent",
+     "provider": "claude",
+     "session": "b2-sp",
+     "records": [
+      {
+       "provider": "claude",
+       "session": "b2-sp",
+       "turn": 1,
+       "input_tokens": 12000,
+       "output_tokens": 400,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b2-sp",
+       "turn": 2,
+       "input_tokens": 6000,
+       "output_tokens": 300,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b2-sp",
+       "turn": 2,
+       "input_tokens": 6000,
+       "output_tokens": 300,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b2-sp",
+       "turn": 99,
+       "input_tokens": 48000,
+       "output_tokens": 2000,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn",
+       "includes_children": true
+      }
+     ]
+    },
+    {
+     "role": "bc-implementer",
+     "provider": "claude",
+     "session": "b2-sc",
+     "records": [
+      {
+       "provider": "claude",
+       "session": "b2-sc",
+       "turn": 1,
+       "input_tokens": 9000,
+       "output_tokens": 100,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "cumulative"
+      },
+      {
+       "provider": "claude",
+       "session": "b2-sc",
+       "turn": 2,
+       "input_tokens": 18000,
+       "output_tokens": 220,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "cumulative"
+      }
+     ]
+    }
+   ],
+   "reads": [],
+   "commands": [
+    {
+     "owner": "bc-verifier",
+     "argv": [
+      ".venv/bin/pytest",
+      "-q"
+     ],
+     "cwd": "host",
+     "exit": 0,
+     "log": "scratch/log.txt",
+     "input_digest": "d1",
+     "env_id": "venv-3.12",
+     "toolchain_id": "py3.12",
+     "cited": false
+    },
+    {
+     "owner": "bc-verifier",
+     "argv": [
+      ".venv/bin/pytest",
+      "-q"
+     ],
+     "cwd": "host",
+     "exit": 0,
+     "log": "scratch/log.txt",
+     "input_digest": "d1",
+     "env_id": "venv-3.12",
+     "toolchain_id": "py3.12",
+     "cited": true
+    }
+   ],
+   "repairs": 0,
+   "cost": null
+  },
+  {
+   "run_id": "b3",
+   "scenario": 3,
+   "complete": false,
+   "cache_state": "cold",
+   "elapsed_seconds": 600,
+   "roles": [
+    {
+     "role": "parent",
+     "provider": "claude",
+     "session": "b3-sp",
+     "records": [
+      {
+       "provider": "claude",
+       "session": "b3-sp",
+       "turn": 1,
+       "input_tokens": 9000,
+       "output_tokens": 400,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b3-sp",
+       "turn": 2,
+       "input_tokens": 4500,
+       "output_tokens": 300,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b3-sp",
+       "turn": 2,
+       "input_tokens": 4500,
+       "output_tokens": 300,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b3-sp",
+       "turn": 99,
+       "input_tokens": 36000,
+       "output_tokens": 2000,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn",
+       "includes_children": true
+      }
+     ]
+    },
+    {
+     "role": "bc-implementer",
+     "provider": "claude",
+     "session": "b3-sc",
+     "records": [
+      {
+       "provider": "claude",
+       "session": "b3-sc",
+       "turn": 1,
+       "input_tokens": 7000,
+       "output_tokens": 100,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b3-sc",
+       "turn": 2,
+       "input_tokens": 7000,
+       "output_tokens": 120,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn",
+       "incomplete": true
+      }
+     ]
+    }
+   ],
+   "reads": [],
+   "commands": [],
+   "repairs": 0,
+   "cost": null
+  },
+  {
+   "run_id": "b4",
+   "scenario": 4,
+   "complete": true,
+   "cache_state": "warm",
+   "elapsed_seconds": 600,
+   "roles": [
+    {
+     "role": "parent",
+     "provider": "claude",
+     "session": "b4-sp",
+     "records": [
+      {
+       "provider": "claude",
+       "session": "b4-sp",
+       "turn": 1,
+       "input_tokens": 9000,
+       "output_tokens": 400,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b4-sp",
+       "turn": 2,
+       "input_tokens": 4500,
+       "output_tokens": 300,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b4-sp",
+       "turn": 2,
+       "input_tokens": 4500,
+       "output_tokens": 300,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b4-sp",
+       "turn": 99,
+       "input_tokens": 36000,
+       "output_tokens": 2000,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn",
+       "includes_children": true
+      }
+     ]
+    },
+    {
+     "role": "bc-implementer",
+     "provider": "claude",
+     "session": "b4-sc",
+     "records": [
+      {
+       "provider": "claude",
+       "session": "b4-sc",
+       "turn": 1,
+       "input_tokens": 7000,
+       "output_tokens": 100,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn"
+      },
+      {
+       "provider": "claude",
+       "session": "b4-sc",
+       "turn": 2,
+       "input_tokens": 7000,
+       "output_tokens": 120,
+       "cache_read_tokens": null,
+       "cache_write_tokens": null,
+       "kind": "per-turn",
+       "incomplete": false
+      }
+     ]
+    }
+   ],
+   "reads": [],
+   "commands": [],
+   "repairs": 0,
+   "cost": {
+    "amount": 1.25,
+    "currency": "USD",
+    "provenance": "provider invoice line"
+   }
+  }
+ ]
+}

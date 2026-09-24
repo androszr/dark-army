@@ -1,0 +1,21 @@
+{
+  "env": {
+    "BOB_SHUNT_MIN_LINES": "1200"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(swift build:*)",
+      "Bash(swift test:*)",
+      "Bash(npm run build:*)",
+      "Bash(ruff check:*)",
+      "mcp__dark-army",
+      "mcp__bob",
+      "Bash(cd host && .venv/bin/pytest:*)",
+      "Bash(cd panel && swift build:*)",
+      "Bash(cd panel && swift test:*)",
+      "Bash(cd vscode-extension && npm run build:*)",
+      "Bash(python3 tools/ship_efficiency.py inventory:*)"
+    ]
+  }
+}

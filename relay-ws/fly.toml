@@ -1,0 +1,30 @@
+# Fly.io configuration for the Dark Army socket relay (bob-relay-ws).
+# See https://fly.io/docs/reference/configuration/ for the full reference.
+#
+# One machine, always on: the relay pairs the Mac and the phone in memory,
+# so a second machine or a stopped one would split or drop the pair.
+
+app = "bob-relay-ws"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

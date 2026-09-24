@@ -1,0 +1,109 @@
+name: iOS
+
+# NO `paths-ignore` here, deliberately: these guards police the Swift, so a
+# path filter that skipped `ios/**` would make them unreachable by the very
+# commits they exist to check. A guard that skips the files it guards is
+# decoration. It costs about a minute of ubuntu per push.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Source guards for the conventions in docs/context.md. Plain greps, three
+  # Python guard scripts and their tests, so this runs on ubuntu: a real Swift
+  # build would mean a macOS runner at a 10x minute multiplier, and the build
+  # and tests are the local gates. Nothing in this app is generated from
+  # another tree, so there is no Node toolchain and no codegen staleness check
+  # here.
+  # ---------------------------------------------------------------------------
+  guards:
+    name: iOS conventions · money · privacy · entitlements
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The guards below are only as good as their bite, and a guard that
+      # has quietly stopped biting passes forever. These tests feed each
+      # guard doctored copies — a push key on one build only, a keychain
+      # group in some files and not others — and fail if it lets one by.
+      # Plain unittest, no dependency, under a second.
+      - name: Keep the guard scripts honest
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+      # Convention #1: money goes through one module to Decimal, so a
+      # `Double(` anywhere in the client is the bug this refuses.
+      #
+      # Charts are the one real exception — Swift Charts plots Doubles — and
+      # when that arrives (stage C3) it goes in PlotPoints.swift and gets added
+      # to this allowlist BY NAME, so the exception stays one file wide.
+      - name: Refuse a Double anywhere near money
+        run: |
+          # Allowlist BY FILE NAME, one file wide. Add the chart-geometry file
+          # here when charts arrive; never widen it to a directory.
+          hits=$(grep -rn 'Double(' ios --include='*.swift' \
+            | grep -v '^ios/{{APP}}/Charts/PlotPoints.swift:' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::Double() outside the sanctioned chart-geometry boundary. See docs/context.md convention #1."
+            exit 1
+          fi
+
+      # `.minute()` prints a minute with no leading zero, so ten o'clock reads
+      # "10:0" — a clock time missing a digit, beside money. It shipped in five
+      # separate formatters because each one looks right in isolation and the
+      # bug only appears on the fifty-nine minutes an hour where it does not.
+      # `.minute(.twoDigits)` is the only spelling this app wants.
+      - name: Refuse a minute without both digits
+        run: |
+          hits=$(grep -rn --include='*.swift' -e '\.minute()' ios || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::.minute() drops the leading zero — '10:0'. Use .minute(.twoDigits)."
+            exit 1
+          fi
+
+      # A cleartext-HTTP exception for a local dev server must never ship. Two
+      # Info.plists is what keeps them apart — and two files that differ by
+      # one key is exactly the pair someone eventually "tidies" into
+      # one. This is the guard that notices.
+      - name: Refuse an ATS exception in a shipping Info.plist
+        run: |
+          for plist in ios/Config/Info.plist ios/Config/Info-*.plist; do
+            case "$plist" in *-Debug.plist) continue ;; esac
+            if grep -q 'NSAppTransportSecurity' "$plist"; then
+              echo "::error::$plist carries an ATS exception. Release ships that file; localhost belongs in the -Debug twin only."
+              exit 1
+            fi
+          done
+
+      # Release signs for distribution and therefore needs a different
+      # aps-environment, which is why there are two entitlements files at all.
+      # Everything else about them must stay identical — see the script.
+      - name: Refuse drift between the Debug and Release entitlements
+        run: python3 scripts/check-entitlements.py
+
+      # A keychain group spelled as a literal in one file, or referenced in
+      # the entitlements and not in the Info.plist the code reads it from,
+      # means the app writes to one group and reads from another — and the
+      # widget renders "sign in" beside a signed-in app with no error
+      # anywhere. No file referencing it is fine (an app with no group); once
+      # one does, every file must, exactly once.
+      - name: Refuse a keychain group referenced by some files and not others
+        run: python3 scripts/check-keychain-group.py
+
+      # A TCC gate the app can REACH and has not DECLARED does not produce a
+      # denied permission — iOS terminates the process. There is no error
+      # message anywhere, so this class of bug ships as an app that vanishes
+      # mid-typing. The camera was the first; the keyboard's dictation key,
+      # which runs in-process since iOS 16, is the second and third.
+      - name: Refuse a missing privacy usage string
+        run: python3 scripts/check-privacy-strings.py

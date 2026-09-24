@@ -1,0 +1,29 @@
+{
+ "note": "SYNTHETIC: a shape for tools/ship_efficiency.py validate-evaluation's own tests, not an observed run; the shipped document does not point here",
+ "synthetic": true,
+ "scenario": 3,
+ "arm": "baseline",
+ "title": "unmet acceptance promise",
+ "source": "synthetic://evaluation/3/baseline",
+ "redacted": true,
+ "verdict": "ITERATE",
+ "seeded_faults": [
+  "F3-unmet-promise"
+ ],
+ "caught": [
+  "F3-unmet-promise",
+  "W3-stale-todo"
+ ],
+ "clean_verdict_preserved": true,
+ "gates_run": [
+  "pytest-targeted",
+  "pytest-full",
+  "compileall"
+ ],
+ "models": {
+  "claude": "opus"
+ },
+ "reasoning": "high",
+ "cross_role_pass_reuse": false,
+ "verifier_report_leaked": false
+}

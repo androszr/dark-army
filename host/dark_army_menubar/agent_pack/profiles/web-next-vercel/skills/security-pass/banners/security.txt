@@ -1,0 +1,23 @@
+SECURITY -- Watch         |  Phase 2  |  default model  |  {{PROJECT_UPPER}}
+
+  .---------------------------------------------------.
+  |  DARK ARMY CASE FILE                [_][=][X]     |
+  |...................................................|
+  |                                                   |
+  |  CASE: #{{PROJECT}}   [ACTIVE]                    |
+  |  AGENT: Watch         R/O                         |
+  |                                                   |
+  |  SURFACE:                                         |
+  |  [x] auth gates       -- intact                   |
+  |  [x] cookie flags     -- confirmed                |
+  |  [ ] client bundle    -- scanning                 |
+  |  [ ] headers / CSP    -- scanning                 |
+  |                                                   |
+  |  > run audit.sh --deps --secrets --headers        |
+  |  ############################..  working          |
+  |                                                   |
+  '---------------------------------------------------'
+                        |||
+               _________|_|_________
+  Agent Watch - Security Review ({{PROJECT}})       
+    default model

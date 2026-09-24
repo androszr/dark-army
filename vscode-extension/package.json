@@ -1,0 +1,60 @@
+{
+  "name": "dark-army-ide",
+  "displayName": "Dark Army IDE Bridge",
+  "description": "Lets Dark Army focus the integrated terminal tab of a Claude Code session in this window.",
+  "version": "0.1.21",
+  "publisher": "dark-army",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In a folder you have not trusted, Dark Army can find and show this window's terminals. It will not start an agent or type into a terminal here until you trust the folder."
+    }
+  },
+  "contributes": {
+    "icons": {
+      "dark-army-mask": {
+        "description": "Dark Army mask",
+        "default": {
+          "fontPath": "media/dark-army-icons.woff",
+          "fontCharacter": "\\E000"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "darkArmy.showThisSession",
+        "title": "Dark Army: Show this session"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "darkArmy.showThisSession",
+        "key": "ctrl+cmd+b",
+        "mac": "ctrl+cmd+b"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js",
+    "watch": "npm run build -- --watch",
+    "package": "npm run build && vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.4.0"
+  }
+}

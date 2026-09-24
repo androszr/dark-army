@@ -1,0 +1,19 @@
+PROBE  |  read-only  |  default model  |  {{PROJECT_UPPER}}
+
+  .---------------------------------------------------.
+  |  [dark army // smoke alarm]         [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > IS IT UP. IS IT FRESH. IS IT LYING._            |
+  |                                                    |
+  |  no agent. no writes. one screen.                  |
+  |                                                    |
+  |  $ ./probe.sh --health --fresh --deploy            |
+  |  ##############################  100%              |
+  |  the verdict is HEALTHY, DEGRADED, or DOWN.        |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  /probe - {{PROJECT}} smoke alarm
+    default model

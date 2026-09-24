@@ -1,0 +1,1116 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AC0220000000000000000006 /* CollaborationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0220000000000000000005; };
+		AC0220000000000000000004 /* CollaborationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0220000000000000000003; };
+		AC0220000000000000000002 /* Collaboration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0220000000000000000001; };
+		DEC090900000000000000000E /* DecryptFeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC090900000000000000000D /* DecryptFeedbackTests.swift */; };
+		C0DEF0A1DEF0000000000002 /* ComposerDefaultsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF0A1DEF0000000000001 /* ComposerDefaultsTests.swift */; };
+		DEC090900000000000000000C /* DecryptMotionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC090900000000000000000B /* DecryptMotionTests.swift */; };
+		DEC0909000000000000000004 /* DecryptFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC0909000000000000000003 /* DecryptFeedback.swift */; };
+		DEC0909000000000000000002 /* DecryptMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC0909000000000000000001 /* DecryptMotion.swift */; };
+		AEF0909000000000000000002 /* AgentReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEF0909000000000000000001 /* AgentReportView.swift */; };
+		L1F3C7C10000000000000002 /* LifecycleReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = L1F3C7C10000000000000001 /* LifecycleReport.swift */; };
+		L1F3C7C10000000000000004 /* LifecycleReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = L1F3C7C10000000000000003 /* LifecycleReportView.swift */; };
+		L1F3C7C10000000000000006 /* LifecycleReportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = L1F3C7C10000000000000005 /* LifecycleReportTests.swift */; };
+		B0B0C0A000000000000001F9 /* OutcomeScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B0C0A000000000000001F8 /* OutcomeScreens.swift */; };
+		B0B0C0A000000000000001F7 /* OutcomeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B0C0A000000000000001F6 /* OutcomeViews.swift */; };
+		B0B0C0A000000000000001F5 /* OutcomeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B0C0A000000000000001F4 /* OutcomeModels.swift */; };
+		A1B2010B0000000000000002 /* KnowledgeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010B0000000000000001 /* KnowledgeModels.swift */; };
+		A1B2010B0000000000000004 /* KnowledgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010B0000000000000003 /* KnowledgeView.swift */; };
+		A1B2010C0000000000000002 /* AccessLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010C0000000000000001 /* AccessLogView.swift */; };
+		7B0B0E1A0000000000000040 /* BobPhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000030 /* BobPhoneApp.swift */; };
+		7B0B0E1A0000000000000041 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000031 /* Models.swift */; };
+		7B0B0E1A000000000000004B /* HostAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000003C /* HostAddress.swift */; };
+		7B0B0E1A000000000000004C /* Markdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000003D /* Markdown.swift */; };
+		7B0B0E1A0000000000000171 /* Specialists.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000170 /* Specialists.swift */; };
+		7B0B0E1A0000000000000291 /* Areas.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000290 /* Areas.swift */; };
+		7B0B0E1A0000000000000293 /* AreaWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000292 /* AreaWire.swift */; };
+		7B0B0E1A0000000000000295 /* BigUInt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000294 /* BigUInt.swift */; };
+		7B0B0E1A0000000000000297 /* SRP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000296 /* SRP.swift */; };
+		7B0B0E1A00000000000001A1 /* AgentChatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001A0 /* AgentChatter.swift */; };
+		7B0B0E1A0000000000000193 /* RecentlyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000192 /* RecentlyView.swift */; };
+		7B0B0E1A0000000000000195 /* PipelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000194 /* PipelineView.swift */; };
+		7B0B0E1A0000000000000197 /* CardCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000196 /* CardCache.swift */; };
+		7B0B0E1A0000000000000199 /* Receipts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000198 /* Receipts.swift */; };
+		7B0B0E1A000000000000019B /* WorkRecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000019A /* WorkRecordView.swift */; };
+		7B0B0E1A000000000000004D /* CardDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000003E /* CardDetailView.swift */; };
+		7B0B0E1A000000000000004E /* Actions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000003F /* Actions.swift */; };
+		7B0B0E1A0000000000000082 /* Arm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000080 /* Arm.swift */; };
+		7B0B0E1A0000000000000083 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000081 /* ComposerView.swift */; };
+		7B0B0E1A0000000000000085 /* UsageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000084 /* UsageView.swift */; };
+		7B0B0E1A0000000000000087 /* Dictation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000086 /* Dictation.swift */; };
+		7B0B0E1A000000000000008D /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000008C /* ProfileView.swift */; };
+		7B0B0E1A000000000000008F /* Outbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000008E /* Outbox.swift */; };
+		7B0B0E1A0000000000000091 /* RelayTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000090 /* RelayTransport.swift */; };
+		7B0B0E1A0000000000000093 /* RemoteAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000092 /* RemoteAuth.swift */; };
+		7B0B0E1A0000000000000191 /* HomeTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000190 /* HomeTransport.swift */; };
+		7B0B0E1A00000000000001D3 /* TerminalStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001D2 /* TerminalStream.swift */; };
+		7B0B0E1A00000000000001D5 /* TerminalPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001D4 /* TerminalPane.swift */; };
+		7B0B0E1A00000000000001D6 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 7B0B0E1A00000000000001D1 /* SwiftTerm */; };
+		7B0B0E1A000000000000008B /* AnswerBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000008A /* AnswerBox.swift */; };
+		7B0B0E1A00000000000000A1 /* AnswerDrafts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000000A0 /* AnswerDrafts.swift */; };
+		7B0B0E1A0000000000000089 /* NeedsYouView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000088 /* NeedsYouView.swift */; };
+		A1B2010A0000000000000002 /* Inbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010A0000000000000001 /* Inbox.swift */; };
+		C0F1600E0000000000000002 /* RunFigures.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F1600E0000000000000001 /* RunFigures.swift */; };
+		C0FFEE0C0000000000000004 /* CommView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0C0000000000000003 /* CommView.swift */; };
+		C0FFEE0C0000000000000002 /* CommRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0C0000000000000001 /* CommRules.swift */; };
+		D0E5A17E0000000000000002 /* RunHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E5A17E0000000000000001 /* RunHealth.swift */; };
+		A1B2010A0000000000000004 /* PhoneInboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010A0000000000000003 /* PhoneInboxTests.swift */; };
+		D5E0510A0000000000000002 /* DemoShotsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E0510A0000000000000001; };
+		7B0B0E1A0000000000000042 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000032 /* Pairing.swift */; };
+		7B0B0E1A0000000000000043 /* Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000033 /* Client.swift */; };
+		7B0B0E1A0000000000000044 /* FleetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000034 /* FleetView.swift */; };
+		7B0B0E1A0000000000000045 /* BoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000035 /* BoardView.swift */; };
+		7B0B0E1A0000000000000046 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000036 /* Theme.swift */; };
+		7B0B0E1A0000000000000047 /* Cast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000037 /* Cast.swift */; };
+		7B0B0E1A0000000000000048 /* ProcessTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000039 /* ProcessTable.swift */; };
+		7B0B0E1A0000000000000049 /* AgentDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000003A /* AgentDetailView.swift */; };
+		7B0B0E1A000000000000004A /* BrandBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000003B /* BrandBar.swift */; };
+		7B0B0E1A0000000000000075 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000074 /* Assets.xcassets */; };
+		7B0B0E1A0000000000000183 /* buzz-permission.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000180 /* buzz-permission.wav */; };
+		7B0B0E1A0000000000000184 /* buzz-question.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000181 /* buzz-question.wav */; };
+		7B0B0E1A0000000000000185 /* buzz-finished.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000182 /* buzz-finished.wav */; };
+		7B0B0E1A0000000000000094 /* brand in Resources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000095 /* brand */; };
+		7B0B0E1A00000000000001C0 /* portraits in Resources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001C1 /* portraits */; };
+		7B0B0E1A0000000000000110 /* Push.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000100 /* Push.swift */; };
+		7B0B0E1A0000000000000111 /* Router.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000101 /* Router.swift */; };
+		7B0B0E1A0000000000000118 /* BackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000109 /* BackgroundRefresh.swift */; };
+		7B0B0E1A0000000000000112 /* FleetSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000102 /* FleetSummary.swift */; };
+		7B0B0E1A0000000000000113 /* FleetSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000102 /* FleetSummary.swift */; };
+		7B0B0E1A0000000000000114 /* BobPhoneWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000103 /* BobPhoneWidget.swift */; };
+		7B0B0E1A0000000000000115 /* WidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000104 /* WidgetViews.swift */; };
+		7B0B0E1A0000000000000119 /* TickRing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000010A /* TickRing.swift */; };
+		7B0B0E1A000000000000011A /* CircularFleetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000010B /* CircularFleetView.swift */; };
+		7B0B0E1A0000000000000117 /* brand in Resources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000095 /* brand */; };
+		7B0B0E1A00000000000001C2 /* portraits in Resources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001C1 /* portraits */; };
+		FACE0A7E0000000000000002 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FACE0A7E0000000000000001 /* NotificationService.swift */; };
+		FACE0A7E0000000000000004 /* NotificationFace.swift in Sources */ = {isa = PBXBuildFile; fileRef = FACE0A7E0000000000000003 /* NotificationFace.swift */; };
+		FACE0A7E0000000000000007 /* portraits in Resources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001C1 /* portraits */; };
+		FACE0A7E0000000000000009 /* BobPhoneNotification.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FACE0A7E0000000000000008 /* BobPhoneNotification.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		7B0B0E1A0000000000000116 /* BobPhoneWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000108 /* BobPhoneWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		DEC1510A000000000000000B /* CatchUpState.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000001; };
+		DEC1510A000000000000000C /* CatchUpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000002; };
+DEC1510A0000000000000028 = {isa = PBXBuildFile; fileRef = DEC1510A000000000000001E; };
+DEC1510A0000000000000029 = {isa = PBXBuildFile; fileRef = DEC1510A000000000000001F; };
+DEC1510A000000000000002A = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000020; };
+DEC1510A000000000000002B = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000021; };
+DEC1510A000000000000002C = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000022; };
+DEC1510A000000000000002D = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000023; };
+DEC1510A000000000000002E = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000024; };
+DEC1510A0000000000000091 = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000090; };
+DEC1510A000000000000002F = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000025; };
+DEC1510A0000000000000030 = {isa = PBXBuildFile; fileRef = DEC1510A0000000000000026; };
+DEC1510B0000000000000028 = {isa = PBXBuildFile; fileRef = DEC1510B000000000000001E; };
+DEC1510B0000000000000029 = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000103; };
+DEC1510B000000000000002A = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000104; };
+DEC1510B000000000000002B = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000010A; };
+DEC1510B000000000000002C = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000010B; };
+DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000102; };
+		B0B051EE0000000000000002 /* PhoneSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B051EE0000000000000001; };
+		B0B051EE0000000000000004 /* PhoneSheetHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B051EE0000000000000003; };
+		B0B051EE0000000000000006 /* SheetPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B051EE0000000000000005; };
+		E5A5C0DE0000000000000002 /* PreparerBrief.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000001 /* PreparerBrief.swift */; };
+		E5A5C0DE0000000000000004 /* CardPrepareRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000003 /* CardPrepareRules.swift */; };
+		E5A5C0DE0000000000000402 /* ComposerUsageRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000401 /* ComposerUsageRule.swift */; };
+		E5A5C0DE0000000000000404 /* ComposerUsageRuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000403 /* ComposerUsageRuleTests.swift */; };
+		E5A5C0DE0000000000000006 /* AnthropicPrepare.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000005 /* AnthropicPrepare.swift */; };
+		E5A5C0DE0000000000000008 /* HeldPicture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000007 /* HeldPicture.swift */; };
+		E5A5C0DE0000000000000802 /* AgentScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000801 /* AgentScreen.swift */; };
+		E5A5C0DE0000000000000804 /* ConversationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000803 /* ConversationModels.swift */; };
+		E5A5C0DE0000000000000806 /* ConversationCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000805 /* ConversationCache.swift */; };
+		E5A5C0DE0000000000000808 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000807 /* ConversationView.swift */; };
+		E5A5C0DE000000000000080A /* ConversationCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000809 /* ConversationCacheTests.swift */; };
+		E5A5C0DE000000000000080C /* AgentScreenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE000000000000080B /* AgentScreenTests.swift */; };
+		E5A5C0DE0000000000000302 /* LinkTiming.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000301 /* LinkTiming.swift */; };
+		E5A5C0DE000000000000000A /* CardPrepareRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000009 /* CardPrepareRulesTests.swift */; };
+		E5A5C0DE000000000000000C /* HeldPictureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE000000000000000B /* HeldPictureTests.swift */; };
+		E5A5C0DE0000000000000304 /* LinkTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000303 /* LinkTimingTests.swift */; };
+		E5A5C0DE0000000000000902 /* RelaySocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000901 /* RelaySocket.swift */; };
+		E5A5C0DE0000000000000904 /* RelaySocketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000903 /* RelaySocketTests.swift */; };
+		E5A5C0DE0000000000000502 /* BackgroundGrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000501 /* BackgroundGrace.swift */; };
+		E5A5C0DE0000000000000702 /* WidgetReloadBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000701 /* WidgetReloadBudget.swift */; };
+		E5A5C0DE0000000000000504 /* BackgroundGraceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000503 /* BackgroundGraceTests.swift */; };
+		E5A5C0DE0000000000000506 /* BoardSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000505 /* BoardSearch.swift */; };
+		E5A5C0DE0000000000000508 /* BoardSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000507 /* BoardSearchTests.swift */; };
+		E5A5C0DE000000000000080E /* SRPTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE000000000000080D /* SRPTests.swift */; };
+		E5A5C0DE0000000000000602 /* NotificationLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000601 /* NotificationLog.swift */; };
+		E5A5C0DE0000000000000604 /* HeldDestination.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000603 /* HeldDestination.swift */; };
+		E5A5C0DE0000000000000606 /* NotificationDestinationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000605 /* NotificationDestinationModel.swift */; };
+		E5A5C0DE0000000000000608 /* NotificationLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000607 /* NotificationLogTests.swift */; };
+		E5A5C0DE000000000000060A /* HeldDestinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000609 /* HeldDestinationTests.swift */; };
+		E5A5C0DE0000000000000102 /* LeaseReminder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000101 /* LeaseReminder.swift */; };
+		E5A5C0DE0000000000000202 /* LockScreenActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000201 /* LockScreenActions.swift */; };
+		1A5E4C710000000000000002 /* NeedsYouActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A5E4C710000000000000001 /* NeedsYouActivity.swift */; };
+		1A5E4C710000000000000003 /* NeedsYouActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A5E4C710000000000000001 /* NeedsYouActivity.swift */; };
+		1A5E4C710000000000000004 /* NeedsYouActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A5E4C710000000000000001 /* NeedsYouActivity.swift */; };
+		1A5E4C710000000000000006 /* LiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A5E4C710000000000000005 /* LiveActivity.swift */; };
+		1A5E4C710000000000000008 /* NeedsYouActivityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A5E4C710000000000000007 /* NeedsYouActivityViews.swift */; };
+		1A5E4C710000000000000009 /* NeedsYouActivityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A5E4C710000000000000007 /* NeedsYouActivityViews.swift */; };
+		1A5E4C71000000000000000B /* LiveActivityRuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A5E4C71000000000000000A /* LiveActivityRuleTests.swift */; };
+		1A5E4C71000000000000000D /* NeedsYouActivityStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A5E4C71000000000000000C /* NeedsYouActivityStateTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		AC0220000000000000000005 /* CollaborationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/CollaborationTests.swift; sourceTree = SOURCE_ROOT; };
+		AC0220000000000000000003 /* CollaborationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/CollaborationView.swift; sourceTree = SOURCE_ROOT; };
+		AC0220000000000000000001 /* Collaboration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/Collaboration.swift; sourceTree = SOURCE_ROOT; };
+		DEC090900000000000000000D /* DecryptFeedbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/DecryptFeedbackTests.swift; sourceTree = SOURCE_ROOT; };
+		C0DEF0A1DEF0000000000001 /* ComposerDefaultsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/ComposerDefaultsTests.swift; sourceTree = SOURCE_ROOT; };
+		DEC090900000000000000000B /* DecryptMotionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/DecryptMotionTests.swift; sourceTree = SOURCE_ROOT; };
+		DEC0909000000000000000003 /* DecryptFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/DecryptFeedback.swift; sourceTree = SOURCE_ROOT; };
+		DEC0909000000000000000001 /* DecryptMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/DecryptMotion.swift; sourceTree = SOURCE_ROOT; };
+		AEF0909000000000000000001 /* AgentReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/AgentReportView.swift; sourceTree = SOURCE_ROOT; };
+		L1F3C7C10000000000000001 /* LifecycleReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/LifecycleReport.swift; sourceTree = SOURCE_ROOT; };
+		L1F3C7C10000000000000003 /* LifecycleReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/LifecycleReportView.swift; sourceTree = SOURCE_ROOT; };
+		L1F3C7C10000000000000005 /* LifecycleReportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/LifecycleReportTests.swift; sourceTree = SOURCE_ROOT; };
+		B0B0C0A000000000000001F8 /* OutcomeScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutcomeScreens.swift; sourceTree = "<group>"; };
+		B0B0C0A000000000000001F6 /* OutcomeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutcomeViews.swift; sourceTree = "<group>"; };
+		B0B0C0A000000000000001F4 /* OutcomeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutcomeModels.swift; sourceTree = "<group>"; };
+		A1B2010B0000000000000001 /* KnowledgeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeModels.swift; sourceTree = "<group>"; };
+		A1B2010B0000000000000003 /* KnowledgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeView.swift; sourceTree = "<group>"; };
+		A1B2010C0000000000000001 /* AccessLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessLogView.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000003 /* BobPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BobPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7B0B0E1A0000000000000030 /* BobPhoneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneApp.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000031 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000032 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000003C /* HostAddress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostAddress.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000003D /* Markdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Markdown.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000170 /* Specialists.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Specialists.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000290 /* Areas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Areas.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000292 /* AreaWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AreaWire.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000294 /* BigUInt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BigUInt.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000296 /* SRP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SRP.swift; sourceTree = "<group>"; };
+		7B0B0E1A00000000000001A0 /* AgentChatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatter.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000192 /* RecentlyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentlyView.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000194 /* PipelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineView.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000196 /* CardCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardCache.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000198 /* Receipts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Receipts.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000019A /* WorkRecordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkRecordView.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000003E /* CardDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardDetailView.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000003F /* Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Actions.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000080 /* Arm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Arm.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000081 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000084 /* UsageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageView.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000086 /* Dictation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dictation.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000008C /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000008E /* Outbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Outbox.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000090 /* RelayTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayTransport.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000092 /* RemoteAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteAuth.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000190 /* HomeTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeTransport.swift; sourceTree = "<group>"; };
+		7B0B0E1A00000000000001D2 /* TerminalStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStream.swift; sourceTree = "<group>"; };
+		7B0B0E1A00000000000001D4 /* TerminalPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPane.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000008A /* AnswerBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnswerBox.swift; sourceTree = "<group>"; };
+		7B0B0E1A00000000000000A0 /* AnswerDrafts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnswerDrafts.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000088 /* NeedsYouView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeedsYouView.swift; sourceTree = "<group>"; };
+		A1B2010A0000000000000001 /* Inbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Inbox.swift; sourceTree = "<group>"; };
+		C0F1600E0000000000000001 /* RunFigures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunFigures.swift; sourceTree = "<group>"; };
+		C0FFEE0C0000000000000003 /* CommView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommView.swift; sourceTree = "<group>"; };
+		C0FFEE0C0000000000000001 /* CommRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommRules.swift; sourceTree = "<group>"; };
+		D0E5A17E0000000000000001 /* RunHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunHealth.swift; sourceTree = "<group>"; };
+		A1B2010A0000000000000003 /* PhoneInboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/PhoneInboxTests.swift; sourceTree = SOURCE_ROOT; };
+		D5E0510A0000000000000001 /* DemoShotsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/DemoShotsTests.swift; sourceTree = SOURCE_ROOT; };
+		7B0B0E1A0000000000000033 /* Client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Client.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000034 /* FleetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetView.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000035 /* BoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardView.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000036 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000037 /* Cast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cast.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000039 /* ProcessTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessTable.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000003A /* AgentDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDetailView.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000003B /* BrandBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandBar.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000095 /* brand */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/brand; sourceTree = "<group>"; };
+		7B0B0E1A00000000000001C1 /* portraits */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/portraits; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000038 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000070 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000071 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000072 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000073 /* ExportOptions.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = ExportOptions.plist; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000074 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000180 /* buzz-permission.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Resources/sounds/buzz-permission.wav; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000181 /* buzz-question.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Resources/sounds/buzz-question.wav; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000182 /* buzz-finished.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Resources/sounds/buzz-finished.wav; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000100 /* Push.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Push.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000101 /* Router.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Router.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000109 /* BackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefresh.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000102 /* FleetSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSummary.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000103 /* BobPhoneWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneWidget.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000104 /* WidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetViews.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000010A /* TickRing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TickRing.swift; sourceTree = "<group>"; };
+		7B0B0E1A000000000000010B /* CircularFleetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CircularFleetView.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000105 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000106 /* BobPhone.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BobPhone.entitlements; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000107 /* BobPhoneWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BobPhoneWidget.entitlements; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000108 /* BobPhoneWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BobPhoneWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		FACE0A7E0000000000000001 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		FACE0A7E0000000000000003 /* NotificationFace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationFace.swift; sourceTree = "<group>"; };
+		FACE0A7E0000000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		FACE0A7E0000000000000006 /* BobPhoneNotification.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BobPhoneNotification.entitlements; sourceTree = "<group>"; };
+		FACE0A7E0000000000000008 /* BobPhoneNotification.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BobPhoneNotification.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		DEC1510A0000000000000001 /* CatchUpState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpState.swift; sourceTree = "<group>"; };
+		DEC1510A0000000000000002 /* CatchUpView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpView.swift; sourceTree = "<group>"; };
+DEC1510A000000000000001E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/NotificationRoutingTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A000000000000001F = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/CatchUpTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A0000000000000020 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/AwayWindowTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A0000000000000021 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/OfflineCacheTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A0000000000000022 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/SealedEnvelopeTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A0000000000000023 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/TerminalFramingTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A0000000000000024 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/DecodeToleranceTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A0000000000000090 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/HomeAddressTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A0000000000000025 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/ActionReplyTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A0000000000000026 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/PhoneFormattingTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510A000000000000003C = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = BobPhoneTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+DEC1510B000000000000001E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneWidgetTests/WidgetTileTests.swift; sourceTree = SOURCE_ROOT; };
+DEC1510B000000000000003C = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = BobPhoneWidgetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B0B051EE0000000000000001 /* PhoneSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/PhoneSheet.swift; sourceTree = SOURCE_ROOT; };
+		B0B051EE0000000000000003 /* PhoneSheetHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/PhoneSheetHost.swift; sourceTree = SOURCE_ROOT; };
+		B0B051EE0000000000000005 /* SheetPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/SheetPresentationTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000001 /* PreparerBrief.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/PreparerBrief.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000003 /* CardPrepareRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/CardPrepareRules.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000401 /* ComposerUsageRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/ComposerUsageRule.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000403 /* ComposerUsageRuleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/ComposerUsageRuleTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000005 /* AnthropicPrepare.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/AnthropicPrepare.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000007 /* HeldPicture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/HeldPicture.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000801 /* AgentScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/AgentScreen.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000803 /* ConversationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/ConversationModels.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000805 /* ConversationCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/ConversationCache.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000807 /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/ConversationView.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000809 /* ConversationCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/ConversationCacheTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE000000000000080B /* AgentScreenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/AgentScreenTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000301 /* LinkTiming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/LinkTiming.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000009 /* CardPrepareRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/CardPrepareRulesTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE000000000000000B /* HeldPictureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/HeldPictureTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000303 /* LinkTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/LinkTimingTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000901 /* RelaySocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/RelaySocket.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000903 /* RelaySocketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/RelaySocketTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000501 /* BackgroundGrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/BackgroundGrace.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000701 /* WidgetReloadBudget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/WidgetReloadBudget.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000503 /* BackgroundGraceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/BackgroundGraceTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000505 /* BoardSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/BoardSearch.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000507 /* BoardSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/BoardSearchTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE000000000000080D /* SRPTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/SRPTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000601 /* NotificationLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/NotificationLog.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000603 /* HeldDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/HeldDestination.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000605 /* NotificationDestinationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/NotificationDestinationModel.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000607 /* NotificationLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/NotificationLogTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000609 /* HeldDestinationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/HeldDestinationTests.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000101 /* LeaseReminder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/LeaseReminder.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE0000000000000201 /* LockScreenActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/LockScreenActions.swift; sourceTree = SOURCE_ROOT; };
+		1A5E4C710000000000000001 /* NeedsYouActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/NeedsYouActivity.swift; sourceTree = SOURCE_ROOT; };
+		1A5E4C710000000000000005 /* LiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/LiveActivity.swift; sourceTree = SOURCE_ROOT; };
+		1A5E4C710000000000000007 /* NeedsYouActivityViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneWidget/NeedsYouActivityViews.swift; sourceTree = SOURCE_ROOT; };
+		1A5E4C71000000000000000A /* LiveActivityRuleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/LiveActivityRuleTests.swift; sourceTree = SOURCE_ROOT; };
+		1A5E4C71000000000000000C /* NeedsYouActivityStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneWidgetTests/NeedsYouActivityStateTests.swift; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXContainerItemProxy section */
+		7B0B0E1A0000000000000134 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7B0B0E1A0000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7B0B0E1A0000000000000130;
+			remoteInfo = BobPhoneWidget;
+		};
+DEC1510A0000000000000040 = {isa = PBXContainerItemProxy; containerPortal = 7B0B0E1A0000000000000001; proxyType = 1; remoteGlobalIDString = 7B0B0E1A0000000000000002; remoteInfo = BobPhone; };
+DEC1510B0000000000000040 = {isa = PBXContainerItemProxy; containerPortal = 7B0B0E1A0000000000000001; proxyType = 1; remoteGlobalIDString = 7B0B0E1A0000000000000002; remoteInfo = BobPhone; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7B0B0E1A0000000000000136 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FACE0A7E0000000000000009 /* BobPhoneNotification.appex in Embed Foundation Extensions */,
+				7B0B0E1A0000000000000116 /* BobPhoneWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		7B0B0E1A0000000000000021 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7B0B0E1A00000000000001D6 /* SwiftTerm in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7B0B0E1A0000000000000132 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+DEC1510A000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		FACE0A7E000000000000000C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		7B0B0E1A0000000000000010 /* BobPhone */ = {
+			isa = PBXGroup;
+			children = (
+				DEC1510A0000000000000001 /* CatchUpState.swift */,
+				DEC1510A0000000000000002 /* CatchUpView.swift */,
+				7B0B0E1A0000000000000030 /* BobPhoneApp.swift */,
+				7B0B0E1A0000000000000031 /* Models.swift */,
+				7B0B0E1A0000000000000032 /* Pairing.swift */,
+				7B0B0E1A000000000000003C /* HostAddress.swift */,
+				7B0B0E1A0000000000000033 /* Client.swift */,
+				7B0B0E1A0000000000000034 /* FleetView.swift */,
+				7B0B0E1A0000000000000035 /* BoardView.swift */,
+				7B0B0E1A000000000000003E /* CardDetailView.swift */,
+				7B0B0E1A000000000000003F /* Actions.swift */,
+				7B0B0E1A0000000000000080 /* Arm.swift */,
+				7B0B0E1A0000000000000081 /* ComposerView.swift */,
+				7B0B0E1A0000000000000084 /* UsageView.swift */,
+				7B0B0E1A0000000000000086 /* Dictation.swift */,
+				7B0B0E1A000000000000008C /* ProfileView.swift */,
+				7B0B0E1A000000000000008E /* Outbox.swift */,
+				7B0B0E1A0000000000000090 /* RelayTransport.swift */,
+				7B0B0E1A0000000000000092 /* RemoteAuth.swift */,
+				7B0B0E1A0000000000000190 /* HomeTransport.swift */,
+				7B0B0E1A00000000000001D2 /* TerminalStream.swift */,
+				7B0B0E1A00000000000001D4 /* TerminalPane.swift */,
+				7B0B0E1A0000000000000100 /* Push.swift */,
+				7B0B0E1A0000000000000101 /* Router.swift */,
+				7B0B0E1A0000000000000109 /* BackgroundRefresh.swift */,
+				7B0B0E1A0000000000000106 /* BobPhone.entitlements */,
+				7B0B0E1A000000000000008A /* AnswerBox.swift */,
+				7B0B0E1A00000000000000A0 /* AnswerDrafts.swift */,
+				7B0B0E1A0000000000000088 /* NeedsYouView.swift */,
+				A1B2010A0000000000000001 /* Inbox.swift */,
+				C0F1600E0000000000000001 /* RunFigures.swift */,
+				C0FFEE0C0000000000000003 /* CommView.swift */,
+				C0FFEE0C0000000000000001 /* CommRules.swift */,
+				D0E5A17E0000000000000001 /* RunHealth.swift */,
+				E5A5C0DE0000000000000201 /* LockScreenActions.swift */,
+				1A5E4C710000000000000005 /* LiveActivity.swift */,
+				E5A5C0DE0000000000000101 /* LeaseReminder.swift */,
+				E5A5C0DE0000000000000001 /* PreparerBrief.swift */,
+				E5A5C0DE0000000000000003 /* CardPrepareRules.swift */,
+				E5A5C0DE0000000000000401 /* ComposerUsageRule.swift */,
+				E5A5C0DE0000000000000005 /* AnthropicPrepare.swift */,
+				E5A5C0DE0000000000000007 /* HeldPicture.swift */,
+				E5A5C0DE0000000000000801 /* AgentScreen.swift */,
+				E5A5C0DE0000000000000803 /* ConversationModels.swift */,
+				E5A5C0DE0000000000000805 /* ConversationCache.swift */,
+				E5A5C0DE0000000000000807 /* ConversationView.swift */,
+				E5A5C0DE0000000000000301 /* LinkTiming.swift */,
+				E5A5C0DE0000000000000901 /* RelaySocket.swift */,
+				E5A5C0DE0000000000000501 /* BackgroundGrace.swift */,
+				E5A5C0DE0000000000000701 /* WidgetReloadBudget.swift */,
+				E5A5C0DE0000000000000505 /* BoardSearch.swift */,
+				E5A5C0DE0000000000000601 /* NotificationLog.swift */,
+				E5A5C0DE0000000000000603 /* HeldDestination.swift */,
+				E5A5C0DE0000000000000605 /* NotificationDestinationModel.swift */,
+				7B0B0E1A0000000000000036 /* Theme.swift */,
+				7B0B0E1A0000000000000037 /* Cast.swift */,
+				7B0B0E1A000000000000003D /* Markdown.swift */,
+				7B0B0E1A0000000000000170 /* Specialists.swift */,
+				7B0B0E1A0000000000000290 /* Areas.swift */,
+				7B0B0E1A0000000000000292 /* AreaWire.swift */,
+				7B0B0E1A0000000000000294 /* BigUInt.swift */,
+				7B0B0E1A0000000000000296 /* SRP.swift */,
+				7B0B0E1A00000000000001A0 /* AgentChatter.swift */,
+				7B0B0E1A0000000000000192 /* RecentlyView.swift */,
+				7B0B0E1A0000000000000194 /* PipelineView.swift */,
+				7B0B0E1A0000000000000196 /* CardCache.swift */,
+				7B0B0E1A0000000000000198 /* Receipts.swift */,
+				7B0B0E1A000000000000019A /* WorkRecordView.swift */,
+				AEF0909000000000000000001 /* AgentReportView.swift */,
+				L1F3C7C10000000000000001 /* LifecycleReport.swift */,
+				L1F3C7C10000000000000003 /* LifecycleReportView.swift */,
+				B0B0C0A000000000000001F8 /* OutcomeScreens.swift */,
+				B0B0C0A000000000000001F6 /* OutcomeViews.swift */,
+				B0B0C0A000000000000001F4 /* OutcomeModels.swift */,
+				A1B2010B0000000000000001 /* KnowledgeModels.swift */,
+				A1B2010B0000000000000003 /* KnowledgeView.swift */,
+				A1B2010C0000000000000001 /* AccessLogView.swift */,
+				7B0B0E1A0000000000000039 /* ProcessTable.swift */,
+				7B0B0E1A000000000000003A /* AgentDetailView.swift */,
+				7B0B0E1A000000000000003B /* BrandBar.swift */,
+				7B0B0E1A0000000000000038 /* Info.plist */,
+				7B0B0E1A0000000000000074 /* Assets.xcassets */,
+				7B0B0E1A0000000000000095 /* brand */,
+				7B0B0E1A00000000000001C1 /* portraits */,
+				7B0B0E1A0000000000000180 /* buzz-permission.wav */,
+				7B0B0E1A0000000000000181 /* buzz-question.wav */,
+				7B0B0E1A0000000000000182 /* buzz-finished.wav */,
+			);
+			path = BobPhone;
+			sourceTree = "<group>";
+		};
+		7B0B0E1A0000000000000076 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				7B0B0E1A0000000000000070 /* Base.xcconfig */,
+				7B0B0E1A0000000000000071 /* Debug.xcconfig */,
+				7B0B0E1A0000000000000072 /* Release.xcconfig */,
+				7B0B0E1A0000000000000073 /* ExportOptions.plist */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		7B0B0E1A0000000000000011 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7B0B0E1A0000000000000003 /* BobPhone.app */,
+				7B0B0E1A0000000000000108 /* BobPhoneWidget.appex */,
+				FACE0A7E0000000000000008 /* BobPhoneNotification.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7B0B0E1A0000000000000120 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				7B0B0E1A0000000000000102 /* FleetSummary.swift */,
+				1A5E4C710000000000000001 /* NeedsYouActivity.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		7B0B0E1A0000000000000121 /* BobPhoneWidget */ = {
+			isa = PBXGroup;
+			children = (
+				7B0B0E1A0000000000000103 /* BobPhoneWidget.swift */,
+				7B0B0E1A0000000000000104 /* WidgetViews.swift */,
+				7B0B0E1A000000000000010A /* TickRing.swift */,
+				7B0B0E1A000000000000010B /* CircularFleetView.swift */,
+				1A5E4C710000000000000007 /* NeedsYouActivityViews.swift */,
+				7B0B0E1A0000000000000105 /* Info.plist */,
+				7B0B0E1A0000000000000107 /* BobPhoneWidget.entitlements */,
+			);
+			path = BobPhoneWidget;
+			sourceTree = "<group>";
+		};
+		FACE0A7E000000000000000A /* BobPhoneNotification */ = {
+			isa = PBXGroup;
+			children = (
+				FACE0A7E0000000000000001 /* NotificationService.swift */,
+				FACE0A7E0000000000000003 /* NotificationFace.swift */,
+				FACE0A7E0000000000000005 /* Info.plist */,
+				FACE0A7E0000000000000006 /* BobPhoneNotification.entitlements */,
+			);
+			path = BobPhoneNotification;
+			sourceTree = "<group>";
+		};
+		7B0B0E1A0000000000000012 = {
+			isa = PBXGroup;
+			children = (
+				7B0B0E1A0000000000000010 /* BobPhone */,
+				7B0B0E1A0000000000000120 /* Shared */,
+				7B0B0E1A0000000000000121 /* BobPhoneWidget */,
+				FACE0A7E000000000000000A /* BobPhoneNotification */,
+				7B0B0E1A0000000000000076 /* Config */,
+				DEC1510A000000000000003D,
+				DEC1510B000000000000003D,
+				7B0B0E1A0000000000000011 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+DEC1510A000000000000003D = {isa = PBXGroup; name = BobPhoneTests; children = (DEC1510A000000000000001E, DEC1510A000000000000001F, DEC1510A0000000000000020, DEC1510A0000000000000021, DEC1510A0000000000000022, DEC1510A0000000000000023, DEC1510A0000000000000024, DEC1510A0000000000000025, DEC1510A0000000000000026, DEC1510A0000000000000090, L1F3C7C10000000000000005, A1B2010A0000000000000003, D5E0510A0000000000000001, E5A5C0DE0000000000000009, E5A5C0DE000000000000000B, E5A5C0DE0000000000000303, E5A5C0DE0000000000000503, E5A5C0DE0000000000000507, E5A5C0DE0000000000000607, E5A5C0DE0000000000000609, 1A5E4C71000000000000000A, E5A5C0DE0000000000000403 /* ComposerUsageRuleTests.swift */, E5A5C0DE0000000000000809 /* ConversationCacheTests.swift */, E5A5C0DE000000000000080B /* AgentScreenTests.swift */, E5A5C0DE000000000000080D, E5A5C0DE0000000000000903,); sourceTree = "<group>"; };
+DEC1510B000000000000003D = {isa = PBXGroup; name = BobPhoneWidgetTests; children = (DEC1510B000000000000001E, 1A5E4C71000000000000000C,); sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7B0B0E1A0000000000000002 /* BobPhone */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7B0B0E1A0000000000000061 /* Build configuration list for PBXNativeTarget "BobPhone" */;
+			buildPhases = (
+				7B0B0E1A0000000000000020 /* Sources */,
+				7B0B0E1A0000000000000021 /* Frameworks */,
+				7B0B0E1A0000000000000022 /* Resources */,
+				7B0B0E1A0000000000000136 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7B0B0E1A0000000000000135 /* PBXTargetDependency */,
+				FACE0A7E0000000000000010 /* PBXTargetDependency */,
+			);
+			name = BobPhone;
+			packageProductDependencies = (
+				7B0B0E1A00000000000001D1 /* SwiftTerm */,
+			);
+			productName = BobPhone;
+			productReference = 7B0B0E1A0000000000000003 /* BobPhone.app */;
+			productType = "com.apple.product-type.application";
+		};
+		7B0B0E1A0000000000000130 /* BobPhoneWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7B0B0E1A0000000000000160 /* Build configuration list for PBXNativeTarget "BobPhoneWidget" */;
+			buildPhases = (
+				7B0B0E1A0000000000000131 /* Sources */,
+				7B0B0E1A0000000000000132 /* Frameworks */,
+				7B0B0E1A0000000000000133 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BobPhoneWidget;
+			productName = BobPhoneWidget;
+			productReference = 7B0B0E1A0000000000000108 /* BobPhoneWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		FACE0A7E000000000000000E /* BobPhoneNotification */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FACE0A7E0000000000000013 /* Build configuration list for PBXNativeTarget "BobPhoneNotification" */;
+			buildPhases = (
+				FACE0A7E000000000000000B /* Sources */,
+				FACE0A7E000000000000000C /* Frameworks */,
+				FACE0A7E000000000000000D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BobPhoneNotification;
+			productName = BobPhoneNotification;
+			productReference = FACE0A7E0000000000000008 /* BobPhoneNotification.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+DEC1510A0000000000000042 /* BobPhoneTests */ = {isa = PBXNativeTarget; buildConfigurationList = DEC1510A0000000000000043; buildPhases = (DEC1510A000000000000003E, DEC1510A000000000000003F,); buildRules = (); dependencies = (DEC1510A0000000000000041,); name = BobPhoneTests; productName = BobPhoneTests; productReference = DEC1510A000000000000003C; productType = "com.apple.product-type.bundle.unit-test"; };
+DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1510B0000000000000043; buildPhases = (DEC1510B000000000000003E, DEC1510B000000000000003F,); buildRules = (); dependencies = (DEC1510B0000000000000041,); name = BobPhoneWidgetTests; productName = BobPhoneWidgetTests; productReference = DEC1510B000000000000003C; productType = "com.apple.product-type.bundle.unit-test"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7B0B0E1A0000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					7B0B0E1A0000000000000002 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					7B0B0E1A0000000000000130 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					FACE0A7E000000000000000E = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 7B0B0E1A0000000000000060 /* Build configuration list for PBXProject "BobPhone" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 7B0B0E1A0000000000000012;
+			packageReferences = (
+				7B0B0E1A00000000000001D0,
+			);
+			productRefGroup = 7B0B0E1A0000000000000011 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				DEC1510A0000000000000042,
+				DEC1510B0000000000000042,
+				7B0B0E1A0000000000000002 /* BobPhone */,
+				7B0B0E1A0000000000000130 /* BobPhoneWidget */,
+				FACE0A7E000000000000000E /* BobPhoneNotification */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7B0B0E1A0000000000000022 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7B0B0E1A0000000000000075 /* Assets.xcassets in Resources */,
+				7B0B0E1A0000000000000094 /* brand in Resources */,
+				7B0B0E1A00000000000001C0 /* portraits in Resources */,
+				7B0B0E1A0000000000000183 /* buzz-permission.wav in Resources */,
+				7B0B0E1A0000000000000184 /* buzz-question.wav in Resources */,
+				7B0B0E1A0000000000000185 /* buzz-finished.wav in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7B0B0E1A0000000000000133 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7B0B0E1A0000000000000117 /* brand in Resources */,
+				7B0B0E1A00000000000001C2 /* portraits in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FACE0A7E000000000000000D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FACE0A7E0000000000000007 /* portraits in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		7B0B0E1A0000000000000020 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AC0220000000000000000004 /* CollaborationView.swift in Sources */,
+				AC0220000000000000000002 /* Collaboration.swift in Sources */,
+				B0B051EE0000000000000004,
+				B0B051EE0000000000000002,
+				DEC1510A000000000000000B /* CatchUpState.swift in Sources */,
+				DEC1510A000000000000000C /* CatchUpView.swift in Sources */,
+				7B0B0E1A0000000000000040 /* BobPhoneApp.swift in Sources */,
+				DEC0909000000000000000004 /* DecryptFeedback.swift in Sources */,
+				DEC0909000000000000000002 /* DecryptMotion.swift in Sources */,
+				7B0B0E1A0000000000000041 /* Models.swift in Sources */,
+				7B0B0E1A0000000000000042 /* Pairing.swift in Sources */,
+				7B0B0E1A000000000000004B /* HostAddress.swift in Sources */,
+				7B0B0E1A0000000000000043 /* Client.swift in Sources */,
+				7B0B0E1A0000000000000044 /* FleetView.swift in Sources */,
+				7B0B0E1A0000000000000045 /* BoardView.swift in Sources */,
+				7B0B0E1A000000000000004D /* CardDetailView.swift in Sources */,
+				7B0B0E1A000000000000004E /* Actions.swift in Sources */,
+				7B0B0E1A0000000000000082 /* Arm.swift in Sources */,
+				7B0B0E1A0000000000000083 /* ComposerView.swift in Sources */,
+				7B0B0E1A0000000000000085 /* UsageView.swift in Sources */,
+				7B0B0E1A0000000000000087 /* Dictation.swift in Sources */,
+				7B0B0E1A000000000000008D /* ProfileView.swift in Sources */,
+				7B0B0E1A000000000000008F /* Outbox.swift in Sources */,
+				7B0B0E1A0000000000000091 /* RelayTransport.swift in Sources */,
+				7B0B0E1A0000000000000093 /* RemoteAuth.swift in Sources */,
+				7B0B0E1A0000000000000191 /* HomeTransport.swift in Sources */,
+				7B0B0E1A00000000000001D3 /* TerminalStream.swift in Sources */,
+				7B0B0E1A00000000000001D5 /* TerminalPane.swift in Sources */,
+				7B0B0E1A000000000000008B /* AnswerBox.swift in Sources */,
+				7B0B0E1A00000000000000A1 /* AnswerDrafts.swift in Sources */,
+				7B0B0E1A0000000000000089 /* NeedsYouView.swift in Sources */,
+				A1B2010A0000000000000002 /* Inbox.swift in Sources */,
+				C0F1600E0000000000000002 /* RunFigures.swift in Sources */,
+				C0FFEE0C0000000000000004 /* CommView.swift in Sources */,
+				C0FFEE0C0000000000000002 /* CommRules.swift in Sources */,
+				D0E5A17E0000000000000002 /* RunHealth.swift in Sources */,
+				E5A5C0DE0000000000000202 /* LockScreenActions.swift in Sources */,
+				1A5E4C710000000000000006 /* LiveActivity.swift in Sources */,
+				1A5E4C710000000000000002 /* NeedsYouActivity.swift */,
+				E5A5C0DE0000000000000102 /* LeaseReminder.swift in Sources */,
+				E5A5C0DE0000000000000002 /* PreparerBrief.swift in Sources */,
+				E5A5C0DE0000000000000004 /* CardPrepareRules.swift in Sources */,
+				E5A5C0DE0000000000000402 /* ComposerUsageRule.swift in Sources */,
+				E5A5C0DE0000000000000006 /* AnthropicPrepare.swift in Sources */,
+				E5A5C0DE0000000000000008 /* HeldPicture.swift in Sources */,
+				E5A5C0DE0000000000000802 /* AgentScreen.swift in Sources */,
+				E5A5C0DE0000000000000804 /* ConversationModels.swift in Sources */,
+				E5A5C0DE0000000000000806 /* ConversationCache.swift in Sources */,
+				E5A5C0DE0000000000000808 /* ConversationView.swift in Sources */,
+				E5A5C0DE0000000000000302 /* LinkTiming.swift in Sources */,
+				E5A5C0DE0000000000000902 /* RelaySocket.swift in Sources */,
+				E5A5C0DE0000000000000502 /* BackgroundGrace.swift in Sources */,
+				E5A5C0DE0000000000000702 /* WidgetReloadBudget.swift in Sources */,
+				E5A5C0DE0000000000000506 /* BoardSearch.swift in Sources */,
+				E5A5C0DE0000000000000602 /* NotificationLog.swift in Sources */,
+				E5A5C0DE0000000000000604 /* HeldDestination.swift in Sources */,
+				E5A5C0DE0000000000000606 /* NotificationDestinationModel.swift in Sources */,
+				7B0B0E1A0000000000000046 /* Theme.swift in Sources */,
+				7B0B0E1A0000000000000047 /* Cast.swift in Sources */,
+				7B0B0E1A000000000000004C /* Markdown.swift in Sources */,
+				7B0B0E1A0000000000000171 /* Specialists.swift in Sources */,
+				7B0B0E1A0000000000000291 /* Areas.swift in Sources */,
+				7B0B0E1A0000000000000293 /* AreaWire.swift in Sources */,
+				7B0B0E1A0000000000000295 /* BigUInt.swift in Sources */,
+				7B0B0E1A0000000000000297 /* SRP.swift in Sources */,
+				7B0B0E1A00000000000001A1 /* AgentChatter.swift in Sources */,
+				7B0B0E1A0000000000000193 /* RecentlyView.swift in Sources */,
+				7B0B0E1A0000000000000195 /* PipelineView.swift in Sources */,
+				7B0B0E1A0000000000000197 /* CardCache.swift in Sources */,
+				7B0B0E1A0000000000000199 /* Receipts.swift in Sources */,
+				7B0B0E1A000000000000019B /* WorkRecordView.swift in Sources */,
+				AEF0909000000000000000002 /* AgentReportView.swift in Sources */,
+				L1F3C7C10000000000000002 /* LifecycleReport.swift in Sources */,
+				L1F3C7C10000000000000004 /* LifecycleReportView.swift in Sources */,
+				B0B0C0A000000000000001F9 /* OutcomeScreens.swift in Sources */,
+				B0B0C0A000000000000001F7 /* OutcomeViews.swift in Sources */,
+				B0B0C0A000000000000001F5 /* OutcomeModels.swift in Sources */,
+				A1B2010B0000000000000002 /* KnowledgeModels.swift in Sources */,
+				A1B2010B0000000000000004 /* KnowledgeView.swift in Sources */,
+				A1B2010C0000000000000002 /* AccessLogView.swift in Sources */,
+				7B0B0E1A0000000000000048 /* ProcessTable.swift in Sources */,
+				7B0B0E1A0000000000000049 /* AgentDetailView.swift in Sources */,
+				7B0B0E1A000000000000004A /* BrandBar.swift in Sources */,
+				7B0B0E1A0000000000000110 /* Push.swift in Sources */,
+				7B0B0E1A0000000000000111 /* Router.swift in Sources */,
+				7B0B0E1A0000000000000118 /* BackgroundRefresh.swift in Sources */,
+				7B0B0E1A0000000000000112 /* FleetSummary.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7B0B0E1A0000000000000131 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7B0B0E1A0000000000000114 /* BobPhoneWidget.swift in Sources */,
+				7B0B0E1A0000000000000115 /* WidgetViews.swift in Sources */,
+				7B0B0E1A0000000000000119 /* TickRing.swift in Sources */,
+				7B0B0E1A000000000000011A /* CircularFleetView.swift in Sources */,
+				7B0B0E1A0000000000000113 /* FleetSummary.swift in Sources */,
+				1A5E4C710000000000000003 /* NeedsYouActivity.swift */,
+				1A5E4C710000000000000008 /* NeedsYouActivityViews.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FACE0A7E000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FACE0A7E0000000000000002 /* NotificationService.swift in Sources */,
+				FACE0A7E0000000000000004 /* NotificationFace.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+DEC1510A000000000000003E = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AC0220000000000000000006, B0B051EE0000000000000006, C0DEF0A1DEF0000000000002, DEC090900000000000000000E, DEC090900000000000000000C, DEC1510A0000000000000028, DEC1510A0000000000000029, DEC1510A000000000000002A, DEC1510A000000000000002B, DEC1510A000000000000002C, DEC1510A000000000000002D, DEC1510A000000000000002E, DEC1510A000000000000002F, DEC1510A0000000000000030, DEC1510A0000000000000091, L1F3C7C10000000000000006, A1B2010A0000000000000004, D5E0510A0000000000000002, E5A5C0DE000000000000000A, E5A5C0DE000000000000000C, E5A5C0DE0000000000000304, E5A5C0DE0000000000000504, E5A5C0DE0000000000000508, E5A5C0DE0000000000000608, E5A5C0DE000000000000060A, 1A5E4C71000000000000000B, E5A5C0DE0000000000000404 /* ComposerUsageRuleTests.swift in Sources */, E5A5C0DE000000000000080A /* ConversationCacheTests.swift in Sources */, E5A5C0DE000000000000080C /* AgentScreenTests.swift in Sources */, E5A5C0DE000000000000080E, E5A5C0DE0000000000000904,); runOnlyForDeploymentPostprocessing = 0; };
+DEC1510B000000000000003E = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (DEC1510B0000000000000028, DEC1510B0000000000000029, DEC1510B000000000000002A, DEC1510B000000000000002B, DEC1510B000000000000002C, DEC1510B000000000000002D, 1A5E4C710000000000000004, 1A5E4C710000000000000009, 1A5E4C71000000000000000D,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7B0B0E1A0000000000000135 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7B0B0E1A0000000000000130 /* BobPhoneWidget */;
+			targetProxy = 7B0B0E1A0000000000000134 /* PBXContainerItemProxy */;
+		};
+		FACE0A7E000000000000000F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7B0B0E1A0000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FACE0A7E000000000000000E;
+			remoteInfo = BobPhoneNotification;
+		};
+		FACE0A7E0000000000000010 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FACE0A7E000000000000000E /* BobPhoneNotification */;
+			targetProxy = FACE0A7E000000000000000F /* PBXContainerItemProxy */;
+		};
+DEC1510A0000000000000041 = {isa = PBXTargetDependency; target = 7B0B0E1A0000000000000002; targetProxy = DEC1510A0000000000000040; };
+DEC1510B0000000000000041 = {isa = PBXTargetDependency; target = 7B0B0E1A0000000000000002; targetProxy = DEC1510B0000000000000040; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		7B0B0E1A0000000000000050 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B0B0E1A0000000000000071 /* Debug.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		7B0B0E1A0000000000000051 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B0B0E1A0000000000000072 /* Release.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		7B0B0E1A0000000000000052 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B0B0E1A0000000000000071 /* Debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = BobPhone/BobPhone.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BobPhone/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Dark Army";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		7B0B0E1A0000000000000053 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B0B0E1A0000000000000072 /* Release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = BobPhone/BobPhone.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BobPhone/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Dark Army";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		7B0B0E1A0000000000000152 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B0B0E1A0000000000000071 /* Debug.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = BobPhoneWidget/BobPhoneWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BobPhoneWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID).widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		7B0B0E1A0000000000000153 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B0B0E1A0000000000000072 /* Release.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = BobPhoneWidget/BobPhoneWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BobPhoneWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID).widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+DEC1510A0000000000000044 = {isa = XCBuildConfiguration; buildSettings = {
+ BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BobPhone.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BobPhone";
+ CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+ PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID).tests"; PRODUCT_NAME = "$(TARGET_NAME)";
+ SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";
+ }; name = Debug; };
+DEC1510A0000000000000045 = {isa = XCBuildConfiguration; buildSettings = {
+ BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BobPhone.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BobPhone";
+ CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+ PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID).tests"; PRODUCT_NAME = "$(TARGET_NAME)";
+ SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";
+ }; name = Release; };
+DEC1510B0000000000000044 = {isa = XCBuildConfiguration; buildSettings = {
+ BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BobPhone.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BobPhone";
+ CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+ PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID).widgettests"; PRODUCT_NAME = "$(TARGET_NAME)";
+ SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";
+ }; name = Debug; };
+DEC1510B0000000000000045 = {isa = XCBuildConfiguration; buildSettings = {
+ BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BobPhone.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BobPhone";
+ CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+ PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID).widgettests"; PRODUCT_NAME = "$(TARGET_NAME)";
+ SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";
+ }; name = Release; };
+		FACE0A7E0000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B0B0E1A0000000000000071 /* Debug.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = BobPhoneNotification/BobPhoneNotification.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BobPhoneNotification/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID).notification";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		FACE0A7E0000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B0B0E1A0000000000000072 /* Release.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = BobPhoneNotification/BobPhoneNotification.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BobPhoneNotification/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DARK_ARMY_BUNDLE_ID).notification";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		7B0B0E1A0000000000000060 /* Build configuration list for PBXProject "BobPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7B0B0E1A0000000000000050 /* Debug */,
+				7B0B0E1A0000000000000051 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7B0B0E1A0000000000000061 /* Build configuration list for PBXNativeTarget "BobPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7B0B0E1A0000000000000052 /* Debug */,
+				7B0B0E1A0000000000000053 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7B0B0E1A0000000000000160 /* Build configuration list for PBXNativeTarget "BobPhoneWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7B0B0E1A0000000000000152 /* Debug */,
+				7B0B0E1A0000000000000153 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+DEC1510A0000000000000043 = {isa = XCConfigurationList; buildConfigurations = (DEC1510A0000000000000044, DEC1510A0000000000000045,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+DEC1510B0000000000000043 = {isa = XCConfigurationList; buildConfigurations = (DEC1510B0000000000000044, DEC1510B0000000000000045,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		FACE0A7E0000000000000013 /* Build configuration list for PBXNativeTarget "BobPhoneNotification" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FACE0A7E0000000000000011 /* Debug */,
+				FACE0A7E0000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7B0B0E1A00000000000001D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.20.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7B0B0E1A00000000000001D1 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7B0B0E1A00000000000001D0;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 7B0B0E1A0000000000000001 /* Project object */;
+}

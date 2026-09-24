@@ -1,0 +1,247 @@
+{
+  "aggregate_bytes": 1977396,
+  "documents": {
+    ".claude/agents/bc-bug-auditor.md": {
+      "bytes": 8062,
+      "sha256": "68592ddf718c2685dc7084aee3207a0549d2f2fd736441f1c3e79ca1620badcf"
+    },
+    ".claude/agents/bc-implementer.md": {
+      "bytes": 13180,
+      "sha256": "cfe846adfc0b624d36724e2fe14efb74418fcf7f7ec614d28e85fc045a7b439d"
+    },
+    ".claude/agents/bc-integration-reviewer.md": {
+      "bytes": 10099,
+      "sha256": "e0f945729e8eed48d16a1a605864c9bb61c9a237aa829fac86ec0f033022584e"
+    },
+    ".claude/agents/bc-planner.md": {
+      "bytes": 12234,
+      "sha256": "4dd8bb4f629d2a29909920dca7350983c53d4a5efd5b7849e5dcd7cb3580226b"
+    },
+    ".claude/agents/bc-security-reviewer.md": {
+      "bytes": 8813,
+      "sha256": "98e6971120aefb755bf7535269d9a7c0b38804e7e7b1b7111241797dc92cb9e7"
+    },
+    ".claude/agents/bc-verifier.md": {
+      "bytes": 8593,
+      "sha256": "8b13cb9261e580612b4fd40c6f873983a05f0074374140babb11db11219aa913"
+    },
+    ".claude/skills/ship/SKILL.md": {
+      "bytes": 39848,
+      "sha256": "8d82659ae5d78218b89d4387e0025ba7e7ea968bd25dd924182d10ee99b75143"
+    },
+    "AGENTS.md": {
+      "bytes": 7232,
+      "sha256": "7f87797f247e809840ff33ff638e71cfa82898d738ce4b407a3c619d1c607858"
+    },
+    "CLAUDE.md": {
+      "bytes": 140021,
+      "sha256": "c64994c424e9a41775ce2bf1e8b1f534f169fa1e85f08ad5029843d02922aefc"
+    },
+    "TODO.md": {
+      "bytes": 143781,
+      "sha256": "edba4a5ff206f504742724b947f30b129570bf557d5d082d0e1d04f3792c4ac8"
+    }
+  },
+  "note": "Byte counts of explicit load sets; not observed request tokens, not provider billing. A path is counted once per load set.",
+  "roles": {
+    "bc-bug-auditor": {
+      "brief": ".claude/agents/bc-bug-auditor.md",
+      "model": null,
+      "model_reasoning_effort": "high",
+      "sandbox_mode": "read-only",
+      "shim": ".codex/agents/bc-bug-auditor.toml",
+      "tools": "Read, Glob, Grep, Bash"
+    },
+    "bc-implementer": {
+      "brief": ".claude/agents/bc-implementer.md",
+      "model": null,
+      "model_reasoning_effort": "high",
+      "sandbox_mode": "workspace-write",
+      "shim": ".codex/agents/bc-implementer.toml",
+      "tools": "Read, Write, Edit, Glob, Grep, Bash"
+    },
+    "bc-integration-reviewer": {
+      "brief": ".claude/agents/bc-integration-reviewer.md",
+      "model": null,
+      "model_reasoning_effort": "high",
+      "sandbox_mode": "read-only",
+      "shim": ".codex/agents/bc-integration-reviewer.toml",
+      "tools": "Read, Glob, Grep, Bash"
+    },
+    "bc-planner": {
+      "brief": ".claude/agents/bc-planner.md",
+      "model": null,
+      "model_reasoning_effort": "high",
+      "sandbox_mode": "workspace-write",
+      "shim": ".codex/agents/bc-planner.toml",
+      "tools": "Read, Write, Edit, Glob, Grep, Bash"
+    },
+    "bc-security-reviewer": {
+      "brief": ".claude/agents/bc-security-reviewer.md",
+      "model": null,
+      "model_reasoning_effort": "high",
+      "sandbox_mode": "read-only",
+      "shim": ".codex/agents/bc-security-reviewer.toml",
+      "tools": "Read, Glob, Grep, Bash"
+    },
+    "bc-verifier": {
+      "brief": ".claude/agents/bc-verifier.md",
+      "model": null,
+      "model_reasoning_effort": "high",
+      "sandbox_mode": "read-only",
+      "shim": ".codex/agents/bc-verifier.toml",
+      "tools": "Read, Glob, Grep, Bash"
+    }
+  },
+  "rule": "legacy",
+  "scenarios": {
+    "cross-surface": {
+      "bytes": 972113,
+      "mode": "implement",
+      "paths": [
+        "host/bob_companion_daemon/api_server.py",
+        "panel/Sources/BobPanel/DaemonClient.swift",
+        "host/tests/test_api_server.py"
+      ],
+      "references": [],
+      "roles": {
+        "bc-bug-auditor": {
+          "bytes": 155315,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/agents/bc-bug-auditor.md"
+          ]
+        },
+        "bc-implementer": {
+          "bytes": 160433,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/agents/bc-implementer.md"
+          ]
+        },
+        "bc-integration-reviewer": {
+          "bytes": 157352,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/agents/bc-integration-reviewer.md"
+          ]
+        },
+        "bc-security-reviewer": {
+          "bytes": 156066,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/agents/bc-security-reviewer.md"
+          ]
+        },
+        "bc-verifier": {
+          "bytes": 155846,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/agents/bc-verifier.md"
+          ]
+        },
+        "parent": {
+          "bytes": 187101,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/skills/ship/SKILL.md"
+          ]
+        }
+      },
+      "rule": "legacy",
+      "surfaces": [
+        "host",
+        "panel"
+      ],
+      "widened": []
+    },
+    "plan-only": {
+      "bytes": 346588,
+      "mode": "plan",
+      "paths": [
+        "tools/ship_efficiency.py",
+        "docs/ship-efficiency.md"
+      ],
+      "references": [],
+      "roles": {
+        "bc-planner": {
+          "bytes": 159487,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/agents/bc-planner.md"
+          ]
+        },
+        "parent": {
+          "bytes": 187101,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/skills/ship/SKILL.md"
+          ]
+        }
+      },
+      "rule": "legacy",
+      "surfaces": [
+        "tools"
+      ],
+      "widened": []
+    },
+    "python-only": {
+      "bytes": 658695,
+      "mode": "implement",
+      "paths": [
+        "host/bob_companion_daemon/session_stats.py",
+        "host/tests/test_session_stats.py"
+      ],
+      "references": [],
+      "roles": {
+        "bc-bug-auditor": {
+          "bytes": 155315,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/agents/bc-bug-auditor.md"
+          ]
+        },
+        "bc-implementer": {
+          "bytes": 160433,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/agents/bc-implementer.md"
+          ]
+        },
+        "bc-verifier": {
+          "bytes": 155846,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/agents/bc-verifier.md"
+          ]
+        },
+        "parent": {
+          "bytes": 187101,
+          "paths": [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/skills/ship/SKILL.md"
+          ]
+        }
+      },
+      "rule": "legacy",
+      "surfaces": [
+        "host"
+      ],
+      "widened": []
+    }
+  },
+  "schema": 1,
+  "source": "The tree the ship of plans/2026-09-19-ship-token-efficiency.md began on, measured under the legacy rule (every role reads AGENTS.md, the whole CLAUDE.md and its brief; the parent reads the whole skill): HEAD 5f02fd9 plus the pre-ship patches, with CLAUDE.md the saved pre-ship copy (140,021 bytes) \u2014 the same bytes claude-md-baseline.json digests, which HEAD plus the patch reapplied by hand does not reproduce. Recorded by tools/ship_efficiency.py inventory --source on that tree."
+}

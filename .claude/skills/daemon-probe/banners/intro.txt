@@ -1,0 +1,21 @@
+DAEMON PROBE  |  no agents  |  bash only  |  DARK ARMY    
+
+  .---------------------------------------------------.
+  |  [dark army // smoke alarm]         [_][=][X]      |
+  |....................................................|
+  |                                                    |
+  |  > A MONITOR THAT LIES IS WORSE THAN NO MONITOR_   |
+  |                                                    |
+  |  everything upstream of Dark Army changes without  |
+  |  telling it: the hook contract, the transcript     |
+  |  shape, the agents roster, the usage cache.        |
+  |                                                    |
+  |  $ ./probe.sh --hooks --api --upstreams            |
+  |  ##############################  100%              |
+  |  reporting freshness, not opinions.                |
+  |                                                    |
+  '----------------------------------------------------'
+                        |||
+               _________|_|_________
+  /daemon-probe - live pipeline health (Dark Army)    
+    read-only. no agent spawn.

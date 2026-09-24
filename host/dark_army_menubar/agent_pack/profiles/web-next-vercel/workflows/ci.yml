@@ -1,0 +1,57 @@
+name: CI
+
+# A commit that only touches the iOS client has nothing for THIS workflow to
+# do — there is no Next build to run in it. If this project has no ios/
+# directory the paths-ignore is harmless. iOS guards live in ios.yml, which
+# carries no path filter for exactly that reason.
+on:
+  pull_request:
+    paths-ignore: ['ios/**']
+  push:
+    branches: [main]
+    paths-ignore: ['ios/**']
+
+# A newer push to the same branch cancels the older run — no point paying for
+# CI on a commit that is already superseded.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint · Typecheck · Test · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+      # `next build` runs env() at module scope for any route that touches auth
+      # or the DB, so it needs syntactically valid values. These are throwaways
+      # — the build never opens a connection.
+      - name: Build
+        run: pnpm build
+        env:
+          # Every REQUIRED field of the env schema needs a placeholder here, or
+          # the build refuses to start. None of these values is ever used: CI
+          # opens no connection and makes no request.
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          AUTH_SECRET: ci-placeholder-secret-not-used-in-production-000
+          AUTH_URL: http://localhost:3000
+          # <add one line per required env field>
