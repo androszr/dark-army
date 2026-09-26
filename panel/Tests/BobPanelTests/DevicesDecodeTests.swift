@@ -101,4 +101,44 @@ final class DevicesDecodeTests: XCTestCase {
         """)
         XCTAssertFalse(closed.devices.pairingOpen)
     }
+
+    func testBotAccessDecodesWhenStated() throws {
+        let snap = try decode("""
+        {"generated_at": 1, "agents": {}, "counts": {},
+         "devices": {"available": true, "devices": [
+            {"id": "bot", "bot_access": {
+                "read": {"mode": "forever", "until": 0},
+                "write": {"mode": "1h", "until": 1700003600}}}]}}
+        """)
+        let access = snap.devices.devices.first?.botAccess
+        XCTAssertEqual(access?.read.mode, "forever")
+        XCTAssertEqual(access?.read.until, 0)
+        XCTAssertEqual(access?.write.mode, "1h")
+        XCTAssertEqual(access?.write.until ?? 0, 1_700_003_600, accuracy: 0.001)
+    }
+
+    /// Absent is "not the bot" (or an older daemon): nil, never a zeroed
+    /// pair that would draw two "off" groups on every phone.
+    func testBotAccessAbsentIsNil() throws {
+        let snap = try decode("""
+        {"generated_at": 1, "agents": {}, "counts": {},
+         "devices": {"available": true, "devices": [
+            {"id": "p", "lease_expires_at": 0}]}}
+        """)
+        XCTAssertEqual(snap.devices.devices.count, 1)
+        XCTAssertNil(snap.devices.devices.first?.botAccess)
+    }
+
+    func testBotAccessWithOnlyReadKeepsWriteDefault() throws {
+        let snap = try decode("""
+        {"generated_at": 1, "agents": {}, "counts": {},
+         "devices": {"available": true, "devices": [
+            {"id": "bot", "bot_access": {"read": {"mode": "6h"}}}]}}
+        """)
+        let access = snap.devices.devices.first?.botAccess
+        XCTAssertNotNil(access)
+        XCTAssertEqual(access?.read.mode, "6h")
+        XCTAssertEqual(access?.read.until, 0)
+        XCTAssertEqual(access?.write, BotGrant())
+    }
 }

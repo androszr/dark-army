@@ -2069,9 +2069,13 @@ final class PhoneClient: ObservableObject {
     /// The bars off a state answer's `usage` key, applied exactly as the
     /// separate `usage` read applies them. Returns whether any rode.
     @discardableResult
-    private func takeUsage(from body: Data, record: PairingRecord) -> Bool {
+    private func takeUsage(from body: Data, record: PairingRecord,
+                           frame: StateFrame? = nil) -> Bool {
+        // A poll leg hands in the carrier it already read off the main
+        // actor (`StateFrame`); the socket's push still reads it here.
         guard record.token == self.record?.token,
-              let carried = try? JSONDecoder().decode(StateUsageCarrier.self, from: body),
+              let carried = frame.map({ $0.usage })
+                ?? (try? JSONDecoder().decode(StateUsageCarrier.self, from: body)),
               let report = carried.usage else {
             usageRodeState = false
             return false
@@ -2239,10 +2243,13 @@ final class PhoneClient: ObservableObject {
     /// would turn an unchanged body into a valid *empty* snapshot and blank
     /// the fleet, the board and the needs-you count on every quiet poll.
     private func applyState(_ body: Data, record: PairingRecord,
-                            route: Via) -> StateOutcome {
+                            route: Via, frame: StateFrame? = nil) -> StateOutcome {
         // Decoded once and read twice: the `unchanged` marker here, the
         // `sections_unchanged` list after the `Snapshot` decode below.
-        let answer = (try? JSONDecoder().decode(StateAnswer.self, from: body))
+        // A poll leg hands in `frame`, read off the main actor in the same
+        // order (`StateFrame`); the socket's push decodes here.
+        let answer = frame?.answer
+            ?? (try? JSONDecoder().decode(StateAnswer.self, from: body))
             ?? StateAnswer()
         if answer.unchanged {
             guard answer.stateDigest == heldStateDigest else {
@@ -2294,8 +2301,10 @@ final class PhoneClient: ObservableObject {
             if departedAt == nil { onLive?() }
             return .unchanged
         }
-        guard var decoded = try? JSONDecoder().decode(
-            Snapshot.self, from: body) else { return .unreadable }
+        // `frame` present means the picture was already read (nil there is
+        // unreadable, never a second try); absent, it is read here.
+        guard var decoded = frame.map({ $0.snapshot }) ?? (try? JSONDecoder().decode(
+            Snapshot.self, from: body)) else { return .unreadable }
         // A delta answer: the sections the Mac left out are named, never
         // silently absent, and each is taken from `heldWire` — the last
         // answer as it came off the wire, never the screen, whose board has
@@ -2424,6 +2433,14 @@ final class PhoneClient: ObservableObject {
             guard let answer = await home.request(
                 kind: "state", body: stateRequestBody(), host: host,
                 port: record.port, timeout: timeout) else { continue }
+            // Read off the main actor, straight after the transport's own
+            // await (`StateFrame`): a whole picture parsed here stalled the
+            // screen mid-scroll.
+            let frame = await StateFrame.offMain(answer.body)
+            // The pairing is read again after both awaits, as the relay
+            // path does: an unpair or re-pair while this answer was on the
+            // wire or being read must not be drawn over.
+            guard record.token == self.record?.token else { return true }
             if answer.failure == RelayChannel.Trouble.cutShort { return true }
             // One exception first: a 421 is the Mac saying this address is
             // a tunnel it does not serve — skip it, keep the pairing, and
@@ -2453,12 +2470,12 @@ final class PhoneClient: ObservableObject {
                 return true
             }
             guard applyState(answer.body, record: record,
-                             route: .lan) != .unreadable else {
+                             route: .lan, frame: frame) != .unreadable else {
                 status = .unreachable
                 lastError = "The Mac sent something this app could not read."
                 return true
             }
-            if !takeUsage(from: answer.body, record: record) {
+            if !takeUsage(from: answer.body, record: record, frame: frame) {
                 await pollUsage(host: host, record: record, timeout: timeout)
             }
             // After both the snapshot and the usage landed (or the usage
@@ -2493,6 +2510,9 @@ final class PhoneClient: ObservableObject {
         let answer = await channel.request(kind: "state",
                                            body: stateRequestBody(),
                                            timeout: stateLeg)
+        // Off the main actor, and before the pairing check below, so the
+        // check still reads the moment the answer is applied (`StateFrame`).
+        let frame = await StateFrame.offMain(answer.body)
         guard record.token == self.record?.token else { return false }
         guard answer.failure.isEmpty else {
             if status != .unpaired {
@@ -2503,7 +2523,7 @@ final class PhoneClient: ObservableObject {
         }
         guard answer.status == 200,
               applyState(answer.body, record: record,
-                         route: .relay) != .unreadable else {
+                         route: .relay, frame: frame) != .unreadable else {
             status = .unreachable
             lastError = answer.detail.isEmpty
                 ? "The Mac sent something this app could not read."
@@ -2513,7 +2533,7 @@ final class PhoneClient: ObservableObject {
         // The bars are the leg worth dropping when a budget runs thin: a
         // miss keeps the last ones, and the tile's counts have landed.
         let usageLeg = Self.relayLeg(deadline)
-        if !takeUsage(from: answer.body, record: record),
+        if !takeUsage(from: answer.body, record: record, frame: frame),
            usageLeg >= Self.usageLegFloor {
             await pollUsageViaRelay(channel, record: record, timeout: usageLeg)
         }

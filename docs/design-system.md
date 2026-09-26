@@ -26,7 +26,7 @@ The iPhone widget extension compiles the phone's generated Swift file directly
 from its app group in the Xcode project. `WidgetTheme` maps those shared colors
 to compact WidgetKit roles; it owns no second palette or generated copy.
 The Mac app's SwiftPM resources and the iPhone Xcode target bundle those
-folders, so Settings → Design system and Menu → Design system work offline
+folders, so Settings → Advanced → *Open Signal workshop* and Menu → Design system work offline
 without this checkout. The WebView can navigate only inside its workshop
 folder and exposes no native bridge, network reader, or daemon action.
 

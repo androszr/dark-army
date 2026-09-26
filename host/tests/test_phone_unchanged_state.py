@@ -71,6 +71,31 @@ def test_apply_state_reads_the_unchanged_marker_before_decoding_a_snapshot():
     assert block.index("answer.unchanged") < block.index("Snapshot.self")
 
 
+def test_both_poll_legs_read_the_answer_off_the_main_actor():
+    """A whole picture is ~440 KB; parsed on the main actor it stalled the
+    screen mid-scroll. Each poll leg reads it with `StateFrame.offMain`
+    straight after the transport's await and hands the frame to both
+    readers; the frame keeps `applyState`'s marker-first order."""
+    text = _read(CLIENT)
+    for name in ("private func pollDirect(", "private func pollViaRelay("):
+        leg = _block(text, name)
+        read = leg.index("await StateFrame.offMain(answer.body)")
+        assert read < leg.index("frame: frame) != .unreadable")
+        assert "takeUsage(from: answer.body, record: record, frame: frame)" in leg
+    # Both legs read the pairing again after the decode's await, so an
+    # unpair while the picture was being read is never drawn over.
+    for name in ("private func pollDirect(", "private func pollViaRelay("):
+        leg = _block(text, name)
+        assert leg.index("StateFrame.offMain") \
+            < leg.index("guard record.token == self.record?.token") \
+            < leg.index("frame: frame) != .unreadable")
+    frame = _block(_read(MODELS), "struct StateFrame")
+    assert frame.index("StateAnswer(from: decoder)") \
+        < frame.index("if !frame.answer.unchanged") \
+        < frame.index("Snapshot(from: decoder)")
+    assert "Task.detached" in frame
+
+
 def test_both_state_reads_send_the_conditional_body():
     text = _read(CLIENT)
     assert text.count("stateRequestBody") == 3  # one definition, two callers

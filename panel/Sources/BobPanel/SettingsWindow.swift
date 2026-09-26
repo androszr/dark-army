@@ -2,11 +2,28 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// Size constants for the settings window: a floor, because a window the user
-/// can resize must be honest about it.
+/// Size constants for the settings window: the size it first opens at, a
+/// floor, because a window the user can resize must be honest about it, and
+/// the sidebar's fixed width. Logical points: the window is deliberately
+/// unscaled (`docs/panel-window-contract.md`, *One scale grows the whole
+/// window*).
 enum SettingsWindowMetrics {
-    static let minWidth: CGFloat = 460
-    static let minHeight: CGFloat = 560
+    static let minWidth: CGFloat = 720
+    static let minHeight: CGFloat = 520
+    /// The first present's content size, clamped to the screen.
+    static let defaultWidth: CGFloat = 860
+    static let defaultHeight: CGFloat = 620
+    /// The section list on the left; the page takes every point that is left.
+    static let sidebarWidth: CGFloat = 210
+    /// The rule between the sidebar and the page.
+    static let dividerWidth: CGFloat = 1
+    /// The page's inset on every side.
+    static let pagePadding: CGFloat = 24
+
+    /// The width a page's content gets in a window this wide.
+    static func pageContentWidth(windowWidth: CGFloat) -> CGFloat {
+        windowWidth - sidebarWidth - dividerWidth - 2 * pagePadding
+    }
 }
 
 /// The one settings window, and the only thing that opens or closes it.
@@ -16,8 +33,8 @@ enum SettingsWindowMetrics {
 /// there is no Combine sink presenting it and the panel's `show()` never
 /// re-presents it — the only ways in are the ⋯ button, the app menu's
 /// Settings… item and ⌘,. **`windowShouldClose` is true unconditionally**:
-/// every control writes through on press and the search query is scratch, so
-/// nothing is half-typed; the one thing in flight can be a dictation shortcut
+/// every control writes through on press and the search query is scratch,
+/// and so is the section, so nothing is half-typed; the one thing in flight can be a dictation shortcut
 /// capture, and blocking a close on it would strand a window whose only exit
 /// is the key the capture is eating — `windowWillClose` cancels the capture
 /// instead.
@@ -71,8 +88,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if let window { return window }
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0,
-                                width: SettingsWindowMetrics.minWidth,
-                                height: SettingsWindowMetrics.minHeight),
+                                width: SettingsWindowMetrics.defaultWidth,
+                                height: SettingsWindowMetrics.defaultHeight),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         win.identifier = NSUserInterfaceItemIdentifier("bob-settings")
@@ -98,8 +115,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func placeCentred(_ win: NSWindow) {
         guard let screen = screenHint?() ?? win.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
-        let size = NSSize(width: SettingsWindowMetrics.minWidth,
-                          height: SettingsWindowMetrics.minHeight)
+        // The default is a *content* size; the frame adds the title bar.
+        let size = win.frameRect(forContentRect: NSRect(
+            x: 0, y: 0,
+            width: SettingsWindowMetrics.defaultWidth,
+            height: SettingsWindowMetrics.defaultHeight)).size
         let frame = NSRect(x: (visible.midX - size.width / 2).rounded(),
                            y: (visible.midY - size.height / 2).rounded(),
                            width: size.width, height: size.height)
@@ -164,6 +184,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // only for a window that is actually on screen.
         actions.cancelShortcutRecording()
         actions.state.designSystemOpen = false
+        // A flash left set would not flash again on the next jump to it.
+        actions.state.highlightedRowId = nil
         guard let window else { return }
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.close()
@@ -188,6 +210,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // The workshop sheet belongs to this opening: the next one starts
         // on the settings themselves (review, 25 Sep 2026).
         actions.state.designSystemOpen = false
+        actions.state.highlightedRowId = nil
         onOcclusionChange?()
     }
 

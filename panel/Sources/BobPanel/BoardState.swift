@@ -225,9 +225,18 @@ final class BoardState: ObservableObject {
     /// A card face's switcher took (`true`) or let go of (`false`) the
     /// keyboard. A claim always lands; a release lands only from the card
     /// that holds the slot.
+    ///
+    /// **Assigned only when the holder changes.** Every tile's switcher
+    /// reports a release from `onDisappear`, and a lazy grid tears tiles down
+    /// on every scroll step — a `@Published` assignment publishes even when
+    /// it writes the value already held, and every tile, every row and the
+    /// whole panel observe this object, so an unguarded `nil = nil` re-ran
+    /// the board once per tile that scrolled out of view (measured: 42
+    /// republishes in a 6,000pt scroll). That was the board's scroll stutter.
     func noteSwitcherFocus(card id: String, focused: Bool) {
-        switcherFocused = Self.switcherFocus(after: switcherFocused, card: id,
-                                            focused: focused)
+        let next = Self.switcherFocus(after: switcherFocused, card: id,
+                                      focused: focused)
+        if next != switcherFocused { switcherFocused = next }
     }
 
     /// The pure rule behind `noteSwitcherFocus`, tabled in

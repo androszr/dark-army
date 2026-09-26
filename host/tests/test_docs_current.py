@@ -111,6 +111,14 @@ RETIRED = (
     ("docs/reference.md", "four narrow ways"),
     # A stopped native Codex session can take an opt-in reply.
     ("README.md", "never replied to"),
+    # Settings is a sidebar of eight sections since 26 Sep 2026: Pipeline is
+    # under Board, Agent models is Models, and Restart / Quit / the kill
+    # switch sit at the foot of the sidebar.
+    ("README.md", "Settings → **Pipeline**"),
+    ("README.md", "Settings → **This app**"),
+    ("README.md", "Settings → **Agent models**"),
+    ("docs/reference.md", "one scrollable page of headed groups"),
+    ("docs/kill-switch.md", "settings page's first row"),
 )
 
 # A hard-coded test count decays by the week; the commands stay, the number goes.

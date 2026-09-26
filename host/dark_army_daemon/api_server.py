@@ -163,6 +163,9 @@ REVEAL_TIMEOUT = 12.0
 # nothing but moving clocks. See `_broadcast`.
 BROADCAST_MIN_INTERVAL = 0.2
 BROADCAST_QUIET_INTERVAL = 1.0
+# How long after a bot grant's end the lapse frame is sent, so the grant
+# has certainly read as off when the frame is built.
+BOT_EXPIRY_GRACE_SECONDS = 0.5
 # The floor for a frame whose only movement is a poll-echo field
 # (`_POLL_ECHO_FIELDS`, all three inside `devices`): a phone checking in every
 # four seconds must not buy a panel frame of its own each time. Deferred this
@@ -516,6 +519,10 @@ class ApiServer:
         # the oldest. A list rather than a scalar so the bound is the
         # constant's to state and not the code's to imply.
         self._lan_streams: dict[str, list] = {}
+        # The one timer at the earliest running bot grant's end
+        # (`_arm_bot_expiry`), and the moment it is set for.
+        self._bot_expiry_handle = None
+        self._bot_expiry_at = 0.0
         # Open connections on the phone door, per peer address and in all,
         # counted on the accept and released in `_handle_lan_client`'s
         # `finally`. Plain ints touched only on the loop: no lock.
@@ -668,6 +675,9 @@ class ApiServer:
 
     async def stop(self) -> None:
         self._daemon.remove_observer(self)
+        if self._bot_expiry_handle is not None:
+            self._bot_expiry_handle.cancel()
+            self._bot_expiry_handle = None
         if self._flush_handle is not None:
             self._flush_handle.cancel()
             self._flush_handle = None
@@ -784,7 +794,7 @@ class ApiServer:
             # Paired phones, and whether the LAN door is actually listening.
             # `available` is stated by the daemon rather than inferred from an
             # empty list — enrollment's shape, same reason.
-            "devices": self._daemon.devices_snapshot()
+            "devices": self._devices_section()
             if hasattr(self._daemon, "devices_snapshot") else {},
             # Needs you acknowledgements. `available` is stated, never
             # inferred: an older daemon sends no section at all.
@@ -2122,7 +2132,8 @@ class ApiServer:
         action = payload.get("action", "")
         if action not in ("begin_pairing", "unpair_device", "set_relay",
                           "set_relay_ws", "set_away_days",
-                          "set_lock_screen_actions", "pair_bot"):
+                          "set_lock_screen_actions", "pair_bot",
+                          "set_bot_access"):
             return None
         return action, payload
 
@@ -2201,6 +2212,23 @@ class ApiServer:
                 str(payload.get("device_id") or ""), enabled)
             if ok:
                 self._broadcast()
+            body = json.dumps({"ok": ok, "detail": detail}).encode()
+            return (200 if ok else 409), "application/json", body
+        if action == "set_bot_access":
+            # `set_away_days`' shape: the desk switching one side of the
+            # bot's access. The daemon method refuses any target but the
+            # headless device; the desk is never the bot, so no requester.
+            side = payload.get("side")
+            mode = payload.get("mode")
+            if not isinstance(side, str) or not isinstance(mode, str):
+                body = json.dumps({
+                    "ok": False,
+                    "detail": relay.BOT_ACCESS_MODE_REFUSAL}).encode()
+                return 409, "application/json", body
+            target = str(payload.get("device_id") or "")
+            ok, detail = self._daemon.set_bot_access(target, side, mode)
+            if ok:
+                self._bot_grants_moved(target)
             body = json.dumps({"ok": ok, "detail": detail}).encode()
             return (200 if ok else 409), "application/json", body
         if action == "pair_bot":
@@ -2507,7 +2535,10 @@ class ApiServer:
         remote frame must never extend its own lease."""
         devices.note_home_recv_ctr(device_id, ctr, durable=durable)
         self._device_last_seen[device_id] = time.time()
-        relay.note_lan_proof(device_id)
+        # The bot is not on the day lease: its access is the two grants
+        # a person sets, and its own home frames must never re-arm anything.
+        if not devices.is_bot(device_id):
+            relay.note_lan_proof(device_id)
 
     @staticmethod
     def _home_answer(device_id: str, key: bytes, body: dict, *,
@@ -2708,9 +2739,14 @@ class ApiServer:
         payload = frame.get("body")
         payload = payload if isinstance(payload, dict) else {}
         staging = str(payload.get("staging") or "")
+        refusal = self._bot_refusal(device_id, "write")
         name = str(payload.get("name") or "")
         frame_id = str(frame.get("id") or "")
-        if not staging or not name:
+        if refusal:
+            # Staging a file is a write: the bot's Write grant decides, and
+            # the blob is never opened.
+            inner = 403, {"ok": False, "detail": refusal}
+        elif not staging or not name:
             inner = 400, {"ok": False, "detail": "that upload named no file"}
         else:
             loop = asyncio.get_running_loop()
@@ -3111,6 +3147,12 @@ class ApiServer:
         # is refused outright when board_dispatch is off. Keyed on card_ids.
         # No parenthesis in this block.
         "board_start_batch",
+        # Switching the bot's read or write access on, off or onto a timer
+        # from the phone. It reaches one row only: BobDaemon.set_bot_access
+        # refuses any target that is not the headless device, and refuses
+        # the bot itself by its verified identity, never by a payload name.
+        # Its own line, chosen on purpose; no parenthesis in this block.
+        "set_bot_access",
     )
 
     #: The phone writes **from away**, and the whole set of them. It starts
@@ -3238,6 +3280,13 @@ class ApiServer:
         # opens. Away it rides the lease, Face ID and the receipt token like
         # every write. No parenthesis in this block.
         "board_start_batch",
+        # Away as well as at home, and its own decision: refreshing the
+        # bot's timer from the train is exactly the thing the person asked
+        # for. Away it rides the phone's lease, Face ID and the receipt
+        # token; the bot itself is refused by identity in
+        # BobDaemon.set_bot_access, so it can never lengthen its own grant.
+        # No parenthesis in this block.
+        "set_bot_access",
     )
 
     #: The board names inside `LAN_ACTIONS`. Membership, not a prefix.
@@ -3272,8 +3321,10 @@ class ApiServer:
 
         ``device_id`` is the already-verified caller — the sealed frame's
         identity, at home (`_home_open`) or away (`relay_client`) — and only
-        `register_push_token` reads it: the token must land on the channel
-        of the phone that *sent* it, never one the payload names.
+        `register_push_token`, `register_activity_token` and
+        `set_bot_access` read it: a token must land on the channel of the
+        phone that *sent* it, never one the payload names, and the bot must
+        be refused by who it is when it aims at its own grants.
         """
         if action in self._LAN_BOARD:
             return await self._board_action(action, payload)
@@ -3409,6 +3460,25 @@ class ApiServer:
             return self._register_push_token(payload, device_id)
         if action == "register_activity_token":
             return self._register_activity_token(payload, device_id)
+        if action == "set_bot_access":
+            # The payload names the *target*; ``device_id`` is the verified
+            # sender, handed on as the requester so the bot is refused by
+            # identity. An away press is filed under "Done remotely" by
+            # `_sealed_run`'s own recorder; a home press is not filed.
+            target = payload.get("device_id")
+            side = payload.get("side")
+            mode = payload.get("mode")
+            if not isinstance(target, str) or not isinstance(side, str) \
+                    or not isinstance(mode, str):
+                return 400, "application/json", json.dumps(
+                    {"error": "unknown action", "action": action}
+                ).encode()
+            ok, detail = self._daemon.set_bot_access(
+                target, side, mode, requester=device_id)
+            if ok:
+                self._bot_grants_moved(target)
+            return (200 if ok else 409), "application/json", json.dumps(
+                {"ok": ok, "detail": detail}).encode()
         if action == "inbox_ack":
             key = payload.get("key")
             kind = payload.get("kind")
@@ -3652,6 +3722,20 @@ class ApiServer:
         on the Mac.
         """
         payload = payload if isinstance(payload, dict) else {}
+        # The bot's read grant, above **every** read kind: one `if` here is
+        # the whole read gate, so no kind below can be left open. A phone is
+        # never headless and passes untouched; expiry of *its* lease still
+        # bounds doing, never seeing.
+        headless = devices.is_bot(device_id)
+        if headless:
+            # A bot paired before the grants existed is made explicit on
+            # its first frame and taken off the day lease for good.
+            relay.materialise_bot_grants(device_id)
+        refusal = self._bot_refusal(device_id, "read") \
+            if headless and kind != "action" else ""
+        if refusal:
+            body = json.dumps({"error": refusal, "detail": refusal}).encode()
+            return 403, "application/json", body
         if kind == "state":
             status, content_type, body = self._state_answer(
                 payload, prebuilt=prebuilt)
@@ -3798,12 +3882,22 @@ class ApiServer:
                 return 403, "application/json", b'{"error":"outcome editing is available on the Mac"}'
             if action not in actions:
                 return 404, "application/json", b'{"error":"not found"}'
-            if check_lease and not relay.lease_valid(device_id):
+            # The bot's write grant decides for the bot on both doors, and
+            # the day lease no longer does; a phone keeps its day lease away
+            # and nothing at home, exactly as before.
+            if headless:
+                refusal = self._bot_refusal(device_id, "write")
+                if refusal:
+                    body = json.dumps(
+                        {"error": refusal, "detail": refusal}).encode()
+                    return 403, "application/json", body
+            elif check_lease and not relay.lease_valid(device_id):
                 body = json.dumps({"error": relay.LEASE_REFUSAL,
                                    "detail": relay.LEASE_REFUSAL}).encode()
                 return 403, "application/json", body
             # The one-time mark, **below** the allow-list and **below** the
-            # lease check, both deliberately: a token minted at home must
+            # lease check (the bot's write grant, for the bot), both
+            # deliberately: a token minted at home must
             # never replay out of a lapsed away window, and an unchosen verb
             # must 404 before anything is looked up. An absent or malformed
             # token means no dedupe and today's behaviour exactly, which is
@@ -3833,6 +3927,97 @@ class ApiServer:
                             action, device_id, status)
             return status, ctype, body
         return 404, "application/json", b'{"error":"not found"}'
+
+    @staticmethod
+    def _bot_refusal(device_id: str, side: str) -> str:
+        """The bot's refusal for ``side`` (``"read"`` / ``"write"``), or
+        ``""`` where the device is not the bot or that grant is on. **The
+        one place both refusals are chosen**, used by every door the bot
+        can reach: `_sealed_run` (every read kind and every action, home and
+        away), the home terminal stream (opening it is a read, each
+        keystroke a write) and the home upload (a write). `devices.is_bot`
+        fails closed; the grant is re-read per call, so an Off bites on the
+        very next frame or keystroke."""
+        if not devices.is_bot(device_id) \
+                or relay.bot_grant_valid(device_id, side):
+            return ""
+        return (relay.BOT_READ_REFUSAL if side == "read"
+                else relay.BOT_WRITE_REFUSAL)
+
+    def _close_bot_streams(self, device_id: str) -> None:
+        """Hang up the bot's open home terminal streams once either of its
+        grants is off, so a stream opened while Read was on does not keep
+        painting after it went off. A phone's streams are never touched."""
+        if not devices.is_bot(device_id):
+            return
+        if relay.bot_grant_valid(device_id, "read") \
+                and relay.bot_grant_valid(device_id, "write"):
+            return
+        for writer in list(self._lan_streams.get(device_id, [])):
+            try:
+                writer.close()
+            except OSError:
+                pass
+
+    def _bot_grants_moved(self, device_id: str) -> None:
+        """After a grant changed: close what it now forbids and redraw."""
+        self._close_bot_streams(device_id)
+        self._arm_bot_expiry_from_store()
+        self._broadcast()
+
+    def _arm_bot_expiry_from_store(self) -> None:
+        """Set the lapse timer from the store itself. `_broadcast` builds no
+        picture while nobody listens, so a grant change or a bot stream
+        opening with no panel and no phone attached would otherwise leave a
+        timed grant running on an open stream past its end."""
+        try:
+            self._arm_bot_expiry(self._daemon.devices_snapshot())
+        except Exception:  # noqa: BLE001 — a timer, never a refusal path
+            logger.exception("could not set the bot grant timer")
+
+    def _devices_section(self) -> dict:
+        """`state()`'s devices section, plus one timer at the moment the
+        earliest running bot grant ends, so a lapsed timer is redrawn (and
+        the bot's streams closed) when it lapses rather than at the next
+        unrelated frame."""
+        section = self._daemon.devices_snapshot()
+        self._arm_bot_expiry(section)
+        return section
+
+    def _arm_bot_expiry(self, section: dict) -> None:
+        now = time.time()
+        ends = []
+        for row in (section or {}).get("devices") or []:
+            access = row.get("bot_access") if isinstance(row, dict) else None
+            if not isinstance(access, dict):
+                continue
+            for grant in access.values():
+                until = grant.get("until") if isinstance(grant, dict) else None
+                if isinstance(until, (int, float)) and until > now:
+                    ends.append(float(until))
+        earliest = min(ends) if ends else 0.0
+        if earliest == self._bot_expiry_at:
+            return
+        if self._bot_expiry_handle is not None:
+            self._bot_expiry_handle.cancel()
+            self._bot_expiry_handle = None
+        self._bot_expiry_at = earliest
+        if not earliest:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._bot_expiry_at = 0.0
+            return
+        self._bot_expiry_handle = loop.call_later(
+            earliest - now + BOT_EXPIRY_GRACE_SECONDS, self._bot_grant_lapsed)
+
+    def _bot_grant_lapsed(self) -> None:
+        self._bot_expiry_handle = None
+        self._bot_expiry_at = 0.0
+        for device_id in list(self._lan_streams):
+            self._close_bot_streams(device_id)
+        self._broadcast()
 
     @staticmethod
     def _door_payload(action: str, payload: dict, actions: tuple) -> dict:
@@ -5435,6 +5620,15 @@ class ApiServer:
                 "error": "session is required"}, kind="err")
             await self._respond(writer, 200, "text/plain", answer)
             return
+        bot_refusal = self._bot_refusal(device_id, "read")
+        if bot_refusal:
+            # Watching a terminal is a read: the bot's Read grant decides,
+            # before anything is attached.
+            answer = self._home_answer(device_id, key, {
+                "re": stream_id, "status": 403,
+                "error": bot_refusal}, kind="err")
+            await self._respond(writer, 200, "text/plain", answer)
+            return
         handle, paint, exited, refusal = self._daemon.terminal_attach(session_id)
         if handle is None:
             answer = self._home_answer(device_id, key, {
@@ -5453,6 +5647,8 @@ class ApiServer:
                 pass
         open_streams.append(writer)
         self._lan_streams[device_id] = open_streams
+        if devices.is_bot(device_id):
+            self._arm_bot_expiry_from_store()
         # **The `try` opens on the same statement as the registration.** The
         # drain below awaits, so a phone that vanished between the admit and
         # the head raises here — and a `finally` that started after it would
@@ -5474,7 +5670,7 @@ class ApiServer:
                         session_id[:12], device_id)
             await terminal_stream.serve(
                 daemon._pty, handle, paint, exited, reader, writer,
-                on_input=lambda blob: daemon.terminal_stream_input(handle, blob),
+                on_input=self._lan_stream_input(device_id, handle),
                 on_size=lambda c, r: daemon.terminal_phone_resize(
                     handle, session_id, c, r),
                 codec=terminal_stream.SealedCodec(key, stream_id),
@@ -5488,6 +5684,18 @@ class ApiServer:
                 self._lan_streams[device_id] = rest
             else:
                 self._lan_streams.pop(device_id, None)
+
+    def _lan_stream_input(self, device_id: str, handle: str):
+        """The home stream's `I` frame handler for one device: every
+        keystroke is a write, so the bot's Write grant is re-read per frame
+        and a refusal goes back as the stream's own `E` frame. A phone
+        types under the desk's rules exactly as before."""
+        def on_input(blob: bytes):
+            refusal = self._bot_refusal(device_id, "write")
+            if refusal:
+                return False, refusal
+            return self._daemon.terminal_stream_input(handle, blob)
+        return on_input
 
     def _terminal_report_for(self, query: str, *, resize: bool,
                              viewer: str = ""):

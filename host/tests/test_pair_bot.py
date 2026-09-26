@@ -175,7 +175,10 @@ def test_pair_bot_mints_a_channel_beside_an_existing_phone(server):
     assert base64.b64decode(result["relay_key"]) == relay.channel_key(
         result["device_id"])
     assert result["relay_ws_url"] == "wss://socket.example"
-    assert relay.lease_valid(result["device_id"])
+    # The bot acts on its Write grant, not the day lease, which pairing
+    # clamps to 0 days so nothing can re-arm it.
+    assert relay.bot_grant_valid(result["device_id"], "write")
+    assert relay.lease_days(result["device_id"]) == 0
     snap = json.dumps(daemon.devices_snapshot())
     _secrets(snap)
     assert result["token"] not in snap
@@ -282,19 +285,25 @@ def test_the_pair_file_is_private_and_roundtrips():
     assert err == "" and frame["kind"] == "state" and frame["id"] == "req-1"
 
 
-def test_a_home_check_in_frame_arms_the_away_window(server):
-    """The frame `renew` seals is a normal home frame: the one arming
-    site accepts it and the lapsed window comes back. No second writer."""
+def test_a_home_check_in_frame_arms_nothing_for_the_bot(server):
+    """The frame `renew` seals is a normal home frame and it verifies — but
+    the bot is not on the day lease (`docs/transport-contract.md`, *The
+    bot's access is two grants*), so its own home frames re-arm nothing:
+    `_home_admit` skips `note_lan_proof` for the bot, and pairing already
+    clamped its lease to 0 days."""
     srv, daemon = server
     _arm(daemon)
     result = daemon.pair_bot("Grok")
     assert result["ok"] is True
     did = result["device_id"]
+    assert relay.lease_days(did) == 0
+    assert relay.lease_valid(did) is False
+    # Even a bot row carrying an old grant length is not re-armed.
     data = json.loads(paths.RELAY_PATH.read_text())
+    data["channels"][did]["lease_days"] = 14
     data["channels"][did]["lease_expires_at"] = time.time() - 60
     paths.RELAY_PATH.write_text(json.dumps(data))
     relay.invalidate()
-    assert relay.lease_valid(did) is False
     home = base64.b64decode(result["home_key"])
     wire = relay.seal_frame(
         home, relay.DIR_PHONE_TO_MAC, 1, "state", {"done": "review"},
@@ -308,7 +317,7 @@ def test_a_home_check_in_frame_arms_the_away_window(server):
     device_id, _key, frame = srv._home_open(_Req(), wire=wire)
     assert device_id == did
     assert frame["kind"] == "state"
-    assert relay.lease_valid(did)
+    assert relay.lease_valid(did) is False
 
 
 def test_a_reply_whose_channel_does_not_match_is_refused():

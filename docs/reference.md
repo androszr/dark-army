@@ -189,7 +189,7 @@ your other projects. Enrol and un-enrol under Settings → **Projects**.
 ## How many agents at once
 
 A project runs one agent at a time by default. Raise it to four for every
-project (Settings → **Pipeline** → *Agents per project*) or for one project
+project (Settings → **Board** → *Agents per project*) or for one project
 (the In progress heading, while the board shows that project alone). Above one,
 two agents may edit the same file. A card started with no free place
 **queues**, in the order you pressed, says in words what it is waiting for, and
@@ -245,20 +245,20 @@ Any of the three can be the assistant a card starts. Codex's rules in full are
 ## Settings
 
 Every setting is in the settings window (⌘, or the button at the top of the
-window): one scrollable page of headed groups with a search box that matches a
-setting's name, its explanation and its heading.
+window): a sidebar of eight sections, each a page of cards where every row
+shows its explanation under its name, and a search box at the top of the
+sidebar that looks across every section — each result carries a trail such as
+*Board › Pipeline*, and pressing it opens that section on the row. ⌘1 to ⌘8
+switch sections.
 
-| Group | What is in it |
+| Section | What is in it |
 |---|---|
-| **Kill switch** | *Kill switch — stop everything*: every Dark Army process on this Mac, at once, with no clean shutdown ([docs/kill-switch.md](kill-switch.md)). |
-| **Notifications** | Sound, Banners, *Open System Settings…*. |
+| **General** | **Notifications** (Sound, Banners, *Open System Settings…*), **Panel size**, **Dictation** (the shortcut that starts dictation). |
 | **Sessions** | *Session channel (new sessions)*, *Compact full sessions*. |
-| **Board** | *Dark Army may start sessions* (off makes Start absent everywhere), *Close the terminal when a card is done*. |
-| **Pipeline** | *Agents per project*, *Start queued cards automatically*, *Dark Army's own terminal*. |
-| **Agent models** | Which model each assistant runs on for Start, Refine and the helpers, machine-wide or per project. |
-| **Dictation** | The shortcut that starts dictation. |
-| **Projects** | Enrolled folders, *Enrol a folder…*, un-enrol, and the shared agent pack. |
-| **Devices** | *Pair a device…*, *Phone access*, *Away access*, *Relay address…*, *Socket link*, and per phone its away window, *Answer from the lock screen* and Un-pair. |
+| **Board** | *Dark Army may start sessions* (off makes Start absent everywhere) with the **Pipeline** under it — *Agents per project*, *Start queued cards automatically*, *Dark Army's own terminal*, dimmed while it is off — then *Close the terminal when a card is done*. |
+| **Models** | A table of which model each assistant runs on for Start, Refine and the helpers, machine-wide; each project has its own under **Projects**. |
+| **Projects** | Enrolled folders as a list, *Enrol a folder…*, and for the chosen one its agent pack, *Knowledge*, *Checks*, its own model table and un-enrol. |
+| **Devices** | *Phone access* with *Away access*, *Relay address…* and *Socket link* under it, *Pair a device…*, and per phone its away window, *Answer from the lock screen* and Un-pair, and for the bot its Read and Write access (Off / 1 hour / 6 hours / 24 hours / No timer). |
 | **Security** | Refused knocks on the phone doors and the *Access log…*. |
-| **Advanced** | *Reinstall hooks*, *Reinstall VS Code extension*, *Open log*, the launch line, the build line, and *Rebuild* when the app was installed from a checkout. |
-| **This app** | *Restart*, *Quit*. |
+| **Advanced** | *Reinstall hooks*, *Reinstall VS Code extension*, *Open log*, the launch line, the build line, *Rebuild* when the app was installed from a checkout, and the **Design system** workshop. |
+| The sidebar's foot | *Restart*, *Quit* and *Kill switch — stop everything*: every Dark Army process on this Mac, at once, with no clean shutdown ([docs/kill-switch.md](kill-switch.md)). On every section. |

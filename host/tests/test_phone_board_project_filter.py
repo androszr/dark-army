@@ -115,6 +115,25 @@ def test_the_filter_narrows_every_row_before_the_search():
     assert "searching || !activeProject.isEmpty" in heading
 
 
+def test_a_draw_reads_the_choice_once_per_row_not_once_per_card():
+    """`activeProject` walks every card on the board; read inside the
+    filter's closure it made each row O(cards²) — half a second of main
+    thread per publish on a 180-card board, the Board tab's frozen scroll.
+    And a poll that moved no card redraws no tile."""
+    board = _code(_read(BOARD))
+    project_cards = _block(board, "private func projectCards(in id: String)")
+    hoist = project_cards.index("let activeProject = activeProject")
+    assert hoist < project_cards.index(".filter")
+    active = _block(board, "private var activeProject")
+    assert active.index("guard !project.isEmpty") \
+        < active.index("FleetProjects.resolve(")
+    assert "extension PhoneBoardCard: Equatable {}" in board
+    link = _block(board, "private func cardLink(_ card: BoardCard)")
+    assert ".equatable()" in link
+    tickable = _block(board, "private func tickableCard(_ card: BoardCard)")
+    assert ".equatable()" in tickable
+
+
 def test_a_filtered_out_list_says_so_in_words():
     board = _code(_read(BOARD))
     body = _block(board, "private func rowBody(for id: String)")

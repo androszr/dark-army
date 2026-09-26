@@ -560,4 +560,172 @@ final class RelayDevicesMenuTests: XCTestCase {
             XCTAssertFalse(row.title.contains("24"))
         }
     }
+
+    // MARK: - The bot's two grants
+
+    /// A stated `Devices` with the bot — its grants decoded from the wire,
+    /// read on with no timer and write on for six hours with an hour left —
+    /// beside one plain phone with a seven-day grant.
+    private func botDevices() throws -> Devices {
+        let until = Date().timeIntervalSince1970 + 3600
+        let bot = try JSONDecoder().decode(PairedDevice.self, from: Data("""
+        {"id": "bot", "name": "Grok", "relay": true,
+         "lease_expires_at": \(until), "lease_days": 1,
+         "bot_access": {"read": {"mode": "forever", "until": 0},
+                        "write": {"mode": "6h", "until": \(until)}}}
+        """.utf8))
+        var phone = PairedDevice(id: "abc", name: "Kitchen")
+        phone.relay = true
+        phone.leaseDays = 7
+        phone.leaseExpiresAt = until
+        var devices = statedDevices()
+        devices.devices = [bot, phone]
+        return devices
+    }
+
+    func testTheBotRowDrawsTwoGroupsAndNoDayGrant() throws {
+        let flat = flatRows(devices: try botDevices())
+        let ids = flat.map(\.id)
+        let modes = ["off", "1h", "6h", "24h", "forever"]
+        XCTAssertEqual(ids.filter { $0.hasPrefix("custom:bot-access:bot:read:") },
+                       modes.map { "custom:bot-access:bot:read:\($0)" })
+        XCTAssertEqual(ids.filter { $0.hasPrefix("custom:bot-access:bot:write:") },
+                       modes.map { "custom:bot-access:bot:write:\($0)" })
+        XCTAssertTrue(ids.contains("custom:bot-restart:bot:write"))
+        XCTAssertFalse(ids.contains("custom:bot-restart:bot:read"))
+        XCTAssertFalse(ids.contains { $0.hasPrefix("custom:away-days:bot:") })
+        XCTAssertFalse(ids.contains("custom:away-off:bot"))
+        XCTAssertFalse(ids.contains("info:device-grant:bot"))
+        XCTAssertFalse(ids.contains("info:device-lease:bot"))
+        // Read comes before Write, each info line above its own run.
+        let readInfo = ids.firstIndex(of: "info:device-bot-read:bot")
+        let writeInfo = ids.firstIndex(of: "info:device-bot-write:bot")
+        XCTAssertNotNil(readInfo)
+        XCTAssertNotNil(writeInfo)
+        XCTAssertLessThan(readInfo!, writeInfo!)
+        XCTAssertEqual(flat.first { $0.id == "info:device-bot-read:bot" }?.title,
+                       "read access: on — no timer")
+        XCTAssertTrue(flat.first { $0.id == "info:device-bot-write:bot" }?.title
+            .hasPrefix("write access: on until ") ?? false)
+        let checkedRead = flat.filter {
+            $0.id.hasPrefix("custom:bot-access:bot:read:") && $0.checked
+        }.map(\.id)
+        XCTAssertEqual(checkedRead, ["custom:bot-access:bot:read:forever"])
+        let checkedWrite = flat.filter {
+            $0.id.hasPrefix("custom:bot-access:bot:write:") && $0.checked
+        }.map(\.id)
+        XCTAssertEqual(checkedWrite, ["custom:bot-access:bot:write:6h"])
+        XCTAssertEqual(flat.first { $0.id == "custom:bot-access:bot:read:forever" }?.title,
+                       "No timer")
+        XCTAssertEqual(flat.first { $0.id == "custom:bot-access:bot:write:1h" }?.title,
+                       "1 hour")
+        let off = flat.first { $0.id == "custom:bot-access:bot:read:off" }
+        if case .custom(let action)? = off?.kind {
+            XCTAssertEqual(action, .botAccess(deviceId: "bot", side: "read", mode: "off"))
+        } else {
+            XCTFail("the bot's row is not a custom action")
+        }
+        // Restart is the running mode again: the daemon times it from now.
+        let restart = flat.first { $0.id == "custom:bot-restart:bot:write" }
+        XCTAssertEqual(restart?.title, "Restart the write timer")
+        if case .custom(let action)? = restart?.kind {
+            XCTAssertEqual(action, .botAccess(deviceId: "bot", side: "write", mode: "6h"))
+        } else {
+            XCTFail("the restart row is not a custom action")
+        }
+        // Un-pair stays on the bot's entry.
+        XCTAssertTrue(ids.contains("custom:unpair:bot"))
+    }
+
+    func testAPhoneRowIsUntouchedBesideTheBot() throws {
+        let flat = flatRows(devices: try botDevices())
+        let ids = flat.map(\.id)
+        XCTAssertEqual(ids.filter { $0.hasPrefix("custom:away-days:abc:") },
+                       ["custom:away-days:abc:1", "custom:away-days:abc:3",
+                        "custom:away-days:abc:7", "custom:away-days:abc:14"])
+        XCTAssertTrue(ids.contains("info:device-lease:abc"))
+        XCTAssertTrue(ids.contains("info:device-grant:abc"))
+        XCTAssertTrue(ids.contains("custom:away-off:abc"))
+        XCTAssertFalse(ids.contains { $0.contains("bot-access:abc") })
+        XCTAssertFalse(ids.contains { $0.hasPrefix("info:device-bot-") && $0.hasSuffix(":abc") })
+    }
+
+    func testBotGrantWords() {
+        let now = Calendar.current.date(
+            bySettingHour: 12, minute: 0, second: 0, of: Date())!
+        let t = now.timeIntervalSince1970
+        XCTAssertEqual(SettingsMenuModel.botGrantWords(
+            BotGrant(mode: "forever", until: 0), now: now), "on — no timer")
+        XCTAssertEqual(SettingsMenuModel.botGrantWords(
+            BotGrant(mode: "off", until: 0), now: now), "off")
+        let later = now.addingTimeInterval(3600)
+        XCTAssertEqual(SettingsMenuModel.botGrantWords(
+            BotGrant(mode: "1h", until: t + 3600), now: now),
+            "on until \(SettingsMenuModel.expiryWords(later, now: now))")
+        // A lapsed timer reads off before the daemon's next frame says so.
+        XCTAssertEqual(SettingsMenuModel.botGrantWords(
+            BotGrant(mode: "24h", until: t - 1), now: now), "off")
+        // A word this build does not know is never read as on.
+        XCTAssertEqual(SettingsMenuModel.botGrantWords(
+            BotGrant(mode: "3d", until: t + 3600), now: now), "off")
+    }
+
+    func testTheBotRunsAreTwoSegmentedControls() {
+        let rows = SettingsMenuModel.botAccessRows(
+            deviceId: "bot",
+            access: BotAccess(read: BotGrant(mode: "forever", until: 0),
+                              write: BotGrant(mode: "off", until: 0)))
+        let lines = SettingsControls.lines(rows.map { SettingsEntry(row: $0) })
+        var runs: [[String]] = []
+        for line in lines {
+            if case .choices(_, let entries, let segmented) = line {
+                XCTAssertTrue(segmented)
+                runs.append(entries.map(\.id))
+            }
+        }
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertEqual(runs.map(\.count), [5, 5])
+        XCTAssertTrue(runs[0].allSatisfy { $0.hasPrefix("custom:bot-access:bot:read:") })
+        XCTAssertTrue(runs[1].allSatisfy { $0.hasPrefix("custom:bot-access:bot:write:") })
+    }
+
+    /// Read's and Write's buttons carry the same lengths, so the side has to
+    /// reach VoiceOver and settings search by some other road: the tooltip.
+    func testTheBotSegmentsNameTheirSideToSearchAndVoiceOver() {
+        let rows = SettingsMenuModel.botAccessRows(
+            deviceId: "bot",
+            access: BotAccess(read: BotGrant(mode: "1h", until: Date().timeIntervalSince1970 + 60),
+                              write: BotGrant(mode: "forever", until: 0)))
+        let readHour = rows.first { $0.id == "custom:bot-access:bot:read:1h" }
+        let writeHour = rows.first { $0.id == "custom:bot-access:bot:write:1h" }
+        XCTAssertEqual(readHour?.title, writeHour?.title)
+        XCTAssertEqual(readHour?.tooltip, "Read access: 1 hour")
+        XCTAssertEqual(writeHour?.tooltip, "Write access: 1 hour")
+        XCTAssertEqual(SettingsControls.spokenName(readHour!), "Read access: 1 hour")
+        XCTAssertEqual(SettingsControls.spokenName(writeHour!), "Write access: 1 hour")
+        XCTAssertEqual(rows.first { $0.id == "custom:bot-restart:bot:read" }?.title,
+                       "Restart the read timer")
+        // Every other segmented control still speaks its own title.
+        let phone = SettingsRow(id: "custom:away-days:abc:1", title: "Grant 24 hours",
+                                kind: .custom(.awayDays(deviceId: "abc", days: 1)),
+                                tooltip: "a description")
+        XCTAssertEqual(SettingsControls.spokenName(phone), "Grant 24 hours")
+        // Search finds the side.
+        let entries = rows.map { SettingsEntry(row: $0) }
+        let found = entries.filter {
+            $0.row.tooltip.localizedCaseInsensitiveContains("write access: 6")
+        }
+        XCTAssertEqual(found.map(\.id), ["custom:bot-access:bot:write:6h"])
+    }
+
+    /// A refused change says so in the daemon's own words; a landed one says
+    /// nothing.
+    func testARefusedBotAccessChangeIsNeverSilent() {
+        XCTAssertNil(SettingsMenuModel.botAccessRefusal(ActionResult(ok: true, detail: "")))
+        XCTAssertEqual(SettingsMenuModel.botAccessRefusal(
+            ActionResult(ok: false, detail: "that device is not Dark Army's bot")),
+            "that device is not Dark Army's bot")
+        XCTAssertEqual(SettingsMenuModel.botAccessRefusal(ActionResult(ok: false, detail: "")),
+                       "Dark Army did not change the bot's access.")
+    }
 }

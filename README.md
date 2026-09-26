@@ -15,7 +15,7 @@ Codex and Grok sessions you run — in VS Code or its own terminal — on one
 board, named, counted and answered: who is working, who needs you, what it
 cost, and a card that turns an idea into a running agent.
 
-<img src="docs/images/showcase/hero-mission-control.png" alt="Dark Army at a glance: the menu-bar strip, the window with the board, Mission Control and the rail, and the iPhone app beside it, all on one made-up project." width="880">
+<img src="docs/images/showcase/hero-mission-control.png" alt="Dark Army at a glance: the menu-bar strip, the window with the board and the inbox of agents waiting on you, and the iPhone app's fleet beside it, all on made-up projects." width="880">
 
 ## Why Dark Army
 
@@ -121,7 +121,7 @@ start, and whether it's done.
    when the agent closes it, when you drag it there, or when you press
    *Close terminal* on the finished session.
 
-Nothing starts without a press. *Agents per project* (Settings → **Pipeline**,
+Nothing starts without a press. *Agents per project* (Settings → **Board**,
 1 by default, up to 4) sets how many agents may work in one project at once; a
 press beyond that queues the card and says what it is waiting for. *Start
 queued cards automatically* (on by default) starts the next one when a place
@@ -169,14 +169,14 @@ Apple developer team; [ios/README.md](ios/README.md) has the build.
 - **Grok and Codex.** Install their CLIs and their sessions appear beside
   Claude's. Codex rows can be watched and jumped to, and do less than
   Claude's: the full list is in [docs/reference.md](docs/reference.md).
-- **No VS Code.** Settings → **Pipeline** → *Dark Army's own terminal* starts
+- **No VS Code.** Settings → **Board** → *Dark Army's own terminal* starts
   cards on a terminal Dark Army hosts itself, shown in the window.
 - **Mission Control.** The **Comm** tab is a standing chief-of-staff session
   you can ask about the whole board.
 - **Auto-compact.** Settings → **Sessions** → *Compact full sessions* types
   `/compact` into a session that has filled its context.
-- **Per-assistant models.** Settings → **Agent models**.
-- **Dictation.** Settings → **Dictation** records a shortcut for speaking
+- **Per-assistant models.** Settings → **Models**.
+- **Dictation.** Settings → **General** → *Dictation* records a shortcut for speaking
   into the card composer.
 
 ## Safety in brief
@@ -210,18 +210,18 @@ Settings → **Advanced** → *Reinstall hooks*. The hooks do not start the app:
 while Dark Army is not running, events are dropped.
 
 **Costs and context are blank.** Those come from Claude Code's statusline,
-installed on every launch; *Restart* under Settings → **This app** puts it back.
+installed on every launch; *Restart* at the foot of the Settings sidebar puts it back.
 
 **Jump, auto-compact or Close terminal do nothing.** They need the VS Code
 extension: Settings → **Advanced** → *Reinstall VS Code extension*, then
 reload the VS Code window.
 
-**It will not quit.** Settings → **Kill switch — stop everything** stops every
+**It will not quit.** *Kill switch — stop everything* at the foot of the Settings sidebar stops every
 Dark Army process at once.
 
 ## Uninstall
 
-Quit Dark Army (Settings → **This app** → *Quit*), then:
+Quit Dark Army (*Quit* at the foot of the Settings sidebar), then:
 
 ```bash
 rm -rf "/Applications/Dark Army.app"

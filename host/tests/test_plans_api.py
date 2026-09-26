@@ -145,7 +145,12 @@ async def test_loopback_index_lists_the_plan_without_its_body(setup):
 @pytest.mark.asyncio
 async def test_loopback_lists_this_checkouts_plans(tmp_path, monkeypatch):
     """The success criterion's list: this repository's plans, newest
-    first, this plan among the first ten, no readme or question list."""
+    first, this plan listed with its title, no readme or question list.
+
+    The plan is looked for anywhere in the list, never in the first ten:
+    `plans/` is the live, git-ignored folder every planning run writes to,
+    so a fixed rank decays as newer plans arrive (it read 16th by
+    26 Sep 2026). Newest-first is pinned by the day order below."""
     repo = os.path.realpath(REPO)
     if not os.path.isfile(os.path.join(
             repo, "plans", "2026-09-25-phone-plans-library.md")):
@@ -164,9 +169,9 @@ async def test_loopback_lists_this_checkouts_plans(tmp_path, monkeypatch):
     assert status == 200, body
     rows = json.loads(body)["rows"]
     names = [r["name"] for r in rows]
-    first = {r["name"]: r for r in rows[:10]}
-    assert "2026-09-25-phone-plans-library.md" in first, names[:10]
-    assert first["2026-09-25-phone-plans-library.md"]["title"] == \
+    listed = {r["name"]: r for r in rows}
+    assert "2026-09-25-phone-plans-library.md" in listed, names[:10]
+    assert listed["2026-09-25-phone-plans-library.md"]["title"] == \
         "The phone lists every project's plans and reads one"
     assert "README.md" not in names
     assert "answerable-questions.md" not in names

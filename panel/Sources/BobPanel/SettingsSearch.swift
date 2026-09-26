@@ -29,6 +29,9 @@ struct SettingsGroup: Equatable, Identifiable {
     var id: String
     var title: String
     var entries: [SettingsEntry]
+    /// The submenu row's own hover text (Panel size's, Agent models'), drawn
+    /// as the group's description. A loose group has none.
+    var tooltip: String = ""
 }
 
 /// Pure grouping and filtering over the descriptor tree `SettingsMenuModel.rows`
@@ -76,7 +79,8 @@ enum SettingsSearch {
             switch row.kind {
             case .submenu(_, let nested):
                 out.append(SettingsGroup(id: row.id, title: row.title,
-                                         entries: flatten(nested, block: "")))
+                                         entries: flatten(nested, block: ""),
+                                         tooltip: row.tooltip))
                 pendingDividers = []
                 lastLooseGroup = nil
             case .divider:
@@ -219,6 +223,90 @@ enum SettingsSearch {
             } else {
                 out.append(.single(entry))
                 lastKey = nil
+            }
+        }
+        return out
+    }
+
+    // MARK: - Hits across every section
+
+    /// One search result: the entry, where it lives, and the trail drawn over
+    /// it. `section` nil is the sidebar's foot.
+    struct Hit: Identifiable, Equatable {
+        var section: SettingsSectionID?
+        var crumb: String
+        var entry: SettingsEntry
+        /// The enrolled project the entry sits under, off the tree's
+        /// `submenu:project:<root>` id — never off its label, which two
+        /// projects may share.
+        var projectRoot: String?
+
+        var id: String { entry.id }
+    }
+
+    /// The crumb for the sidebar's foot.
+    static let footerCrumb = "Sidebar"
+
+    /// The trail over a hit: the section's title; then the group's, unless it
+    /// says the same or the section holds only that group; then the entry's
+    /// `block` where it has one. Joined with ` › `. `section` nil is the foot.
+    static func crumb(section: SettingsPage?, group: SettingsGroup,
+                      entry: SettingsEntry) -> String {
+        guard let section else { return footerCrumb }
+        var parts = [section.title]
+        if group.title != section.title && section.groups.count > 1 {
+            parts.append(group.title)
+        }
+        if !entry.block.isEmpty { parts.append(entry.block) }
+        return parts.joined(separator: " › ")
+    }
+
+    /// Entry id → the enrolled root it sits under, walked in inventory order:
+    /// a `submenu:project:<root>` entry opens a project, and the next entry at
+    /// the group's own top level (`block` empty) closes it.
+    static func projectRoots(_ entries: [SettingsEntry]) -> [String: String] {
+        let prefix = "submenu:project:"
+        var out: [String: String] = [:]
+        var current: String?
+        for entry in entries {
+            if entry.id.hasPrefix(prefix) {
+                current = String(entry.id.dropFirst(prefix.count))
+            } else if entry.block.isEmpty {
+                current = nil
+            }
+            if let current { out[entry.id] = current }
+        }
+        return out
+    }
+
+    /// Every section searched with the unchanged `filter`, page by page in
+    /// page order, the foot last. An empty or whitespace query finds nothing:
+    /// the window shows the selected page instead.
+    static func hits(pages: [SettingsPage], footer: [SettingsEntry],
+                     query: String) -> [Hit] {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return []
+        }
+        var out: [Hit] = []
+        for page in pages {
+            for group in page.groups {
+                let roots = projectRoots(group.entries)
+                for survivor in filter([group], query: query) {
+                    for entry in survivor.entries {
+                        out.append(Hit(
+                            section: page.id,
+                            crumb: crumb(section: page, group: group, entry: entry),
+                            entry: entry,
+                            projectRoot: roots[entry.id]))
+                    }
+                }
+            }
+        }
+        let foot = SettingsGroup(id: "footer", title: footerCrumb, entries: footer)
+        for survivor in filter([foot], query: query) {
+            for entry in survivor.entries {
+                out.append(Hit(section: nil, crumb: footerCrumb, entry: entry,
+                               projectRoot: nil))
             }
         }
         return out

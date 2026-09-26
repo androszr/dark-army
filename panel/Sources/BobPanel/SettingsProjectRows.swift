@@ -102,7 +102,8 @@ extension SettingsMenuModel {
                 return SettingsRow(
                     id: "custom:installPack:\(root):\(option.id)",
                     title: title,
-                    kind: .custom(.installPack(root: root, profile: option.id)))
+                    kind: .custom(.installPack(root: root, profile: option.id)),
+                    checked: option.id == installed?.profile)
             }))
         if installed != nil {
             let stopArmed = stopSyncArmed == root

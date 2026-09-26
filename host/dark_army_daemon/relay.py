@@ -50,6 +50,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
 import secrets
 import time
@@ -920,6 +921,181 @@ def lease_expires_at(device_id: str) -> float:
     if entry is None:
         return 0.0
     return float(entry.get("lease_expires_at") or 0.0)
+
+
+# ── the bot's two grants ─────────────────────────────────────────────────────
+#
+# The headless device (`devices.is_headless`) is not gated by the phone's day
+# lease. Its reads and its writes are two grants the person sets from the
+# desk or a paired phone, each off, timed from the moment it was chosen, or
+# on with no timer. They live on the bot's own channel entry, so they die
+# with `forget` like the key. `docs/transport-contract.md`, *The bot's access
+# is two grants, not the day lease*.
+
+#: The two halves of the bot's access, each its own grant.
+BOT_ACCESS_SIDES = ("read", "write")
+#: Every position a grant can be in. A word outside this set, written by a
+#: newer build, reads as off — never widened into.
+BOT_ACCESS_MODES = ("off", "1h", "6h", "24h", "forever")
+#: The timed positions and how long each lasts from the moment it is chosen.
+BOT_ACCESS_SECONDS = {"1h": 3600, "6h": 21600, "24h": 86400}
+
+BOT_READ_REFUSAL = ("the bot's read access is off — switch it on under "
+                    "Devices in Dark Army's settings")
+BOT_WRITE_REFUSAL = ("the bot's write access is off — switch it on under "
+                     "Devices in Dark Army's settings")
+BOT_ACCESS_TARGET_REFUSAL = "that device is not Dark Army's bot"
+BOT_ACCESS_SELF_REFUSAL = "the bot may not change its own access"
+BOT_ACCESS_MODE_REFUSAL = "that is not a length Dark Army offers"
+
+
+def bot_grant(device_id: str, side: str,
+              now: float | None = None) -> tuple[str, float]:
+    """``(mode, until)`` for one side of the bot's access, normalised.
+
+    No channel is off. **Absent and unknown mean opposite things**: a
+    channel written before the grants existed carries neither key and
+    reads as today's behaviour — reads on with no timer, writes on the
+    day lease while it runs — so an upgrade cuts nobody off; a mode that
+    is present but not one of `BOT_ACCESS_MODES` is a newer build's word
+    and reads as off. A timed grant whose moment has passed is off.
+    Re-read from the store per call, the ``channel_key`` discipline, so an
+    Off bites on the very next frame.
+    """
+    entry = _channel(device_id)
+    if entry is None or side not in BOT_ACCESS_SIDES:
+        return "off", 0.0
+    clock = time.time() if now is None else float(now)
+    mode_key, until_key = f"bot_{side}_mode", f"bot_{side}_until"
+    if mode_key not in entry and until_key not in entry:
+        if side == "read":
+            return "forever", 0.0
+        if lease_valid(device_id, now=clock):
+            return "24h", lease_expires_at(device_id)
+        return "off", 0.0
+    mode = entry.get(mode_key)
+    if not isinstance(mode, str) or mode not in BOT_ACCESS_MODES:
+        return "off", 0.0
+    if mode == "off":
+        return "off", 0.0
+    if mode == "forever":
+        return "forever", 0.0
+    raw = entry.get(until_key)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return "off", 0.0
+    until = float(raw)
+    # A NaN compares false with everything, so `until <= clock` alone would
+    # let one through as a grant that never ends.
+    if not math.isfinite(until) or until <= clock:
+        return "off", 0.0
+    return mode, until
+
+
+def has_bot_grants(device_id: str) -> bool:
+    """Whether this device's channel carries any of the bot's grant keys —
+    the relay store's own word that this channel is the bot's, read beside
+    the ledger's `headless` key so that an unreadable `devices.json` fails
+    closed (`devices.is_bot`)."""
+    entry = _channel(device_id)
+    return entry is not None and any(
+        isinstance(key, str) and key.startswith("bot_") for key in entry)
+
+
+def _bot_fallback_write(device_id: str, clock: float) -> tuple[str, float]:
+    """What a pre-grant bot's writes become when made explicit: on for at
+    most a day from now, never longer than the lease it had, so the
+    "24 hours" position is an honest one and nothing widens."""
+    if not lease_valid(device_id, now=clock):
+        return "off", 0.0
+    return "24h", min(lease_expires_at(device_id),
+                      clock + BOT_ACCESS_SECONDS["24h"])
+
+
+def materialise_bot_grants(device_id: str) -> tuple:
+    """Take the bot off the day lease for good. ``(ok, detail)``.
+
+    Every side still reading through `bot_grant`'s fallback gets explicit
+    keys (Read `forever`; Write `24h` capped at the old lease, or off), and
+    the day lease is clamped to 0 days, so a later home frame re-arms
+    nothing and an older build after a downgrade reads the bot's writes as
+    ended — a downgrade never widens. Idempotent: a bot with both sides
+    stated and no lease writes nothing.
+    """
+    did = str(device_id or "")
+    entry = _channel(did)
+    if entry is None:
+        return False, "that device is not paired"
+    clock = time.time()
+    missing = {}
+    for side in BOT_ACCESS_SIDES:
+        if f"bot_{side}_mode" in entry or f"bot_{side}_until" in entry:
+            continue
+        missing[side] = (("forever", 0.0) if side == "read"
+                         else _bot_fallback_write(did, clock))
+    if not missing and lease_days(did) == 0 \
+            and lease_expires_at(did) == 0.0:
+        return True, ""
+    if lease_days(did) != 0 or lease_expires_at(did) != 0.0:
+        ok, detail = set_lease_days(did, 0)
+        if not ok:
+            invalidate()
+            return False, detail
+    if not missing:
+        return True, ""
+    return _write_bot_keys(did, missing)
+
+
+def _write_bot_keys(device_id: str, sides: dict) -> tuple:
+    """Write ``{side: (mode, until)}`` onto the bot's channel entry. The
+    memoised store is copied, never mutated, and dropped on a failed save,
+    so a refused write never stays in force in memory."""
+    data = dict(load())
+    channels = dict(data.get("channels") or {})
+    entry = dict(channels.get(device_id) or {})
+    if not entry:
+        return False, "that device is not paired"
+    for side, (mode, until) in sides.items():
+        entry[f"bot_{side}_mode"] = mode
+        entry[f"bot_{side}_until"] = float(until)
+    channels[device_id] = entry
+    data["channels"] = channels
+    if not save(data):
+        invalidate()
+        return False, "could not record the bot's access"
+    return True, ""
+
+
+def bot_grant_valid(device_id: str, side: str,
+                    now: float | None = None) -> bool:
+    """Whether the bot may read (``side="read"``) or act (``"write"``)
+    right now."""
+    return bot_grant(device_id, side, now=now)[0] != "off"
+
+
+def set_bot_access(device_id: str, side: str, mode: str) -> tuple:
+    """Put one side of the bot's access in one position. ``(ok, detail)``.
+
+    A timed position always runs **from now**, which is what makes choosing
+    the same timer again a refresh. Every change first makes the bot's
+    grants explicit and clamps its day lease to 0 (`materialise_bot_grants`),
+    so the lease never decides for the bot again, a later home frame
+    re-arms nothing and an older build after a downgrade reads the bot's
+    writes as ended. Who may call this is `BobDaemon.set_bot_access`'s
+    question; this is the store.
+    """
+    did = str(device_id or "")
+    if _channel(did) is None:
+        return False, "that device is not paired"
+    if not isinstance(side, str) or side not in BOT_ACCESS_SIDES:
+        return False, BOT_ACCESS_MODE_REFUSAL
+    if not isinstance(mode, str) or mode not in BOT_ACCESS_MODES:
+        return False, BOT_ACCESS_MODE_REFUSAL
+    ok, detail = materialise_bot_grants(did)
+    if not ok:
+        return False, detail
+    seconds = BOT_ACCESS_SECONDS.get(mode)
+    until = (time.time() + seconds) if seconds else 0.0
+    return _write_bot_keys(did, {side: (mode, until)})
 
 
 def set_url(url: str, push_secret=None) -> tuple:

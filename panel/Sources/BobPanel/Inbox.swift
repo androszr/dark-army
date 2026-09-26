@@ -93,9 +93,18 @@ enum InboxWireKind: Int, Hashable {
 enum InboxFingerprint {
     static func value(kind: String, material: String) -> String {
         if kind == "waiting" { return "waiting" }
-        let digest = SHA256.hash(data: Data(material.utf8))
-            .map { String(format: "%02x", $0) }.joined()
-        return kind + ":" + digest
+        // Lowercase hex by table, byte-identical to `String(format: "%02x")`
+        // per byte: the formatter ran 32 times per entry, on every snapshot,
+        // from `PanelView.body` — a measurable slice of each frame's
+        // main-thread cost while the board was being scrolled.
+        let hex = Array("0123456789abcdef".utf8)
+        var digest: [UInt8] = []
+        digest.reserveCapacity(64)
+        for byte in SHA256.hash(data: Data(material.utf8)) {
+            digest.append(hex[Int(byte >> 4)])
+            digest.append(hex[Int(byte & 0x0f)])
+        }
+        return kind + ":" + String(decoding: digest, as: UTF8.self)
     }
 
     static func questionMaterial(_ questions: [AgentQuestion]) -> String {
@@ -289,7 +298,12 @@ enum Inbox {
                 let fp = InboxFingerprint.value(
                     wire: item.wire,
                     questions: questions(for: item, rows: rows),
-                    card: cards.first { $0.id == item.cardId })
+                    // Only a card entry names a card. A session entry's
+                    // `""` used to walk every card on the board (each a
+                    // large value copied into the predicate) and find
+                    // none — per entry, per call, per snapshot.
+                    card: item.cardId.isEmpty
+                        ? nil : cards.first { $0.id == item.cardId })
                 return acks.contains {
                     $0.key == item.target.key
                         && $0.kind == item.wire.name

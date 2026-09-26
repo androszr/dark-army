@@ -13226,6 +13226,11 @@ class BobDaemon(BoardVerbsMixin):
             devices.unpair(device_id)
             relay.forget(device_id)
             return {"ok": False, "detail": "could not open an away channel"}
+        # A freshly paired bot starts reading with no timer and acting for
+        # a day; the person moves either from Devices on the Mac or the
+        # phone (`set_bot_access`).
+        relay.set_bot_access(device_id, "read", "forever")
+        relay.set_bot_access(device_id, "write", "24h")
         home = devices.home_key(device_id) or b""
         return {
             "ok": True,
@@ -13246,6 +13251,32 @@ class BobDaemon(BoardVerbsMixin):
         ok, detail = devices.unpair(device_id)
         if ok:
             relay.forget(device_id)
+        return ok, detail
+
+    def set_bot_access(self, device_id: str, side: str, mode: str, *,
+                       requester: str = "") -> tuple:
+        """Put one side of the bot's access — ``"read"`` or ``"write"`` —
+        in one position. ``(ok, detail)``.
+
+        ``requester`` is the **verified** sender of a sealed frame, or
+        ``""`` for the desk; it is never read off a payload. The bot is
+        refused by that identity, so it can never lengthen its own grant —
+        the whole safety case of the day lease, kept. Any target but the
+        headless device is refused, so a phone cannot aim this at a phone's
+        away window. Only the desk's own press is filed under "Done
+        remotely" here; an away press is filed by the away door's recorder
+        and a home press, like every home write, is not filed.
+        """
+        if devices.is_bot(requester):
+            return False, relay.BOT_ACCESS_SELF_REFUSAL
+        if not devices.is_bot(device_id):
+            return False, relay.BOT_ACCESS_TARGET_REFUSAL
+        ok, detail = relay.set_bot_access(device_id, side, mode)
+        if ok:
+            logger.info("bot %s access set to %s by %s", side, mode,
+                        requester or "desk")
+            if requester == "":
+                self.record_remote_action("desk", "set_bot_access", True)
         return ok, detail
 
     def devices_snapshot(self) -> dict:
@@ -13320,6 +13351,20 @@ class BobDaemon(BoardVerbsMixin):
             # counter.
             row["socket"] = (socket.socket_word(did) if socket_live
                              else relay_ws.SOCKET_OFF)
+            # The bot's two grants, on the bot's row alone: a mode word and
+            # a fixed epoch, `relay.bot_grant`'s answer and nothing derived.
+            # A phone row carries no such key, and the key's presence is
+            # the phone's version marker.
+            if devices.is_bot(did):
+                # First sight of a bot paired before the grants existed:
+                # make its grants explicit and end its day lease, so what
+                # is drawn is what is enforced and nothing re-arms it.
+                relay.materialise_bot_grants(did)
+                access = {}
+                for side in relay.BOT_ACCESS_SIDES:
+                    mode, until = relay.bot_grant(did, side)
+                    access[side] = {"mode": mode, "until": until}
+                row["bot_access"] = access
         return out
 
     def _write_pid(self) -> None:

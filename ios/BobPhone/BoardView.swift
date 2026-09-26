@@ -267,7 +267,10 @@ struct BoardView: View {
     /// The stored choice resolved against the names on screen, on read as
     /// well as on write-back — Fleet's `activeProject`, for the same reason.
     private var activeProject: String {
-        FleetProjects.resolve(selected: project, in: projects, heard: board.available)
+        // `""` is `ALL` whatever the names are (`resolve`'s own first
+        // line), so the walk over every card that builds them is skipped.
+        guard !project.isEmpty else { return project }
+        return FleetProjects.resolve(selected: project, in: projects, heard: board.available)
     }
 
     /// Daemon tally when the Mac sent one; listed-card count only for an
@@ -290,8 +293,18 @@ struct BoardView: View {
     }
 
     /// The project filter first, then the search.
+    ///
+    /// `activeProject` is read **once**, before the filter, and that hoist
+    /// is load-bearing: it is a computed property over every card on the
+    /// board (`projects` → `allCards`), so reading it inside the closure
+    /// made one call O(cards²). The body calls this a dozen times, and the
+    /// body re-runs on every publish of the client — about half a second of
+    /// main thread per poll on a 180-card board (measured in a debug build
+    /// on the live board: 457 ms before, 3 ms after), which is what froze
+    /// the Board tab's scroll. Pinned by `test_phone_board_project_filter.py`.
     private func projectCards(in id: String) -> [BoardCard] {
-        board.cards(in: id).filter { BoardProjects.matches(project: $0.project, active: activeProject) }
+        let activeProject = activeProject
+        return board.cards(in: id).filter { BoardProjects.matches(project: $0.project, active: activeProject) }
     }
 
     private func visibleCards(in id: String) -> [BoardCard] {
@@ -543,6 +556,7 @@ struct BoardView: View {
                                notice: client.boardNotices[card.id] ?? "",
                                leaving: leaving,
                                live: liveStageNames(card))
+                    .equatable()
             }
             .buttonStyle(.plain)
             .disabled(leaving)
@@ -595,6 +609,7 @@ struct BoardView: View {
                            leaving: leaving,
                            live: liveStageNames(card),
                            tick: tick)
+                .equatable()
         }
         .buttonStyle(.plain)
         // A barred card does not tick; nor does anything while the press
@@ -1350,6 +1365,15 @@ struct PhoneBoardCard: View {
     }
 }
 
+
+/// A tile is its inputs and nothing else — no state, no environment, no
+/// clock — so two tiles with equal inputs draw the same, and `.equatable()`
+/// at both call sites lets SwiftUI skip the body of every row whose card did
+/// not move. The client publishes several times a poll (the phase line, the
+/// link note, `lastHeard`, the agents' churn), and each publish re-runs
+/// `BoardView.body`; without this every visible tile rebuilt its crew band,
+/// its two `Specialists.parse` calls and its spoken sentence each time.
+extension PhoneBoardCard: Equatable {}
 
 /// One queued card and its two verbs. Two presses to remove, so a stray tap
 /// cannot throw away words nobody else has a copy of; one press to RETRY a

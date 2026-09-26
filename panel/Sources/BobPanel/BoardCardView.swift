@@ -171,8 +171,18 @@ struct BoardCardView: View {
                            : "Ticks this card to refine with the others")
     }
 
+    #if DEBUG
+    /// How many times any tile's `body` ran — the redraw tests' probe
+    /// (`BoardScrollRedrawTests`). Debug builds only; a release panel
+    /// counts nothing.
+    @MainActor static var bodyEvaluations = 0
+    #endif
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        #if DEBUG
+        Self.bodyEvaluations += 1
+        #endif
+        return VStack(alignment: .leading, spacing: 6) {
             statusBanner
             if card.manualCheckDue {
                 // Above the title, because it is the first thing about this

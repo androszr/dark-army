@@ -302,7 +302,10 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `REMOTE_ACTIONS` never exceeds `LAN_ACTIONS`, and the sealed reads
     (`bearings` included) are on neither and check no lease.
     `relay.note_lan_proof` alone may
-    extend an away window; `set_lease_days` may only clamp down. `POST
+    extend an away window; `set_lease_days` may only clamp down. The
+    bot is gated by `relay.bot_grant_valid` instead, on every door it
+    reaches (`docs/transport-contract.md`, *The bot's access is two
+    grants*). `POST
     /api/upload` is LAN-only with its own body rule (`_lan_body_rule`);
     `/api/action`'s cap is pinned. The sealed `state` read's `unchanged:
     true` and `sections_unchanged` are **present keys**,

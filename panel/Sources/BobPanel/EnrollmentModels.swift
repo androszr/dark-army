@@ -354,6 +354,11 @@ struct PairedDevice: Decodable, Identifiable, Hashable {
     /// id. Empty on an older daemon, which publishes no such key, and the
     /// line is then absent.
     var socket = ""
+    /// The bot's two grants, read and write. **`nil` means this row is not
+    /// the bot** (or an older daemon published none), and the day-window
+    /// rows are drawn as for any phone; never a zeroed struct, which would
+    /// draw two "off" groups on every phone.
+    var botAccess: BotAccess?
 
     enum CodingKeys: String, CodingKey {
         case id, name, relay, home, socket
@@ -363,6 +368,7 @@ struct PairedDevice: Decodable, Identifiable, Hashable {
         case leaseDays = "lease_days"
         case lastFrameAt = "last_frame_at"
         case lockScreenActions = "lock_screen_actions"
+        case botAccess = "bot_access"
     }
 
     init(from decoder: Decoder) throws {
@@ -378,11 +384,57 @@ struct PairedDevice: Decodable, Identifiable, Hashable {
         home = c.value(.home, false)
         lockScreenActions = try? c.decode(Bool.self, forKey: .lockScreenActions)
         socket = c.value(.socket, "")
+        botAccess = try? c.decode(BotAccess.self, forKey: .botAccess)
     }
 
     init(id: String = "", name: String = "") {
         self.id = id
         self.name = name
+    }
+}
+
+/// One side of the bot's access as the daemon states it: a mode word out
+/// of `off`, `1h`, `6h`, `24h`, `forever`, and for a timed mode the epoch
+/// it ends at. `relay.bot_grant`'s answer, drawn and never re-derived.
+struct BotGrant: Decodable, Hashable {
+    var mode = ""
+    var until: Double = 0
+
+    enum CodingKeys: String, CodingKey { case mode, until }
+
+    init(mode: String = "", until: Double = 0) {
+        self.mode = mode
+        self.until = until
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mode = c.value(.mode, "")
+        until = c.value(.until, 0)
+    }
+}
+
+/// The bot's two grants. Tolerant: a half-stated object keeps the other
+/// side's default rather than failing the row.
+struct BotAccess: Decodable, Hashable {
+    var read = BotGrant()
+    var write = BotGrant()
+
+    enum CodingKeys: String, CodingKey { case read, write }
+
+    init(read: BotGrant = BotGrant(), write: BotGrant = BotGrant()) {
+        self.read = read
+        self.write = write
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        read = c.value(.read, BotGrant())
+        write = c.value(.write, BotGrant())
+    }
+
+    func grant(_ side: String) -> BotGrant {
+        side == "write" ? write : read
     }
 }
 

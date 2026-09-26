@@ -60,7 +60,7 @@ the read-merge-write discipline of `board_projects` / `board_folded_lanes`.
 `windowDidMove`/`windowDidEndLiveResize`, never `setFrameAutosaveName`. The
 anchor the menu bar sends on `show` picks the *screen*, nothing more.
 
-## Settings is a window with a search box, built from one descriptor tree
+## Settings is a window with a sidebar, built from one descriptor tree
 
 `SettingsMenuModel.rows` is the only inventory; the ⋯ button, **Settings…**
 and ⌘, open `SettingsWindowController` (`SettingsWindow.swift`; `show` never
@@ -71,6 +71,60 @@ block and heading. The toggle overlay clears **only** on a `$context` publish.
 A **key is never renamed** — `preferences.json` is written in keys, so a
 rename reads as *absent* and silently resets that switch. `session_timeout`
 lives in `preferences.DEFAULTS`.
+
+**`SettingsSections.placement` is the second heading table**, beside
+`looseSection` (`SettingsSections.swift`, Foundation only): it places every
+*group* on one of eight sidebar sections — **General** (Notifications, Panel
+size, Dictation), **Sessions**, **Board** (the loose board switches, then
+Pipeline), **Models**, **Projects**, **Devices**, **Security**, **Advanced**
+(Advanced, then Design system) — or in the sidebar's **foot** (the kill
+switch, Restart, Quit, on every section). It names groups, never rows, and a
+group it does not know has no placement at all: there is no fallback section,
+and `SettingsSectionsTests` fails on it. The tree is not reordered to match —
+the kill switch is still the inventory's first row
+(`testKillSwitchLeadsTheInventory`), *drawn* in the foot.
+
+**Every row shows its explanation.** One row shape (`SettingsRows.swift`):
+the label, the tooltip drawn as a second line under it (the hover stays),
+the control on the right — a switch, a segmented control for a pick run of
+up to four, a pop-up above that, a bordered button for a verb (never the
+unchosen-option look), facts in a fixed-width selectable face.
+**`SettingsSections.dependents`** names the rows that only matter while a
+master switch is on (*Dark Army may start sessions* → Pipeline; *Phone
+access* → the away rows): drawn indented and dimmed on the master's *drawn*
+(optimistic) state, and **never `.disabled`** — the phone's two switches are
+independent by design. A phone's away lengths stay `.custom` rows ticked from
+`SettingsRow.checked`, never `.pick`, whose channel knows nothing of
+`relay.json`.
+
+**Models is a table**: `SettingsModelsTable` regroups the Agent models pick
+runs into roles down and assistants across, one pop-up per cell, sending
+only a changed choice. **Projects is a list and a detail**
+(`SettingsProjectsPage`): the enrolled folders keyed by the root off
+`submenu:project:<root>`, never the label; the chosen one's agent pack,
+Knowledge and Checks beside the list, then its own model table (Inherit
+first) and Un-enrol under both panes at full width — beside the list three
+columns do not fit. `SettingsModelsGridMetrics.minimumWidth` fits the page
+at 720 and at 860, and cells anchor and flash, never a `GridRow`.
+
+**Search spans every section.** `SettingsSearch.hits` runs the unchanged
+`filter` page by page, the foot last, and each hit carries a **crumb**: the
+section's title, then the group's unless it repeats the section or the
+section holds one group, then the entry's block (*Board › Pipeline*,
+*Projects › proj*; the foot is *Sidebar*). Pressing a hit opens its section
+(and project), scrolls to the row and flashes it — an outline instead under
+Reduce Motion — and the row clears the mark when the flash ends;
+`jump(to:)` clears it itself after `markSeconds`, so a target that draws no
+flash never strands it.
+
+**Keys.** ⌘1…⌘8 pick a section through zero-size buttons on this window only
+(never the main menu, which would make them app-wide); ↑ / ↓ move the
+sidebar's selection, wrapping, once it holds the keyboard; Escape clears the
+query first and closes the window second. The section, the project and the
+frame are remembered for the life of the process and never persisted.
+`SettingsWindowMetrics`: opens at **860 × 620**, floors at **720 × 520**, a
+210pt sidebar; the frame is clamped back on screen on every present. The
+window is **unscaled**.
 
 ## The keyboard is one reader, and the verbs are one object
 
@@ -145,7 +199,11 @@ face reports through `noteSwitcherFocus(card:focused:)`: a claim always
 lands, a release lands only from the card holding the slot — a snapshot
 that rebinds or recycles *another* card's tile fires that tile's
 disappearance, and a bool would have been cleared while the focused row
-still drew its ring. The slot is released on the switcher's own Escape, on
+still drew its ring. The slot is **assigned only when its holder changes**:
+the lazy rows tear tiles down on every scroll step, and an unguarded
+`nil = nil` republished `BoardState` — every tile, row and the panel — once
+per tile scrolled away, the board's scroll stutter
+(`BoardScrollRedrawTests`). The slot is released on the switcher's own Escape, on
 its disappearance, and on every hide of the panel — where
 `AppDelegate.releaseSwitcherFocus` resigns the first responder (guarded on
 the slot being held, so the hosted terminal's caret and a dictation-promoted

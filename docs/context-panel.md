@@ -277,8 +277,9 @@ watchdog's route and releases `PanelLock` by hand, and sheet-detaching is legal
 `.normal`-level, closing mirrors `hide()` and `windowDidChangeOcclusionState`
 writes the same `visible`/`boardOpen` gate stdin does, both idempotent through
 `didSet`, the covered edge after a grace; `Placement.swift` keeps **a frame per screen** and clamps on every
-show; `SettingsMenuModel.rows` is the settings window's only inventory
-(diagnostics under one **Advanced** heading) and a
+show; `SettingsMenuModel.rows` is the settings window's only inventory,
+placed into eight sidebar sections by `SettingsSections` (diagnostics under
+**Advanced**; Restart, Quit and the kill switch in the sidebar footer) and a
 preference **key is never renamed**; the keyboard is one `NSEvent` monitor
 (`installKeyMonitor`) asking `KeyRouter.editing`, with Escape climbing
 `RailLayout.escapeRung` and arm-then-confirm in `RowActions` — **a focused

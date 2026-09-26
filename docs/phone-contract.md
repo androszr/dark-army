@@ -890,6 +890,27 @@ tile wraps the column in `FleetLinks.agent` (`bobphone://fleet?session=`),
 `PhoneRouter.open` holds the id in memory behind the face check and
 `applyPendingTab` opens the agent sheet where the fleet still lists it.
 
+**The profile screen switches the bot's access** (26 Sep 2026). Where the
+Mac publishes `bot_access` on a devices row (`PhoneDevices.bot`), the
+profile screen draws **BOT ACCESS** after AWAY: the bot's name, then per
+side a line in `BotAccessRules.words` — "on — no timer", "on until
+<time>" (through `AwaySpan.until`) or "off" — a `.menu` `Picker` of the
+five positions (Off / 1 hour / 6 hours / 24 hours / No timer) seeded and
+re-seeded from the published mode so a desk change wins, and **RESTART
+TIMER** while a timer runs. A choice that differs from the published mode
+posts `set_bot_access` through `PhoneClient.post` — receipt token, LAN
+then relay, Face ID away — judged by `ReceiptEffect.botAccess` against
+the Mac's `bot_access`, and **never re-sent**: a record a failed press
+left `sent` is dropped by the sweep's `evidenceBeforeSending` before any
+resend. SENDING… shows while it is
+out; a refusal is drawn inline under that side in the Mac's words and
+the menu goes back to the Mac's current position, a move that never
+posts (`botReseeding`, `BotAccessRules.shouldPost`). The key's
+presence is the version marker: an older Mac publishes none and the
+section is absent. The Mac is the authority and re-checks every request
+the bot sends (`docs/transport-contract.md`, *The bot's access is two
+grants*); `BotAccessTests.swift`.
+
 ## Allow, Deny and Acknowledge on the banner
 
 With the desk's per-phone switch on (**Answer from the lock screen**, the

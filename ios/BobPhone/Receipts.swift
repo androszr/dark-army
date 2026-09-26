@@ -83,6 +83,13 @@ enum ReceiptEffect: Codable, Equatable {
     /// reads not-landed, `.cardRefining`'s own guard, so a card deleted
     /// mid-flight leaves the press SENT until the effect deadline.
     case cardsRefining(cardIds: [String])
+    /// The bot's grant should shortly be in this position
+    /// (`set_bot_access`), judged against the Mac's `bot_access`. **Never
+    /// re-sent**: `evidenceBeforeSending` drops such a record before any
+    /// resend, because a change the profile screen already showed as
+    /// failed must not land minutes later behind the person's back and
+    /// switch the bot on. Pressing again is the retry.
+    case botAccess(deviceId: String, side: String, mode: String)
     /// Nothing on the board or the fleet says whether this landed
     /// (`register_push_token`, `prepare_card`). Settles on acceptance.
     case none
@@ -213,6 +220,7 @@ struct Receipt: Identifiable, Codable, Equatable {
         case PhoneActions.boardUpdate: return "Save a card"
         case PhoneActions.boardReset: return "Unlink a card"
         case PhoneActions.boardDelete: return "Delete a card"
+        case PhoneActions.setBotAccess: return "Change the bot's access"
         case PhoneActions.boardClearDone: return "Clear all done items"
         case PhoneActions.boardDispatch: return "Start a card"
         case PhoneActions.boardRefine: return "Refine a card"
@@ -764,6 +772,9 @@ final class ReceiptLedger: ObservableObject {
         switch effect {
         case .cardRevision, .doneScopeChanged, .replyHold, .none:
             return false
+        case .botAccess:
+            // Dropped, landed or not: see the case's own comment.
+            return true
         default:
             return landed(effect, in: snapshot)
         }
@@ -844,6 +855,10 @@ final class ReceiptLedger: ObservableObject {
                 || card.column != "prep"
         case .cardsRefining(let cardIds):
             return cardIds.allSatisfy { landed(.cardRefining(cardId: $0), in: snapshot) }
+        case .botAccess(let deviceId, let side, let mode):
+            guard let access = snapshot.devices.devices
+                .first(where: { $0.id == deviceId })?.botAccess else { return false }
+            return (side == "write" ? access.write.mode : access.read.mode) == mode
         }
     }
 
@@ -922,6 +937,11 @@ final class ReceiptLedger: ObservableObject {
             let root = fields["root"] ?? ""
             return .preference(key: PhoneClient.parallelSettlingKey(root),
                                want: fields["limit"] ?? "")
+        case PhoneActions.setBotAccess:
+            let device = fields["device_id"] ?? ""
+            guard !device.isEmpty else { return .none }
+            return .botAccess(deviceId: device, side: fields["side"] ?? "",
+                              mode: fields["mode"] ?? "")
         case PhoneActions.boardClearDone:
             guard let count = Int(fields["expected_count"] ?? "") else {
                 return .none

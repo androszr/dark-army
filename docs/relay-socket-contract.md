@@ -179,8 +179,9 @@ pair reply carries `relay_ws_url`. The reply is the phone's pair reply
 plus the home key (a headless caller has no square to have read it from),
 returned once and never put on a snapshot. The row is an ordinary device:
 its own channel id and key, its own counters, `unpair_device` forgets
-both, and the away window is the phone's — one day at mint, lengthened
-only by `note_lan_proof` after a home frame. The speaker is
+both, and its reads and writes are the two bot grants
+(`docs/transport-contract.md`, *The bot's access is two grants*), not
+the phone's day window. The speaker is
 `host/dark_army_daemon/relay_bot.py` (`python -m
 dark_army_daemon.relay_bot`), which saves the reply at 0600 and seals
 with `relay.seal_frame`. `serve` keeps that line open and answers MCP

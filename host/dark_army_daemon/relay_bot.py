@@ -520,8 +520,9 @@ def cmd_pair(name: str, replace: bool) -> int:
     print(f"Device id: {record['device_id']}")
     print(f"Saved the pair reply to {path}")
     print("It has its own channel, key and socket.")
-    print("Away writes last a day, the same window a phone gets, "
-          "until this device checks in at home (`renew`).")
+    print("Its reads and writes are two grants set under Devices in Dark "
+          "Army's settings, on the Mac or a paired phone: reads start with "
+          "no timer, writes for 24 hours.")
     print("Unpair it from Devices to revoke the key.")
     return 0
 
@@ -591,9 +592,12 @@ def cmd_listen() -> int:
 
 
 def cmd_renew() -> int:
-    """One sealed home frame. That is the lease renewal a phone gets by
-    being on the same network: ``note_lan_proof`` arms the away window,
-    and this command does not grow it any other way.
+    """One sealed home frame: a state read over the home door, which says
+    whether this device can reach Dark Army at home and whether its Read
+    grant is on. It renews nothing — the bot is not on a phone's day
+    window; its reads and writes are the two grants a person sets under
+    Devices (`docs/transport-contract.md`, *The bot's access is two
+    grants*). A refused read prints the Mac's own words.
 
     It holds the pair file only for its two counter writes, not for the
     request, so it runs while ``listen`` has the socket."""
@@ -643,8 +647,8 @@ def cmd_renew() -> int:
             detail or "the home door refused the check-in") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise BotError(
-            "Phone access is off, so the away window cannot be "
-            "renewed from here") from exc
+            "Phone access is off, so the home door cannot be "
+            "reached from here") from exc
     if status != 200:
         raise BotError("the home door refused the check-in")
     text = raw.decode("ascii", "replace").strip()
@@ -656,10 +660,41 @@ def cmd_renew() -> int:
         if err or frame is None:
             raise BotError("the home door's answer did not open")
         record["home_recv_ctr"] = int(frame["ctr"])
+        opened.append(frame)
 
+    opened: list = []
     _update(path, note)
-    print("Checked in at home. Away writes run for this device's window.")
+    refusal = _inner_refusal(opened[0] if opened else {})
+    if refusal:
+        raise BotError(refusal)
+    print("Checked in at home. Reads and writes follow the two grants set "
+          "under Devices in Dark Army's settings.")
     return 0
+
+
+def _inner_refusal(frame: dict) -> str:
+    """The Mac's own words when a sealed home answer is not a 200, else
+    ``""``. A `reply` carries the inner status and a JSON body whose
+    `detail` / `error` is the sentence; an `err` carries `error`."""
+    body = frame.get("body") if isinstance(frame, dict) else None
+    if not isinstance(body, dict):
+        return ""
+    try:
+        status = int(body.get("status") or 200)
+    except (TypeError, ValueError):
+        status = 0
+    if status == 200:
+        return ""
+    words = str(body.get("error") or "")
+    inner = body.get("body")
+    if isinstance(inner, str) and inner:
+        try:
+            parsed = json.loads(inner)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            words = str(parsed.get("detail") or parsed.get("error") or words)
+    return words or f"the home door answered {status}"
 
 
 MCP_HOST = "127.0.0.1"
@@ -1019,7 +1054,7 @@ def main(argv: list[str] | None = None) -> int:
     act = sub.add_parser("action", help="one sealed action over the socket")
     act.add_argument("body", help="a JSON object naming the action")
     sub.add_parser("listen", help="arm the socket and print each push")
-    sub.add_parser("renew", help="one home check-in, which renews the away window")
+    sub.add_parser("renew", help="one home check-in: a state read over the home door, which renews nothing")
     sub.add_parser("serve", help="keep the line open and answer the local connector")
     args = parser.parse_args(argv)
     try:

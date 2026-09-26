@@ -47,9 +47,181 @@ final class SettingsWindowTests: XCTestCase {
         let win = try! XCTUnwrap(controller.windowForTesting)
         XCTAssertEqual(win.contentMinSize.width, SettingsWindowMetrics.minWidth)
         XCTAssertEqual(win.contentMinSize.height, SettingsWindowMetrics.minHeight)
-        XCTAssertEqual(SettingsWindowMetrics.minWidth, 460)
-        XCTAssertEqual(SettingsWindowMetrics.minHeight, 560)
+        XCTAssertEqual(SettingsWindowMetrics.minWidth, 720)
+        XCTAssertEqual(SettingsWindowMetrics.minHeight, 520)
+        XCTAssertEqual(SettingsWindowMetrics.defaultWidth, 860)
+        XCTAssertEqual(SettingsWindowMetrics.defaultHeight, 620)
+        XCTAssertEqual(SettingsWindowMetrics.sidebarWidth, 210)
         controller.forceClose()
+    }
+
+    /// The first present opens at 860 × 620 of content, or as much of it as
+    /// the screen has room for.
+    @MainActor
+    func testTheFirstPresentOpensAtTheDefaultSizeClampedToTheScreen() {
+        let controller = makeController()
+        controller.present()
+        let win = try! XCTUnwrap(controller.windowForTesting)
+        let content = win.contentRect(forFrameRect: win.frame).size
+        if let visible = (win.screen ?? NSScreen.main)?.visibleFrame {
+            let chrome = win.frame.height - content.height
+            XCTAssertEqual(content.width, min(SettingsWindowMetrics.defaultWidth, visible.width))
+            XCTAssertEqual(content.height,
+                           min(SettingsWindowMetrics.defaultHeight, visible.height - chrome))
+        } else {
+            // No screen to place on: the window keeps the size it was made at.
+            XCTAssertEqual(content.width, SettingsWindowMetrics.defaultWidth)
+            XCTAssertEqual(content.height, SettingsWindowMetrics.defaultHeight)
+        }
+        controller.forceClose()
+    }
+
+    /// Where the window was left is where it comes back, for the life of the
+    /// process — clamped, never re-centred.
+    @MainActor
+    func testAMovedWindowKeepsItsFrameAcrossACloseAndAPresent() throws {
+        let controller = makeController()
+        controller.present()
+        let win = try XCTUnwrap(controller.windowForTesting)
+        guard let visible = (win.screen ?? NSScreen.main)?.visibleFrame else {
+            throw XCTSkip("no screen to place a window on")
+        }
+        let moved = SettingsWindowController.clamped(
+            NSRect(x: visible.minX + 10, y: visible.minY + 10,
+                   width: SettingsWindowMetrics.minWidth + 40,
+                   height: SettingsWindowMetrics.minHeight + 60),
+            to: visible)
+        win.setFrame(moved, display: false)
+        controller.forceClose()
+        controller.present()
+        XCTAssertEqual(win.frame, moved)
+        // A frame left partly off screen is nudged back on, not re-centred.
+        let off = NSRect(x: visible.maxX - 100, y: visible.minY + 10,
+                         width: moved.width, height: moved.height)
+        win.setFrame(off, display: false)
+        controller.forceClose()
+        controller.present()
+        XCTAssertEqual(win.frame, SettingsWindowController.clamped(off, to: visible))
+        XCTAssertLessThanOrEqual(win.frame.maxX, visible.maxX)
+        controller.forceClose()
+    }
+
+    @MainActor
+    func testTheClampNeverGoesBelowTheFloorOrPastTheScreen() {
+        let visible = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let tiny = SettingsWindowController.clamped(
+            NSRect(x: 50, y: 50, width: 100, height: 100), to: visible)
+        XCTAssertEqual(tiny.width, SettingsWindowMetrics.minWidth)
+        XCTAssertEqual(tiny.height, SettingsWindowMetrics.minHeight)
+        let small = NSRect(x: 0, y: 0, width: 600, height: 400)
+        let huge = SettingsWindowController.clamped(
+            NSRect(x: 0, y: 0, width: 5000, height: 5000), to: small)
+        XCTAssertEqual(huge.size, small.size)
+    }
+
+    // MARK: - The section
+
+    @MainActor
+    func testTheSectionSurvivesACloseAndAPresent() {
+        let controller = makeController()
+        XCTAssertEqual(controller.state.section, .general)
+        controller.present()
+        controller.state.select(section: .board)
+        controller.forceClose()
+        controller.present()
+        XCTAssertEqual(controller.state.section, .board)
+        controller.forceClose()
+    }
+
+    @MainActor
+    func testSelectingASectionClearsTheQuery() {
+        let state = SettingsWindowState()
+        state.query = "outright"
+        state.select(section: .advanced)
+        XCTAssertEqual(state.section, .advanced)
+        XCTAssertEqual(state.query, "")
+    }
+
+    @MainActor
+    func testAJumpOpensTheSectionAndProjectMarksTheRowAndClearsTheQuery() {
+        let state = SettingsWindowState()
+        state.query = "un-enrol"
+        let entry = SettingsEntry(row: SettingsRow(
+            id: "custom:unenrol:/Users/me/proj", title: "Un-enrol",
+            kind: .custom(.unenrol(root: "/Users/me/proj"))), block: "proj")
+        state.jump(to: SettingsSearch.Hit(section: .projects, crumb: "Projects › proj",
+                                          entry: entry, projectRoot: "/Users/me/proj"))
+        XCTAssertEqual(state.section, .projects)
+        XCTAssertEqual(state.selectedProjectRoot, "/Users/me/proj")
+        XCTAssertEqual(state.highlightedRowId, "custom:unenrol:/Users/me/proj")
+        XCTAssertEqual(state.query, "")
+    }
+
+    @MainActor
+    func testAJumpToTheSidebarFootKeepsTheSectionAndTheProject() {
+        let state = SettingsWindowState()
+        state.select(section: .devices)
+        state.selectedProjectRoot = "/a"
+        state.query = "quit"
+        let quit = SettingsEntry(row: SettingsRow(
+            id: "send:quit_app", title: "Quit", kind: .send(action: "quit_app", value: nil)))
+        state.jump(to: SettingsSearch.Hit(section: nil, crumb: "Sidebar", entry: quit,
+                                          projectRoot: nil))
+        XCTAssertEqual(state.section, .devices)
+        XCTAssertEqual(state.selectedProjectRoot, "/a")
+        XCTAssertEqual(state.highlightedRowId, "send:quit_app")
+        XCTAssertEqual(state.query, "")
+    }
+
+    /// A jump clears its own mark, so a target that draws no flash cannot
+    /// strand it and a later jump to the same row flashes again; a newer
+    /// jump's mark outlives the older one's timer.
+    @MainActor
+    func testAJumpClearsItsOwnMarkAndANewerJumpKeepsItsOwn() async throws {
+        let state = SettingsWindowState()
+        state.markSeconds = 0.05
+        let header = SettingsEntry(row: SettingsRow(
+            id: "submenu:agent-models:grok", title: "grok", kind: .submenu(title: "grok", rows: [])))
+        state.jump(to: SettingsSearch.Hit(section: .models, crumb: "Models", entry: header,
+                                          projectRoot: nil))
+        XCTAssertEqual(state.highlightedRowId, "submenu:agent-models:grok")
+        XCTAssertEqual(state.jumpSerial, 1)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertNil(state.highlightedRowId)
+
+        state.markSeconds = 0.05
+        state.jump(to: SettingsSearch.Hit(section: .models, crumb: "Models", entry: header,
+                                          projectRoot: nil))
+        state.markSeconds = 60
+        let root = SettingsEntry(row: SettingsRow(
+            id: "info:project-root:/a", title: "/a", kind: .info))
+        state.jump(to: SettingsSearch.Hit(section: .projects, crumb: "Projects › a",
+                                          entry: root, projectRoot: "/a"))
+        XCTAssertEqual(state.jumpSerial, 3)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(state.highlightedRowId, "info:project-root:/a")
+    }
+
+    /// One predicate for "showing results": white space alone is not a search,
+    /// so the sidebar keeps its selection and the page stays.
+    @MainActor
+    func testWhiteSpaceIsNotASearch() {
+        let state = SettingsWindowState()
+        XCTAssertFalse(state.isSearching)
+        state.query = "   \n"
+        XCTAssertFalse(state.isSearching)
+        state.query = " queued "
+        XCTAssertTrue(state.isSearching)
+    }
+
+    /// A close drops the mark, so the next jump to the same row flashes again.
+    @MainActor
+    func testACloseClearsTheHighlight() {
+        let controller = makeController()
+        controller.present()
+        controller.state.highlightedRowId = "toggle:set_board_close_terminal"
+        controller.forceClose()
+        XCTAssertNil(controller.state.highlightedRowId)
     }
 
     // MARK: - One window, reused

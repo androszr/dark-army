@@ -581,6 +581,25 @@ def headless_paired() -> bool:
     return False
 
 
+def is_headless(device_id: str) -> bool:
+    """Whether this one device is the headless bot. An empty id, an unknown
+    id and a phone are all False. Re-read from the ledger per call, so the
+    grants in `relay.bot_grant` bite on the very next frame."""
+    entry = _entry(device_id)
+    return entry is not None and entry.get("headless") is True
+
+
+def is_bot(device_id: str) -> bool:
+    """Whether the bot's grants decide for this device. **Fails closed**:
+    the ledger's `headless` key *or* any bot grant key on the device's relay
+    channel (`relay.has_bot_grants`) is enough, so an unreadable or
+    rewritten `devices.json` cannot turn the bot back into an ungated
+    phone. The one test every gate and the verb's two refusals use."""
+    if not str(device_id or ""):
+        return False
+    return is_headless(device_id) or relay.has_bot_grants(device_id)
+
+
 # ── the home key ──────────────────────────────────────────────────────────────
 
 def _entry(device_id: str) -> dict | None:

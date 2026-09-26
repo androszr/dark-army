@@ -27,7 +27,63 @@ final class SettingsWindowState: ObservableObject {
     /// Foldable headings (`SettingsSearch.foldable`) a person has opened.
     /// Closed by default and not persisted: the window is reused for the
     /// life of the process and a fold is a reading position, not a setting.
+    /// Kept for `SettingsSearch.visible`'s tests; since the sidebar redesign
+    /// (26 Sep 2026) no view reads it — the Projects page draws each
+    /// project's model table open.
     @Published var openBlocks: Set<String> = []
+    /// The sidebar's selected section. Scratch like the query: remembered for
+    /// the life of the process (the window is reused), never persisted.
+    @Published var section: SettingsSectionID = .general
+    /// The project the Projects page shows; nil means the first enrolled one.
+    @Published var selectedProjectRoot: String?
+    /// The row a search jump landed on. Set by `jump(to:)`, cleared by the
+    /// row when its flash ends, by `jump(to:)` itself after `markSeconds` and
+    /// by every close — left set, the next jump to the same row would not
+    /// flash.
+    @Published var highlightedRowId: String?
+    /// Stepped on every jump, so the page scrolls to the mark even when the
+    /// mark has not changed (a second jump to the same row).
+    @Published private(set) var jumpSerial = 0
+    /// How long a jump's mark lives before `jump(to:)` clears it itself: the
+    /// flash's length and a margin. A drawn row clears it sooner, when its
+    /// flash ends; this is the floor for a target that draws no flash.
+    var markSeconds: Double = SettingsFlash.seconds + 0.5
+    private var markClear: Task<Void, Never>?
+
+    /// Whether the window shows search results rather than a page: a query
+    /// with something besides white space. The one predicate the page, the
+    /// results and the sidebar's selection all read.
+    var isSearching: Bool {
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Switch sections — the sidebar, ⌘1…⌘8, the arrows. Clears the query, so
+    /// the page shown is the section asked for rather than the results.
+    func select(section: SettingsSectionID) {
+        query = ""
+        self.section = section
+    }
+
+    /// Open the section a search hit lives in, on its project where it names
+    /// one, and mark the row so the page scrolls to it and flashes it. A hit
+    /// in the sidebar's foot keeps the current section.
+    func jump(to hit: SettingsSearch.Hit) {
+        if let target = hit.section { section = target }
+        if let root = hit.projectRoot { selectedProjectRoot = root }
+        query = ""
+        let mark = hit.entry.id
+        highlightedRowId = mark
+        jumpSerial += 1
+        let serial = jumpSerial
+        let delay = UInt64(max(markSeconds, 0) * 1_000_000_000)
+        markClear?.cancel()
+        markClear = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled, let self, self.jumpSerial == serial,
+                  self.highlightedRowId == mark else { return }
+            self.highlightedRowId = nil
+        }
+    }
 
     func toggleBlock(_ id: String) {
         if openBlocks.contains(id) { openBlocks.remove(id) } else { openBlocks.insert(id) }
@@ -219,6 +275,24 @@ final class SettingsActions {
             // A consent switch, not a destruction: it fires on the first
             // press, and the info line above the row says where it stands.
             Task { _ = await client.setLockScreenActions(deviceId, enabled: enabled) }
+        case .botAccess(let deviceId, let side, let mode):
+            state.killArmed = false
+            state.packArmed = nil
+            state.stopSyncArmed = nil
+            state.awayOffArmed = nil
+            // First press, Off included: the person asked for Off to bite
+            // at once, and on again is one press away. The info line above
+            // the run says which position is in force.
+            Task {
+                let result = await client.setBotAccess(deviceId, side: side, mode: mode)
+                if let words = SettingsMenuModel.botAccessRefusal(result) {
+                    let alert = NSAlert()
+                    alert.messageText = "Could not change the bot's access"
+                    alert.informativeText = words
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                }
+            }
         case .awayOff(let deviceId):
             state.killArmed = false
             state.packArmed = nil

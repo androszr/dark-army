@@ -96,9 +96,13 @@ extension SettingsMenuModel {
                         line, id: "info:device-home:\(device.id)"))
                 }
                 if devices.remoteStated {
-                    deviceEntries.append(info(
-                        leaseLine(device, remoteEnabled: remoteAccess),
-                        id: "info:device-lease:\(device.id)"))
+                    // The bot is not on the day window: its reads and
+                    // writes are the two grants drawn below instead.
+                    if device.botAccess == nil {
+                        deviceEntries.append(info(
+                            leaseLine(device, remoteEnabled: remoteAccess),
+                            id: "info:device-lease:\(device.id)"))
+                    }
                     // Drawn only where the daemon stated the health — an
                     // older one publishes no `relay_health`, and a silent
                     // line is the honest answer rather than a green "OK"
@@ -118,8 +122,12 @@ extension SettingsMenuModel {
                     // The grant block. Only where this phone has an away
                     // channel *and* the daemon stated a grant: `leaseDays`
                     // defaults to -1, and an older daemon must draw nothing
-                    // rather than a wrong "off".
-                    if device.relay && device.leaseDays >= 0 {
+                    // rather than a wrong "off". The bot draws its two
+                    // grants in this place instead.
+                    if let bot = device.botAccess {
+                        deviceEntries.append(contentsOf: botAccessRows(
+                            deviceId: device.id, access: bot))
+                    } else if device.relay && device.leaseDays >= 0 {
                         deviceEntries.append(info(
                             device.leaseDays == 0
                                 ? "away access is off for this phone"
@@ -136,7 +144,8 @@ extension SettingsMenuModel {
                                 id: "custom:away-days:\(device.id):\(days)",
                                 title: "Grant \(grantWords(days))",
                                 kind: .custom(.awayDays(deviceId: device.id,
-                                                        days: days))))
+                                                        days: days)),
+                                checked: days == device.leaseDays))
                         }
                         if device.leaseDays > 0 {
                             let ending = awayOffArmed == device.id
@@ -240,6 +249,89 @@ extension SettingsMenuModel {
     /// One grant length as a person says it.
     static func grantWords(_ days: Int) -> String {
         days == 1 ? "24 hours" : "\(days) days"
+    }
+
+    /// The bot's two groups — Read, then Write — each an info line saying
+    /// the position in force, the five positions as one row of buttons,
+    /// and "Restart the timer" while a timer runs. Plain `.custom` rows and
+    /// not `.pick`, for `awayDays`' reason: the tick machinery writes
+    /// `preferences.json` and knows nothing about `relay.json`.
+    static func botAccessRows(deviceId id: String,
+                              access: BotAccess,
+                              now: Date = Date()) -> [SettingsRow] {
+        var rows: [SettingsRow] = []
+        for side in ["read", "write"] {
+            let grant = access.grant(side)
+            rows.append(info(
+                "\(side) access: \(botGrantWords(grant, now: now))",
+                id: "info:device-bot-\(side):\(id)"))
+            // The segment says the length alone; the side rides the
+            // tooltip, which settings search matches and VoiceOver speaks
+            // (`SettingsControls.spokenName`), so Read's and Write's
+            // buttons never read the same.
+            for mode in botAccessModes {
+                rows.append(SettingsRow(
+                    id: "custom:bot-access:\(id):\(side):\(mode)",
+                    title: botModeTitle(mode),
+                    kind: .custom(.botAccess(deviceId: id, side: side,
+                                             mode: mode)),
+                    tooltip: "\(botSideTitle(side)) access: \(botModeTitle(mode))",
+                    checked: mode == grant.mode))
+            }
+            if botTimedModes.contains(grant.mode) {
+                rows.append(SettingsRow(
+                    id: "custom:bot-restart:\(id):\(side)",
+                    title: "Restart the \(side) timer",
+                    kind: .custom(.botAccess(deviceId: id, side: side,
+                                             mode: grant.mode))))
+            }
+        }
+        return rows
+    }
+
+    /// Every position one side of the bot's access can be put in, mirroring
+    /// the daemon's `BOT_ACCESS_MODES`.
+    static let botAccessModes = ["off", "1h", "6h", "24h", "forever"]
+
+    /// The positions that run on a timer, the daemon's `BOT_ACCESS_SECONDS`.
+    static let botTimedModes: Set<String> = ["1h", "6h", "24h"]
+
+    /// One side as a heading says it.
+    static func botSideTitle(_ side: String) -> String {
+        side == "write" ? "Write" : "Read"
+    }
+
+    /// What the settings window says when the daemon refused a change to
+    /// the bot's access — its own sentence, or a plain fallback — and nil
+    /// when the change landed. Drawn as an alert, the pairing refusal's
+    /// shape, so a refused Off is never silent.
+    static func botAccessRefusal(_ result: ActionResult) -> String? {
+        guard !result.ok else { return nil }
+        return result.detail.isEmpty
+            ? "Dark Army did not change the bot's access." : result.detail
+    }
+
+    /// One position as a button says it.
+    static func botModeTitle(_ mode: String) -> String {
+        switch mode {
+        case "off": return "Off"
+        case "1h": return "1 hour"
+        case "6h": return "6 hours"
+        case "24h": return "24 hours"
+        case "forever": return "No timer"
+        default: return mode
+        }
+    }
+
+    /// One grant in words: off, on with no timer, or on until a moment. A
+    /// timed grant whose moment has passed reads off before the daemon's
+    /// next frame says so.
+    static func botGrantWords(_ grant: BotGrant, now: Date = Date()) -> String {
+        if grant.mode == "forever" { return "on — no timer" }
+        guard botTimedModes.contains(grant.mode),
+              grant.until > now.timeIntervalSince1970 else { return "off" }
+        let until = Date(timeIntervalSince1970: grant.until)
+        return "on until \(expiryWords(until, now: now))"
     }
 
     /// The moment a window closes. Time alone while it is today, date and

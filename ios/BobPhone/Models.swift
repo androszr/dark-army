@@ -485,21 +485,78 @@ struct PhoneDevices: Decodable {
     func leaseExpiresAt(deviceId: String) -> Double {
         devices.first { $0.id == deviceId }?.leaseExpiresAt ?? 0
     }
+
+    /// The Mac's bot, where the Mac publishes its grants — the row carrying
+    /// `bot_access`. An older Mac publishes none, and the profile screen's
+    /// BOT ACCESS section is then absent.
+    var bot: PhoneDeviceRow? {
+        devices.first { $0.botAccess != nil }
+    }
 }
 
 struct PhoneDeviceRow: Decodable {
     var id = ""
     var leaseExpiresAt: Double = 0
+    /// The name the Mac shows for this device. Empty against an older Mac.
+    var name = ""
+    /// The bot's two grants. **`nil` means this row is not the bot** (or an
+    /// older Mac said nothing); never a zeroed pair.
+    var botAccess: PhoneBotAccess?
 
     enum CodingKeys: String, CodingKey {
-        case id
+        case id, name
         case leaseExpiresAt = "lease_expires_at"
+        case botAccess = "bot_access"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = c.value(.id, "")
         leaseExpiresAt = c.value(.leaseExpiresAt, 0)
+        name = c.value(.name, "")
+        botAccess = try? c.decode(PhoneBotAccess.self, forKey: .botAccess)
+    }
+}
+
+/// One side of the bot's access as the Mac states it: a mode word out of
+/// `off`, `1h`, `6h`, `24h`, `forever`, and for a timed mode the epoch it
+/// ends at. Drawn, never re-derived.
+struct PhoneBotGrant: Decodable, Equatable {
+    var mode = ""
+    var until: Double = 0
+
+    enum CodingKeys: String, CodingKey { case mode, until }
+
+    init(mode: String = "", until: Double = 0) {
+        self.mode = mode
+        self.until = until
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mode = c.value(.mode, "")
+        until = c.value(.until, 0)
+    }
+}
+
+/// The bot's two grants, read and write. Tolerant: a half-stated object
+/// keeps the other side's default.
+struct PhoneBotAccess: Decodable, Equatable {
+    var read = PhoneBotGrant()
+    var write = PhoneBotGrant()
+
+    enum CodingKeys: String, CodingKey { case read, write }
+
+    init(read: PhoneBotGrant = PhoneBotGrant(),
+         write: PhoneBotGrant = PhoneBotGrant()) {
+        self.read = read
+        self.write = write
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        read = c.value(.read, PhoneBotGrant())
+        write = c.value(.write, PhoneBotGrant())
     }
 }
 
@@ -1883,7 +1940,7 @@ enum WorkRecordFormat {
     }
 }
 
-struct BoardCard: Decodable, Identifiable {
+struct BoardCard: Decodable, Identifiable, Equatable {
     var outcomeRevision = 0
     var outcomeStatus = "unaccepted"
     var id = ""
@@ -2435,6 +2492,46 @@ struct StateUsageCarrier: Decodable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         usage = c.maybe(.usage)
+    }
+}
+
+/// One state answer read **off the main actor**, in one parse: the answer's
+/// marker, the picture and the usage bars that ride beside it. A whole
+/// picture is ~440 KB (the board alone ~400 KB) and was parsed three times
+/// on the main actor, inside `applyState` and `takeUsage` — a stall in the
+/// middle of whatever the person was scrolling. The poll legs build this
+/// with `offMain` and hand it to both; `applyState` still reads `answer`
+/// first, and `snapshot` is not decoded at all for an `unchanged` answer —
+/// `applyState`'s own order, kept here for the same reason (`Snapshot`
+/// decodes anything, so an unchanged body read as one is a blank picture).
+/// `snapshot` nil on any other answer is `.unreadable`, exactly as a failed
+/// `Snapshot` decode was.
+struct StateFrame: @unchecked Sendable {
+    var answer = StateAnswer()
+    var snapshot: Snapshot?
+    var usage: StateUsageCarrier?
+
+    /// The same three reads `applyState` / `takeUsage` make, sharing one
+    /// JSON parse. Pure; safe on any thread.
+    static func decode(_ body: Data) -> StateFrame {
+        (try? JSONDecoder().decode(Whole.self, from: body))?.frame ?? StateFrame()
+    }
+
+    /// `decode`, on a background task. The caller awaits it straight after
+    /// the transport's own await, so the screen sees nothing new in between.
+    static func offMain(_ body: Data) async -> StateFrame {
+        await Task.detached(priority: .userInitiated) { decode(body) }.value
+    }
+
+    private struct Whole: Decodable {
+        var frame = StateFrame()
+        init(from decoder: Decoder) throws {
+            frame.answer = (try? StateAnswer(from: decoder)) ?? StateAnswer()
+            if !frame.answer.unchanged {
+                frame.snapshot = try? Snapshot(from: decoder)
+            }
+            frame.usage = try? StateUsageCarrier(from: decoder)
+        }
     }
 }
 

@@ -17,7 +17,7 @@
   "height_px": 1624,
   "scale": 2,
   "display_width": 880,
-  "bytes": 261545,
+  "bytes": 284084,
   "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d",
   "window_pt": [
    1180,
@@ -31,7 +31,7 @@
   "height_px": 2128,
   "scale": 2,
   "display_width": 880,
-  "bytes": 534379,
+  "bytes": 407543,
   "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d",
   "window_pt": [
    1640,
@@ -45,7 +45,7 @@
   "height_px": 722,
   "scale": 2,
   "display_width": 584,
-  "bytes": 82568,
+  "bytes": 85191,
   "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d"
  }
 }

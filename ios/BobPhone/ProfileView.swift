@@ -42,6 +42,20 @@ struct ProfileView: View {
     /// afterwards: `retryReceipt` mints a fresh id, so the row's identity
     /// changes on completion and a lookup would never match.
     @State private var retryingReceipt = ""
+    /// The bot's two positions as the menus hold them, seeded from the
+    /// Mac's published grant and re-seeded whenever it moves, so a change
+    /// made at the desk wins. A differing choice is what posts.
+    @State private var botReadMode = ""
+    @State private var botWriteMode = ""
+    /// The side (`read` / `write`) whose press is out, or empty.
+    @State private var botSending = ""
+    /// Sides whose menu this screen is moving itself (a re-seed from the
+    /// Mac's picture, or putting it back after a refusal). The next change
+    /// on such a side is ours, never the person's, and never posts.
+    @State private var botReseeding: Set<String> = []
+    /// The Mac's own words for the last refused press, per side, drawn
+    /// under that side's line until the next press.
+    @State private var botRefusal: [String: String] = [:]
 
     /// `client.status` spelled as a word a person can read.
     private var statusWord: String {
@@ -110,6 +124,8 @@ struct ProfileView: View {
                         .profileRow()
                 }
             }
+
+            botSection
 
             PhoneSectionHeader(title: "CONNECTION")
                 .profileRow()
@@ -203,6 +219,125 @@ struct ProfileView: View {
             DecryptButton("Keep it", role: .cancel) {}
         } message: {
             Text("The phone forgets its key; pair again from the Mac's Devices menu.")
+        }
+    }
+
+    /// **BOT ACCESS** — the Mac's bot, its Read and its Write, each off, on
+    /// for 1, 6 or 24 hours, or on with no timer; the same switches as the
+    /// bot's entry under Devices on the Mac. Drawn only where the Mac
+    /// publishes `bot_access` on a row — an older Mac publishes none and the
+    /// section is absent. The words are `BotAccessRules`'; the Mac re-checks
+    /// every request the bot sends against its own copy.
+    @ViewBuilder
+    private var botSection: some View {
+        if let bot = client.snapshot.devices.bot, let access = bot.botAccess {
+            PhoneSectionHeader(title: "BOT ACCESS")
+                .profileRow()
+            row(label: "device", value: bot.name.isEmpty ? bot.id : bot.name)
+                .profileRow()
+            botSide("read", botId: bot.id, grant: access.read,
+                    selection: $botReadMode)
+            botSide("write", botId: bot.id, grant: access.write,
+                    selection: $botWriteMode)
+        }
+    }
+
+    /// One side of the bot's access: the position in words, a menu of the
+    /// five, RESTART TIMER while a timer runs, and the Mac's refusal inline.
+    @ViewBuilder
+    private func botSide(_ side: String, botId: String, grant: PhoneBotGrant,
+                         selection: Binding<String>) -> some View {
+        row(label: side,
+            value: botSending == side ? "SENDING…"
+                : BotAccessRules.words(mode: grant.mode, until: grant.until,
+                                       now: Date().timeIntervalSince1970))
+            .profileRow()
+        Picker(selection: selection.decrypting(decryptFeedback)) {
+            ForEach(BotAccessRules.modes, id: \.self) { mode in
+                Text(BotAccessRules.title(mode)).tag(mode)
+            }
+        } label: {
+            Text("\(side) access")
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.faint)
+        }
+        .font(Theme.mono(12))
+        .tint(Theme.phosphor)
+        .disabled(!botSending.isEmpty)
+        .accessibilityLabel("The bot's \(side) access")
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .profileRow()
+        .onAppear { reseedBot(side, selection, to: grant.mode) }
+        .onChange(of: grant.mode) { _, published in
+            reseedBot(side, selection, to: published)
+        }
+        .onChange(of: selection.wrappedValue) { _, chosen in
+            // A change this screen made itself never posts: a re-seed from
+            // the Mac, or the menu put back after a refusal.
+            if botReseeding.remove(side) != nil { return }
+            let published = publishedBotMode(side)
+            guard BotAccessRules.shouldPost(chosen: chosen,
+                                            published: published) else { return }
+            sendBotAccess(botId: botId, side: side, mode: chosen,
+                          selection: selection)
+        }
+        if let refusal = botRefusal[side], !refusal.isEmpty {
+            row(label: "refused", value: refusal, faint: true)
+                .profileRow()
+        }
+        if BotAccessRules.showsRestart(grant.mode) {
+            DecryptButton(botSending == side ? "SENDING…" : "RESTART TIMER") {
+                sendBotAccess(botId: botId, side: side, mode: grant.mode,
+                              selection: selection)
+            }
+            .buttonStyle(AlarmOutline())
+            .disabled(!botSending.isEmpty)
+            .accessibilityLabel("Restart the \(side) timer")
+            .accessibilityHint("Starts the \(side) timer again from now")
+            .font(Theme.mono(12))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .profileRow()
+        }
+    }
+
+    /// The position the Mac publishes for one side right now, read at the
+    /// moment of use — never a value captured before an await.
+    private func publishedBotMode(_ side: String) -> String {
+        guard let access = client.snapshot.devices.bot?.botAccess else { return "" }
+        return side == "write" ? access.write.mode : access.read.mode
+    }
+
+    /// Move one side's menu without it counting as a press. Marked only when
+    /// the value actually changes, since an unchanged value fires no
+    /// `onChange` and a mark left behind would swallow the next real press.
+    private func reseedBot(_ side: String, _ selection: Binding<String>,
+                           to mode: String) {
+        guard selection.wrappedValue != mode else { return }
+        botReseeding.insert(side)
+        selection.wrappedValue = mode
+    }
+
+    /// Post one position. A failed press is never re-sent later behind the
+    /// person's back (`ReceiptEffect.botAccess`, which the sweep drops
+    /// before any resend), so SENDING… is shown
+    /// while it is out, a refusal is shown inline in the Mac's own words,
+    /// and the menu goes back to whatever the Mac publishes *now*.
+    private func sendBotAccess(botId: String, side: String, mode: String,
+                               selection: Binding<String>) {
+        guard botSending.isEmpty else { return }
+        botSending = side
+        botRefusal[side] = nil
+        Task {
+            let result = await client.post(
+                action: PhoneActions.setBotAccess,
+                fields: ["device_id": botId, "side": side, "mode": mode])
+            botSending = ""
+            if !result.ok {
+                botRefusal[side] = BotAccessRules.refusalWords(result.detail)
+                reseedBot(side, selection, to: publishedBotMode(side))
+            }
         }
     }
 

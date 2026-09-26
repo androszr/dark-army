@@ -89,18 +89,26 @@ own fields:
 
 ## The showcase slides
 
-`showcase/` holds four slides from the Reddit showcase deck, which lives in
-the git-ignored `user-data/reddit-showcase/slides/`: its 2160 px originals and
-its own render never change. The README copies come from a second render:
+`showcase/` holds four slides in the Signal design system, redrawn from the
+Reddit showcase deck (`user-data/reddit-showcase/slides/`, left as it was).
+The new deck lives in the git-ignored `user-data/readme-showcase/slides/`:
+its frame takes its colours, radii and type from a copy of
+`design-system/workshop/tokens.css`, and every picture of the app in it is a
+real render of this folder's made-up day — the Mac panel's layers from
+`DemoShotsTests`, the iPhone screens from the phone's own views drawn in a
+simulator. Only the macOS menu bar around the real strip, the generic
+terminals on the problem slide and the iPhone bezel and status bar are drawn
+by the deck. The README copies come from a second render:
 
 ```bash
 host/.venv/bin/python tools/showcase_ingest.py           # needs Chrome and the deck
 host/.venv/bin/python tools/showcase_ingest.py --check   # the committed four alone
 ```
 
-It switches off the footer line `.foot .brand::after` in `base.css` (the
-author's name and the flag), shrinks to 1200 px and saves a palette PNG under
-300 KB. `host/tests/test_showcase_images.py` pins the set, the size, the
+It switches off the footer line `.foot .brand::after` in `base.css`, shrinks
+to 1200 px and saves a palette PNG under 300 KB, choosing the palette by fast
+octree so small colours — the window's traffic lights, a red `wait` — keep
+their hue. `host/tests/test_showcase_images.py` pins the set, the size, the
 footer (no flag red, no name read by the Mac's text recognition) and the
 README embeds. Never edit these by hand either: re-run the tool.
 

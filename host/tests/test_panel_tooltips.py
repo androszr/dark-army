@@ -16,8 +16,9 @@ EXPECTED = {
     "ProcessTable.swift": 3,
     "ProviderSwitch.swift": 2,
     "RowBars.swift": 3,
+    "SettingsRows.swift": 4,
     "SettingsSection.swift": 2,
-    "SettingsView.swift": 5,
+    "SettingsSidebar.swift": 1,
 }
 
 HELP = ".help("
@@ -71,8 +72,15 @@ def test_each_keeper_still_carries_its_text():
     assert "names one it no longer offers" in card
     assert "on a terminal Dark Army itself opens" in card
 
-    settings_view = _read("SettingsView.swift")
-    assert "row.tooltip" in settings_view
+    # The settings window's five moved with its rows on 26 Sep 2026: the row
+    # shell, a segment, a models pop-up and a fact (`SettingsRows.swift`),
+    # and the kill switch in the sidebar's foot (`SettingsSidebar.swift`).
+    settings_rows = _read("SettingsRows.swift")
+    assert ".help(tooltip)" in settings_rows
+    assert ".help(entry.row.tooltip)" in settings_rows
+    assert ".help(row.tooltip)" in settings_rows
+    assert ".help(row.tooltip)" in _read("SettingsSidebar.swift")
+    assert HELP not in _read("SettingsView.swift")
 
     settings_section = _read("SettingsSection.swift")
     assert "helpText" in settings_section
@@ -103,7 +111,7 @@ def test_icon_only_controls_keep_a_spoken_label():
     panel_view = _read("PanelView.swift")
     assert 'accessibilityLabel("Clear the filter")' in panel_view
 
-    settings = _read("SettingsView.swift")
+    settings = _read("SettingsRows.swift")
     assert 'accessibilityLabel("Clear the search")' in settings
 
     card = _read("BoardCardView.swift")

@@ -136,7 +136,7 @@ lengths and ids rather than content.
 
 ## Stopping everything
 
-Settings → **Kill switch — stop everything** stops every Dark Army process on
-this Mac at once, including the hosted terminals and the channel inside each
-session, with no clean shutdown and no undo
+*Kill switch — stop everything*, at the foot of the Settings sidebar, stops
+every Dark Army process on this Mac at once, including the hosted terminals
+and the channel inside each session, with no clean shutdown and no undo
 ([docs/kill-switch.md](docs/kill-switch.md)).

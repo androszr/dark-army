@@ -77,9 +77,11 @@ has not proved.
 
 ## The two surfaces, both armed then confirmed
 
-- **The settings page's first row** — `SettingsMenuModel.killRowId`, the only
-  row on the page with `danger` set (alarm ink and an alarm edge; the title
-  already carries the meaning, so colour is additive). `SettingsWindowState`
+- **The settings window's sidebar footer** — pinned there beside Restart and
+  Quit, on every section. `SettingsMenuModel.killRowId`, first in the
+  inventory and the only row in it with `danger` set (alarm ink and an alarm
+  edge; the title already carries the meaning, so colour is additive).
+  `SettingsWindowState`
   gives it its own arming slot for the reason every armed verb has one. The
   confirmed press sends `kill_all` on the panel's stdout channel — the
   menu-bar app owns every process here, this one included. Nothing is sent

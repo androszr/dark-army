@@ -14,6 +14,11 @@ struct SettingsRow: Equatable, Identifiable {
     /// only signal — the title already says what the press does — so this is
     /// additive, and today exactly one row sets it.
     var danger: Bool = false
+    /// A drawing hint for a `.custom` row that stands in a choice — an
+    /// away-days grant, a pack profile: this one is the length or profile in
+    /// force. Not part of the id, and never a `.pick`: those rows post to the
+    /// daemon, not on the preference channel.
+    var checked: Bool = false
 
     /// True for checkboxes and exclusive pickers (Agents per project).
     /// Action rows, Un-enrol and the rest still close.
@@ -59,6 +64,10 @@ struct SettingsRow: Equatable, Identifiable {
         case awayOff(deviceId: String)
         /// Let this phone answer a buzz from its lock screen, or stop.
         case lockScreenActions(deviceId: String, enabled: Bool)
+        /// Put one side (`read` / `write`) of the bot's access in one
+        /// position from `botAccessModes`; the same mode again restarts
+        /// its timer.
+        case botAccess(deviceId: String, side: String, mode: String)
         /// Install (or re-install) the shared agent pack under `root`.
         case installPack(root: String, profile: String)
         /// Drop `root` from the pack ledger; leave the files where they are.

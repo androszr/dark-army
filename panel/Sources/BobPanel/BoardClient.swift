@@ -627,6 +627,15 @@ extension DaemonClient {
                        "days": days])
     }
 
+    /// Put one side (`read` / `write`) of the bot's access in one position
+    /// (`off`, `1h`, `6h`, `24h`, `forever`). Loopback only, `setAwayDays`'
+    /// gate; a timed position runs from now, so the same one again is a
+    /// refresh. The refusal is the daemon's own sentence.
+    func setBotAccess(_ deviceId: String, side: String, mode: String) async -> ActionResult {
+        await postAny(["action": "set_bot_access", "device_id": deviceId,
+                       "side": side, "mode": mode])
+    }
+
     /// Let one phone answer a permission or acknowledge a waiting agent
     /// from its lock screen, or stop. Loopback only, `setAwayDays`' gate.
     func setLockScreenActions(_ deviceId: String, enabled: Bool) async -> ActionResult {

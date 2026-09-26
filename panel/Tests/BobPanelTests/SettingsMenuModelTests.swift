@@ -706,7 +706,8 @@ final class SettingsMenuModelTests: XCTestCase {
 
     // MARK: - The kill switch
 
-    /// The whole point of the row is that it is the first thing on the page.
+    /// First in the inventory, and drawn in the settings window's sidebar
+    /// footer beside Restart and Quit, on every section.
     func testKillSwitchLeadsTheInventory() {
         let tree = rows()
         XCTAssertEqual(tree.first?.id, SettingsMenuModel.killRowId)

@@ -145,6 +145,13 @@ enum PhoneActions {
     /// card, so the row goes quiet everywhere; never an answer, never Mark
     /// checked.
     static let inboxAck = "inbox_ack"
+    /// Route: `BobDaemon.set_bot_access` — put the Mac's bot's Read or
+    /// Write access in one position (`off`, `1h`, `6h`, `24h`, `forever`);
+    /// the same timer again restarts it. The payload's `device_id` is the
+    /// bot, the *target*; the Mac refuses any other target and refuses the
+    /// bot itself by its verified identity. Drawn on the profile screen only
+    /// where the Mac publishes `bot_access`.
+    static let setBotAccess = "set_bot_access"
     /// Route: `BobDaemon.ack_access_alert` — close one burst alert off the
     /// phone doors' access log. Clear-never-set: the log entry stays, and
     /// the verb can raise nothing. Its own verb, never `inbox_ack`.

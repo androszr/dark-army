@@ -4,7 +4,9 @@ git-ignored slide deck with the personal footer line switched off.
     host/.venv/bin/python tools/showcase_ingest.py           # render, shrink, write
     host/.venv/bin/python tools/showcase_ingest.py --check   # verify the committed four
 
-The deck lives under `user-data/reddit-showcase/slides/` (git-ignored). Its
+The deck lives under `user-data/readme-showcase/slides/` (git-ignored): the
+Signal redraw of the Reddit deck, every app picture in it a real render of the
+demo day (`docs/images/SHOTS.md`, *The showcase slides*). Its
 own renders (`render.sh`, 2160 px, footer and all) are never touched: this
 tool writes a temporary `readme-<slide>.html` beside each chosen slide with
 one `<style>` override injected before `</head>` — the footer's
@@ -158,7 +160,11 @@ def _bake(render: Path, dest: Path) -> int:
     with Image.open(render) as opened:
         img = _even(opened.convert("RGB").resize((WIDTH, WIDTH), Image.LANCZOS))
     for colours in COLOUR_STEPS:
-        quantised = img.quantize(colours, method=Image.Quantize.MEDIANCUT,
+        # Fast octree, not median cut: median cut spends the palette on the
+        # large dark areas and greys out the small ones — the window's
+        # traffic lights, a red `wait`, a blue link — which is a picture of an
+        # app that does not exist.
+        quantised = img.quantize(colours, method=Image.Quantize.FASTOCTREE,
                                  dither=Image.Dither.FLOYDSTEINBERG)
         quantised.save(dest, format="PNG", optimize=True)
         _strip_chunks(dest)
@@ -186,7 +192,7 @@ def ingest(slides: Path, out: Path, work: Path, chrome: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--slides", default="user-data/reddit-showcase/slides",
+    parser.add_argument("--slides", default="user-data/readme-showcase/slides",
                         help="the slide deck, relative to the repository root")
     parser.add_argument("--out", default="docs/images/showcase",
                         help="where the README copies go, relative to the repository root")
