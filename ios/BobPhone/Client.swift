@@ -219,6 +219,11 @@ final class PhoneClient: ObservableObject {
     /// can drop it in one place with everything else pairing-scoped.
     let cardCache = CardCacheStore()
     let conversationCache = ConversationCacheStore()
+    /// Pictures a person opened, newest last, so reopening one draws at
+    /// once without asking the Mac again. **Memory only** — a picture is
+    /// never written to disk by the phone — a few entries, and none older
+    /// than a day (`ImageMemo.lifetime`), pruned on every applied state.
+    var imageMemo = ImageMemo()
     /// The last full picture, on disk, for a cold launch with the Mac out
     /// of reach. Filled at the end of `applyState`'s applied branch and
     /// restored once by `restoreHeldPicture()`; pairing-scoped.
@@ -2244,6 +2249,8 @@ final class PhoneClient: ObservableObject {
     /// the fleet, the board and the needs-you count on every quiet poll.
     private func applyState(_ body: Data, record: PairingRecord,
                             route: Via, frame: StateFrame? = nil) -> StateOutcome {
+        // A picture held past its day goes on the next state, opened or not.
+        if imageMemo.count > 0 { imageMemo.prune() }
         // Decoded once and read twice: the `unchanged` marker here, the
         // `sections_unchanged` list after the `Snapshot` decode below.
         // A poll leg hands in `frame`, read off the main actor in the same
@@ -2823,9 +2830,11 @@ final class PhoneClient: ObservableObject {
     ///
     /// `fetchLog`'s shape exactly, and for `fetchLog`'s reason: a read on the
     /// sealed doors, so it widens no action tuple and checks no away lease.
-    /// Called from the card screen's own `.task` and from **nowhere else** —
-    /// never from `poll`, never from `backgroundRefresh` — because a screen
-    /// nobody is looking at has no card to read.
+    /// Called from the card screen's own `.task` and from the agent sheet's
+    /// journey rail (`loadJourney`, only when its card has moved on since
+    /// the held report) and from **nowhere else** — never from `poll`, never from
+    /// `backgroundRefresh` — because a screen nobody is looking at has no
+    /// card to read.
     ///
     /// A 404 is an older Mac that has never heard of the `card` kind: nil,
     /// and not an error. The card screen falls back to the snapshot's preview
@@ -3115,6 +3124,8 @@ final class PhoneClient: ObservableObject {
         log = []
         lastLogFetch = .distantPast
         answerDrafts.prune(keeping: [])
+        // Pictures belong to the Mac they came from.
+        imageMemo = ImageMemo()
         // Both new stores are pairing-scoped and go with it: a cache filled
         // from another Mac must never be read as this one's, and a press
         // made against it must never be replayed here.
@@ -3634,6 +3645,35 @@ extension PhoneClient {
         guard record.token == self.record?.token, let answer,
               answer.failure.isEmpty, answer.status == 200 else { return nil }
         return try? JSONDecoder().decode(PlanBody.self, from: answer.body)
+    }
+
+    func cachedImage(session: String, path: String) -> ImagePreview? {
+        imageMemo.get(session: session, path: path)
+    }
+
+    /// One picture from a session's project, asked when the picture sheet
+    /// shows it and at no other time. `planBody`'s route and rule: a
+    /// **read** on the sealed home/away route; the session and the path
+    /// ride the sealed JSON body, never a query string, and the Mac
+    /// confines the path to that session's project.
+    func imagePreview(session: String, path: String) async -> ImagePreview? {
+        guard let record, !backgroundRun, !session.isEmpty, !path.isEmpty else { return nil }
+        let body: [String: Any] = ["session": session, "path": path]
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "image", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(kind: "image", body: body,
+                                        host: record.host, port: record.port,
+                                        timeout: 15)
+        } else { return nil }
+        guard record.token == self.record?.token, let answer,
+              answer.failure.isEmpty, answer.status == 200,
+              let preview = try? JSONDecoder().decode(ImagePreview.self, from: answer.body)
+        else { return nil }
+        imageMemo.put(preview, session: session, path: path)
+        return preview
     }
 
     /// The Mac's access log — every refused knock on the phone doors — on

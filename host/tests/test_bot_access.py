@@ -225,7 +225,7 @@ async def test_read_off_refuses_the_picture_on_both_doors(server):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["plans", "bearings", "card", "log",
+@pytest.mark.parametrize("kind", ["plans", "bearings", "card", "log", "image",
                                   "terminal", "scout_reports", "usage"])
 async def test_read_off_refuses_every_read_kind(server, kind):
     srv, daemon = server

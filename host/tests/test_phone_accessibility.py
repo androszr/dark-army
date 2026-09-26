@@ -407,6 +407,10 @@ def test_the_files_the_plan_named_were_all_opened():
 #: entries below sit in one file, so file granularity was never enough
 #: either. Adding a site means adding a reason **and** moving a number.
 IGNORE_SITES = {
+    ("AgentDetailView.swift", "JourneyRail"):
+        (1, "the agent sheet's journey rail — five drawn stops with no press "
+            "anywhere in it, spoken as one sentence (`CardJourney.spoken`) "
+            "rather than fifteen fragments"),
     ("NeedsYouView.swift", "NeedsYouView"):
         (1, "the orphan permission entry — a published prompt with no agent "
             "row behind it, so nothing to open: a text-only row spoken as "

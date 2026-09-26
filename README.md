@@ -147,7 +147,7 @@ frees.
 
 ## Your phone
 
-<img src="docs/images/showcase/walk-away-from-the-desk.png" alt="Walk away from the desk: three iPhone screens, Fleet with every agent on one line, Board with the cards, and an agent's question answered from the couch." width="880">
+<img src="docs/images/showcase/walk-away-from-the-desk.png" alt="Walk away from the desk: three iPhone screens, Fleet with every agent on one line, Board with the cards, and an agent's screen with its card's journey from idea to done." width="880">
 
 Pair once: Settings → **Devices** → *Pair a device…*, and scan the QR code with
 the phone. The app asks for Face ID on every open and has five tabs: Needs you,

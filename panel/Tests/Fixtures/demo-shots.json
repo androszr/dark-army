@@ -663,6 +663,55 @@
       }
      },
      {
+      "id": "demo-card-11",
+      "project": "pocket-weather",
+      "root": "/Users/you/Code/pocket-weather",
+      "title": "Default temperature units",
+      "summary": "Pick the units a new user sees first, and keep them in the settings.",
+      "prompt": "Pick the units a new user sees first, and keep them in the settings.",
+      "column_name": "in_progress",
+      "tool": "claude",
+      "created_at": 1790049600,
+      "session_id": "demo-cipher",
+      "link_state": "live",
+      "work_active": true,
+      "run_active": true,
+      "revision": 1,
+      "priority": "55",
+      "area": "",
+      "plan_path": "plans/2026-09-21-default-units.md",
+      "position": 4,
+      "workflow": "bc-implementer\nbc-verifier\nbc-bug-auditor",
+      "author": "user",
+      "dispatch_error": "",
+      "manual_steps": "",
+      "closed_by": "",
+      "close_note": "",
+      "agent_trail": "bc-implementer",
+      "run_figures": {
+       "cost_usd": 0.62,
+       "cost_coverage": "complete",
+       "active_seconds": 720,
+       "active_ticking": false,
+       "ctx_percent": 27,
+       "attempts": 1
+      },
+      "run_health": {
+       "class": "typical",
+       "basis": "project",
+       "turns": 19,
+       "tokens_k": 95,
+       "ctx_pct": 27,
+       "asks": 1,
+       "refusals": 0,
+       "attempts": 1,
+       "returns": 0,
+       "fix_rounds": 0,
+       "attention": false,
+       "live": true
+      }
+     },
+     {
       "id": "demo-card-09",
       "project": "pocket-weather",
       "root": "/Users/you/Code/pocket-weather",
@@ -738,7 +787,7 @@
     "counts": {
      "prep": 2,
      "backlog": 3,
-     "in_progress": 3,
+     "in_progress": 4,
      "done": 2
     },
     "projects": [
@@ -1453,6 +1502,55 @@
       }
      },
      {
+      "id": "demo-card-11",
+      "project": "pocket-weather",
+      "root": "/Users/you/Code/pocket-weather",
+      "title": "Default temperature units",
+      "summary": "Pick the units a new user sees first, and keep them in the settings.",
+      "prompt": "Pick the units a new user sees first, and keep them in the settings.",
+      "column_name": "in_progress",
+      "tool": "claude",
+      "created_at": 1790049600,
+      "session_id": "demo-cipher",
+      "link_state": "live",
+      "work_active": true,
+      "run_active": true,
+      "revision": 1,
+      "priority": "55",
+      "area": "",
+      "plan_path": "plans/2026-09-21-default-units.md",
+      "position": 4,
+      "workflow": "bc-implementer\nbc-verifier\nbc-bug-auditor",
+      "author": "user",
+      "dispatch_error": "",
+      "manual_steps": "",
+      "closed_by": "",
+      "close_note": "",
+      "agent_trail": "bc-implementer",
+      "run_figures": {
+       "cost_usd": 0.62,
+       "cost_coverage": "complete",
+       "active_seconds": 720,
+       "active_ticking": false,
+       "ctx_percent": 27,
+       "attempts": 1
+      },
+      "run_health": {
+       "class": "typical",
+       "basis": "project",
+       "turns": 19,
+       "tokens_k": 95,
+       "ctx_pct": 27,
+       "asks": 1,
+       "refusals": 0,
+       "attempts": 1,
+       "returns": 0,
+       "fix_rounds": 0,
+       "attention": false,
+       "live": true
+      }
+     },
+     {
       "id": "demo-card-09",
       "project": "pocket-weather",
       "root": "/Users/you/Code/pocket-weather",
@@ -1528,7 +1626,7 @@
     "counts": {
      "prep": 2,
      "backlog": 3,
-     "in_progress": 3,
+     "in_progress": 4,
      "done": 2
     },
     "projects": [

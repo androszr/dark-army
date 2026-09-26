@@ -11,8 +11,8 @@ is a change to the day and a re-run, never a change to the PNG.
 `pocket-weather` (a weather app), `trailhead-api` (a hiking-trails service)
 and `inkwell` (a notes app), each at `/Users/you/Code/<project>`. Seven agents
 from the cast: Vex, Forge (Claude) and Hex (Codex) working, Cipher waiting on
-a question about temperature units, Ledger and Nyx (Grok) resting, Relay
-finished. Ten cards across the four rows, one open card with a plan, running
+a question about temperature units on the card he is building, Ledger and Nyx (Grok) resting, Relay
+finished. Eleven cards across the four rows, one open card with a plan, running
 cards with their cost and time, a Done card waiting on a person's check, and
 usage meters in the middle of their range. Cipher is the one waiting because
 his is the one face the menu-bar strip has art for.
@@ -98,7 +98,18 @@ real render of this folder's made-up day — the Mac panel's layers from
 `DemoShotsTests`, the iPhone screens from the phone's own views drawn in a
 simulator. Only the macOS menu bar around the real strip, the generic
 terminals on the problem slide and the iPhone bezel and status bar are drawn
-by the deck. The README copies come from a second render:
+by the deck. The phone screens (Fleet, Board and Cipher's sheet on Main,
+with his card's journey) come from `DemoShotsTests.testRenderPhoneShots` on a
+throwaway simulator, deleted afterwards; the folder must be absolute:
+
+```bash
+TEST_RUNNER_BOB_DEMO_SHOTS_OUT=/abs/out xcodebuild test -project ios/BobPhone.xcodeproj \
+  -scheme BobPhone -destination 'platform=iOS Simulator,id=<throwaway udid>' \
+  -only-testing:BobPhoneTests/DemoShotsTests CODE_SIGNING_ALLOWED=NO
+```
+
+Copy the three PNGs into the deck's `img/`; `phone-fleet-rows.png` is the
+Fleet screen cut from y = 690 px to 1680 px. The README copies come from a second render:
 
 ```bash
 host/.venv/bin/python tools/showcase_ingest.py           # needs Chrome and the deck

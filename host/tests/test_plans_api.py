@@ -324,7 +324,7 @@ async def test_sealed_kinds_are_reads_on_both_doors(setup, door):
 
 def test_the_lan_door_admits_both_kinds():
     src = inspect.getsource(ApiServer._lan_home)
-    assert '"plans", "plan", "action"' in src
+    assert '"plans", "plan", "image",' in src
 
 
 def test_both_kinds_sit_above_the_action_branch():

@@ -153,6 +153,16 @@ struct AgentDetailView: View {
     /// Whether the strip above the live terminal is unfolded. Starts folded
     /// so the screen is the terminal; see `terminalScreen`.
     @State private var stripOpen = false
+    /// The card's timeline for the journey rail on Main, the id of the card
+    /// it belongs to, and the phone's clock when it arrived — so the open
+    /// line ages from the Mac's own `generated_at` without asking again.
+    @State private var journeyReport: CardTimelineReport?
+    @State private var journeyCardId = ""
+    /// The `CardJourney.fetchKey` the held report was read under. The open
+    /// line is drawn only while it still matches the card, so a caption
+    /// from before a move is never shown after it; the stage times stay.
+    @State private var journeyHeldKey = ""
+    @State private var journeyFetchedAt = Date.distantPast
 
     private var agent: Agent {
         let a = client.snapshot.agents
@@ -573,6 +583,7 @@ struct AgentDetailView: View {
                 .padding(.horizontal, 14)
                 .padding(.top, 4)
                 .padding(.bottom, 4)
+                journey
                 if hasVerbs {
                     VStack(alignment: .leading, spacing: 10) {
                         verbs
@@ -585,6 +596,58 @@ struct AgentDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollDismissesKeyboard(.interactively)
+    }
+
+    /// The journey rail, on a session working (or planning) a card: five
+    /// stages, where the card is now, and the Mac's open line under it.
+    /// Drawn from the board card at once and timed once the card's
+    /// timeline arrives; an older Mac without the timeline gets the rail
+    /// with no times.
+    @ViewBuilder private var journey: some View {
+        if let card = boardCard, !cardLine.isEmpty {
+            let key = CardJourney.fetchKey(card)
+            let report = journeyCardId == card.id ? journeyReport : nil
+            let current = journeyHeldKey == key ? report : nil
+            TimelineView(.everyMinute) { context in
+                JourneyRail(
+                    steps: CardJourney.steps(card: card, report: report),
+                    caption: current.flatMap { report in
+                        report.generatedAt <= 0 ? nil : CardTimeline.openLine(
+                            report,
+                            now: report.generatedAt
+                                + max(0, context.date.timeIntervalSince(journeyFetchedAt)))
+                    })
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .task(id: key) { await loadJourney(card, key: key) }
+        }
+    }
+
+    /// The card read the card screen makes, for its timeline alone — asked
+    /// only when the card has moved on since the held report
+    /// (`CardJourney.fetchKey`), so a return to Main reads nothing. A Mac
+    /// without the timeline, or a read that failed, keeps the stage times
+    /// held and draws no open line; a read overtaken by a newer one (the
+    /// task cancelled, or the card moved on) is dropped.
+    private func loadJourney(_ card: BoardCard, key: String) async {
+        if journeyCardId != card.id {
+            journeyReport = nil
+            journeyHeldKey = ""
+            journeyCardId = card.id
+        }
+        guard journeyHeldKey != key,
+              client.snapshot.board.cardTimelineSupported else { return }
+        guard let full = await client.fetchCard(card.id),
+              !Task.isCancelled,
+              let report = full.timeline, report.available,
+              journeyCardId == card.id,
+              let now = boardCard, CardJourney.fetchKey(now) == key
+        else { return }
+        journeyReport = report
+        journeyHeldKey = key
+        journeyFetchedAt = Date()
     }
 
     /// The one line kept above every tab but Main: the card's title (a tap
@@ -1562,3 +1625,222 @@ enum TerminalStrip {
     }
 }
 
+
+/// The journey rail's rule: where a card stands among five stages — Idea,
+/// Plan, Build, Check, Done — and how long each passed stage took, read
+/// from the board's own fields and the card's timeline (`card_timeline.py`).
+///
+/// **Where the card is now comes from the board card, never the clock.**
+/// The column, the link, the refinement and the manual steps decide the
+/// current stage; the timeline only times what already happened. A passed
+/// stage's time runs from its first moment to the earliest later moment of
+/// any stage after it, up to the current one, so a stage that was skipped (a scout's plan) or
+/// never witnessed reads blank rather than guessed, and a figure that would
+/// be negative — a reopened card's earlier Done — is dropped. The current
+/// stage carries no figure: the Mac's own open line says how long, under
+/// the rail. Pure: no view state, no network.
+enum CardJourney {
+    enum Stage: Int, CaseIterable {
+        case idea, plan, build, check, done
+
+        var label: String {
+            switch self {
+            case .idea: return "IDEA"
+            case .plan: return "PLAN"
+            case .build: return "BUILD"
+            case .check: return "CHECK"
+            case .done: return "DONE"
+            }
+        }
+
+        var spoken: String { label.capitalized }
+    }
+
+    enum Mark: Equatable { case passed, current, ahead }
+
+    struct Step: Identifiable, Equatable {
+        let stage: Stage
+        let mark: Mark
+        /// `"12m"` for a passed stage with both ends witnessed, else `""`.
+        let time: String
+        var id: Int { stage.rawValue }
+    }
+
+    /// The stage a timeline moment belongs to; nil for a moment that marks
+    /// no stage (asks, queue moves, a refused start).
+    static func stage(forKind kind: String) -> Stage? {
+        switch kind {
+        case "created": return .idea
+        case "refine_started", "refine_ended", "plan_attached", "plan_approved":
+            return .plan
+        case "started", "picked_up", "restarted": return .build
+        case "ended", "manual_flagged", "manual_cleared":
+            return .check
+        // `submitted` is an agent's own close, written at the instant it
+        // moved the card to Done: the move into Done, not a check. A review
+        // and an acceptance happen on a card already in Done.
+        case "submitted", "moved_done", "reviewed", "accepted": return .done
+        default: return nil
+        }
+    }
+
+    /// Where the card stands now, from the board card alone.
+    static func current(_ card: BoardCard) -> Stage {
+        if card.isRefining { return .plan }
+        switch card.column {
+        case "prep":
+            return .idea
+        case "backlog":
+            // A planned card is waiting to be built; an unplanned one (or a
+            // scout, which has no plan) still has its plan ahead of it.
+            return card.planPath.isEmpty && !card.isScout ? .plan : .build
+        case "in_progress":
+            if card.isInFlight || card.isQueued { return .build }
+            let checking = card.linkState == "ended"
+                || !card.manualSteps.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return checking ? .check : .build
+        case "done":
+            return .done
+        default:
+            return .idea
+        }
+    }
+
+    static func steps(card: BoardCard, report: CardTimelineReport?) -> [Step] {
+        let now = current(card)
+        var first: [Stage: Double] = [:]
+        for step in report?.steps ?? [] {
+            guard step.observed, let at = step.at, at > 0,
+                  let stage = stage(forKind: step.kind),
+                  first[stage] == nil else { continue }
+            first[stage] = at
+        }
+        return Stage.allCases.map { stage in
+            let mark: Mark = stage.rawValue < now.rawValue ? .passed
+                : (stage == now ? .current : .ahead)
+            var time = ""
+            if mark == .passed, let start = first[stage] {
+                let next = Stage.allCases
+                    .filter { $0.rawValue > stage.rawValue && $0.rawValue <= now.rawValue }
+                    .compactMap { first[$0] }
+                    // Strictly after: a stage whose next one began the same
+                    // second took no witnessed time, and "0s" would be a
+                    // guess; an earlier one (a reopened card) is not an end.
+                    .filter { $0 > start }
+                    .min()
+                if let next {
+                    time = CardTimeline.elapsed(next - start)
+                }
+            }
+            return Step(stage: stage, mark: mark, time: time)
+        }
+    }
+
+    /// Everything the Mac's open line (`card_timeline.open_state`) reads
+    /// off the card, as one string: when it changes, the timeline is worth
+    /// asking for again. Never the minute, so an open sheet does not poll.
+    static func fetchKey(_ card: BoardCard) -> String {
+        [card.id, card.column, card.linkState, card.refineState,
+         card.queueState, String(card.revision), card.planPath,
+         String(card.manualSteps.isEmpty), card.closedBy,
+         card.reviewedAt.map { String($0) } ?? "",
+         card.queuedAt.map { String($0) } ?? "",
+         card.outcomeStatus, String(card.outcomeRevision)]
+            .joined(separator: "|")
+    }
+
+    /// The word under a stop: the passed stop's time, "now" on the current
+    /// one — and a tick on Done, where the journey has ended, not paused.
+    static func timeWords(_ step: Step) -> String {
+        guard step.mark == .current else { return step.time }
+        return step.stage == .done ? "✓" : "now"
+    }
+
+    /// The whole rail as one sentence for a screen reader.
+    static func spoken(_ steps: [Step]) -> String {
+        let parts = steps.map { step -> String in
+            switch step.mark {
+            case .passed:
+                return step.stage.spoken + ", passed"
+                    + (step.time.isEmpty ? "" : ", took " + step.time)
+            case .current:
+                return step.stage.spoken + (step.stage == .done ? ", reached" : ", now")
+            case .ahead:
+                return step.stage.spoken + ", ahead"
+            }
+        }
+        return "Journey. " + parts.joined(separator: "; ")
+    }
+}
+
+/// Five stops on one line, the passed ones filled and joined, the current
+/// one ringed, the rest faint; each passed stop's time under its name, and
+/// the Mac's own open line ("Assistant working · 48m") under the rail.
+struct JourneyRail: View {
+    let steps: [CardJourney.Step]
+    let caption: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("JOURNEY")
+                .font(Theme.mono(10))
+                .tracking(0.8)
+                .foregroundStyle(Theme.dim)
+            HStack(alignment: .top, spacing: 0) {
+                ForEach(steps) { step in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 0) {
+                            dot(step.mark)
+                            if step.stage != CardJourney.Stage.allCases.last {
+                                Rectangle()
+                                    .fill(step.mark == .passed ? Theme.phosphor : Theme.hair)
+                                    .frame(height: 2)
+                            }
+                        }
+                        .frame(height: 12)
+                        Text(step.stage.label)
+                            .font(Theme.mono(10, weight: step.mark == .current ? .semibold : .regular))
+                            .tracking(0.6)
+                            .foregroundStyle(color(step.mark))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(CardJourney.timeWords(step))
+                            .font(Theme.mono(10))
+                            .foregroundStyle(step.mark == .current ? Theme.phosphorBright : Theme.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if let caption, !caption.isEmpty {
+                Text("> " + caption)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.phosphorBright)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(CardJourney.spoken(steps)
+                            + ((caption ?? "").isEmpty ? "" : ". " + (caption ?? "")))
+    }
+
+    @ViewBuilder private func dot(_ mark: CardJourney.Mark) -> some View {
+        switch mark {
+        case .passed:
+            Circle().fill(Theme.phosphor).frame(width: 10, height: 10)
+        case .current:
+            Circle().stroke(Theme.phosphorBright, lineWidth: 2)
+                .background(Circle().fill(Theme.bg))
+                .frame(width: 12, height: 12)
+        case .ahead:
+            Circle().stroke(Theme.faint, lineWidth: 1).frame(width: 10, height: 10)
+        }
+    }
+
+    private func color(_ mark: CardJourney.Mark) -> Color {
+        switch mark {
+        case .passed: return Theme.phosphor
+        case .current: return Theme.phosphorBright
+        case .ahead: return Theme.faint
+        }
+    }
+}

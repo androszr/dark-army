@@ -228,3 +228,60 @@ enum CommHelperTabs {
         return trimmed.isEmpty ? String(id.prefix(8)) : trimmed
     }
 }
+
+/// The picture paths an agent's message names, in the order written — the
+/// chips under the message (`ConversationImageChips`) and the pages of the
+/// picture sheet. Foundation only, so the rule is tested without a screen.
+///
+/// A path is one token ending in a picture extension (`extensions`), with
+/// no spaces; a web address is not a path (`https://…/a.png` never
+/// matches), and neither is anything inside a hidden folder, which the Mac
+/// would refuse. A bare name written right after a path — within
+/// `borrowGap` characters, `girl/01.jpg` through `05.jpg` — is read as that
+/// folder's: agents write a run of frames that way. A bare name further
+/// away keeps its own spelling. At most `limit`, duplicates once.
+enum ImageLinks {
+    static let extensions = ["png", "jpg", "jpeg", "gif", "svg", "webp", "heic"]
+    static let limit = 12
+    static let borrowGap = 24
+
+    private static let pattern: NSRegularExpression? = try? NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9_./~@+\-:\\])((?:~/|/)?(?:\.{1,2}/)*(?:[A-Za-z0-9_@+\-][A-Za-z0-9_.@+\-]*/)*[A-Za-z0-9_@+\-][A-Za-z0-9_.@+\-]*\.(?:png|jpe?g|gif|svg|webp|heic))(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])"#,
+        options: [.caseInsensitive])
+
+    static func paths(in text: String) -> [String] {
+        guard let pattern, !text.isEmpty else { return [] }
+        let range = NSRange(text.startIndex..., in: text)
+        var out: [String] = []
+        var seen = Set<String>()
+        var folder = ""
+        var folderExtension = ""
+        var lastEnd = 0
+        for match in pattern.matches(in: text, range: range) {
+            guard let r = Range(match.range(at: 1), in: text) else { continue }
+            var path = String(text[r])
+            let ext = (path as NSString).pathExtension.lowercased()
+            let gap = match.range(at: 1).location - lastEnd
+            lastEnd = match.range(at: 1).location + match.range(at: 1).length
+            if let slash = path.lastIndex(of: "/") {
+                folder = String(path[..<slash])
+                folderExtension = ext
+            } else if !folder.isEmpty, ext == folderExtension, gap <= borrowGap {
+                path = folder + "/" + path
+            } else {
+                folder = ""
+            }
+            guard !seen.contains(path) else { continue }
+            seen.insert(path)
+            out.append(path)
+            if out.count == limit { break }
+        }
+        return out
+    }
+
+    /// The chip's words: the file's own name.
+    static func name(_ path: String) -> String {
+        let last = (path as NSString).lastPathComponent
+        return last.isEmpty ? path : last
+    }
+}

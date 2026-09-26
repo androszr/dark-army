@@ -1,4 +1,6 @@
+import ImageIO
 import SwiftUI
+import UIKit
 
 struct ConversationScreen<Header: View>: View {
     let agent: Agent
@@ -26,6 +28,7 @@ struct ConversationScreen<Header: View>: View {
     /// `windowStep` at a time from the top.
     @State private var window: Int
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @EnvironmentObject private var sheets: PhoneSheetRouter
     // Computed, not stored: a generic type cannot hold a static stored
     // property, and the archive build refuses it.
     static var windowStep: Int { 300 }
@@ -189,7 +192,8 @@ struct ConversationScreen<Header: View>: View {
                 nickname: nickname,
                 expanded: expanded.contains(turn.seq),
                 result: result(for: turn),
-                onToggle: { toggle(turn.seq) }
+                onToggle: { toggle(turn.seq) },
+                onImage: { path in sheets.show(.image(agent.sessionId, path)) }
             )
         case .run(let tools):
             ConversationRunRow(
@@ -357,10 +361,25 @@ struct ConversationTurnRow: View {
     let expanded: Bool
     let result: ConversationTurn?
     let onToggle: () -> Void
+    /// Opens the picture sheet on one picture; nil where no sheet can
+    /// open, and then no chips are drawn.
+    var onImage: ((String) -> Void)? = nil
 
     var body: some View {
+        let images = turn.kind == "agent" && onImage != nil
+            ? ImageLinks.paths(in: turn.text) : []
+        VStack(alignment: .leading, spacing: 6) {
+            message
+            if !images.isEmpty, let onImage {
+                ConversationImageChips(paths: images, onOpen: { onImage(images[$0]) })
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var message: some View {
         let clock = ConversationRows.clock(turn.ts)
-        VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 rowBody
                 Spacer(minLength: 8)
@@ -428,5 +447,247 @@ struct ConversationTurnRow: View {
                 .foregroundStyle(Theme.dim)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// The pictures an agent's message names, as a row of chips under it
+/// (`ImageLinks`). A tap opens the picture sheet on that one picture, and
+/// only a tapped picture is ever asked of the Mac. Drawn outside the message's own
+/// combined accessibility element, so each chip is its own button.
+struct ConversationImageChips: View {
+    let paths: [String]
+    let onOpen: (Int) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(paths.enumerated()), id: \.offset) { pair in
+                    DecryptButton(action: { onOpen(pair.offset) }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "photo")
+                                .font(Theme.mono(11))
+                                .accessibilityHidden(true)
+                            Text(ImageLinks.name(pair.element))
+                                .font(Theme.mono(11))
+                        }
+                        .foregroundStyle(Theme.phosphor)
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 44)
+                        .overlay(RoundedRectangle(cornerRadius: 6)
+                            .stroke(Theme.hair, lineWidth: 1))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open picture \(ImageLinks.name(pair.element))")
+                    .accessibilityHint(pair.element)
+                }
+            }
+        }
+    }
+}
+
+/// A picture from the Mac as a `UIImage`: an animated GIF becomes an
+/// animated image (at most 300 frames), everything else decodes as it is.
+enum PreviewPicture: Sendable {
+    /// All frames of an animation together, decoded — the Mac's own
+    /// `GIF_MAX_TOTAL_PIXELS`, held here too so an older Mac cannot exceed it.
+    nonisolated static let maxAnimatedPixels = 40_000_000
+
+    nonisolated static func image(_ preview: ImagePreview) -> UIImage? {
+        guard let data = preview.pictureData else { return nil }
+        if preview.format == "gif",
+           let source = CGImageSourceCreateWithData(data as CFData, nil),
+           CGImageSourceGetCount(source) > 1 {
+            var frames: [UIImage] = []
+            var total = 0.0
+            var pixels = 0
+            // Each frame is decoded at most 1024 pixels long, whatever the
+            // file says: a phone screen needs no more.
+            let options = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                           kCGImageSourceThumbnailMaxPixelSize: 1024] as CFDictionary
+            for i in 0..<min(CGImageSourceGetCount(source), 300) {
+                guard let frame = CGImageSourceCreateThumbnailAtIndex(source, i, options) else { continue }
+                // Every frame stays decoded while it plays: past the budget
+                // the phone shows the first frame instead of running out.
+                pixels += frame.width * frame.height
+                if pixels > maxAnimatedPixels { frames = []; break }
+                let props = CGImageSourceCopyPropertiesAtIndex(source, i, nil) as? [CFString: Any]
+                let gif = props?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+                let delay = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double)
+                    ?? (gif?[kCGImagePropertyGIFDelayTime] as? Double) ?? 0.1
+                total += max(delay, 0.02)
+                frames.append(UIImage(cgImage: frame))
+            }
+            if frames.count > 1 { return UIImage.animatedImage(with: frames, duration: total) }
+        }
+        return UIImage(data: data)
+    }
+}
+
+/// Pinch to zoom, double-tap to zoom in or back to fit, and an animated
+/// GIF still moves: a `UIScrollView` around a `UIImageView`, which SwiftUI's
+/// own `Image` cannot do.
+struct ZoomablePicture: UIViewRepresentable {
+    let image: UIImage
+    let spoken: String
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scroll = UIScrollView()
+        scroll.minimumZoomScale = 1
+        scroll.maximumZoomScale = 6
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.showsVerticalScrollIndicator = false
+        scroll.delegate = context.coordinator
+        scroll.backgroundColor = .clear
+        let view = UIImageView(image: image)
+        view.contentMode = .scaleAspectFit
+        view.frame = scroll.bounds
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.accessibilityIgnoresInvertColors = true
+        scroll.addSubview(view)
+        context.coordinator.imageView = view
+        let tap = UITapGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.doubleTap(_:)))
+        tap.numberOfTapsRequired = 2
+        scroll.addGestureRecognizer(tap)
+        scroll.isAccessibilityElement = true
+        scroll.accessibilityTraits = .image
+        scroll.accessibilityLabel = spoken
+        return scroll
+    }
+
+    func updateUIView(_ scroll: UIScrollView, context: Context) {
+        scroll.accessibilityLabel = spoken
+        guard context.coordinator.imageView?.image !== image else { return }
+        scroll.setZoomScale(1, animated: false)
+        context.coordinator.imageView?.image = image
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        weak var imageView: UIImageView?
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+
+        @objc func doubleTap(_ tap: UITapGestureRecognizer) {
+            guard let scroll = tap.view as? UIScrollView else { return }
+            if scroll.zoomScale > 1.01 {
+                scroll.setZoomScale(1, animated: true)
+            } else {
+                let point = tap.location(in: imageView)
+                let size = CGSize(width: scroll.bounds.width / 2.5,
+                                  height: scroll.bounds.height / 2.5)
+                scroll.zoom(to: CGRect(x: point.x - size.width / 2,
+                                       y: point.y - size.height / 2,
+                                       width: size.width, height: size.height),
+                            animated: true)
+            }
+        }
+    }
+}
+
+/// The picture sheet: the one picture that was tapped, the Mac's facts
+/// about the file and what was shrunk. It is asked of the Mac when the sheet
+/// opens and at no other time; the phone keeps it in memory only, for a day
+/// at most (`PhoneClient.cachedImage`), and offers no way to save it.
+struct PhoneImageSheetView: View {
+    @ObservedObject var client: PhoneClient
+    let sessionId: String
+    let path: String
+    @State private var preview: ImagePreview?
+    @State private var picture: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(path)
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.dim)
+                .fixedSize(horizontal: false, vertical: true)
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            facts
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .task(id: path) { await load() }
+    }
+
+    @ViewBuilder private var content: some View {
+        if let picture, let preview {
+            ZoomablePicture(image: picture, spoken: ImagePreviewWords.spoken(preview))
+        } else if let preview, !preview.available {
+            message(preview.reason.isEmpty ? "The Mac could not show this picture" : preview.reason,
+                    retry: false)
+        } else if preview != nil {
+            message("The phone could not draw this picture", retry: false)
+        } else if failed {
+            message("No answer from the Mac", retry: true)
+        } else {
+            Text("// asking the Mac…")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.dim)
+        }
+    }
+
+    private func message(_ words: String, retry: Bool) -> some View {
+        VStack(spacing: 12) {
+            Text(words)
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.dim)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            if retry {
+                DecryptButton(action: { Task { await load() } }) {
+                    Text("Try again")
+                        .font(Theme.mono(12))
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.phosphor)
+            }
+        }
+        .padding(20)
+    }
+
+    @ViewBuilder private var facts: some View {
+        if let preview, preview.available {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(ImagePreviewWords.meta(preview))
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                let reduced = ImagePreviewWords.reducedLine(preview)
+                if !reduced.isEmpty {
+                    Text(reduced)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.faint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func load() async {
+        failed = false
+        if preview == nil, let held = client.cachedImage(session: sessionId, path: path) {
+            await accept(held)
+            return
+        }
+        guard let fresh = await client.imagePreview(session: sessionId, path: path) else {
+            if !Task.isCancelled, preview == nil { failed = true }
+            return
+        }
+        await accept(fresh)
+    }
+
+    /// Decoding (an animation's every frame) happens off the main actor.
+    private func accept(_ fresh: ImagePreview) async {
+        let drawn = await Task.detached(priority: .userInitiated) {
+            PreviewPicture.image(fresh)
+        }.value
+        preview = fresh
+        picture = drawn
     }
 }

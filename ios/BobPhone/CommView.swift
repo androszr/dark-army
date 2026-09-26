@@ -459,6 +459,7 @@ struct HelperConversationPane: View {
     @State private var expanded: Set<Int> = []
     @State private var openRuns: Set<Int> = []
     @State private var atBottom = true
+    @EnvironmentObject private var sheets: PhoneSheetRouter
 
     private var key: String { ConversationSubject.key(session: session, agent: agentId) }
 
@@ -574,7 +575,8 @@ struct HelperConversationPane: View {
                 turn: turn, nickname: label,
                 expanded: expanded.contains(turn.seq),
                 result: result(for: turn),
-                onToggle: { toggle(turn.seq) })
+                onToggle: { toggle(turn.seq) },
+                onImage: { path in sheets.show(.image(session, path)) })
         case .run(let tools):
             ConversationRunRow(
                 tools: tools,

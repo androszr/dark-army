@@ -1,3 +1,5 @@
+import SwiftUI
+import UIKit
 import XCTest
 @testable import BobPhone
 
@@ -5,9 +7,16 @@ import XCTest
 /// (`panel/Tests/Fixtures/demo-shots.json`), read by the phone.
 ///
 /// `testDemoDayDecodesOnPhone`: the day must decode through the phone's
-/// `Snapshot` and leave something under Needs you. The render that drew the
-/// front page's phone picture moved out with that picture on 23 Sep 2026;
-/// the decode stays, so the phone keeps reading the same day the Mac does.
+/// `Snapshot` and leave something under Needs you, so the phone keeps
+/// reading the same day the Mac does.
+///
+/// `testRenderPhoneShots` draws the iPhone screens of the README's showcase
+/// slides (`docs/images/SHOTS.md`, *The showcase slides*): Fleet, Board and
+/// Cipher's sheet on Main, with his card's journey. It runs only when
+/// `BOB_DEMO_SHOTS_OUT` is set (as `TEST_RUNNER_BOB_DEMO_SHOTS_OUT`) on a
+/// throwaway simulator. The client is never started — no pairing record, no
+/// poll — so nothing leaves the simulator; the tab and the sheet are chosen
+/// through the router's own deep-link slot.
 @MainActor
 final class DemoShotsTests: XCTestCase {
 
@@ -59,5 +68,64 @@ final class DemoShotsTests: XCTestCase {
             + snapshot.agents.sleeping.count
         XCTAssertEqual(fleet, 6)
         XCTAssertEqual(snapshot.agents.waiting.first?.nickname, "Cipher")
+    }
+
+    func testRenderPhoneShots() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let outPath = env["BOB_DEMO_SHOTS_OUT"], !outPath.isEmpty else {
+            throw XCTSkip("Set BOB_DEMO_SHOTS_OUT to render the phone's showcase screens.")
+        }
+        let out = URL(fileURLWithPath: outPath, isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.first)
+        let client = PhoneClient()
+        client.snapshot = try Self.mainFrame()
+        client.status = .live
+        client.lastHeard = Date()
+
+        let window = UIWindow(windowScene: scene)
+        window.windowLevel = .alert + 1
+        window.overrideUserInterfaceStyle = .dark
+        window.rootViewController = UIHostingController(rootView: ContentView(
+            client: client, pairing: PairingStore(), outbox: OutboxStore()))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        func wait(_ seconds: TimeInterval) {
+            RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        }
+        // Past the Needs you decrypt, so the tabs draw settled.
+        wait(DecryptMotion.screenDuration + DecryptMotion.finalHold + 0.6)
+
+        func tab(_ destination: PhoneTab, named file: String) throws {
+            PhoneRouter.shared.go(destination)
+            wait(1.2)
+            try write(window, to: out.appendingPathComponent(file))
+        }
+        try tab(.fleet, named: "phone-fleet.png")
+        try tab(.board, named: "phone-board.png")
+
+        // The widget's own deep link: Cipher's sheet, opening on Main.
+        let cipher = try XCTUnwrap(client.snapshot.agents.waiting
+            .first { $0.nickname == "Cipher" })
+        let url = try XCTUnwrap(URL(string: "\(FleetLinks.scheme)://fleet?session=\(cipher.sessionId)"))
+        PhoneRouter.shared.open(url)
+        wait(1.5)
+        try write(window, to: out.appendingPathComponent("phone-cipher.png"))
+    }
+
+    /// The window as the screen draws it, at the device's own scale, in
+    /// standard sRGB so the compositor needs no profile.
+    private func write(_ window: UIWindow, to url: URL) throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = window.screen.scale
+        format.preferredRange = .standard
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
+        let image = renderer.image { _ in
+            _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        try XCTUnwrap(image.pngData()).write(to: url)
     }
 }

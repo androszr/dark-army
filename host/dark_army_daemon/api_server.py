@@ -47,6 +47,7 @@ from . import (access_log, agent_report, attachments, bearings, board,
                board_workflow, card_timeline, claude_usage, codex_spenders,
                command_receipts, conversation, daemon_board,
                devices, enrollment, event_log, fleet_figures, grok_billing,
+               image_preview,
                lan_hosts, limits, live_activity, manual_check,
                mission, relay, scout_index, srp, terminal_stream, vtgrid,
                work_record, workspace)
@@ -2587,7 +2588,8 @@ class ApiServer:
                     "outcomes", "work_record", "agent_report", "lifecycle",
                     "terminal", "conversation", "done", "knowledge",
                     "access_log", "bearings", "scout_reports",
-                    "scout_report", "manual_checks", "plans", "plan", "action"):
+                    "scout_report", "manual_checks", "plans", "plan", "image",
+                    "action"):
             status, ctype, out = await self._sealed_run(
                 kind, payload, device_id, actions=self.LAN_ACTIONS,
                 check_lease=False, record=False)
@@ -3871,6 +3873,15 @@ class ApiServer:
             # string would reach the relay's logs) and is re-checked
             # against `plan_index.locate`'s closed set at the read.
             return await self._plan_for(payload)
+        if kind == "image":
+            # One picture from a session's project, shrunk to fit one
+            # answer (`image_preview`). `plan`'s rule: a **read**, above the
+            # `action` branch — neither action tuple, no lease check, no
+            # `remote_activity` record — and the bot's Read grant above
+            # decides for the bot. `session` and `path` ride the JSON body,
+            # never a query string, and the path is confined to that
+            # session's own project at the read.
+            return await self._image_for(payload)
         if kind == "action":
             action = str(payload.get("action") or "")
             # `board_create` alone is exempt: a card may be written *with*
@@ -4324,6 +4335,34 @@ class ApiServer:
         except (ValueError, TypeError) as exc:
             return 400, "application/json", json.dumps(
                 {"error": str(exc)}).encode()
+
+    async def _image_for(self, payload):
+        """One picture for the sealed `image` kind: `session` (≤ 200
+        characters) and `path` (≤ 4096) in the JSON body, both required, a
+        400 in words otherwise. An unknown session, a path outside its
+        project and a file that is not a picture are each a 200
+        `available: false` with the refusal in `reason`
+        (`image_preview.locate`)."""
+        payload = payload if isinstance(payload, dict) else {}
+        session_id = payload.get("session")
+        path = payload.get("path")
+        if not isinstance(session_id, str) or not session_id \
+                or len(session_id) > 200:
+            return 400, "application/json", json.dumps(
+                {"error": "session is required"}).encode()
+        if not isinstance(path, str) or not path.strip():
+            return 400, "application/json", json.dumps(
+                {"error": "Dark Army needs the picture's path"}).encode()
+        if len(path) > image_preview.PATH_MAX_CHARS:
+            return 400, "application/json", json.dumps(
+                {"error": "a picture path must be at most 4096 characters"}
+            ).encode()
+        handler = getattr(self._daemon, "image_preview", None)
+        report = (await handler(session_id, path) if handler else {
+            "available": False, "path": path,
+            "reason": "Dark Army cannot show pictures"})
+        return 200, "application/json", json.dumps(
+            report, allow_nan=False).encode()
 
     @staticmethod
     def _scout_reports_page_bytes(report):

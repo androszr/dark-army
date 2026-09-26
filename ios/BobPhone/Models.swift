@@ -3102,3 +3102,132 @@ struct TerminalBytesFrame: Decodable, Equatable {
     /// The raw bytes, decoded; empty for anything that is not base64.
     var bytes: Data { Data(base64Encoded: data) ?? Data() }
 }
+
+/// One picture from the Mac (the sealed `image` read): shrunk there to fit
+/// one answer, or refused in words (`reason`). Every key tolerant: an older
+/// or newer Mac never blanks the sheet.
+struct ImagePreview: Decodable, Equatable {
+    var available = false
+    var path = ""
+    var name = ""
+    var reason = ""
+    var format = ""
+    var sourceFormat = ""
+    var data = ""
+    var bytes = 0
+    var modified: Double = 0
+    var width = 0
+    var height = 0
+    var shownWidth = 0
+    var shownHeight = 0
+    var animated = false
+    var frames = 1
+    var reduced = false
+
+    enum CodingKeys: String, CodingKey {
+        case available, path, name, reason, format, data, bytes, modified
+        case width, height, animated, frames, reduced
+        case sourceFormat = "source_format"
+        case shownWidth = "shown_width"
+        case shownHeight = "shown_height"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        path = c.value(.path, "")
+        name = c.value(.name, "")
+        reason = c.value(.reason, "")
+        format = c.value(.format, "")
+        sourceFormat = c.value(.sourceFormat, "")
+        data = c.value(.data, "")
+        bytes = c.value(.bytes, 0)
+        modified = c.value(.modified, 0.0)
+        width = c.value(.width, 0)
+        height = c.value(.height, 0)
+        shownWidth = c.value(.shownWidth, 0)
+        shownHeight = c.value(.shownHeight, 0)
+        animated = c.value(.animated, false)
+        frames = c.value(.frames, 1)
+        reduced = c.value(.reduced, false)
+    }
+
+    var pictureData: Data? { available ? Data(base64Encoded: data) : nil }
+}
+
+/// The picture sheet's words, Foundation only.
+enum ImagePreviewWords {
+    /// `1024 × 1536 · JPEG · 4.1 MB · changed 3m ago`.
+    static func meta(_ p: ImagePreview, now: Date = Date()) -> String {
+        var parts: [String] = []
+        if p.width > 0, p.height > 0 { parts.append("\(p.width) × \(p.height)") }
+        let kind = (p.sourceFormat.isEmpty ? p.format : p.sourceFormat).uppercased()
+        if !kind.isEmpty { parts.append(kind) }
+        if p.bytes > 0 { parts.append(size(p.bytes)) }
+        if p.modified > 0 { parts.append("changed " + age(now.timeIntervalSince1970 - p.modified)) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// What the phone is showing instead of the Mac's own file, or "".
+    static func reducedLine(_ p: ImagePreview) -> String {
+        if p.animated && p.format != "gif" {
+            return "animated, \(p.frames) frames — shown as its first frame; open it on the Mac to see it move"
+        }
+        if p.shownWidth > 0, p.width > 0, p.shownWidth < p.width {
+            return "shown at \(p.shownWidth) × \(p.shownHeight) — the Mac's copy is larger"
+        }
+        return ""
+    }
+
+    static func size(_ bytes: Int) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        if bytes < 1024 * 1024 { return "\(Int((Double(bytes) / 1024).rounded())) KB" }
+        return String(format: "%.1f MB", Double(bytes) / 1024 / 1024)
+    }
+
+    static func age(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds))
+        if s < 60 { return "just now" }
+        if s < 3600 { return "\(s / 60)m ago" }
+        if s < 86400 { return "\(s / 3600)h ago" }
+        return "\(s / 86400)d ago"
+    }
+
+    static func spoken(_ p: ImagePreview) -> String {
+        var words = "Picture \(p.name.isEmpty ? (p.path as NSString).lastPathComponent : p.name)"
+        if p.width > 0, p.height > 0 { words += ", \(p.width) by \(p.height)" }
+        return words
+    }
+}
+
+
+/// The phone's only copy of a picture it was shown: in memory, at most
+/// `limit` of them, each dropped `lifetime` after it arrived (a day) —
+/// never written to disk, gone with the pairing and with the app.
+struct ImageMemo {
+    static let lifetime: TimeInterval = 24 * 60 * 60
+    static let limit = 16
+    private var entries: [(key: String, at: Date, preview: ImagePreview)] = []
+
+    var count: Int { entries.count }
+
+    mutating func put(_ preview: ImagePreview, session: String, path: String,
+                      now: Date = Date()) {
+        let key = session + "\u{0}" + path
+        prune(now: now)
+        entries.removeAll(where: { $0.key == key })
+        entries.append((key, now, preview))
+        if entries.count > Self.limit { entries.removeFirst(entries.count - Self.limit) }
+    }
+
+    mutating func get(session: String, path: String, now: Date = Date()) -> ImagePreview? {
+        prune(now: now)
+        return entries.last(where: { $0.key == session + "\u{0}" + path })?.preview
+    }
+
+    mutating func prune(now: Date = Date()) {
+        entries.removeAll(where: { now.timeIntervalSince($0.at) >= Self.lifetime })
+    }
+}

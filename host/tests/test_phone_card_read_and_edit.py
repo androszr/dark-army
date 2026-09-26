@@ -61,12 +61,19 @@ def test_no_background_path_reads_a_card():
 
 
 def test_the_card_screen_is_the_caller():
-    """One caller, and it is the screen: the read exists because somebody
-    opened a card."""
+    """Two callers, and both are screens somebody opened: the card screen,
+    and the agent sheet's Main tab, whose journey rail times the card the
+    agent is on from the same read (`loadJourney`)."""
     assert "client.fetchCard(" in _read(DETAIL)
     callers = [q.name for q in PHONE.rglob("*.swift")
                if _CALL.search(_read(q))]
-    assert sorted(callers) == ["CardDetailView.swift", "Client.swift"]
+    assert sorted(callers) == ["AgentDetailView.swift", "CardDetailView.swift",
+                               "Client.swift"]
+    agent = _read(PHONE / "AgentDetailView.swift")
+    assert len(_CALL.findall(agent)) == 1
+    load = agent[agent.index("private func loadJourney("):]
+    load = load[:load.index("\n    }\n")]
+    assert "client.fetchCard(" in load
 
 
 def test_the_screen_no_longer_apologises_for_a_shortened_prompt():

@@ -7,7 +7,7 @@
   "scale": 2,
   "display_width": 350,
   "bytes": 13917,
-  "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d",
+  "fixture_sha256": "bf1750d9ec840d6527a2bd843791303eaa7bec79287cd111d1303f0a6f02eb22",
   "rung": 0
  },
  "agent-question.png": {
@@ -17,8 +17,8 @@
   "height_px": 1624,
   "scale": 2,
   "display_width": 880,
-  "bytes": 284084,
-  "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d",
+  "bytes": 287968,
+  "fixture_sha256": "bf1750d9ec840d6527a2bd843791303eaa7bec79287cd111d1303f0a6f02eb22",
   "window_pt": [
    1180,
    748
@@ -31,8 +31,8 @@
   "height_px": 2128,
   "scale": 2,
   "display_width": 880,
-  "bytes": 407543,
-  "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d",
+  "bytes": 407355,
+  "fixture_sha256": "bf1750d9ec840d6527a2bd843791303eaa7bec79287cd111d1303f0a6f02eb22",
   "window_pt": [
    1640,
    1000
@@ -45,7 +45,7 @@
   "height_px": 722,
   "scale": 2,
   "display_width": 584,
-  "bytes": 85191,
-  "fixture_sha256": "26e462276d8b5918eb6417bb926f7d00919446eb9fd79bbe225a8df3da6da74d"
+  "bytes": 84898,
+  "fixture_sha256": "bf1750d9ec840d6527a2bd843791303eaa7bec79287cd111d1303f0a6f02eb22"
  }
 }

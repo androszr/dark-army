@@ -421,6 +421,25 @@ the emulator's keyboard up an always-open strip left the terminal a
 sliver. An older Mac
 (`terminal_stream_supported` absent) gets one sentence and no emulator.
 
+**A picture an agent names opens in a sheet.** `ImageLinks.paths` finds each picture path in an agent's message (a bare name right after a path takes that folder; web addresses and hidden folders never match; at most twelve) and `ConversationImageChips` draws them as chips under the message, outside its combined accessibility element. A tap opens the `image` sheet subject on **that one picture**, and only a tapped picture is ever asked of the Mac, which serves it only from Dark Army's own checkout or an onboarded project, never Documents, Desktop or elsewhere at home (the sealed `image` read, `docs/transport-contract.md`) — no prefetch, no neighbours, no filmstrip. The sheet draws it with pinch and double-tap zoom (`ZoomablePicture`, a `UIScrollView`, so a GIF still moves), the Mac's facts about the file and what was shrunk, and offers **no way to save it**: no Share, no Photos. The phone's only copy is `ImageMemo` — memory only, never disk, sixteen at most, each dropped a day after it arrived (pruned on every applied state) and all of them with the pairing.
+
+**Main carries the card's journey** (`CardJourney`, `JourneyRail` in
+`AgentDetailView.swift`, 26 Sep 2026): under the lead, on a session working
+or planning a card, five stops — Idea, Plan, Build, Check, Done. The current
+stop comes from the board card alone (column, link, refinement, manual
+steps); a passed stop's time comes from the card's timeline, from its first
+moment to the earliest later moment of a stop after it, and reads blank
+where either end was never witnessed or no later moment follows it (an
+agent's own close writes `submitted` and `moved_done` at one instant, both
+Done). Under the rail, the Mac's own open line (`CardTimeline.openLine`),
+aged on the phone from the report's `generated_at`, drawn only while the
+report was read under the card's current `CardJourney.fetchKey` — every
+field `open_state` reads — so a caption from before a move or a review is
+never shown after it. The timeline is the card screen's own `card` read,
+asked only when that key has moved since the held report: never per minute
+and never on a mere return to Main; an overtaken read is dropped, and an
+older Mac gets the rail untimed. `CardJourneyTests`.
+
 **The tabs lead the agent sheet, and Main is the first.**
 Fleet opens `AgentScreen` (Main, Conversation, Details, Terminal when hosted)
 with `PhoneAgentScreenBar` at the top of the sheet. Main is the lead (still,

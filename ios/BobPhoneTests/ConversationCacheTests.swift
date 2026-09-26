@@ -207,3 +207,102 @@ final class ConversationCacheTests: XCTestCase {
             atPath: dir.appendingPathComponent("conversations").path))
     }
 }
+
+final class ImageLinksTests: XCTestCase {
+    func testPathsAreFoundInOrderWithTheirFolders() {
+        let text = "Her morning clip is now `girl/thinking/morning/01.jpg` through `05.jpg`. "
+            + "I also opened [his frame](sleeping/night/03.PNG) and /Users/me/proj/a.gif."
+        XCTAssertEqual(ImageLinks.paths(in: text), [
+            "girl/thinking/morning/01.jpg", "girl/thinking/morning/05.jpg",
+            "sleeping/night/03.PNG", "/Users/me/proj/a.gif",
+        ])
+    }
+
+    func testWebAddressesHiddenFoldersAndOtherFilesAreNotPictures() {
+        let text = "See https://example.com/a.png and .claude/x.png, notes.md, "
+            + "a.png.txt, archive.pngx and image_edit ×4"
+        XCTAssertEqual(ImageLinks.paths(in: text), [])
+    }
+
+    func testRelativeHomeAndEveryExtension() {
+        let text = "./a.svg ../b.webp ~/c.heic d.jpeg e.JPG"
+        XCTAssertEqual(ImageLinks.paths(in: text),
+                       ["./a.svg", "../b.webp", "~/c.heic", "d.jpeg", "e.JPG"])
+    }
+
+    func testABareNameOfAnotherKindIsNotMovedIntoTheFolder() {
+        XCTAssertEqual(ImageLinks.paths(in: "art/01.jpg then logo.png"),
+                       ["art/01.jpg", "logo.png"])
+    }
+
+    func testDuplicatesOnceAndAtMostTheLimit() {
+        let many = (1...20).map { "f\($0).png" }.joined(separator: " ")
+        XCTAssertEqual(ImageLinks.paths(in: many).count, ImageLinks.limit)
+        XCTAssertEqual(ImageLinks.paths(in: "a.png a.png"), ["a.png"])
+        XCTAssertEqual(ImageLinks.name("girl/01.jpg"), "01.jpg")
+    }
+
+    func testThePreviewDecodesTolerantly() throws {
+        let json = #"{"available":true,"path":"a/b.png","name":"b.png","format":"png","#
+            + #""source_format":"png","data":"iVBORw0KGgo=","bytes":4300000,"modified":0,"#
+            + #""width":3000,"height":2000,"shown_width":2048,"shown_height":1365,"#
+            + #""animated":false,"frames":1,"reduced":true,"future":1}"#
+        let p = try JSONDecoder().decode(ImagePreview.self, from: Data(json.utf8))
+        XCTAssertTrue(p.available)
+        XCTAssertNotNil(p.pictureData)
+        XCTAssertEqual(ImagePreviewWords.meta(p), "3000 × 2000 · PNG · 4.1 MB")
+        XCTAssertEqual(ImagePreviewWords.reducedLine(p),
+                       "shown at 2048 × 1365 — the Mac's copy is larger")
+        let empty = try JSONDecoder().decode(ImagePreview.self, from: Data("{}".utf8))
+        XCTAssertFalse(empty.available)
+        XCTAssertNil(empty.pictureData)
+    }
+
+    func testAnAnimationShownAsOneFrameSaysSo() {
+        var p = ImagePreview()
+        p.available = true
+        p.animated = true
+        p.frames = 48
+        p.format = "jpeg"
+        XCTAssertTrue(ImagePreviewWords.reducedLine(p).hasPrefix("animated, 48 frames"))
+        p.format = "gif"
+        XCTAssertEqual(ImagePreviewWords.reducedLine(p), "")
+    }
+}
+
+final class ImageLinksBorrowTests: XCTestCase {
+    func testAFarAwayBareNameKeepsItsOwnSpelling() {
+        let text = "I wrote `assets/hero.png` and then, after a long while of other work, also `logo.png`."
+        XCTAssertEqual(ImageLinks.paths(in: text), ["assets/hero.png", "logo.png"])
+    }
+
+    func testARunOfFramesKeepsBorrowing() {
+        XCTAssertEqual(ImageLinks.paths(in: "a/01.jpg, 02.jpg, 03.jpg"),
+                       ["a/01.jpg", "a/02.jpg", "a/03.jpg"])
+    }
+}
+
+final class ImageMemoTests: XCTestCase {
+    func testAPictureIsDroppedAfterADay() {
+        var memo = ImageMemo()
+        var p = ImagePreview()
+        p.available = true
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        memo.put(p, session: "s", path: "a.png", now: start)
+        XCTAssertNotNil(memo.get(session: "s", path: "a.png",
+                                 now: start.addingTimeInterval(ImageMemo.lifetime - 1)))
+        XCTAssertNil(memo.get(session: "s", path: "a.png",
+                              now: start.addingTimeInterval(ImageMemo.lifetime)))
+        XCTAssertEqual(memo.count, 0)
+        XCTAssertEqual(ImageMemo.lifetime, 86_400)
+    }
+
+    func testAtMostTheLimitAndKeyedBySession() {
+        var memo = ImageMemo()
+        for i in 0..<(ImageMemo.limit + 4) { memo.put(ImagePreview(), session: "s", path: "\(i).png") }
+        XCTAssertEqual(memo.count, ImageMemo.limit)
+        XCTAssertNil(memo.get(session: "s", path: "0.png"))
+        XCTAssertNil(memo.get(session: "other", path: "\(ImageMemo.limit).png"))
+        XCTAssertNotNil(memo.get(session: "s", path: "\(ImageMemo.limit).png"))
+    }
+}

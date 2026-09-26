@@ -36,6 +36,7 @@ from .ai_title import first_user_prompt, session_display_name
 from .socket_server import SocketServer, HOOK_IPC_PORT
 from . import access_log
 from . import agents_poll
+from . import image_preview
 from . import alerts as alerting
 from . import board
 from . import buzz_ledger
@@ -10324,6 +10325,29 @@ class BobDaemon(BoardVerbsMixin):
             state = self._session_states.get(sid) or {}
             path = str(state.get("transcript_path") or "") or ss.resolve_transcript(sid)
         return provider, path or "", sid
+
+    async def image_preview(self, session_id: str, path: str) -> dict:
+        """One picture from a published session's project, for the phone's
+        Conversation tab (`image_preview.preview`). The session's working
+        folder is read on the loop, from the same published row
+        `conversation_source` reads; an unknown session is refused in words
+        without touching disk. Everything else — confinement, decoding,
+        shrinking — is one executor hop."""
+        row, _ = self._inbox_session_entry(session_id)
+        if not isinstance(row, dict):
+            return {"available": False, "path": str(path or "")[:4096],
+                    "reason": conversation.UNKNOWN_SESSION_REFUSAL}
+        cwd = str(row.get("cwd") or "")
+        # One picture at a time, whoever asks: a decode and a bounded folder
+        # search each hold an executor thread, and a flood of reads must not
+        # starve the daemon's other executor work.
+        gate = getattr(self, "_image_gate", None)
+        if gate is None:
+            gate = self._image_gate = asyncio.Semaphore(1)
+        loop = asyncio.get_running_loop()
+        async with gate:
+            return await loop.run_in_executor(
+                None, image_preview.preview, cwd, path)
 
     async def conversation_page(self, session_id: str, since: int = 0,
                                 key: str = "", agent: str = "") -> dict:

@@ -113,13 +113,13 @@ final class DemoShotsTests: XCTestCase {
         XCTAssertEqual(main.agents.waiting.first?.nickname, "Cipher")
         XCTAssertEqual(main.agents.waiting.first?.questionList.first?.options.count, 3)
 
-        // The board: ten cards, two to three to three to two.
+        // The board: eleven cards, two to three to four to two.
         let cards = main.board.cards
-        XCTAssertEqual(cards.count, 10)
+        XCTAssertEqual(cards.count, 11)
         let perColumn = ["prep", "backlog", "in_progress", "done"].map { column in
             cards.filter { $0.column == column }.count
         }
-        XCTAssertEqual(perColumn, [2, 3, 3, 2])
+        XCTAssertEqual(perColumn, [2, 3, 4, 2])
         let widget = try XCTUnwrap(cards.first { $0.title == "Widget for tomorrow's forecast" })
         XCTAssertFalse(widget.planPath.isEmpty)
         XCTAssertNotNil(cards.first { $0.column == "in_progress" && $0.runFigures != nil })
