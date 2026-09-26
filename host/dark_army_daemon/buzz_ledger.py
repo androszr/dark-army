@@ -36,7 +36,11 @@ never buzzes the phone), `withheld:unlisted` (since 23 Sep 2026, a word
 under the same key: a non-`security` alert whose session is not on the
 phone's Needs you list (`live_activity.listed_sessions`: a live row
 waiting, prompted or carded, or a prompt with no row), so a push would be
-cleared by `clearDeliveredIfQuiet` on the phone's next check-in),
+cleared by `clearDeliveredIfQuiet` on the phone's next check-in; a listed
+session whose entry the person dismissed, and that no surviving card entry
+names, is withheld under the same word (`live_activity.shown_sessions`),
+and `evidence.category == "waiting"` on such a line is how the
+after-measure tells it from a busy agent),
 `withheld:mac_active` (the Mac was touched inside
 `MAC_PRESENT_SECONDS`), `dropped:card_gone` and `dropped:muted` (a card
 buzz held for the grace whose card went, or whose session was muted, before
@@ -87,7 +91,8 @@ PRUNE_SLACK = 100
 #: those keys is refused.
 FORBIDDEN_KEYS = access_log.FORBIDDEN_KEYS + tuple(
     k for k in ("title", "body", "subtitle", "message", "text", "work",
-                "last_summary", "last_text", "last_report", "question",
+                "last_summary", "last_text", "last_report", "work_report",
+                "question",
                 "questions", "reply_options", "options", "input_preview",
                 "description", "cwd", "transcript_path", "project", "branch")
     if k not in access_log.FORBIDDEN_KEYS)

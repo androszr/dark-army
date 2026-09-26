@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Dark Army · Design system</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="workshop.css">
+  <script defer src="tokens.js"></script>
+  <script defer src="workshop.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="eyebrow">DARK ARMY / DESIGN SYSTEM</div>
+    <h1>Signal workshop</h1>
+    <p>Edit the preview, inspect the components, then export valid token JSON. Native screens change after you update <code>design-system/tokens.json</code>, run the generator, and rebuild both apps.</p>
+  </header>
+  <main>
+    <section class="panel" aria-labelledby="tokens-heading">
+      <div class="section-head">
+        <div><div class="eyebrow">01 / FOUNDATION</div><h2 id="tokens-heading">Tokens</h2></div>
+        <button id="reset" type="button" class="button secondary">Reset draft</button>
+      </div>
+      <p class="note">Changes here are preview drafts. They do not alter either running native app.</p>
+      <div id="token-controls" class="token-grid"></div>
+      <div class="section-head actions">
+        <label class="button secondary file-button">Import JSON<input id="import-file" type="file" accept="application/json,.json"></label>
+        <button id="export" type="button" class="button primary">Copy export JSON</button>
+      </div>
+      <label class="export-label" for="export-json">Validated export</label>
+      <textarea id="export-json" readonly spellcheck="false" aria-describedby="export-help"></textarea>
+      <p id="export-help" class="note">If automatic copy is unavailable, select and copy the JSON above.</p>
+      <p id="message" role="status" aria-live="polite"></p>
+    </section>
+    <section class="panel" aria-labelledby="components-heading">
+      <div class="eyebrow">02 / COMPONENTS</div>
+      <h2 id="components-heading">Live specimens</h2>
+      <div class="specimens">
+        <article class="specimen">
+          <div class="spec-label">STATUS / ATTENTION</div>
+          <div class="attention"><span class="status-dot"></span><strong>Needs you</strong><span>1 session waiting</span></div>
+          <div class="card">
+            <div class="card-meta">BACKLOG <span>·</span> HIGH PRIORITY</div>
+            <h3>Bring Signal into both clients</h3>
+            <p>A readable system for the board, fleet, and the work in progress.</p>
+            <div class="card-foot"><span class="badge">PLAN READY</span><span>2 attempts · cost unknown</span></div>
+          </div>
+        </article>
+        <article class="specimen">
+          <div class="spec-label">ACTIONS / FIELDS</div>
+          <div class="button-row"><button class="button primary" type="button">Start work</button><button class="button secondary" type="button">Open card</button></div>
+          <div class="button-row"><button class="button danger" type="button">Delete card</button><button class="button quiet" type="button">Dismiss</button></div>
+          <label class="field-label" for="sample-field">Card title</label>
+          <input id="sample-field" class="field" value="A clear name for the work">
+          <details><summary>What happens next</summary><p>The action is checked again when it runs. A queued card waits for the current slot.</p></details>
+        </article>
+        <article class="specimen">
+          <div class="spec-label">FLEET / SESSION</div>
+          <div class="fleet-row"><span class="avatar">C</span><div><strong>Cipher</strong><small>dark-army · implementing</small></div><span class="running">RUNNING</span></div>
+          <div class="fleet-row"><span class="avatar">N</span><div><strong>Nyx</strong><small>dark-army · needs an answer</small></div><span class="waiting">WAITING</span></div>
+          <div class="terminal">root@darkarmy:~/dark-army$ <span>swift test</span></div>
+        </article>
+      </div>
+    </section>
+  </main>
+  <footer>Signal · bundled offline · system fonts only</footer>
+</body>
+</html>

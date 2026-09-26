@@ -71,17 +71,33 @@ def test_the_unlock_path_restarts_only_a_stopped_poller():
 
 # --- away keys are batched -----------------------------------------------------
 
-def test_away_keys_flush_on_a_control_byte_or_a_pause():
+def test_away_keys_flush_on_a_committing_key_or_a_pause_under_the_budget():
+    """26 Sep 2026: Backspace and arrows no longer spend a write each; only
+    Enter, Ctrl-C, Ctrl-D and a lone Escape send at once. The phone mirrors
+    the Mac's key bucket and holds a batch it would refuse, and a refusal
+    that happens anyway puts the keys back — none are dropped for the rate."""
+    import re
+    from dark_army_daemon import relay, relay_client
     pane = _read("TerminalPane.swift")
     rule = _block(pane, "enum AwayKeys")
-    assert "static let pause: TimeInterval = 1.5" in rule
-    assert "$0 < 0x20 || $0 == 0x7F" in rule
+    assert "static let pause: TimeInterval = 0.8" in rule
+    assert "$0 == 0x0D || $0 == 0x0A || $0 == 0x03 || $0 == 0x04" in rule
+    assert "$0 == 0x7F" not in rule.split("static func flushesAtOnce", 1)[1].split("}", 2)[0]
+    per = re.search(r"static let perMinute = (\d+)", rule)
+    assert per and int(per.group(1)) == relay.RELAY_MAX_KEY_WRITES_PER_MINUTE
+    assert f'static let slowDown = "{relay_client._WRITE_LIMIT_REFUSAL}"' in rule
     send = _block(pane, "func send(source: TerminalView, data: ArraySlice<UInt8>)")
     assert "AwayKeys.flushesAtOnce(data)" in send
     assert "AwayKeys.pause" in send
+    assert "showPending()" in send
     flush = _block(pane, "private func flushAway()")
     assert "refreshAfter: false" in flush
+    assert "awayBudget.wait()" in flush and "awayBudget.take()" in flush
+    # A refused batch goes back in front, in order, and is retried.
+    assert "self.pendingAway = payload + self.pendingAway" in flush
+    assert "result.detail == AwayKeys.slowDown" in flush
     assert "AwayKeys.hint" in pane
+    assert "Text(pending)" in pane
 
 
 # --- clear all ------------------------------------------------------------------

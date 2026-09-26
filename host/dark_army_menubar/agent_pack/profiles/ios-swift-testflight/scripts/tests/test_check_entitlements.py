@@ -133,6 +133,24 @@ class CheckEntitlementsTests(unittest.TestCase):
     def test_no_arguments_checks_the_real_tree_and_passes(self) -> None:
         self.assertPasses(run())
 
+    def tree(self, debug_name: str, debug: dict, release: dict) -> None:
+        config = os.path.join(self.tmp, 'ios', 'Config')
+        os.makedirs(config)
+        write(config, debug_name, debug)
+        write(config, '{{APP}}-Release.entitlements', release)
+
+    def test_no_arguments_finds_a_debug_twin_named_by_role(self) -> None:
+        self.tree('{{APP}}-Debug.entitlements', {}, {})
+        self.assertPasses(run(cwd=self.tmp))
+
+    def test_no_arguments_finds_the_xcode_default_debug_name(self) -> None:
+        self.tree('{{APP}}.entitlements', {}, {})
+        self.assertPasses(run(cwd=self.tmp))
+
+    def test_no_arguments_still_bites_through_the_role_name(self) -> None:
+        self.tree('{{APP}}-Debug.entitlements', {'com.apple.developer.healthkit': True}, {})
+        self.assertFails(run(cwd=self.tmp))
+
 
 if __name__ == '__main__':
     unittest.main()

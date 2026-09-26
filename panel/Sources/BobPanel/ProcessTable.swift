@@ -47,6 +47,9 @@ struct ProcessRow: View {
     /// the hosted pane where Dark Army owns the pty). Nil where there is
     /// none to raise; the caller checks `isJumpable`, the daemon's word.
     var onJump: (() -> Void)? = nil
+    /// The bound board card's title, worded as the detail header words it
+    /// (`AgentDetailHeader.cardLine`). Empty for no card.
+    var cardLine: String = ""
 
     @State private var cardHover = false
     @State private var jumpHover = false
@@ -74,11 +77,7 @@ struct ProcessRow: View {
                     .foregroundStyle(stateColor)
                     .frame(width: 36, alignment: .leading)
                 ageCell
-                Text(command)
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.dim)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                commandCell
                 chip("⌗", action: onShowCard, hover: $cardHover,
                      label: "Show this session's card on the board")
                 chip("↗", action: onJump, hover: $jumpHover,
@@ -108,6 +107,7 @@ struct ProcessRow: View {
         }
         .buttonStyle(.plain)
         .clickable()
+        .reportsKeyboardFocus()
         // Spoken content: the bare name and a three-letter state code say
         // almost nothing, and the red attention edge is colour-only. The
         // label carries the name, the provider and the state; the value is
@@ -135,9 +135,14 @@ struct ProcessRow: View {
                     .frame(width: Self.chipSize, height: Self.chipSize)
                     .background(Theme.phosphor.opacity(hover.wrappedValue ? 0.16 : 0.08))
                     .overlay(Rectangle().strokeBorder(Theme.hair, lineWidth: 1))
+                    // A 16pt square under a 26pt row is a miss-prone press:
+                    // the target reaches 6pt past the drawn chip, the slot
+                    // (and so the CTX edge) stays where it was.
+                    .contentShape(Rectangle().inset(by: -6))
             }
             .buttonStyle(.plain)
             .clickable()
+            .reportsKeyboardFocus()
             .onHover { hover.wrappedValue = $0 }
             .accessibilityLabel(label)
         } else {
@@ -194,17 +199,75 @@ struct ProcessRow: View {
         }
     }
 
-    private var command: String {
-        // First, because the daemon publishes a card title only beside its
-        // own non-empty placeholder name — a rung below `name` never fires.
-        let base: String
-        if !agent.cardTitle.isEmpty { base = agent.cardTitle }
-        else if !agent.name.isEmpty { base = agent.name }
-        else if !agent.currentTool.isEmpty { base = agent.currentTool }
-        else { base = "—" }
+    /// The CMD column's words: the bound board card's title first — the
+    /// same line the detail header leads with (`AgentDetailHeader.cardLine`),
+    /// so the row a person clicks names what opens — then the daemon's
+    /// `card_title`, the session's name, its tool. A finished run's report
+    /// headline is **not** put in front: it pushed the title past the
+    /// column's two lines, so the row read "Changed: …" over a detail
+    /// titled something else. The headline stays in the detail's report.
+    static func baseTitle(for agent: Agent, cardLine: String = "") -> String {
+        // The daemon publishes a card title only beside its own non-empty
+        // placeholder name — a rung below `name` never fires.
+        if !cardLine.isEmpty { return cardLine }
+        if !agent.cardTitle.isEmpty { return agent.cardTitle }
+        if !agent.name.isEmpty { return agent.name }
+        if !agent.currentTool.isEmpty { return agent.currentTool }
+        return "—"
+    }
+
+    /// The CMD column as one line: the working helper leads the title,
+    /// `tab gone` leads both. `category` is kept for callers; the column no
+    /// longer changes with it.
+    static func commandText(for agent: Agent, category: Category? = nil,
+                            cardLine: String = "") -> String {
+        let base = baseTitle(for: agent, cardLine: cardLine)
         // The column drops the tail, so the words have to lead.
-        if !agent.tabGone { return base }
-        return base == "—" ? "tab gone" : "tab gone \(base)"
+        let work: String
+        if agent.subagents > 0 {
+            let helper = agent.subagentRows.last?.label ?? "\(agent.subagents) helpers"
+            work = base == "—" ? helper : "\(helper) · \(base)"
+        } else {
+            work = base
+        }
+        if !agent.tabGone { return work }
+        return work == "—" ? "tab gone" : "tab gone \(work)"
+    }
+
+    /// The CMD column as two lines: the helper (and `tab gone`) small on top,
+    /// the title on its own line below with room for two lines of words —
+    /// one shared line cut every title to its first few words.
+    static func commandLines(for agent: Agent, category: Category? = nil,
+                             cardLine: String = "") -> (top: String, title: String) {
+        let base = baseTitle(for: agent, cardLine: cardLine)
+        var top = ""
+        var title = base
+        if agent.subagents > 0 {
+            let helper = agent.subagentRows.last?.label ?? "\(agent.subagents) helpers"
+            if base == "—" { title = helper } else { top = helper }
+        }
+        if agent.tabGone { top = top.isEmpty ? "tab gone" : "tab gone · \(top)" }
+        return (top, title)
+    }
+
+    private var commandCell: some View {
+        let lines = Self.commandLines(for: agent, category: category, cardLine: cardLine)
+        return VStack(alignment: .leading, spacing: 1) {
+            if !lines.top.isEmpty {
+                Text(lines.top)
+                    .font(Theme.mono(10))
+                    .foregroundStyle(Theme.faint)
+                    .lineLimit(1)
+            }
+            Text(lines.title)
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.phosphor)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(lines.top.isEmpty ? lines.title : "\(lines.top) · \(lines.title)")
     }
 
     private var stateLabel: String {
@@ -234,7 +297,7 @@ struct ProcessRow: View {
 
     private var ctxColor: Color {
         guard let pct = agent.metrics.ctxUsedPct else { return Theme.faint }
-        if agent.metrics.exceeds200k || pct >= 90 { return .red }
+        if agent.metrics.exceeds200k || pct >= 85 { return .red }
         if pct >= 75 { return .orange }
         return Theme.dim
     }
@@ -440,6 +503,16 @@ struct StdoutPane: View {
                 ReplyBar(agent: agent, actions: actions, client: client,
                          onFocusChange: onReplyFocus)
             }
+            // Stop and Delete are drawn, not only secret letters (S, R):
+            // the same `RowActions` gate the keys arm, so the arm shows.
+            // Stop sits in the Details pane; on the Terminal tab only
+            // while armed, so a live screen does not wear a standing strip.
+            if agent.canStop, !messageHidden || actions.armedStop == agent.id {
+                StopBar(agent: agent, actions: actions, client: client)
+            }
+            if category == .abandoned {
+                DeleteBar(agent: agent, actions: actions, client: client)
+            }
             if prompt == nil, stopped, agent.canLowPriority {
                 LowPriorityBar(agent: agent, actions: actions, client: client)
             }
@@ -447,9 +520,13 @@ struct StdoutPane: View {
                 WrapUpBar(agent: agent, actions: actions, client: client)
             }
             if agent.canHide {
-                Button("Hide") { actions.dismiss(agent, client: client) }
+                Button { actions.dismiss(agent, client: client) } label: {
+                    Text(Verbs.hide.label)
+                        .contentShape(Rectangle().inset(by: -6))
+                }
                     .buttonStyle(.plain)
                     .clickable()
+                    .reportsKeyboardFocus()
                     .font(Theme.mono(11))
                     .accessibilityHint("Hide this row until the session changes")
             }
@@ -521,8 +598,12 @@ struct StdoutPane: View {
             markdown(agent.question.text, color: Theme.phosphorBright)
         } else if !agent.lastText.isEmpty || !agent.lastSummary.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                markdown(agent.lastSummary.isEmpty ? agent.lastText : agent.lastSummary,
-                         color: Theme.dim)
+                let latest = Self.latestToShow(
+                    latest: agent.lastSummary.isEmpty ? agent.lastText : agent.lastSummary,
+                    labelled: agent.workReport?.labelled == true)
+                if !latest.isEmpty {
+                    markdown(latest, color: Theme.dim)
+                }
                 workReport
             }
         } else if !Self.reportToShow(latest: "", report: agent.lastReport).isEmpty {
@@ -540,12 +621,21 @@ struct StdoutPane: View {
     /// one-line follow-up — "that was the background job, nothing new" — was
     /// all this pane had of a session that had just reported a day's work, and
     /// there is no route from here back to the transcript.
+    ///
+    /// A report the daemon could split into its labelled parts is drawn as
+    /// those parts (`WorkReportBlock`); the message line has already given
+    /// up its copy of the report (`latestToShow`), so it is drawn whether or
+    /// not the latest message was the report. Anything else keeps the raw
+    /// block, under `reportToShow`'s two rules.
     @ViewBuilder
     private var workReport: some View {
         let report = Self.reportToShow(
             latest: agent.lastSummary.isEmpty ? agent.lastText : agent.lastSummary,
             report: agent.lastReport)
-        if !report.isEmpty {
+        if let parsed = agent.workReport, parsed.labelled,
+           !agent.lastReport.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            WorkReportBlock(parsed: parsed)
+        } else if !report.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Rectangle().fill(Theme.hair).frame(height: 1)
                 Text("# work done")
@@ -567,7 +657,15 @@ struct StdoutPane: View {
     }
 
     /// The heading `WORK_REPORT_HINT` dictates, and the daemon slices on.
-    static let reportHeading = "## Work done"
+    static let reportHeading = WorkReport.reportHeading
+
+    /// The latest words as the message line draws them: unchanged, unless
+    /// the report is drawn as labelled sections — then a message that *is*
+    /// the report keeps only the prose before its heading, so the report is
+    /// never on screen twice.
+    static func latestToShow(latest: String, labelled: Bool) -> String {
+        labelled ? WorkReport.prose(before: latest) : latest
+    }
 
     private func markdown(_ source: String, color: Color) -> some View {
         CodexReviewOutput(source: source)

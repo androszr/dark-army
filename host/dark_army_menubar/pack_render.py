@@ -75,6 +75,8 @@ LEGACY_LEAD_DIGESTS = frozenset({
     "bcf0802289cbf529185acd0827601ec5d71a12d82da10b27a7b2a08d38a0cc60",
     "cc823688242bcbd6ca64bbc29629401a94839c8c07d1e1f146cce7ea5f0f76a8",
     "f1a0158a3c417fc51c476771c72a133665eed8085ac44a196af3d943d2616808",
+    # pocket.md once the cast name Ptyś became the ASCII Ptys (25 Sep 2026).
+    "8e0461ef90fc7acd593da1fdeffce2e0fc9b296ae976d2e8577d7995c494abac",
 })
 PREFIX_RE = re.compile(r"^[a-z][a-z0-9]{0,7}$")
 _PLACEHOLDER = re.compile(r"\{\{([A-Z_]+)\}\}")
@@ -94,6 +96,41 @@ SPLICED_KEYS = frozenset({
     "docs/context.md",
     ".claude/review.md",
 })
+#: Spliced files the project is meant to *fill in*, not merely sit beside.
+#: `docs/context.md` is a template of blanks — the Identity table's real
+#: gates, the architecture, the conventions — so its whole body lives between
+#: the markers, and a resync that re-spliced it would put the blanks back over
+#: the project's answers (vir-sunset lost its gate rows that way, 24 Sep 2026).
+#: `pack_install` rewrites such a region only while it is still the bytes the
+#: pack last wrote (`managed_digest`, recorded per project in the ledger's
+#: `pack_digests`); once the project has edited it, the file is the
+#: project's. A file with no markers at all is the project's own text: the
+#: pack splices its region in above it once, and never rewrites that text.
+PROJECT_FILLED_KEYS = frozenset({
+    "docs/context.md",
+})
+#: Whole files the pack seeds but a project routinely adapts to itself: the
+#: guard scripts (which Debug entitlements file, which privacy keys this app
+#: can reach) and the CI workflows. The same rule as `PROJECT_FILLED_KEYS`,
+#: applied to the whole file because these carry no markers: the pack
+#: rewrites one only while it is still the bytes the pack last wrote there
+#: (`file_digest`, in the ledger's `pack_digests`). Once the project has
+#: edited it, it is the project's — and a file that differs from the pack
+#: with no digest on record (a ledger row from before this rule) is treated
+#: as edited, never overwritten. arpg-web lost its adapted
+#: `check-entitlements.py` and `check-privacy-strings.py` to a resync that
+#: way (24 Sep 2026) and its gate went red on files nobody in it had touched.
+#: The cost: a later fix to a shipped script does not reach a project that
+#: edited its copy; deleting the file lets the next resync seed it again.
+PROJECT_ADAPTED_PREFIXES = (
+    "scripts/",
+    ".github/workflows/",
+)
+
+
+def project_adapted(key: str) -> bool:
+    """Whether ``key`` is a whole file the project may take over by editing."""
+    return key.startswith(PROJECT_ADAPTED_PREFIXES)
 SETTINGS_KEY = ".claude/settings.json"
 
 QUESTIONS_HEADER = """# Interview questions
@@ -889,6 +926,28 @@ def _managed_region(managed: bytes) -> bytes:
         + body
         + (END_MARK + "\n").encode("utf-8")
     )
+
+
+def file_digest(text: bytes) -> str:
+    """SHA-256 of a whole file, line endings normalised (see `managed_digest`)."""
+    return hashlib.sha256(text.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def managed_digest(text: bytes) -> str:
+    """SHA-256 of the managed region in ``text``, markers included.
+
+    Line endings are normalised, so a checkout that converts to CRLF still
+    reads as unedited. ``""`` when ``text`` carries no complete marker pair.
+    """
+    body = text.replace(b"\r\n", b"\n")
+    begin = BEGIN_MARK.encode("utf-8")
+    end = END_MARK.encode("utf-8")
+    start = body.find(begin)
+    stop = body.find(end)
+    if start == -1 or stop == -1 or stop <= start:
+        return ""
+    region = body[start:stop + len(end)]
+    return hashlib.sha256(region).hexdigest()
 
 
 def splice(existing: bytes, managed: bytes) -> bytes:

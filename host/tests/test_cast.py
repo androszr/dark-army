@@ -52,9 +52,9 @@ SWIFT_GOLDEN = [
     ('', 'codex:7f2e4d1a-8b90-4c3d-a5e6-1f2a3b4c5d6e', 'audit'),
     ('nobody-at-all', 'a-very-long-session-identifier-0123456789-0123456789-0123456789', 'relay'),
     ('', 'a-very-long-session-identifier-0123456789-0123456789-0123456789', 'relay'),
-    ('Ptyś', 'any-session', 'ptyś'),
-    ('PTYŚ', 'any-session', 'ptyś'),
-    ('Ptyś-ab12', 'any-session', 'ptyś'),
+    ('Ptys', 'any-session', 'ptys'),
+    ('PTYS', 'any-session', 'ptys'),
+    ('Ptys-ab12', 'any-session', 'ptys'),
 ]
 
 

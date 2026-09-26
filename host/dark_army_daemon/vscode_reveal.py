@@ -1171,17 +1171,34 @@ def native_reply_text(text) -> Optional[str]:
     return text if text and text[0] not in "/!#" else None
 
 
-def can_reply_native_terminal(pid: int, root: str) -> bool:
-    """Cached native proof plus one compatible bridge; no foreign environment.
+def native_reply_connection(pid: int, root: str) -> tuple[Optional[dict], str]:
+    """Select one project bridge and explain why none can carry a native reply.
 
-    The addressed bridge verifies terminal ancestry/tty before it may send.
-    Legacy _in_vscode uses environment inspection and is not reply authority.
+    This is only discovery. The addressed bridge verifies terminal ancestry
+    and tty before sending; foreign process environment grants no authority.
     """
     if type(pid) is not int or pid <= 1 or not root:
-        return False
+        return None, "The exact Codex terminal cannot be verified. Reply in the original Codex session."
     locks = [lock for lock in _bob_ext_locks() if _lock_owns(lock, root)]
-    return (len(locks) == 1
-            and _parse_ext_version(locks[0].get("extensionVersion")) >= NATIVE_REPLY_MIN_VERSION)
+    if not locks:
+        return None, ("No Dark Army IDE connection owns this project. Open it in VS Code "
+                      "with the Dark Army IDE extension, then reply from the phone.")
+    if len(locks) != 1:
+        return None, ("More than one VS Code window has this project open. Close the extra "
+                      "project windows so one Dark Army IDE connection remains.")
+    version = _parse_ext_version(locks[0].get("extensionVersion"))
+    if version < NATIVE_REPLY_MIN_VERSION:
+        running = ".".join(str(part) for part in version) if version != (0,) else "unknown"
+        required = ".".join(str(part) for part in NATIVE_REPLY_MIN_VERSION)
+        return None, (f"This project's VS Code window is running Dark Army IDE {running}; "
+                      f"phone replies need {required} or later. Update the extension and "
+                      "run Reload Window in that VS Code window.")
+    return locks[0], ""
+
+
+def can_reply_native_terminal(pid: int, root: str) -> bool:
+    """Snapshot reach through the same bridge selector used for the write."""
+    return native_reply_connection(pid, root)[0] is not None
 
 
 async def reply_native_terminal(pid: int, tty: str, root: str, text: str, validate, *, expires_at_ms: int) -> Optional[dict]:
@@ -1191,11 +1208,8 @@ async def reply_native_terminal(pid: int, tty: str, root: str, text: str, valida
             or type(expires_at_ms) is not int or expires_at_ms <= time.time() * 1000):
         return None
     def prepare():
-        locks = [lock for lock in _bob_ext_locks() if _lock_owns(lock, root)]
-        if (len(locks) != 1
-                or _parse_ext_version(locks[0].get("extensionVersion")) < NATIVE_REPLY_MIN_VERSION):
-            return None
-        return dict(locks[0])
+        lock, _ = native_reply_connection(pid, root)
+        return dict(lock) if lock is not None else None
     lock = await asyncio.get_running_loop().run_in_executor(None, prepare)
     if lock is None:
         return None

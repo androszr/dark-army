@@ -46,6 +46,7 @@ are the upload body's raw AEAD, bound to the header frame that carried it.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -90,6 +91,29 @@ RELAY_FRAME_MAX_BYTES = 900_000
 #: minute. The relay's own 240/min cap is a DoS filter, not the boundary.
 RELAY_MAX_FRAMES_PER_MINUTE = 60
 RELAY_MAX_WRITES_PER_MINUTE = 10
+#: Raw keystrokes from the phone's terminal (`terminal_input` with `bytes`)
+#: draw on their **own** bucket of this size, beside the writes bucket above
+#: and never from it: a person typing into a terminal from away must not
+#: spend the minute's allowance an Approve or a reply needs, and a burst of
+#: answers must not strand keys already typed. The phone mirrors this number
+#: (`AwayKeys.perMinute`) and batches under it; the frame bucket above still
+#: bounds everything a device sends.
+RELAY_MAX_KEY_WRITES_PER_MINUTE = 10
+
+
+def write_bucket_kind(payload: dict) -> str:
+    """Which per-device write bucket an opened action frame draws on:
+    ``"keys"`` for raw terminal keystrokes, ``"writes"`` for every other
+    action — the line route (`text`) included, which is a whole sentence
+    and keeps its older rules. The test is the executor's own
+    (``_sealed_run`` takes the raw route only for a non-empty string), so
+    an empty or odd ``bytes`` beside a ``text`` line cannot charge that
+    line to the keys bucket."""
+    raw = payload.get("bytes")
+    if (payload.get("action") == "terminal_input"
+            and isinstance(raw, str) and raw):
+        return "keys"
+    return "writes"
 
 #: The sentence a lapsed lease refuses a write with — verbatim on the phone,
 #: so the shared prefix in ``Actions.swift`` must match its opening words.
@@ -173,7 +197,8 @@ def channel_id(key: bytes, *, ns: Namespace = RELAY) -> str:
     """The mailbox address for this key: 16 derived bytes as 32 hex chars.
 
     Derived, not random, so both ends compute it from the one shared secret;
-    and deliberately not a credential — it buys ciphertext and DoS only.
+    and deliberately not a credential — it buys ciphertext, DoS and one
+    held-poll window per ``PEER_REARM_SECONDS`` (`note_phone_arrived`) only.
     """
     return _hkdf(key, ns.info_channel_id)[:16].hex()
 
@@ -366,6 +391,91 @@ _send_mem: dict = {}
 #: those writes so the connector's idle/active decision is never a persist
 #: window behind the truth. ``{device_id: epoch_seconds}``.
 _frame_mem: dict = {}
+#: When the socket relay last told the Mac the phone arrived on its line
+#: (`peer:1`, `relay_ws.py`), wall clock, memory only. The phone opens its
+#: socket the moment it wakes, so this is the earliest word the Mac gets
+#: that a person picked the phone up — before any frame is sent. The
+#: mailbox connector arms its held polls on it for ``PEER_ARM_SECONDS`` and
+#: is woken out of an idle sleep by `_peer_waiters`, so a request that falls
+#: through to the mailbox is not left behind a thirty-second idle gap.
+_peer_mem: dict = {}
+#: One event per device the mailbox connector's idle sleep waits on.
+_peer_waiters: dict = {}
+#: When the socket relay last said the phone left its line (`peer:0`),
+#: wall clock, memory only. A departure ends the arm at once: a phone that
+#: opened its line at home and closed it on the home answer costs the
+#: mailbox seconds of held polling, not ``PEER_ARM_SECONDS``.
+_peer_left_mem: dict = {}
+#: When the phone last proved itself on the socket lane — a verified frame
+#: (`relay_ws._handle_wire`) — wall clock, memory only. A socket frame
+#: deliberately stamps no `last_frame_at`, so this is that lane's proof for
+#: `note_phone_arrived`'s budget. A home request is deliberately **not** a
+#: proof here: a phone open at home proves itself every few seconds, and a
+#: stranger reconnecting as the phone would then re-arm on every one
+#: (security review, 25 Sep 2026). Only the away lanes reset the budget.
+_proof_mem: dict = {}
+#: `peer:1` is the relay's word, not a proof: anybody holding the channel
+#: id can connect as the phone and make the relay say it. So a `peer:1`
+#: arms the held polls at most once per this many seconds, unless the
+#: phone proved itself away — a verified mailbox or socket frame — since the last
+#: arm. A real phone proves itself on every away wake it uses; a stranger
+#: reconnecting in a loop buys one ``PEER_ARM_SECONDS`` window per half
+#: hour (≈ 5% of the time held), not a mailbox held for ever.
+PEER_REARM_SECONDS = 1800.0
+
+
+def note_phone_proof(device_id: str) -> None:
+    """The socket lane verified a frame from this device."""
+    did = str(device_id or "")
+    if did:
+        _proof_mem[did] = time.time()
+
+
+def note_phone_left(device_id: str) -> None:
+    """The socket relay said the phone left its line: the arm ends."""
+    did = str(device_id or "")
+    if did:
+        _peer_left_mem[did] = time.time()
+
+
+def note_phone_arrived(device_id: str) -> bool:
+    """The socket relay said the phone is on the line: stamp it and wake
+    the mailbox connector's idle sleep for that device — within the
+    `PEER_REARM_SECONDS` budget. Returns whether it armed."""
+    did = str(device_id or "")
+    if not did:
+        return False
+    now = time.time()
+    last = float(_peer_mem.get(did, 0.0))
+    proved = max(last_frame_at(did), float(_proof_mem.get(did, 0.0)))
+    if last and now - last < PEER_REARM_SECONDS and proved <= last:
+        return False
+    _peer_mem[did] = now
+    waiter = _peer_waiters.get(did)
+    if waiter is not None:
+        waiter.set()
+    return True
+
+
+def last_phone_arrived_at(device_id: str) -> float:
+    """`note_phone_arrived`'s stamp, epoch seconds, while the phone is still
+    on its line; ``0.0`` if never, or once a `peer:0` came after it."""
+    did = str(device_id or "")
+    arrived = float(_peer_mem.get(did, 0.0))
+    if float(_peer_left_mem.get(did, 0.0)) >= arrived:
+        return 0.0
+    return arrived
+
+
+def phone_arrival_waiter(device_id: str) -> "asyncio.Event":
+    """The event `note_phone_arrived` sets for one device, made on first
+    use — on the daemon loop, the only caller."""
+    did = str(device_id or "")
+    waiter = _peer_waiters.get(did)
+    if waiter is None:
+        waiter = asyncio.Event()
+        _peer_waiters[did] = waiter
+    return waiter
 
 
 def _revision(path):

@@ -971,6 +971,33 @@ final class OfflineCacheTests: XCTestCase {
         XCTAssertFalse(ReceiptLedger.evidenceBeforeSending(tool, in: snapshot(board: board([before]))))
     }
 
+    /// The Board tab's batch Refine (`board_refine_batch`) is `.cardRefining`
+    /// over every ticked card: the mark stays SENT until the frame shows
+    /// each one's planner at work, and a member the board no longer lists
+    /// proves nothing.
+    func testTheBatchEffectIsEveryCardsRefining() {
+        XCTAssertEqual(ReceiptLedger.effect(for: PhoneActions.boardRefineBatch,
+                                            fields: ["card_ids": "a, b,"],
+                                            scope: PhoneRowSelection.scope),
+                       .cardsRefining(cardIds: ["a", "b"]))
+        XCTAssertEqual(ReceiptLedger.effect(for: PhoneActions.boardRefineBatch,
+                                            fields: ["card_ids": " , "],
+                                            scope: PhoneRowSelection.scope),
+                       ReceiptEffect.none)
+        let batch = ReceiptEffect.cardsRefining(cardIds: ["a", "b"])
+        func card(_ json: String) -> BoardCard {
+            try! JSONDecoder().decode(BoardCard.self, from: Data(json.utf8))
+        }
+        let aIdle = card(#"{"id": "a", "column_name": "prep"}"#)
+        let bIdle = card(#"{"id": "b", "column_name": "prep"}"#)
+        let aLive = card(#"{"id": "a", "column_name": "prep", "refine_state": "dispatching"}"#)
+        let bLive = card(#"{"id": "b", "column_name": "prep", "refine_session_id": "s9"}"#)
+        XCTAssertFalse(ReceiptLedger.landed(batch, in: snapshot(board: board([aIdle, bIdle]))))
+        XCTAssertFalse(ReceiptLedger.landed(batch, in: snapshot(board: board([aLive, bIdle]))))
+        XCTAssertFalse(ReceiptLedger.landed(batch, in: snapshot(board: board([aLive]))))
+        XCTAssertTrue(ReceiptLedger.landed(batch, in: snapshot(board: board([aLive, bLive]))))
+    }
+
     /// Approve on a *changed* plan: the card already carries the old
     /// digest, so "any approval" read as landed on the very snapshot that
     /// offered the button and the press was removed unsent (the audit's

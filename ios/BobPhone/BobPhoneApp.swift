@@ -56,7 +56,13 @@ struct BobPhoneApp: App {
                     // Adopt a Lock Screen card the last run left up before
                     // the first poll can request a second one.
                     LiveActivityController.shared.adoptExisting()
-                    Task { await lock.unlock() }
+                    // The line comes up while Face ID runs; nothing is
+                    // sent on it until the unlock's `wake()`.
+                    client.prewarm()
+                    Task {
+                        await lock.unlock()
+                        if !lock.unlocked { client.abandonPrewarm() }
+                    }
                     // Opening the app supersedes the badge — the screen is
                     // now the truth — and is also the re-registration
                     // nudge: iOS rotates push tokens whenever it likes, and
@@ -292,13 +298,19 @@ final class LockGate: ObservableObject {
     @Published var unlocked = false
     @Published var busy = false
     @Published var error = ""
+    /// Stepped by every `lock()`. An unlock captures it before its sheet
+    /// and commits only if no lock came in between: a Face ID that resolves
+    /// after the app went to the background must not unlock it, nor grant
+    /// the away writes (security review, 25 Sep 2026).
+    private var epoch = 0
 
     func lock() {
+        epoch += 1
         PhoneRouter.shared.lock()
         unlocked = false
         error = ""
-        // A locked phone's next remote write prompts again — the 5-minute
-        // grace must not outlive the person putting the phone down.
+        // A locked phone's next opening asks again, and the writes' grant
+        // must not outlive the person putting the phone down.
         RemoteAuth.shared.reset()
     }
 
@@ -314,11 +326,19 @@ final class LockGate: ObservableObject {
             unlocked = false
             return
         }
+        let started = epoch
         do {
-            let ok = try await context.evaluatePolicy(
+            let answered = try await context.evaluatePolicy(
                 .deviceOwnerAuthentication,
                 localizedReason: "Unlock Dark Army to see your Mac.")
+            // Locked meanwhile, or already behind the lock screen: the
+            // answer is stale, and the next opening asks again.
+            let ok = answered && epoch == started
+                && UIApplication.shared.applicationState != .background
             unlocked = ok
+            // The opening's face covers the away writes too: one Face ID
+            // per opening, until `lock()` resets it.
+            if ok { RemoteAuth.shared.grantForSession() }
             if !ok { error = "Unlock cancelled." }
         } catch {
             unlocked = false
@@ -357,11 +377,25 @@ struct LockedView: View {
     }
 }
 
-/// The five tabs, named so a banked draft can say which one it was written
+/// The four tabs, named so a banked draft can say which one it was written
 /// on. Raw values are persisted in `draft.json`; a value an older build does
 /// not know reads back as `.needs`.
 enum PhoneTab: String, CaseIterable, Hashable {
-    case needs, fleet, board, comm, usage
+    case needs, fleet, board, menu
+
+    /// A tab as a draft or a deep link spells it. Comm and Usage were tabs
+    /// of their own until the Menu gathered them, so a draft stamped `comm`
+    /// and the widget's `bobphone://usage` still land — on the Menu — and
+    /// any other menu section's name does too. Anything else is `nil`.
+    init?(stored raw: String) {
+        if let tab = PhoneTab(rawValue: raw) {
+            self = tab
+        } else if MenuSection(rawValue: raw) != nil {
+            self = .menu
+        } else {
+            return nil
+        }
+    }
 }
 
 struct ContentView: View {
@@ -375,6 +409,9 @@ struct ContentView: View {
 
     /// Bound so a resumed draft can bring its own tab to the front.
     @State private var selectedTab: PhoneTab = .needs
+    /// The section open on the Menu tab, `nil` for the grid itself. Held
+    /// here so a deep link can open one after bringing the tab forward.
+    @State private var menuOpen: MenuSection?
     @StateObject private var sheets = PhoneSheetRouter()
 
     var body: some View {
@@ -412,32 +449,19 @@ struct ContentView: View {
             .tag(PhoneTab.board)
             .environment(\.decryptActive, selectedTab == .board && sheets.top == nil)
 
-            // Talk to Mission Control, Dark Army's standing read-only chief
-            // of staff (`CommView.swift`); the tab's own root, same chrome.
+            // Usage, Comm (Mission Control, `CommView.swift`), Scouting and
+            // Manual checks, as a grid; a tile pushes its section onto this
+            // tab's own stack and the back button returns to the grid.
             NavigationStack {
-                PhoneTabRoot(path: "~/comm", tab: .comm, client: client, pairing: pairing,
+                PhoneTabRoot(path: "~/menu", tab: .menu, client: client, pairing: pairing,
                              outbox: outbox, onForget: forget) {
-                    CommView(client: client, selected: selectedTab == .comm)
+                    MenuView(client: client, open: $menuOpen,
+                             selected: selectedTab == .menu)
                 }
             }
-            .tabItem { Label("Comm", systemImage: "text.bubble") }
-            .tag(PhoneTab.comm)
-            .environment(\.decryptActive, selectedTab == .comm && sheets.top == nil)
-
-            NavigationStack {
-                PhoneTabRoot(path: "~/usage", tab: .usage, client: client, pairing: pairing,
-                             outbox: outbox, onForget: forget) {
-                    UsageView(usage: client.usage,
-                              attribution: client.attribution,
-                              client: client,
-                              refreshing: client.refreshing) {
-                        await client.refreshNow()
-                    }
-                }
-            }
-            .tabItem { Label("Usage", systemImage: "chart.bar") }
-            .tag(PhoneTab.usage)
-            .environment(\.decryptActive, selectedTab == .usage && sheets.top == nil)
+            .tabItem { Label("Menu", systemImage: "square.grid.3x3") }
+            .tag(PhoneTab.menu)
+            .environment(\.decryptActive, selectedTab == .menu && sheets.top == nil)
         }
         .tint(Theme.phosphor)
         .toolbarBackground(Theme.bar, for: .tabBar)
@@ -463,6 +487,7 @@ struct ContentView: View {
 
     private func applyPendingTab() {
         if let tab = router.take() { selectedTab = tab; sheets.close() }
+        if let section = router.takeSection() { menuOpen = section }
         if let route = router.pendingReceipt { sheets.route(route) }
         // The widget's face: open that agent where the fleet still lists
         // it. A session the fleet has forgotten opens nothing — the tab
@@ -512,7 +537,7 @@ struct ContentView: View {
 ///
 /// A struct instantiated once per tab rather than a method on `ContentView`,
 /// because the two navigation booleans must be **per-tab**: state held on
-/// `ContentView` would be one switch shared by four stacks, and setting it
+/// `ContentView` would be one switch shared by every stack, and setting it
 /// would push the destination in every tab at once. A consequence, accepted:
 /// `TabView` keeps inactive tabs' hierarchies alive, so two tabs can each
 /// hold a mounted composer. The banked draft, by contrast, is **one slot for

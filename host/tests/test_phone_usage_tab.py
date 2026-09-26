@@ -100,10 +100,13 @@ def test_the_sources_are_there():
     assert list(PHONE.glob("*.swift")), "no Swift sources under ios/BobPhone"
 
 
-def test_the_usage_tab_is_present_once():
+def test_usage_lives_in_the_menu_once():
     app = _read(APP)
-    assert app.count('Label("Usage"') == 1
-    assert app.count('"~/usage"') == 1
+    assert 'Label("Usage"' not in app
+    assert '"~/usage"' not in app
+    menu = _read(PHONE / "MenuView.swift")
+    assert menu.count("UsageView(usage: client.usage,") == 1
+    assert 'Label("Menu"' in app
     assert 'Label("Fleet"' in app
     assert 'Label("Board"' in app
     assert "TabView" in app
@@ -355,14 +358,13 @@ assert(try decode("{}").spenderGroups.isEmpty)
     assert ran.returncode == 0, ran.stderr
 
 
-def test_phone_tab_stays_five_named_cases():
+def test_phone_tab_is_four_named_cases():
     app = _read(APP)
     match = re.search(r"enum PhoneTab.*?\n\}", app, re.S)
     assert match, "no enum PhoneTab"
     chunk = match.group(0)
     assert chunk.count("case ") == 1
-    assert "case needs, fleet, board, comm, usage" in chunk
-    assert app.count('Label("Usage"') == 1
+    assert "case needs, fleet, board, menu" in chunk
 
 
 def test_usage_report_rows_are_navigation_links_not_inline_sections():

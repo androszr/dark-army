@@ -27,6 +27,7 @@ struct PhoneSheet: Identifiable, Equatable {
     static let detents = PhoneSheetKind.detents
     static let onKeyboard = PhoneSheetKind.onKeyboard
     static let presentsTerminalFullScreen = PhoneSheetKind.presentsTerminalFullScreen
+    static let answers = PhoneSheetKind.answers
 
     var kind: PhoneSheetKind {
         switch subject {
@@ -37,6 +38,12 @@ struct PhoneSheet: Identifiable, Equatable {
         case .workFile: return .workFile
         case .notification: return .notification
         }
+    }
+    /// The one subject fact the rule table reads: a card's column decides
+    /// whether it is answered from half height. Nil for every other kind.
+    var cardColumn: String? {
+        if case .card(let card) = subject { return card.column }
+        return nil
     }
     var id: String {
         let key: String
@@ -136,10 +143,22 @@ private struct PhoneSheetEntryKey: EnvironmentKey {
     static let defaultValue: PhoneSheetEntryState? = nil
 }
 
+/// The sheet's current height, for content that draws differently at half
+/// height (the agent sheet's compact lead). A `SheetDetent`, never a
+/// `PresentationDetent`, so the rule reading it stays Foundation-only
+/// (`AgentSheetLead.stillSize`). Nil outside a sheet.
+private struct PhoneSheetDetentKey: EnvironmentKey {
+    static let defaultValue: SheetDetent? = nil
+}
+
 extension EnvironmentValues {
     var phoneSheetEntry: PhoneSheetEntryState? {
         get { self[PhoneSheetEntryKey.self] }
         set { self[PhoneSheetEntryKey.self] = newValue }
+    }
+    var phoneSheetDetent: SheetDetent? {
+        get { self[PhoneSheetDetentKey.self] }
+        set { self[PhoneSheetDetentKey.self] = newValue }
     }
 }
 
@@ -196,14 +215,19 @@ private extension SheetDetent {
 struct PhoneSheetFrame: View {
     @EnvironmentObject private var router: PhoneSheetRouter
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.decryptFeedback) private var decryptFeedback
     @ObservedObject var client: PhoneClient
     @ObservedObject var outbox: OutboxStore
     @State private var detent: SheetDetent = .large
     @State private var offeredDetents: Set<PresentationDetent> = [.medium, .large]
     @State private var didAimInitialDetent = false
     @State private var resolvedNotification: UUID?
+    /// The surface inside this sheet names itself here on arrival, and the
+    /// header plays its caption; the content reserves no strip of its own.
+    @StateObject private var captionHost = DecryptCaptionHost()
 
     private var kind: PhoneSheetKind { router.top?.kind ?? .card }
+    private var column: String? { router.top?.cardColumn }
     private var presentationBinding: Binding<PresentationDetent> {
         Binding(get: { detent.presentation }, set: { detent = $0 == .medium ? .medium : .large })
     }
@@ -213,6 +237,8 @@ struct PhoneSheetFrame: View {
             if let entry = router.top {
                 content(entry)
                     .environment(\.phoneSheetEntry, router.topState)
+                    .environment(\.phoneSheetDetent, detent)
+                    .environment(\.decryptCaptionHost, captionHost)
             }
         }
         .id(router.topState?.id)
@@ -257,6 +283,10 @@ struct PhoneSheetFrame: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
+                if let decryptFeedback {
+                    SheetArrivalCaption(feedback: decryptFeedback, host: captionHost)
+                        .frame(minHeight: 44)
+                }
                 DecryptButton(action: {
                     if case .notification(let receipt) = router.top?.subject {
                         PhoneRouter.shared.consume(receipt)
@@ -270,7 +300,11 @@ struct PhoneSheetFrame: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(Theme.phosphor)
-            Rectangle().fill(Theme.hair).frame(height: 1)
+            if let decryptFeedback {
+                SheetArrivalRule(feedback: decryptFeedback, host: captionHost)
+            } else {
+                Rectangle().fill(Theme.hair).frame(height: 1)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.top, 8)
@@ -304,7 +338,42 @@ struct PhoneSheetFrame: View {
         // nested-presentation crash. The cover's own onAppear already flipped
         // `terminalPresented`; a poll or decrypt tick must not re-aim.
         guard !router.terminalPresented else { return }
-        detent = PhoneSheet.initialDetent(kind, dynamicTypeSize.isAccessibilitySize)
-        offeredDetents = Set(PhoneSheet.detents(kind, dynamicTypeSize.isAccessibilitySize).map(\.presentation))
+        detent = PhoneSheet.initialDetent(kind, column, dynamicTypeSize.isAccessibilitySize)
+        offeredDetents = Set(PhoneSheet.detents(kind, column, dynamicTypeSize.isAccessibilitySize).map(\.presentation))
+    }
+}
+
+/// The arrival caption of the surface inside a sheet, drawn in the sheet's
+/// header row beside the title rather than in a band reserved under it.
+/// `DecryptCaption` holds its own geometry with hidden text, so the row
+/// never jumps when the scramble starts or ends.
+private struct SheetArrivalCaption: View {
+    @ObservedObject var feedback: DecryptFeedback
+    @ObservedObject var host: DecryptCaptionHost
+
+    var body: some View {
+        DecryptCaption(caption: "OPEN", frame: SheetArrival.glyphs(feedback, host))
+    }
+}
+
+/// The rule under the sheet's header: lit while the caption plays, the
+/// ordinary hairline otherwise.
+private struct SheetArrivalRule: View {
+    @ObservedObject var feedback: DecryptFeedback
+    @ObservedObject var host: DecryptCaptionHost
+
+    var body: some View {
+        let glyphs = SheetArrival.glyphs(feedback, host)
+        Rectangle().fill(glyphs != nil ? Theme.phosphor : Theme.hair).frame(height: 1)
+    }
+}
+
+@MainActor
+private enum SheetArrival {
+    /// The frame to draw, only while the playing episode is this sheet's
+    /// own surface.
+    static func glyphs(_ feedback: DecryptFeedback, _ host: DecryptCaptionHost) -> String? {
+        guard let surface = host.surface, feedback.state.surface == surface else { return nil }
+        return feedback.state.screen?.frame(at: feedback.instant, reduced: feedback.reduced)
     }
 }

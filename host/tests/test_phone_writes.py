@@ -36,9 +36,18 @@ ARM_SLOTS = (
     "lowPriority",
     "clearDone",
     "manualClear",
+    # Passed / Failed on a card flagged with a check file (25 Sep 2026, the
+    # manual check folder plan): its own slot, so a Mark checked arm can
+    # never confirm an outcome.
+    "manualOutcome",
     "review",
     # End on the Comm tab: closes Mission Control's terminal, its own slot.
     "missionEnd",
+    # The Prep row's batch Refine (25 Sep 2026): its own slot, so a Refine
+    # armed on a card screen can never confirm a batch, nor the reverse.
+    "refineBatch",
+    # The Backlog row's batch Start (25 Sep 2026): its own slot, never a card screen's Start.
+    "startBatch",
 )
 
 OLDER_MAC = "this Mac cannot take commands from the phone yet"

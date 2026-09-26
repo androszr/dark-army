@@ -9,7 +9,7 @@ a fixed-width column, a horizontally scrolling strip, a reserved-height
 chrome line or a `5...` **minimum**; everything else wraps and the screen
 scrolls, and a cap removed from an `HStack` child carries
 `.fixedSize(horizontal: false, vertical: true)` or it is a no-op. A
-preformatted CRT or code block is the scrolling-strip case: it takes
+preformatted terminal or code block is the scrolling-strip case: it takes
 `.fixedSize(horizontal: true, vertical: true)` inside its own horizontal
 scroll so the drawing does not wrap to the pane — `Markdown.swift` is the
 one file that may say `horizontal: true`. A `.navigationTitle` is **always
@@ -58,13 +58,18 @@ still end with the departing view. These objects are memory only, bounded by
 the trail and discarded on pop, replacement or Close. A resolved notification
 page is retained only after the original receipt checks succeed; Back may read
 it after consumption, but never after a lock, pairing change or new receipt.
+A card screen draws its WAITS ON section and the Add picker under EDIT CARD
+only where the board says `dependencies_supported` (`docs/card-dependencies.md`).
 
 | Subject | Ordinary text | Accessibility text |
 |---|---|---|
 | Agent | Medium, draggable to large | Large only |
-| Card, Catch up, decision, changed file, notification | Large only | Large only |
+| Card in In progress | Medium, draggable to large | Large only |
+| Card in Prep, Backlog or Done, Catch up, decision, changed file, notification | Large only | Large only |
 
-`PhoneSheet.swift` holds the four Foundation-only rules on `PhoneSheetKind`;
+`PhoneSheet.swift` holds the five Foundation-only rules on `PhoneSheetKind`;
+`answers(_:column:)` names the two answering cases, the agent and a card in
+In progress, and the card's column is the one subject fact the table reads.
 `PhoneSheet` exposes them without re-deriving them. A keyboard opening grows
 the sheet to large; the terminal cover's keyboard leaves the sheet height
 alone, and hiding a keyboard never shrinks the sheet automatically. Changing
@@ -74,23 +79,55 @@ it before the cover comes down.** The sheet's detents are stored and not
 restated while the cover is up: restating a detent sheet under a
 first-responder full-screen cover is the crash. `terminalPresented` is a
 flag the keyboard observer reads, not a published property that would
-rebuild the sheet. The frame enables finite
-entry decoration and draws the same CRT background and scanlines as the tabs.
+rebuild the sheet. Every text box has a hide-keyboard button while
+focused, and while typing the sheet folds its lead and verbs so SEND
+stays visible (`test_phone_keyboard_hide.py`). The frame enables finite
+entry decoration and draws the same Signal background as the tabs, without a
+reading overlay.
 An unresolved or unavailable notification refuses a swipe; explicit Close
 still consumes its receipt. Resolution retains the pairing and sequence guards.
 
-Agent details lead with identity, the card and origin, the question and the
-answer controls. The facts, command and message remain below in the same
-scrolling column. **Terminal opens a full-screen cover** from the agent sheet;
+Agent details lead with identity, the card, the question and the answer
+controls. The origin lines, the cast quote, the facts, command and message
+remain below in the same scrolling column.
+
+**The agent sheet's half height is a glance.** Under the name sits one status
+line — `AgentSheetLead.statusLine` over `PhoneAgentFacts.head`, the fleet
+row's age (`FleetAge.text` at the snapshot's own stamp) and its context
+figure: "Working — running Bash · 1h · ctx 20%↑" — wrapping, never capped.
+A waiting agent's question (`AgentSheetLead.questionText`, the words Details
+draws too) sits right above its answer controls on the Conversation screen,
+where every open lands, handed in as `ConversationScreen`'s `ask:`, inside
+the answer's bounded share. The conversation draws no tool-result rows — a
+result stays one tap away behind its call — and two or more consecutive tool
+calls fold into one dim line, `⚙ 5 tool calls · Bash ×3, Read, Grep`, a tap
+opening the calls (`ConversationFold`); every scroll anchor reads the rows,
+never the last turn. The frame puts its detent in the content's environment
+(`phoneSheetDetent`, a `SheetDetent?`) and the lead's still is 40pt at half
+height and 96pt dragged up or outside a sheet (`AgentSheetLead.stillSize`).
+Permission asks, notification cards and the low-priority offer keep their
+full shape; Close, Hide, Stop and Delete share one row of small buttons, each
+armed before it fires, Close's sentence drawn only while it is armed or in
+play. The rules are Foundation-only in `AgentSheetLead.swift`, run under
+`swiftc` by `host/tests/test_phone_sheet_lead.py` and on the phone job by
+`AgentSheetLeadTests.swift`. **Terminal opens a full-screen cover** from the agent sheet;
 Done selects Details and returns to the sheet. Its stream and width release
 still follow the existing terminal watch and pane disappearance. Composer,
 profile, Pipeline and the two Usage report screens retain their existing
 (push) navigation. The reports are pushes inside Usage, absent when the
 Mac does not publish the flag, fetched on appear not on tab visit.
 
+**A finished agent's report reads as on the Mac**: the sheet draws
+`work_report` through `WorkReport` (byte-pinned, `test_work_report_parse.py`)
+as labelled sections, Unchecked numbered; the status line and Needs you lead
+with its headline, parsing nothing. A row never does: it names what tapping
+it opens — the sheet's card line first (`AgentDetailView.cardLine`), the
+Mac's `ProcessRow.baseTitle` rule. An older Mac sends none
+and the raw report is drawn; no push (S3).
+
 **A card opens with five things and one MORE row, in `CardSections`' order,
-and the phone re-derives none of it.** The card screen leads with the title,
-the summary, the assistant row (`PhoneProviderSwitch` where `canRetool`,
+and the phone re-derives none of it.** On a card in Prep, Backlog or Done
+the card screen leads with the title, the summary, the assistant row (`PhoneProviderSwitch` where `canRetool`,
 else the inert mark and name of what ran — `assistantRecord` — so a bound
 or finished card still says which assistant has it), one line saying where
 the card stands (`CardSections.stateWords(for:linked:)` — "Planned — ready
@@ -102,7 +139,7 @@ the screen fills from the gates it already computes (`canRefine`, `canStart`,
 `canMessageSession`, `PhoneCardAck.showsManualClear` / `showsReview`) — a
 Prep card leads with Refine, a planned card with Start, a card being worked
 with the message box, a card waiting on a check with Mark checked under the
-steps, an ended run with Done, a finished card with Mark reviewed under the
+steps (Passed / Failed instead where the card names a check file), an ended run with Done, a finished card with Mark reviewed under the
 close note. Then the sections through `CardSections.order(for:)` — the rule
 the Mac's card window reads, copied byte-equal into `CardDetailView.swift`
 and pinned by `host/tests/test_card_sections.py`: everything else sits
@@ -140,6 +177,20 @@ where the Mac states its own marker (`manual_clear_writable` /
 identity that were on screen from the live snapshot card — never the cache —
 so the Mac's store WHERE refuses a stale picture in its own words.
 
+**An In progress card is answered from half height.** It opens medium,
+draggable to large, and large under the accessibility text sizes, like the
+agent sheet. Its portrait, title, summary, meta line and assistant row
+(`identityLead`) move under the pinned sections — status, the band, QUEUED
+and WAITS ON — and above MORE, so at half height the status line and the
+message box are the first screen. The lead order follows the column
+(`statusFirst`, the table's own `answers`), never the detent, so nothing
+reshuffles on a drag. The seed's column at open decides; a card changing
+column while its sheet is up does not move the sheet, and the next open
+reads the new column. The keyboard grows it one way, as every sheet. Where
+the box is not offered (`canMessageSession` false) the band draws nothing
+and the lead is the status alone. Pinned by
+`test_phone_sheets.py::test_an_in_progress_card_leads_with_the_band`.
+
 Pinned by `test_phone_sheets.py`, `SheetPresentationTests.swift`, and the phone
 text, accessibility, decrypt and terminal-tab contract suites.
 
@@ -157,6 +208,82 @@ counts the drawn list while searching. A column with no match says
 reads `“…” is not in a title, a summary or a project.` The filter runs on
 the snapshot the phone already holds and sends no request. Pinned by
 `host/tests/test_phone_board_search.py` and `ios/BobPhoneTests/BoardSearchTests.swift`.
+
+## Several Prep cards are refined from the phone at once
+
+The Prep row carries the Mac's batch Refine (25 Sep 2026). Under its
+heading, **SELECT** is drawn only where the board says
+`refine_batch_supported` (absent decodes false: an older Mac 404s
+`board_refine_batch`, so the control is absent, never present and refused)
+and at least two of the cards drawn could be refined — the search and the
+project filter narrow what may be ticked exactly as they narrow what is
+drawn. In select mode every Prep card draws a box, `[x]` ticked, `[ ]`
+open, a dim `[-]` barred (the shape differs, never the colour alone), spoken as "ticked" / "not ticked" / "cannot be
+ticked", and a press on the tile toggles it instead of opening the card.
+**One rule decides the tick and the card screen's Refine**:
+`PhoneRowSelection.tickable("prep", …)` (`RowSelection.swift`,
+Foundation only, the Mac's `RowSelection` as a typed twin rather than a
+byte copy) is `CardDetailView.canRefine`, so a scout, a planned card, a
+card being refined or started and every card when Dark Army's launcher is
+off cannot be ticked; `admits` adds the same `root` as the first tick, one
+planning session running in one folder.
+
+The batch button reads `REFINE n TOGETHER`, is disabled under
+`PhoneRowSelection.minimum` (two), and is armed then confirmed ("Really
+refine n?") on its own slot, `Arm.Slot.refineBatch`, so a Refine armed on
+a card screen never confirms a batch nor the reverse. The arm's id is the
+ticked ids **in board order** (`orderedIds`), joined — the same list on
+both presses — so a tick changed between them re-arms rather than fires,
+and any change to the ticks disarms. CANCEL leaves select mode with
+nothing sent; while a press is out it stays pressable and leaves select
+mode without touching the queued press (the QUEUE list keeps it with its
+mark and RETRY), and SELECT is absent until that press leaves the queue. The press goes through `enqueue` under
+`PhoneRowSelection.scope` (`batch:refine`) with `card_ids`
+comma-joined: written down at the tap, Face ID once from away, waiting
+offline like a single Refine, the button wearing QUEUED, SENDING… and
+SENT. It is judged by `.cardsRefining(cardIds:)` — every ticked card's
+`.cardRefining` — so the mark stays SENT until the board shows each one
+being planned, and select mode ends when the mark leaves with nothing
+said. A refusal — the Mac's words through `queueNote`, drawn and
+therefore read (`readQueueNote`), or the phone's own duplicate and Face
+ID sentences from a refused enqueue — is drawn under the button with the
+ticks kept, so one can be fixed and pressed again. Ticks are pruned on
+every board against what in the whole row may still be ticked, never while
+the press is out. **Ticks outlive looking away** (25 Sep 2026): a search,
+a project change, a fold or leaving the Board tab keeps select mode and
+its ticks (each disarms a waiting press), the batch button's count names
+every ticked card drawn or not, a folded selecting row keeps its batch
+control under the heading, and the selecting row draws its ticked cards
+first — the Mac's board does the same. A member deleted mid-flight leaves the
+press SENT until the effect deadline, as a single Refine on a deleted
+card does. The Mac re-checks everything (`docs/transport-contract.md`,
+*The LAN door is sealed*); the tick only hides a press that could not
+succeed. Pinned by `host/tests/test_phone_batch_refine.py` and
+`ios/BobPhoneTests/RowSelectionTests.swift`.
+
+## Several planned cards are started from the phone at once
+
+The Backlog row carries the Mac's batch Start (25 Sep 2026) on the same
+machinery. **SELECT** under the Backlog heading is drawn only where the
+board says `start_batch_supported` (absent decodes false), no row is
+selecting — `selectingRow` is one optional, so the two rows never select
+at once — and at least two drawn cards could be started. The tick is
+`PhoneRowSelection.tickable("backlog", …)`: the launcher on, a plan, an
+assistant, not a scout, never started, not refining, not queued and not
+already in a batch; `admits` adds one project. The button reads
+`START n TOGETHER`, armed then confirmed ("Really start n?") on
+`Arm.Slot.startBatch`, keyed on the joined ids in board order.
+
+**Unlike the Prep row, the press is synchronous**: `post` under
+`PhoneRowSelection.startScope` (`batch:start`), never `enqueue` and never
+the outbox. Its reply is the Mac's report — what started, what waits, what
+was skipped — drawn verbatim whether or not it succeeded: under the
+heading on success, under the button with the ticks kept on a refusal. An
+unreachable Mac is a refusal in words; nothing fires later on the phone's
+clock. The tile and the card screen draw the Mac's `BATCH r/n · working`,
+`· waiting` or `· left the line`, and `canStart` is withheld on
+`holdsBatchMark`. Pinned by `host/tests/test_phone_batch_start.py` and
+`ios/BobPhoneTests/RowSelectionTests.swift`.
 
 ## One decision list
 
@@ -199,7 +326,7 @@ word is spelled next to the red accent, never colour alone.
 **The tab routes; it does not answer.** The whole row is one press and
 opens the agent or card sheet, where the answer box, the permission verdict,
 Mark done / Send back and Mark checked / Mark reviewed (`board_manual_clear`
-/ `board_review`, each chosen on its own line of both phone tuples, each
+/ `board_review`, with Passed / Failed as `board_manual_outcome`, each chosen on its own line of both phone tuples, each
 carrying a current-state echo) live; outcome accept/revise are not phone
 verbs. Navigation posts no action. **An agent's row also carries that
 agent's own verbs** (`InboxAgentVerb`, 23 Sep 2026): after Dismiss, the
@@ -223,6 +350,21 @@ no Delete on the list.
 
 Pinned by `host/tests/test_phone_inbox.py`, `PhoneInboxTests.swift` and
 `DecodeToleranceTests.swift`.
+
+## The verbs are one word list
+
+Stop, Delete, Hide, Dismiss, Close terminal and Low priority are spelled
+the same way on the Mac and the phone (25 Sep 2026,
+`plans/2026-09-25-usability-accessibility-pass.md`). `ios/BobPhone/Verbs.swift`
+is Foundation only and byte-equal from `enum Verbs {` down with the panel's
+copy: each verb's plain label, its armed "really?" label (Hide and Dismiss
+fire on the first press and arm to their own word), the spoken form, and the
+one no-undo sentence Close terminal carries — the Close dialog's title. The
+agent screen's quiet verbs, `InboxAgentVerb.label` and the Needs you swipe
+read it; the Mac's `WrapUpBar`, `LowPriorityBar`, `StopBar`, `DeleteBar`, the
+row's Hide and the triage legend do too. What a press does is still each
+caller's, with the same actions and fields; only the words moved. Pinned by
+`host/tests/test_verbs_shared.py`, which runs the table under `swiftc`.
 
 ## The terminal is a real emulator, and it is the one exception
 
@@ -252,10 +394,23 @@ receipt behind the last, through `post`), with no phone-side rule about
 what may be pressed. A key pressed before the stream's head has landed is
 **held** (`pendingInput`, ≤ 4 KiB) and sent the moment it does; a key that
 cannot be held is reported (`onInputDropped` → the pane's note), never
-swallowed. Away, each press is one write against
-`RELAY_MAX_WRITES_PER_MINUTE` (10 a minute): the eleventh comes back as
-the Mac's own `too many remote requests — slow down`, drawn under the
-terminal, and those keystrokes are not re-sent. The pane fills its full-screen cover under one
+swallowed. Away, keys are **batched** (`AwayKeys`, 26 Sep 2026): only a
+committing key — Enter, Ctrl-C, Ctrl-D, a lone Escape — sends at once;
+letters, Backspace, Tab and arrows wait for a 0.8 s pause. Each batch is one
+write against the Mac's **own key bucket**,
+`RELAY_MAX_KEY_WRITES_PER_MINUTE` (10 a minute, beside and never from the
+writes bucket, so typing cannot spend an Approve's allowance). The phone
+mirrors that bucket (`AwayKeys.Budget`) and **holds** a batch the Mac would
+refuse; a `too many remote requests — slow down` that comes back anyway
+puts the keys back in front, in order, and retries — no key is dropped for
+the rate, and the pane removes that refusal's receipt, so no REFUSED line or
+agent-screen note stands for keys that land seconds later. Held keys belong
+to the session they were typed into (`pendingFor`): a pane re-aimed at
+another agent drops them with a note rather than type one agent's line into
+another; coming home sends them up the stream only after any batch still on
+the relay has answered, so nothing overtakes it; Done sends what is held in
+one last write. The unsent text is drawn under the grid as it is typed
+(`showPending`), with what it waits for. The pane fills its full-screen cover under one
 row holding Done and a **fold** (`TerminalStrip`): the strip of what still
 needs a press — the question, the permission buttons, the card verbs — is
 one line until a tap opens it, and opens by itself only when an ask
@@ -266,19 +421,30 @@ the emulator's keyboard up an always-open strip left the terminal a
 sliver. An older Mac
 (`terminal_stream_supported` absent) gets one sentence and no emulator.
 
-**The conversation is the first screen, and the tabs sit inside the phone's own container.**
-Fleet opens `AgentScreen` (Conversation, Details, Terminal when hosted) via
-`PhoneAgentScreenBar`. `DetailTab` still decides the stream. Turns are
+**The tabs lead the agent sheet, and Main is the first.**
+Fleet opens `AgentScreen` (Main, Conversation, Details, Terminal when hosted)
+with `PhoneAgentScreenBar` at the top of the sheet. Main is the lead (still,
+name and status, card, every verb) as one scrolling page; every other tab
+keeps only the card's title under the bar (`AgentScreen.titleOnly`,
+`titleLine`) and scrolls the rest as one page — the conversation's turns,
+ask and answer buttons (`AnswerBox` `part: .choices`) included, opening at
+the foot. **The conversation's message composer is pinned under that page**
+(`AnswerBox` `part: .composer`, 26 Sep 2026): a stack sibling, never an
+overlay, drawn whether the agent is working or stopped, so a person can
+always write to it; where `channel` is false one dim line says the message
+may be turned down, and the Mac's refusal is the note. The whole box on
+Main and Needs you keeps its stopped-and-channel gate. `DetailTab` still
+decides the stream. Turns are
 oldest-first, newest at the bottom: `>` for the person, `MarkdownText` for
 the agent, one dim `⚙` line per tool (tap for brief and a one-line result,
-never the bytes). Follows new turns only at the bottom. `AnswerBox` sits
-under it. `ConversationCacheStore` is pairing-stamped, pruned at five days.
+never the bytes). Follows new turns only at the bottom.
+`ConversationCacheStore` is pairing-stamped, pruned at five days.
 Catch-up 40 hops at home, 3 away; never `backgroundRefresh`. When the
 hops left cannot reach the present (`ConversationCatchUp.jump`), the cursor
 jumps to the last page and lands it as a reset — the newest turns first,
 never minutes of paging from turn 0. Pages persist once per catch-up, in
 order. Absent
-`conversation_supported` opens Details with one sentence.
+`conversation_supported`, Conversation draws one sentence.
 
 **The terminal is the second of two tabs, and the stream follows the tab.**
 A hosted row draws `PhoneDetailTabBar` under its identity line —
@@ -320,9 +486,81 @@ next size may be ignored for up to `FRONTMOST_TRUST_SECONDS` (15 s).
 Pinned by `host/tests/test_phone_terminal.py` and
 `test_phone_terminal_stream_drift.py`.
 
-## The Comm tab talks to Mission Control
+## The Menu tab gathers Usage, Comm, Scouting and Manual checks
 
-The fifth tab (`PhoneTab.comm`, `CommView.swift`) talks to **Mission
+Four tabs: Needs you, Fleet, Board, **Menu** (`MenuView.swift`), a grid four
+across (two at accessibility sizes) of `MenuSection` tiles — Usage, Comm,
+Scouting, Manual checks, Plans — beside the bundled Design system, each
+pushed on the Menu's own stack with a back button. Manual checks, Scouting
+and Plans each say "not built yet" against a Mac that does not serve their
+list (below). `PhoneTab(stored:)` reads a section name as `.menu`, so an old `comm`
+draft and `bobphone://usage` still land. Pinned by
+`host/tests/test_phone_menu.py`.
+
+**Manual checks open from the Menu's Manual checks tile.** Against a Mac
+that publishes `manual_checks_supported` the tile is lit
+(`MenuSection.lit(scoutReports:manualChecks:)`) and pushes
+`ManualChecksView` (`.navigationTitle("manual checks")`): a search line, a
+status filter (`all` / `open` / `passed` / `failed`) and the list off the
+sealed `manual_checks` read, open first then newest first, each row
+`ManualCheckRules.rowLine` over the check, prose wrapping in full. A row opens
+the file as a document (`MarkdownText`, `base: 12, mono: true`); where the Mac
+publishes `manual_outcome_writable` it offers **Passed** / **Failed**, each
+armed then confirmed, with a note (`board_manual_outcome`). The words and
+the order are `ManualCheckRules`, byte-pinned with the Mac's Checks window
+(`test_phone_manual_checks.py`). **On the card screen** a card flagged with a
+check file draws the file under its steps off the on-open `card` read's
+`manual_check` (`reportSection`'s branches) and the same armed Passed /
+Failed (`PhoneCardAck.showsManualOutcome`); Mark checked is hidden there
+(`showsManualClear` requires an empty `manualCheckPath`) and stays for a
+card flagged with steps alone.
+
+**Scout reports open from the Menu's Scouting tile.** Against a Mac that
+publishes `scout_reports_supported` the tile is lit (`MenuSection.lit`) and
+pushes `ScoutReportsView` (`.navigationTitle("scout reports")`): a `>`
+search line over the list, newest first, each row the title, the verdict
+wrapping in full and `project · date`, one element spoken from what it
+draws. `ScoutReportSearch.matches` narrows by title, verdict, question,
+project, card title and recommendation — the rule is `ScoutReports.swift`,
+byte-pinned with the Mac. A tapped row pushes `ScoutReportReaderView`
+(`.navigationTitle("report")`), which fetches the text **on open** and never
+on the poll or `backgroundRefresh`, and draws the answer block as labelled
+lines (`ScoutReportHeader.rows`) above the body through `MarkdownText`, the
+card screen's call. The list and the body are the sealed `scout_reports` /
+`scout_report` reads (`docs/transport-contract.md`), relay first when away.
+After a 300 ms pause on three or more characters, and only against a Mac
+publishing `scout_reports_body_search_supported`, the screen asks the
+sealed `scout_reports` read again with `q` in the body and merges the hits
+through `ScoutReportSearch.merge` (byte-pinned, newest first, each report
+once), each hit drawn with its snippet under the verdict and spoken with it.
+An older Mac keeps the instant search alone and is asked for nothing more.
+An older Mac leaves the tile dim and the page that says so. Pinned by
+`host/tests/test_scout_reports_surface.py`.
+
+**Plans open from the Menu's Plans tile.** Against a Mac that publishes
+`plans_supported` the tile is lit (`MenuSection.lit(scoutReports:manualChecks:plans:)`)
+and pushes `PlansView` (`.navigationTitle("plans")`): a `>` search line over
+every enrolled project's plans, newest first by the day in the file name,
+each row the title, `status · area` where the plan states them,
+`project · day`, and `card: <title> · <column>` where a card holds the plan,
+one element spoken from what it draws. `PlanSearch.matches` narrows by
+title, project, status, area, the file name's slug and the card title
+(`Plans.swift`, phone-only — the Mac lists no plans, so no byte pin). A
+tapped row pushes `PlanReaderView` (`.navigationTitle("plan")`), which
+fetches the text **on open** and never on the poll or `backgroundRefresh`,
+and draws it whole through `MarkdownText` under the title. Where the row's
+card is on the board the phone already holds, a **CARD · <title>** button
+opens that card's screen through `PhoneSheetRouter` —
+`PhoneInbox.sheet(for:snapshot:)`'s rule, resolved at the draw; a card the
+board no longer carries draws no button. Read-only: nothing here writes,
+starts or deletes a plan. The list and the body are the sealed `plans` /
+`plan` reads (`docs/transport-contract.md`), relay first when away. An
+older Mac leaves the tile dim and the page that says so. Pinned by
+`host/tests/test_phone_plans.py`.
+
+## The Comm section talks to Mission Control
+
+The Menu's Comm section (`MenuSection.comm`, `CommView.swift`) talks to **Mission
 Control**, the Mac's standing chief of staff, which answers and acts
 (`docs/context-host.md`). One scrolling column: the identity line, the
 status word from `CommRules.status` (`older Mac` / `off` / `starting` /
@@ -353,8 +591,8 @@ stamp — and the needs-you chip reads the same filtered rows; the Comm
 tab still draws it by id. `test_comm_rules.py` runs the rule and pins
 the fleet's use of it.
 
-**Open-on-appear, once per visit.** Where `mission.available &&
-!mission.alive`, the tab posts `mission_open` once per appearance
+**Open-on-appear, once per visit** (a visit: Comm pushed from the Menu). Where
+`mission.available && !mission.alive`, the screen posts `mission_open` once per appearance
 (`openedThisVisit`), never on a timer; `starting` while in flight, Send
 disabled; a refusal is drawn under that button rather than under a second
 Try again. The Mac spawns
@@ -363,6 +601,8 @@ restart re-attach to the same session; nothing on the phone remembers a
 session id, so a `/clear` successor follows. An older Mac draws one
 sentence. `CommRules` is byte-pinned to the panel's copy
 (`test_comm_rules.py`).
+
+**Mission Control's helpers are tabs** (`CommHelperTabs`, `subagent_conversation_supported`): each is read-only, its own turns watched as `<session>#<agent>` (`ConversationSubject`); a finished helper keeps an open tab, marked `done`.
 
 The Mac composes a Bearings digest (`docs/context-host.md`) the phone
 may read as sealed `bearings` (`bearings_supported`); **no screen draws
@@ -564,6 +804,9 @@ it. `test_scout_cards.py` pins the three files.
 `REPORT`, on every scout): "still out" words before the attach, then the
 text off the on-open `card` read (`CardFull.report`, `_card_report`,
 `_card_plan`'s twin) through `MarkdownText`, or the path and why not.
+Above the text, the card's stored `report_verdict` · recommendation word
+through `ScoutVerdictLine` (byte-pinned in `ScoutReports.swift`), drawn in
+full and absent on an older Mac.
 Under a Done scout's report, **Promote** (`PhoneActions.boardPromote`),
 one press, unarmed, drawn only where the board says `promote_supported`.
 
@@ -616,10 +859,11 @@ offline line or a fresh relay round trip. Pinned by
 
 ## Keys typed from away are batched
 
-Away, every terminal send is one relay write against
-`RELAY_MAX_WRITES_PER_MINUTE` (10), so `PhoneTerminalHost` holds printable
-keys and sends the batch on Enter or any control byte (`AwayKeys
-.flushesAtOnce`, C0 or DEL) or after `AwayKeys.pause` (1.5 s) of quiet;
+Away, every terminal send is one relay write against the Mac's key bucket
+(`RELAY_MAX_KEY_WRITES_PER_MINUTE`, 10), so `PhoneTerminalHost` holds keys
+and sends the batch on a committing key (`AwayKeys.flushesAtOnce`: Enter,
+Ctrl-C, Ctrl-D, a lone Escape) or after `AwayKeys.pause` (0.8 s) of quiet,
+paced and retried as the pane section above states;
 `terminal_input` rides with `refreshAfter: false`, since the 8 s poll brings
 the screen back anyway — but **a batch that landed asks for its echo at
 once** (`flushAway` → `fetchTerminalBytes()`, a sealed read that spends no
@@ -732,6 +976,34 @@ sets `via = .relay` from `lastKnownAwayKey` when the record carries a
 relay channel, so `pollOnce` takes its own away branch on the first
 poll; it never seeds `.lan`.
 
+**The check-in a person waits on is fast either way (25 Sep 2026).**
+`start()` and `wake()` set `wakeCheckIn`, spent by the next `pollOnce`:
+when the last poll went home and a relay channel exists, that check-in
+tries **only the address on file, for `Client.wakeProbe` (1s)**, not the
+walk's eight seconds and the other addresses — at home the Mac answers in
+milliseconds, away the relay is tried a second later. A quick probe that
+missed is not proof of being away (a slow Mac, a radio waking from power
+save), so once the relay has filled the screen the same check-in walks
+every home address at the ordinary probe length, and a 200 sets
+`via = .lan` before the AWAY badge settles — on a `wake()` too, which polls
+with `probeHome: false`, so the walk is gated on the quick check-in alone.
+The socket follows the last route: away last time, `start()`, `wake()` and
+`prewarm()` (from `.active`, while Face ID runs) want it at once; home last
+time, it comes up only when the quick probe misses, just before the relay
+rung, whose request waits the moment it takes. A home opening therefore
+opens no relay line and spends none of the Mac's `peer:1` budget (review,
+25 Sep 2026). Any home answer — a refusal included, which leaves `via`
+unassigned — closes it again; nothing is sent on it before the unlock, and
+a failed or cancelled unlock closes it (`abandonPrewarm()`). A `RelayChannel.request` made while the
+line is still coming up (`RelaySocket.comingUp`: a connect actually in
+flight — the reconnect ladder's sleep holds no task and never counts — or
+open for under `peerGrace` 0.4s with no `peer:` word read yet) waits up to
+`RelaySocket.readyGrace` (1.5s) for it before choosing socket or mailbox —
+the socket answers in tens of milliseconds, the mailbox in seconds. The
+Mac's side of the cost: `peer:0` ends its wake arm, so a line opened at
+home holds the mailbox for seconds (`docs/transport-contract.md`). Pinned
+by `test_phone_wake_fast.py`.
+
 **And while it is away and on screen it holds the socket lane open**
 (`ios/BobPhone/RelaySocket.swift`, the away door's fast lane —
 `docs/relay-socket-contract.md`).
@@ -739,11 +1011,12 @@ A record whose pair reply carried `relay_ws_url` (`PairingRecord.relayWSURL`,
 tolerant decode, part of `identity` so a changed address restarts the
 poller as a changed mailbox address does) gets a `RelaySocket` on its
 `RelayChannel` from `PhoneClient.start()` alone — `backgroundRefresh` and
-`lockScreenWrite` never open a line. The socket is **wanted** exactly while
-`via == .relay` and the app is on screen: `via`'s `didSet` opens it on
+`lockScreenWrite` never open a line. The socket is **wanted** while
+`via == .relay` and the app is on screen, and on every launch, return and
+Face ID prompt until a home answer lands: `via`'s `didSet` opens it on
 `.relay` and closes it on `.lan`, `suspend()` closes it at `.background`
 (iOS suspends background sockets, so the line is never left to die
-invisibly), `wake()` re-wants it, `stop()` closes it. It builds only
+invisibly), `start()`, `wake()` and `prewarm()` want it, `stop()` closes it. It builds only
 `wss://…/ws?ch=<channel>&side=phone` (`RelaySocket.url`; any other scheme
 opens nothing), pings every `pingSeconds` (20) and reconnects on a ladder
 of 1, 2, 4, 8, 16 then `maxBackoff` 30 s, reset after 30 s stable. The relay's
@@ -810,7 +1083,7 @@ true double-tap carries identical `fields`; a different press on the same
 subject and verb (a reply with other words, a verdict on a second prompt,
 the tool then the model, ▲ then ▼, the autostart dial on then off) queues
 behind the first, and only the two answer verbs are keyed on `question_id`
-alone; a different verb on the same subject queues behind it too. **Face ID is asked once, at the press**, before the record
+alone; a different verb on the same subject queues behind it too. **The app-open unlock is the face (25 Sep 2026):** `LockGate.unlock()` succeeding calls `RemoteAuth.grantForSession()`, so every `RemoteAuth.authorize()` below returns at once until the app locks again (`LockGate.lock()` → `RemoteAuth.reset()`, on every departure) — one Face ID per opening, none per action. An unlock that resolves after a `lock()` (the lock's `epoch` stepped meanwhile) or with the app in the background grants nothing and leaves the app locked. Un-pairing inside an opening resets the grant, so the new pairing's first away write asks once. The Mac's checks are unchanged: device token, away lease and `REMOTE_ACTIONS`, per request. The rest of this paragraph is the fail-closed path for a write made without that unlock. **Face ID is asked once, at the press**, before the record
 exists — a declined sheet leaves nothing queued — and remembered on it
 (`Receipt.authorised`), which the sender passes to `post(authorised:)` so a
 queue draining from away never raises the sheet again; a press queued at
@@ -902,12 +1175,16 @@ wearing one of the phone's own `phoneAuthored` sentences), with RETRY (a
 no-op on a `.queued` or `.sending` row: a fresh token mid-transmit would
 send the press twice) and DISCARD (off while the row is `.sending`) as
 before; a refusal the person read stays listed for `refusedShown` (600 s).
-**Four presses keep the synchronous `post`**
+**Five presses keep the synchronous `post`**
 because the screen reads their reply body: the guarded card Save
 (`expected_revision`, whose 409 carries the Mac's copy), card creation
 (`OutboxStore`, its own queue), Clear done (count and token off the
 reply) and START PROJECT (`board_start_project`, whose 200 `detail` is the
-Mac's report of what started and what was left alone, drawn verbatim);
+Mac's report of what started and what was left alone, drawn verbatim)
+and START n TOGETHER (`board_start_batch`, whose 200 `detail` is the
+Mac's report of what started, what waits and what was skipped; a batch
+Start banked and fired later would put work in front of the launcher on
+the phone's clock, not the person's);
 terminal keystrokes stay on `post` as a stream with their own batching. Pinned by `host/tests/test_phone_action_queue.py` (the four pure
 functions under `swiftc`, the wiring by grep) and `OfflineCacheTests.swift`.
 
@@ -950,6 +1227,18 @@ expiry, going the way the last poll went (`lastKnownAwayKey`, written
 from `via`'s `didSet`): away is relay first then one home probe, home
 is two probes then the relay. It wires `onPromote` / counters and
 **never `onLive`**, so the outbox — and its Face ID ask — stays shut.
+
+**The tile and Live Activity use Signal's generated palette.** The widget
+target compiles `ios/BobPhone/SignalTokens.generated.swift` directly, with
+`WidgetTheme` mapping its surface, readable text, muted text, green accent,
+amber attention, red danger and divider roles. Home Screen counts and the
+Lock Screen card use neutral text for ordinary values, amber for Needs you and
+staleness, and red only for a critical usage meter. Agent words and captions
+use proportional type; prompts, clocks and measures keep monospace. The
+Dynamic Island uses the same roles. The circular accessory keeps its system
+background and primary material because vibrant mode can flatten colors; its
+tick weight, length and caption still carry meaning by form.
+
 Profile → Knowledge is a read-only list of one enrolled project's notes,
 gated on `knowledgeSupported`, with a picker over `enrollment.enrolled`
 only. `.navigationTitle("knowledge")` is a literal; answers wrap, with no
@@ -1052,7 +1341,10 @@ the Mac composer does not read the acks (`_inbox_acks`), so a pushed
 update may re-show a subject the phone had hidden until the next local
 reconcile corrects it — in practice `_settle_acknowledged_session` demotes
 an acked session out of the buckets, and the residual is a question ack on
-a row still in `waiting`.
+a row still in `waiting`. The buzz gate, unlike the composer, does read
+the acks (`live_activity.shown_sessions`; `docs/transport-contract.md`,
+*A buzz names only what the phone lists*), so a reminder about a dismissed
+row is withheld rather than pushed and swept.
 
 **The app starts, adopts or ends it; the Mac only updates and ends it.**
 `LiveActivityController` (`ios/BobPhone/LiveActivity.swift`, main actor) is
@@ -1128,7 +1420,7 @@ never silent, an arm-then-confirm button says which step it is on, and
 are each one element with a composed `spoken` — assembled **only** from
 the fields that row already draws, with the Mac's own sentences
 (`queue_reason`, `dispatch_error`) verbatim. Decoration is silent: the
-pixel faces, the scanlines, the meter and the provider silhouettes are
+pixel faces, the meter and the provider silhouettes are
 `.accessibilityHidden(true)`. **Nothing announces itself** —
 `UIAccessibility.post` was considered and rejected as noisy. The assistant
 switcher (`PhoneProviderSwitch`, on the card screen and in the composer, the
@@ -1148,6 +1440,21 @@ home screen and the Lock Screen's circular slot; the Lock Screen half
 is drawn in vibrant mode where form carries every distinction, and the
 circular view deliberately omits `.privacySensitive()`.
 
+## The Fleet tab names the Mac's battery
+
+`power_source.py` reads `pmset -g batt` on the snapshot executor, memoised
+`POWER_SOURCE_INTERVAL` (60s), and publishes the omittable `power` section:
+`available`, `present`, a whole `percent`, `source` (`ac` / `battery`) and
+`charge` (`charging`, `discharging`, `charged`, `not_charging`,
+`finishing`). **No clock rides it** — the time estimate is dropped, so the
+section is news only when the battery moved. `MacPower.line`
+(`FleetView.swift`) owns the words — charging, on battery, charged, on
+power, on power, not charging, finishing charge — drawn as one label
+between the refresh notice and **Catch up across projects**, spoken the
+same. A desktop (`present` false) or an older Mac draws nothing; the panel
+does not decode it. Pinned by `test_power_source.py` and
+`test_phone_mac_power.py`.
+
 ## Deliberate interactions have finite decrypt decoration
 
 `DecryptMotion` and `DecryptFeedback` play one short public caption, and only
@@ -1155,8 +1462,12 @@ when a screen arrives. OPEN runs on completed visible navigation and on a tab
 arrival (1.5s), then the caption goes and the photograph holds still. INPUT on
 a button and REFRESH on a pull are gone: an enabled press keeps the native dim
 and fires at once, and a pull keeps the system's own spinner. The arrival
-caption is drawn only while that play is on; idle chrome reserves nothing, so
-the photograph does not jump. Actions never await decoration. Polling,
+caption is drawn only while that play is on. A tab root reserves the strip
+above its content, always laid out so nothing jumps when a play starts or
+ends; a sheet draws the caption in its header row beside the title, the
+header's rule lit while it plays, and reserves nothing extra — its content's
+surface publishes itself to the frame's `DecryptCaptionHost` and mounts no
+strip. Actions never await decoration. Polling,
 reconnects, cache changes, receipts and terminal bytes stay silent. One screen
 episode at a time, superseded rather than queued.
 

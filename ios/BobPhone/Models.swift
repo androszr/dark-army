@@ -45,6 +45,9 @@ struct Snapshot: Decodable {
     /// which decodes `available == false` and draws the Comm tab's one
     /// sentence.
     var mission = MissionSection()
+    /// The host Mac's battery for the Fleet tab. Older Macs send none,
+    /// which decodes `available == false` and Fleet draws nothing.
+    var power = PowerSection()
 
     /// Live decision subjects, one per agent and one per card.
     var decisionItems: [PhoneInboxItem] { PhoneInbox.items(from: self) }
@@ -57,7 +60,7 @@ struct Snapshot: Decodable {
         case generatedAt = "generated_at"
         case counts, agents, board, notifications, permissions, devices, collaboration
         case fleetFigures = "fleet_figures"
-        case enrollment, inbox, security, mission
+        case enrollment, inbox, security, mission, power
         case stateDigest = "state_digest"
     }
 
@@ -77,19 +80,21 @@ struct Snapshot: Decodable {
         inbox = c.value(.inbox, InboxAcks())
         security = c.value(.security, SecuritySection())
         mission = c.value(.mission, MissionSection())
+        power = c.value(.power, PowerSection())
         stateDigest = c.value(.stateDigest, "")
     }
 
     init() {}
 
     /// The sections a delta answer may leave out and name in
-    /// `sections_unchanged`. Raw values are the wire names — the panel's
-    /// `Snapshot.Section` minus `signals` and `mesh`, which the phone does
-    /// not decode. `generated_at`, `fleet_figures` and `state_digest` are not
+    /// `sections_unchanged`. Raw values are the wire names — the daemon's
+    /// `_OMITTABLE_SECTIONS` minus `signals` and `mesh`, which the phone does
+    /// not decode; `power` is the phone's alone (the panel's Mac shows its
+    /// own battery). `generated_at`, `fleet_figures` and `state_digest` are not
     /// sections and are never carried.
     enum Section: String, CaseIterable {
         case counts, notifications, agents, collaboration, permissions, board
-        case enrollment, devices, inbox, security, mission
+        case enrollment, devices, inbox, security, mission, power
     }
 
     /// Take one section, named on the wire, from the picture already held.
@@ -112,6 +117,7 @@ struct Snapshot: Decodable {
         case .inbox: inbox = held.inbox
         case .security: security = held.security
         case .mission: mission = held.mission
+        case .power: power = held.power
         }
         return true
     }
@@ -158,6 +164,43 @@ struct MissionSection: Decodable, Equatable {
         root = c.value(.root, "")
         name = c.value(.name, "")
         openedAt = c.value(.openedAt, 0)
+    }
+}
+
+/// The `power` section of the state (`BobDaemon.power_snapshot`): the host
+/// Mac's battery as `pmset -g batt` reads it — a whole `percent`, the
+/// `source` it draws from (`ac`, `battery`) and the `charge` word
+/// (`charging`, `discharging`, `charged`, `not_charging`, `finishing`).
+/// `available` is stated by the Mac; absent decodes false and Fleet draws
+/// nothing, as it does for `present == false` (a desktop). No clock rides
+/// here. `MacPower.line` (`FleetView.swift`) owns the words.
+struct PowerSection: Decodable, Equatable {
+    var available = false
+    var present = false
+    var percent: Int? = nil
+    var source = ""
+    var charge = ""
+
+    enum CodingKeys: String, CodingKey {
+        case available, present, percent, source, charge
+    }
+
+    init(available: Bool = false, present: Bool = false, percent: Int? = nil,
+         source: String = "", charge: String = "") {
+        self.available = available
+        self.present = present
+        self.percent = percent
+        self.source = source
+        self.charge = charge
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        present = c.value(.present, false)
+        percent = c.maybe(.percent)
+        source = c.value(.source, "")
+        charge = c.value(.charge, "")
     }
 }
 
@@ -707,6 +750,10 @@ struct Agent: Decodable, Identifiable {
     /// kept by the daemon across the chatter that follows it. Absent decodes
     /// empty — an older Mac sends no key.
     var lastReport = ""
+    /// The same report split into its labelled parts by the Mac
+    /// (`work_report.py`), drawn through `WorkReport` and never re-parsed
+    /// here. `nil` where there is no report or the Mac is older than the key.
+    var workReport: WorkReport.Parsed?
     /// The finished list's own word for this row — `done`, `cut`, `lost`
     /// or `end` (`session_stats.finish_word`), published by the daemon on
     /// finished rows only and drawn verbatim. "done" was the one word every
@@ -782,6 +829,7 @@ struct Agent: Decodable, Identifiable {
         case lastText = "last_text"
         case lastSummary = "last_summary"
         case lastReport = "last_report"
+        case workReport = "work_report"
         case finishWord = "finish_word"
         case interactionNote = "interaction_note"
         case askNote = "ask_note"
@@ -823,6 +871,7 @@ struct Agent: Decodable, Identifiable {
         lastText = c.value(.lastText, "")
         lastSummary = c.value(.lastSummary, "")
         lastReport = c.value(.lastReport, "")
+        workReport = c.maybe(.workReport)
         finishWord = c.value(.finishWord, "")
         branch = c.value(.branch, "")
         question = c.value(.question, AgentQuestion())
@@ -1065,6 +1114,19 @@ struct Board: Decodable {
     /// Whether this Mac serves the human knowledge reader. Absent means
     /// **false**: the Profile row is drawn absent rather than empty.
     var knowledgeSupported = false
+    /// Whether this Mac lists its scout reports and serves one on open
+    /// (`scout_reports_supported`). Absent means **false**: the Menu's
+    /// Scouting tile stays dim and opens the page that says so.
+    var scoutReportsSupported = false
+    /// Whether this Mac searches the reports' text when the list read
+    /// carries `q` (`scout_reports_body_search_supported`). Absent means
+    /// **false**: the Scouting screen keeps its instant search alone and
+    /// asks for no text search.
+    var scoutReportsBodySearchSupported = false
+    /// Whether this Mac lists its projects' plans and serves one on open
+    /// (`plans_supported`). Absent means **false**: the Menu's Plans tile
+    /// stays dim and opens the page that says so.
+    var plansSupported = false
     /// Whether this Mac keeps and serves the phone doors' access log.
     /// Absent means **false**: the Profile row is drawn absent.
     var accessLogSupported = false
@@ -1154,6 +1216,11 @@ struct Board: Decodable {
     /// means **false**: an older Mac sends no key, and the figures line on
     /// the card screen is drawn **absent** rather than blank.
     var runFiguresSupported = false
+    /// Whether this Mac gates Start on a card's dependencies and admits
+    /// `blocked_by` through `board_update`. Absent means **false**: an older
+    /// Mac drops the field at its door, so the WAITS ON editor is drawn
+    /// **absent** rather than writing a list nobody keeps.
+    var dependenciesSupported = false
     /// Whether this Mac takes `register_activity_token` and pushes Live
     /// Activity updates through the mailbox. Absent means **false**: against
     /// an older Mac the Lock Screen card still starts and ends locally, and
@@ -1175,10 +1242,22 @@ struct Board: Decodable {
     /// **false**: an older Mac 404s the verb, so the card screen draws
     /// Promote absent rather than present and refused.
     var promoteSupported = false
+    /// Whether this Mac honours `board_refine_batch` from a phone. Absent
+    /// means **false**: an older Mac 404s the verb, so the Board tab's Prep
+    /// row draws its Select control absent rather than present and refused.
+    var refineBatchSupported = false
+    /// Whether this Mac honours `board_start_batch` from a phone. Absent
+    /// means **false**: an older Mac 404s the verb, so the Board tab's
+    /// Backlog row draws its Select control absent rather than present and refused.
+    var startBatchSupported = false
     /// Whether this Mac serves the sealed `conversation` read. Absent means
     /// **false**: an older Mac 404s the kind, so the phone opens Details and
     /// draws one sentence rather than a blank conversation.
     var conversationSupported = false
+    /// The Mac takes `agent` on the `conversation` read — one helper's own
+    /// journal. Without it Comm draws no helper tabs: an older Mac ignores
+    /// the key and would answer with the parent's turns.
+    var subagentConversationSupported = false
     /// Whether this Mac's on-open `card` read carries a `timeline`. Absent
     /// means **false**: the TIMELINE row is drawn absent rather than empty.
     var cardTimelineSupported = false
@@ -1208,6 +1287,14 @@ struct Board: Decodable {
     /// Mac 404s `board_manual_clear` inside the sealed reply, so the button
     /// is drawn **absent** rather than present and 404ing.
     var manualClearWritable = false
+    /// Whether this Mac serves the Checks section (the sealed
+    /// `manual_checks` read). Absent means **false**: the Menu tile is
+    /// drawn dim rather than opening onto an empty 404.
+    var manualChecksSupported = false
+    /// Whether this Mac takes Passed / Failed on a check file from a phone
+    /// (`board_manual_outcome`). Its own marker, so the list can be drawn
+    /// against a Mac that refuses the press.
+    var manualOutcomeWritable = false
     /// Its twin for Mark reviewed — `board_review`. Two flags, not one, so a
     /// Mac that honours one verb and not the other hides exactly one button.
     var reviewWritable = false
@@ -1243,6 +1330,9 @@ struct Board: Decodable {
     enum CodingKeys: String, CodingKey {
         case outcomesSupported = "outcomes_supported"
         case knowledgeSupported = "knowledge_supported"
+        case scoutReportsSupported = "scout_reports_supported"
+        case scoutReportsBodySearchSupported = "scout_reports_body_search_supported"
+        case plansSupported = "plans_supported"
         case accessLogSupported = "access_log_supported"
         case linkTimingSupported = "link_timing_supported"
         case available, cards, counts, tools, installed, models, projects
@@ -1262,18 +1352,24 @@ struct Board: Decodable {
         case agentReportSupported = "agent_report_supported"
         case lifecycleSupported = "lifecycle_supported"
         case runFiguresSupported = "run_figures_supported"
+        case dependenciesSupported = "dependencies_supported"
         case liveActivitySupported = "live_activity_supported"
         case liveActivityFleet = "live_activity_fleet"
         case runHealthSupported = "run_health_supported"
         case scoutSupported = "scout_supported"
         case promoteSupported = "promote_supported"
+        case refineBatchSupported = "refine_batch_supported"
+        case startBatchSupported = "start_batch_supported"
         case conversationSupported = "conversation_supported"
+        case subagentConversationSupported = "subagent_conversation_supported"
         case cardTimelineSupported = "card_timeline_supported"
         case objectiveOnCreateSupported = "objective_on_create_supported"
         case terminalSupported = "terminal_supported"
         case terminalStreamSupported = "terminal_stream_supported"
         case clearDoneWritable = "clear_done_writable"
         case manualClearWritable = "manual_clear_writable"
+        case manualChecksSupported = "manual_checks_supported"
+        case manualOutcomeWritable = "manual_outcome_writable"
         case reviewWritable = "review_writable"
         case ownTerminalEnabled = "own_terminal_enabled"
         case ownTerminalSpawnSupported = "own_terminal_spawn_supported"
@@ -1286,6 +1382,9 @@ struct Board: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         outcomesSupported = c.value(.outcomesSupported, false)
         knowledgeSupported = c.value(.knowledgeSupported, false)
+        scoutReportsSupported = c.value(.scoutReportsSupported, false)
+        scoutReportsBodySearchSupported = c.value(.scoutReportsBodySearchSupported, false)
+        plansSupported = c.value(.plansSupported, false)
         accessLogSupported = c.value(.accessLogSupported, false)
         linkTimingSupported = c.value(.linkTimingSupported, false)
         available = c.value(.available, false)
@@ -1313,16 +1412,22 @@ struct Board: Decodable {
         agentReportSupported = c.value(.agentReportSupported, false)
         lifecycleSupported = c.value(.lifecycleSupported, false)
         runFiguresSupported = c.value(.runFiguresSupported, false)
+        dependenciesSupported = c.value(.dependenciesSupported, false)
         liveActivitySupported = c.value(.liveActivitySupported, false)
         liveActivityFleet = c.value(.liveActivityFleet, false)
         runHealthSupported = c.value(.runHealthSupported, false)
         scoutSupported = c.value(.scoutSupported, false)
         promoteSupported = c.value(.promoteSupported, false)
+        refineBatchSupported = c.value(.refineBatchSupported, false)
+        startBatchSupported = c.value(.startBatchSupported, false)
         conversationSupported = c.value(.conversationSupported, false)
+        subagentConversationSupported = c.value(.subagentConversationSupported, false)
         cardTimelineSupported = c.value(.cardTimelineSupported, false)
         objectiveOnCreateSupported = c.value(.objectiveOnCreateSupported, false)
         clearDoneWritable = c.value(.clearDoneWritable, false)
         manualClearWritable = c.value(.manualClearWritable, false)
+        manualChecksSupported = c.value(.manualChecksSupported, false)
+        manualOutcomeWritable = c.value(.manualOutcomeWritable, false)
         reviewWritable = c.value(.reviewWritable, false)
         ownTerminalEnabled = c.value(.ownTerminalEnabled, false)
         ownTerminalSpawnSupported = c.value(.ownTerminalSpawnSupported, false)
@@ -1798,10 +1903,60 @@ struct BoardCard: Decodable, Identifiable {
     var planPath = ""
     var queueState = ""
     var queueReason = ""
+    /// The cards this one waits on, as the store holds them: ids joined by
+    /// newlines, written back whole through `board_update` with
+    /// `expected_revision`. `""` from an older Mac.
+    var blockedBy = ""
+    /// Those cards as the Mac resolved them — title, column, and its
+    /// `met` word — and the cards waiting on this one; `[]` where none.
+    var dependencies: [CardDependency] = []
+    var dependents: [CardLink] = []
+    /// The Mac's two sentences, drawn verbatim and only where non-empty.
+    var dependencyLine = ""
+    var dependentsLine = ""
+    /// `blockedBy` as a list of ids, the store's own split.
+    var dependencyIds: [String] {
+        blockedBy.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+    /// The ids of the dependencies that still name a card, in the stored
+    /// order — what every write sends back. A deleted card's id stays in
+    /// `blockedBy` (the store's rule) but is neither counted against the
+    /// limit nor kept by the next edit, so ✕ never faces an id it cannot show.
+    var linkedIds: [String] { dependencies.map(\.id) }
+
+    /// What a card's **Add…** may offer as a card to wait on: the cards of
+    /// `card`'s own folder, not `card` itself, not already listed, none in
+    /// Done — and nothing once the list holds the store's eight
+    /// (`board.MAX_BLOCKERS`, which would otherwise cut a ninth without a
+    /// word). Pure; the store still refuses a loop, a self-wait and another
+    /// project whatever a picker offers.
+    static func dependencyChoices(for card: BoardCard,
+                                  in cards: [BoardCard]) -> [BoardCard] {
+        let listed = Set(card.linkedIds)
+        guard listed.count < maxDependencies else { return [] }
+        return cards.filter {
+            $0.root == card.root && $0.id != card.id
+                && !listed.contains($0.id) && $0.column != "done"
+        }
+    }
+
+    /// The store's own bound on one card's list (`board.MAX_BLOCKERS`).
+    static let maxDependencies = 8
     var manualCheckDue = false
     /// The daemon decides which cards have lost their session.
     var needsYou = false
+    /// Mission Control asked for this card to be started (the daemon's
+    /// `start_ask_id`, fresh and still startable). The ask starts nothing:
+    /// it puts the card on Needs you, and the person's press on START is the
+    /// start. `""` for no ask; the id is the Dismiss fingerprint's material.
+    var startAskId = ""
+    var startAskedAt: Double = 0
     var manualSteps = ""
+    /// The check file the flag named, or `""` for steps alone. With a file
+    /// the card screen offers Passed / Failed instead of Mark checked.
+    var manualCheckPath = ""
     var prompt = ""
     /// Newline-separated stage names, the store's own shape; the cache
     /// keeps it for the card screen.
@@ -1846,6 +2001,31 @@ struct BoardCard: Decodable, Identifiable {
     /// `RunHealthLine`. **nil is no run**, `workRecord`'s rule: a card
     /// nobody has started sends no key and draws no line.
     var runHealth: RunHealth?
+    /// This card's place in a batch-implement session — the one the
+    /// session is on, one waiting its turn, or one dragged out of the line.
+    /// **nil is no batch**, `workRecord`'s rule: the daemon sends the key
+    /// only for those, and an absent or malformed one decodes to nil rather
+    /// than blanking the board. The Mac's `BoardCard.batch`.
+    var batch: BatchMark?
+    /// The one line the tile draws for `batch`: `BATCH 2/3 · working`, or
+    /// `""` where there is no batch. Composed from the daemon's three
+    /// fields; nothing is counted here. The panel's body, byte for byte.
+    var batchLine: String {
+        guard let batch else { return "" }
+        // `left` is a card dragged out of the batch's line that still
+        // carries its mark: said in words, because its Start is refused.
+        let state = batch.state == "left" ? "left the line" : batch.state
+        return "BATCH \(batch.rank)/\(batch.size) \u{00B7} \(state)"
+    }
+    /// Waiting its turn in a batch: its own Start is refused by the daemon
+    /// until it leaves the batch.
+    var isBatchWaiting: Bool { batch?.state == "waiting" }
+    /// Carries a batch mark and no session of its own — waiting in Backlog,
+    /// or dragged out of the line (`left`). The daemon refuses its single
+    /// Start until Leave batch (`board_reset`) clears the mark, in any column.
+    var holdsBatchMark: Bool {
+        batch?.state == "waiting" || batch?.state == "left"
+    }
     /// The plan version somebody read and said yes to — the SHA-256 of the
     /// plan file's bytes at that moment, `""` for never approved. Written by
     /// the Mac's `approve_plan` alone; empty **never** holds a Start up.
@@ -1870,6 +2050,12 @@ struct BoardCard: Decodable, Identifiable {
     var kind = ""
     /// The scout's attached report. An absent key decodes `""`.
     var reportPath = ""
+    /// The attached report's one-line verdict and recommendation token, as
+    /// the Mac read the answer block at the attach. An absent key — a Mac
+    /// older than the column — decodes `""`, and an empty verdict draws
+    /// nothing.
+    var reportVerdict = ""
+    var reportRecommendation = ""
     var isScout: Bool { kind == "scout" }
     /// The card's change number — the Mac's own counter, stepped up whenever
     /// a write changes something a person reads. Sent straight back as
@@ -1945,7 +2131,10 @@ struct BoardCard: Decodable, Identifiable {
         case queueReason = "queue_reason"
         case manualCheckDue = "manual_check_due"
         case needsYou = "needs_you"
+        case startAskId = "start_ask_id"
+        case startAskedAt = "start_asked_at"
         case manualSteps = "manual_steps"
+        case manualCheckPath = "manual_check_path"
         case promptTruncated = "prompt_truncated"
         case summaryTruncated = "summary_truncated"
         case closeNote = "close_note"
@@ -1961,10 +2150,17 @@ struct BoardCard: Decodable, Identifiable {
         case startWhenPlanned = "start_when_planned"
         case priority, area, kind
         case reportPath = "report_path"
+        case reportVerdict = "report_verdict"
+        case reportRecommendation = "report_recommendation"
         case workRecord = "work_record"
         case runFigures = "run_figures"
         case runHealth = "run_health"
+        case batch
         case revision
+        case blockedBy = "blocked_by"
+        case dependencies, dependents
+        case dependencyLine = "dependency_line"
+        case dependentsLine = "dependents_line"
     }
 
     init(from decoder: Decoder) throws {
@@ -1987,7 +2183,10 @@ struct BoardCard: Decodable, Identifiable {
         queueReason = c.value(.queueReason, "")
         manualCheckDue = c.value(.manualCheckDue, false)
         manualSteps = c.value(.manualSteps, "")
+        manualCheckPath = c.value(.manualCheckPath, "")
         needsYou = c.value(.needsYou, false)
+        startAskId = c.value(.startAskId, "")
+        startAskedAt = c.value(.startAskedAt, 0)
         prompt = c.value(.prompt, "")
         workflow = c.value(.workflow, "")
         agentTrail = c.value(.agentTrail, "")
@@ -2013,6 +2212,9 @@ struct BoardCard: Decodable, Identifiable {
         area = c.value(.area, "")
         kind = c.value(.kind, "")
         reportPath = c.value(.reportPath, "")
+        // An absent key — a Mac older than the column — decodes "".
+        reportVerdict = c.value(.reportVerdict, "")
+        reportRecommendation = c.value(.reportRecommendation, "")
         revision = c.value(.revision, 0)
         root = c.value(.root, "")
         parallelLimit = c.value(.parallelLimit, 0)
@@ -2026,6 +2228,88 @@ struct BoardCard: Decodable, Identifiable {
         workRecord = c.maybe(.workRecord)
         runFigures = c.maybe(.runFigures)
         runHealth = c.maybe(.runHealth)
+        // Absent is no batch, malformed is no batch.
+        batch = c.maybe(.batch)
+        // The dependency five, tolerant with empty defaults: an older Mac
+        // sends none, and a card with no links sends none of the four
+        // derived ones.
+        blockedBy = c.value(.blockedBy, "")
+        dependencies = c.value(.dependencies, [])
+        dependents = c.value(.dependents, [])
+        dependencyLine = c.value(.dependencyLine, "")
+        dependentsLine = c.value(.dependentsLine, "")
+    }
+
+    init() {}
+}
+
+/// A card's place in a batch-implement session, as the daemon published it:
+/// `rank` of `size`, `state` `working` or `waiting`. Tolerant on every key,
+/// and a mark with no usable rank is no mark at all. The panel's
+/// `BoardModels.swift` `BatchMark`, byte for byte.
+struct BatchMark: Decodable, Equatable {
+    var rank = 0
+    var size = 0
+    var state = ""
+
+    enum CodingKeys: String, CodingKey { case rank, size, state }
+
+    init(rank: Int, size: Int, state: String) {
+        self.rank = rank
+        self.size = size
+        self.state = state
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        rank = c.value(.rank, 0)
+        size = c.value(.size, 0)
+        state = c.value(.state, "")
+        guard rank > 0, !state.isEmpty else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "a batch mark needs a rank and a state"))
+        }
+        size = max(size, rank)
+    }
+}
+
+/// One card another waits on, as the Mac resolved it. `met` is the Mac's
+/// word — Done, or finished and waiting only on a manual check — never
+/// re-derived from `column` here.
+struct CardDependency: Decodable, Identifiable, Equatable {
+    var id = ""
+    var title = ""
+    var column = ""
+    var met = false
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, met
+        case column = "column_name"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        title = c.value(.title, "")
+        column = c.value(.column, "")
+        met = c.value(.met, false)
+    }
+
+    init() {}
+}
+
+/// A card named by another — the "Unblocks" list. Id and title only.
+struct CardLink: Decodable, Identifiable, Equatable {
+    var id = ""
+    var title = ""
+
+    enum CodingKeys: String, CodingKey { case id, title }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        title = c.value(.title, "")
     }
 
     init() {}
@@ -2362,9 +2646,13 @@ struct CardFull: Decodable {
     /// The card's timeline, a sibling of `plan` on the on-open read alone.
     /// Nil from an older Mac, which draws the TIMELINE row absent.
     var timeline: CardTimelineReport?
+    /// The check file the card was flagged with (`manual_check_path`),
+    /// `report`'s twin on the on-open read. Nil from an older Mac.
+    var manualCheck: CardPlan?
 
     enum CodingKeys: String, CodingKey {
         case available, cards, plan, report, timeline
+        case manualCheck = "manual_check"
     }
 
     init(from decoder: Decoder) throws {
@@ -2375,6 +2663,7 @@ struct CardFull: Decodable {
         plan = c.value(.plan, CardPlan())
         report = c.maybe(.report)
         timeline = c.maybe(.timeline)
+        manualCheck = c.maybe(.manualCheck)
     }
 
     init() {}

@@ -38,7 +38,7 @@ PHONE = ROOT / "ios" / "BobPhone"
 SOURCES = [
     "Receipts.swift", "Models.swift", "AreaWire.swift", "Collaboration.swift",
     "Actions.swift", "Inbox.swift", "RunFigures.swift", "RunHealth.swift",
-    "HostAddress.swift",
+    "HostAddress.swift", "WorkReport.swift",
 ]
 
 HARNESS = r'''

@@ -128,3 +128,103 @@ struct StartProjectButton: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+/// A row's select mode, drawn under its heading's caption —
+/// `StartProjectButton`'s shape. Not selecting: one `SELECT` button (the
+/// caller draws the control only where the row has at least
+/// `RowSelection.minimum` tickable cards and Dark Army may start sessions).
+/// Selecting: the row's batch verb (`RowSelection.verb`, disabled below the
+/// minimum with a line saying why), `CANCEL`, and the daemon's words for a
+/// refused press drawn verbatim beneath.
+///
+/// No tooltips (the panel's `.help` sites are a closed allowlist,
+/// `test_panel_tooltips.py`): what a tooltip would say is spoken as an
+/// accessibility hint, and the one thing a sighted person needs — why the
+/// verb is dim — is a line on screen.
+struct RowBatchControl: View {
+    let column: BoardColumn
+    let count: Int
+    let selecting: Bool
+    let refusal: String
+    let onSelect: () -> Void
+    let onCancel: () -> Void
+    let onFire: () -> Void
+    /// The row's batch verb has been pressed once and waits for its
+    /// confirmation (Backlog). The label then says what a second press does
+    /// (`RowSelection.confirm`). Default off, so a row that fires at once
+    /// passes nothing.
+    var armed: Bool = false
+
+    private var ready: Bool { count >= RowSelection.minimum }
+
+    private var fireLabel: String {
+        let confirm = RowSelection.confirm(column, count: count)
+        return armed && !confirm.isEmpty ? confirm
+                                         : RowSelection.verb(column, count: count)
+    }
+
+    private var fireHint: String {
+        column == .backlog
+            ? "One session for every ticked card, worked one at a time; each still closes as its own card"
+            : "One planning session for every ticked card; each still gets its own plan"
+    }
+
+    private var selectHint: String {
+        column == .backlog
+            ? "Tick several planned cards and start them in one session"
+            : "Tick several cards and refine them in one session"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                if selecting {
+                    Button(action: onFire) {
+                        Self.label(fireLabel, lit: ready)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!ready)
+                    .clickable(ready)
+                    .accessibilityHint(fireHint)
+                    Button(action: onCancel) {
+                        Self.label("CANCEL", lit: false)
+                    }
+                    .buttonStyle(.plain)
+                    .clickable()
+                    .accessibilityHint("Leaves select mode; nothing is sent")
+                } else {
+                    Button(action: onSelect) {
+                        Self.label("SELECT", lit: true)
+                    }
+                    .buttonStyle(.plain)
+                    .clickable()
+                    .accessibilityHint(selectHint)
+                }
+            }
+            if selecting && !ready {
+                Text("tick at least \(RowSelection.minimum) cards of one project")
+                    .font(Theme.mono(10))
+                    .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if selecting && !refusal.isEmpty {
+                Text(refusal)
+                    .font(Theme.mono(10))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private static func label(_ text: String, lit: Bool) -> some View {
+        Text(text)
+            .font(Theme.mono(10, weight: .semibold))
+            .tracking(0.8)
+            .foregroundStyle(lit ? Theme.phosphor : Theme.dim)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .overlay(Rectangle().stroke(Theme.hair, lineWidth: 1))
+            .contentShape(Rectangle())
+    }
+}

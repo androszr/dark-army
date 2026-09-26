@@ -237,7 +237,7 @@ native session is proven, and replied to (opt-in) only while stopped. A Codex
 session cannot be typed into, and its questions are answered in its own
 terminal. A trusted Codex permission hook shows command asks under Needs you;
 the [permission modes guide](cli-permission-modes.md) says when they can be
-answered from Dark Army. It gets four board tools.
+answered from Dark Army. It gets five board tools.
 **Grok** sessions are watched and named like Claude's and get no board tools.
 Any of the three can be the assistant a card starts. Codex's rules in full are
 [docs/codex-contract.md](codex-contract.md).

@@ -181,6 +181,24 @@ def test_both_verbs_are_chosen_once_on_every_list_and_remote_stays_within_lan():
     assert set(ApiServer.REMOTE_ACTIONS) <= set(ApiServer.LAN_ACTIONS)
 
 
+def test_the_manual_outcome_verb_is_on_both_tuples_and_the_lan_board():
+    """Passed / Failed on a check file: chosen once on each phone tuple,
+    routed by `_LAN_BOARD`, and `REMOTE_ACTIONS` still within `LAN_ACTIONS`.
+    Mark checked steps aside on a card flagged with a file."""
+    verb = "board_manual_outcome"
+    assert ApiServer.LAN_ACTIONS.count(verb) == 1
+    assert ApiServer.REMOTE_ACTIONS.count(verb) == 1
+    assert verb in ApiServer._LAN_BOARD
+    assert ApiServer.BOARD_ACTIONS.count(verb) == 1
+    assert set(ApiServer.REMOTE_ACTIONS) <= set(ApiServer.LAN_ACTIONS)
+    src = _read(API)
+    sliced = src.split("LAN_ACTIONS = (", 1)[1].split(")", 1)[0]
+    assert f'"{verb}"' in sliced
+    ack = _read(PHONE / "Actions.swift").split("enum PhoneCardAck {", 1)[1]
+    clear = ack.split("static func showsManualClear", 1)[1].split("}", 1)[0]
+    assert "card.manualCheckPath.isEmpty" in clear
+
+
 def test_outcome_accept_and_revision_stay_off_both_phone_tuples():
     """Acknowledgment never implies outcome acceptance: the two decision
     verbs are loopback-only and reachable from no phone door."""

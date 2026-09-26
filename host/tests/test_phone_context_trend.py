@@ -150,7 +150,7 @@ def test_the_marker_is_text_and_the_tint_is_untouched():
         assert glyph in pace_enum
     colour = _member(_read(PROCESS), "private var ctxColor: Color {")
     assert "exceeds200k" in colour
-    assert "pct >= 90" in colour
+    assert "pct >= 85" in colour
     assert "pct >= 75" in colour
     assert "trend" not in colour
 

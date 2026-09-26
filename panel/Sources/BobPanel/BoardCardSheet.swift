@@ -59,6 +59,21 @@ struct BoardCardSheet: View {
     /// naming a report that is not there — words on screen, never a blank.
     @State private var reportText: String?
     @State private var reportMissing = false
+    /// The check file a card was flagged with, read once per path like
+    /// `reportText`; `manualCheckMissing` is the card naming a file that is
+    /// not there. `manualNote` is the Passed / Failed note being typed.
+    @State private var manualCheckText: String?
+    @State private var manualCheckMissing = false
+    /// The daemon's words for a check file it would not serve (moved,
+    /// edited out of shape, outside the project's folder). With it, Mark
+    /// checked comes back so the badge always has a way off.
+    @State private var manualCheckReason = ""
+    /// The read itself failed (no answer, a refusal before the token
+    /// loaded, a reply that would not decode) — not the daemon refusing the
+    /// file, so Passed / Failed stay and the line says the read failed.
+    @State private var manualCheckFetchFailed = false
+    @State private var manualNote = ""
+    @State private var manualRecording = false
     /// SHA-256 of the plan text drawn above, computed once beside the read.
     /// It is what an Approve press echoes to the daemon, so the approval is
     /// of the wording actually on screen — the panel never approves a file it
@@ -183,6 +198,7 @@ struct BoardCardSheet: View {
         // Keyed on the report path for the same reason: the scout's attach
         // lands while the sheet is open, and the REPORT section must fill.
         .task(id: live?.reportPath ?? "") { loadReport() }
+        .task(id: live?.manualCheckPath ?? "") { await loadManualCheck() }
         .task(id: threadFetchKey) { await loadThread() }
         .task(id: live?.sessionId ?? "") { await loadRunRecord() }
         .task(id: workRecordFetchKey) { await loadWorkRecord() }
@@ -313,6 +329,7 @@ struct BoardCardSheet: View {
         f.documents = documentPaths.count
         f.manualNote = live.needsManualCheck
         f.crewStages = live.workflow.count
+        f.dependencies = live.dependencies.count
         if let report = timeline, live.createdAt > 0 {
             f.age = CardTimeline.elapsed(report.generatedAt - live.createdAt)
         }
@@ -349,6 +366,11 @@ struct BoardCardSheet: View {
                 || (live.isAgentAuthored && agent(for: live.author) != nil)
         case .thread: return true
         case .queue: return live.isQueued
+        // Something to show, or somewhere to add one: a finished card with
+        // no links offers nothing, since nothing waits on a Done card.
+        case .dependencies:
+            return !live.dependencies.isEmpty || !live.dependents.isEmpty
+                || live.column != "done"
         case .timeline: return timeline != nil
         case .documents: return !documentPaths.isEmpty
         case .attachments: return !live.attachments.isEmpty
@@ -410,6 +432,7 @@ struct BoardCardSheet: View {
         case .session: sessionSection
         case .thread: threadSection
         case .queue: queueSection
+        case .dependencies: dependenciesSection
         case .timeline: timelineSection
         case .documents: documents
         case .attachments: existingAttachments
@@ -528,12 +551,12 @@ struct BoardCardSheet: View {
         if let live {
             VStack(alignment: .leading, spacing: 4) {
                 Text(live.title.isEmpty ? "untitled" : live.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(Theme.prose(17, weight: .semibold))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                 if !live.summary.isEmpty {
                     Text(live.summary)
-                        .font(.system(size: 12))
+                        .font(Theme.prose(14))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
@@ -709,7 +732,10 @@ struct BoardCardSheet: View {
                 && !live.isDispatching
                 && !live.isRefining,
             canReply: messagesTerminal,
-            canMarkChecked: live.needsManualCheck,
+            // A card flagged with a check file is settled by Passed / Failed
+            // in its manual-check section, never by Mark checked.
+            canMarkChecked: live.needsManualCheck
+                && (live.manualCheckPath.isEmpty || manualCheckMissing),
             canMarkDone: live.column == BoardColumn.inProgress.rawValue,
             canReview: live.awaitsReview)
     }
@@ -1386,8 +1412,8 @@ struct BoardCardSheet: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                Text(label).font(Theme.mono(11, weight: .semibold))
-                    .foregroundStyle(Theme.phosphor)
+                Text(label).font(Theme.prose(13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
                 Spacer(minLength: 0)
                 accessory()
             }
@@ -1399,8 +1425,8 @@ struct BoardCardSheet: View {
                 .accessibilityLabel(label)
                 .accessibilityHint(hint)
             Text(hint)
-                .font(Theme.mono(10))
-                .foregroundStyle(Theme.faint)
+                .font(Theme.prose(11))
+                .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityHidden(true)
         }
@@ -2001,6 +2027,23 @@ struct BoardCardSheet: View {
                 Text("Report")
                     .font(Theme.mono(11, weight: .semibold))
                     .foregroundStyle(Theme.phosphor)
+                // The verdict the daemon stored at the attach, in full,
+                // above the report — drawn even where the file has moved,
+                // because the stored line is the point. `ScoutVerdictLine`
+                // is the wording the tile and the phone share.
+                if !live.reportPath.isEmpty,
+                   let verdict = ScoutVerdictLine.text(
+                       verdict: live.reportVerdict,
+                       recommendation: live.reportRecommendation) {
+                    Text(verdict)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.phosphor)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .accessibilityLabel(ScoutVerdictLine.spoken(
+                            verdict: live.reportVerdict,
+                            recommendation: live.reportRecommendation))
+                }
                 if live.reportPath.isEmpty {
                     Text(live.column == BoardColumn.inProgress.rawValue
                          ? "Scouting — the report lands here when the investigation finishes."
@@ -2046,6 +2089,32 @@ struct BoardCardSheet: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Through the daemon (`GET /api/manual-checks?path=`), never a file
+    /// read on the main thread: the daemon's read is non-blocking and
+    /// refuses a FIFO or a link, and it applies the same place and shape
+    /// rule the press does, so "cannot be read" here is exactly "Passed /
+    /// Failed would be refused".
+    private func loadManualCheck() async {
+        manualCheckText = nil
+        manualCheckMissing = false
+        manualCheckReason = ""
+        manualCheckFetchFailed = false
+        guard let live, !live.manualCheckPath.isEmpty else { return }
+        let path = live.manualCheckPath
+        let document = await client.manualCheckText(path: path)
+        guard self.live?.manualCheckPath == path else { return }
+        guard let document else {
+            manualCheckFetchFailed = true
+            return
+        }
+        if document.available {
+            manualCheckText = document.text
+        } else {
+            manualCheckMissing = true
+            manualCheckReason = document.reason
         }
     }
 
@@ -2817,6 +2886,107 @@ struct BoardCardSheet: View {
         }
     }
 
+    /// The cards this one waits on, one row each — the title, the daemon's
+    /// met bit as a word, and ✕ to stop waiting on it — then the daemon's
+    /// Unblocks line verbatim, then **Add…**: this project's other cards
+    /// that are not Done and not already listed. Every change writes the
+    /// whole list through `setDependencies`; the daemon refuses a loop, a
+    /// self-wait and another project in words, drawn on the refusal line.
+    @ViewBuilder
+    private var dependenciesSection: some View {
+        if let live {
+            VStack(alignment: .leading, spacing: 6) {
+                Divider()
+                Text(CardSections.Section.dependencies.rawValue)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .tracking(0.6)
+                ForEach(live.dependencies) { dep in
+                    HStack(spacing: 8) {
+                        Text(dep.title.isEmpty ? "untitled" : dep.title)
+                            .font(.system(size: 11))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(dependencyWord(dep))
+                            .font(.system(size: 10))
+                            .foregroundStyle(dep.met ? Theme.phosphor : Theme.dim)
+                        Spacer(minLength: 8)
+                        Button("\u{2715}") {
+                            setDependencies(live, live.linkedIds.filter { $0 != dep.id })
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Stop waiting on \(dep.title)")
+                        .clickable()
+                    }
+                }
+                if !live.dependentsLine.isEmpty {
+                    Text(live.dependentsLine)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                let choices = dependencyChoices(live)
+                if live.column != "done", !choices.isEmpty {
+                    Menu("Add\u{2026}") {
+                        ForEach(choices) { other in
+                            Button(other.title.isEmpty ? "untitled" : other.title) {
+                                setDependencies(live, live.linkedIds + [other.id])
+                            }
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .controlSize(.small)
+                    .accessibilityLabel("Add a card this one waits on")
+                    .clickable()
+                } else if live.dependencies.isEmpty, live.dependents.isEmpty {
+                    Text("Waits on nothing.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    /// The daemon's met bit in words — the same three `dependency_line`
+    /// uses. `met` is never re-derived here; the column only says *why*.
+    private func dependencyWord(_ dep: CardDependency) -> String {
+        if dep.column == "done" { return "done" }
+        return dep.met ? "check pending" : "not yet"
+    }
+
+    /// What **Add…** offers: this project's other cards, none in Done, none
+    /// already listed, and nothing once the list holds the store's eight.
+    private func dependencyChoices(_ live: BoardCard) -> [BoardCard] {
+        BoardCard.dependencyChoices(for: live, in: board.cards)
+    }
+
+    /// Write this card's whole dependency list — `setTool`'s route exactly:
+    /// `board_update` through `outcomeWrite`, guarded at the draft's own
+    /// revision, the draft then brought up to date from the reply so the
+    /// next Save is not refused as somebody else's change. The ids ride as
+    /// one newline-joined string, the store's own shape.
+    private func setDependencies(_ live: BoardCard, _ ids: [String]) {
+        state.disarm()
+        Task { @MainActor in
+            let result = await client.outcomeWrite(
+                action: "board_update", cardId: live.id,
+                fields: ["blocked_by": ids.joined(separator: "\n"),
+                         "expected_revision": String(state.draft.revision)])
+            await client.refresh()
+            guard state.editing == live.id else { return }
+            state.refusals[live.id] = result.ok ? "" : result.detail
+            if result.isCardChangedRefusal {
+                cardChangedAt = result.currentRevision
+                return
+            }
+            guard result.ok else { return }
+            if let revision = result.cardRevision {
+                state.draft.revision = revision
+            }
+            cardChangedAt = nil
+        }
+    }
+
     private func unqueue(_ id: String) {
         Task { @MainActor in
             let result = await client.boardUnqueue(id)
@@ -2860,9 +3030,31 @@ struct BoardCardSheet: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                // The band draws the press on the manual-check stage; this
-                // copy is for a stale note read at any other stage.
-                if nextAction != .markChecked {
+                if !live.manualCheckPath.isEmpty && !manualCheckMissing {
+                    manualCheckFile(live)
+                } else {
+                    if !live.manualCheckPath.isEmpty {
+                        // The file the card names cannot be served any
+                        // more, so Passed / Failed would be refused: say
+                        // why, and offer Mark checked instead.
+                        Text(manualCheckReason.isEmpty
+                             ? "The check file cannot be read."
+                             : "The check file cannot be read — \(manualCheckReason).")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                    }
+                    manualClearRow(live)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func manualClearRow(_ live: BoardCard) -> some View {
+        if nextAction != .markChecked {
+                    // The band draws the press on the manual-check stage;
+                    // this copy is for a stale note read at any other stage.
                     HStack(spacing: 10) {
                         Button("Mark checked") { clearManual(live.id) }
                             .controlSize(.small)
@@ -2872,8 +3064,83 @@ struct BoardCardSheet: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
-                }
+        }
+    }
+
+    /// The check file under the card's manual-check section: the document
+    /// (`reportSection`'s frame), Open in editor, Open in Checks, and
+    /// unarmed **Passed** / **Failed** with a one-line note. The daemon
+    /// writes the outcome into the file and clears this card's steps.
+    @ViewBuilder
+    private func manualCheckFile(_ live: BoardCard) -> some View {
+        if let manualCheckText {
+            ScrollView {
+                MarkdownText(source: manualCheckText)
+                    .equatable()
+                    .padding(8)
             }
+            .frame(height: 200)
+            .overlay(Rectangle().strokeBorder(Theme.hair, lineWidth: 1))
+        } else if manualCheckFetchFailed {
+            Text(ManualCheckRules.fetchFailedLine)
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+        }
+        HStack(spacing: 10) {
+            ManualCheckButton(action: { revealInEditor(live.manualCheckPath) }) {
+                Text("Open in editor").font(.system(size: 10))
+            }
+            ManualCheckButton(action: {
+                state.onOpenManualCheck?(live.manualCheckPath)
+            }) {
+                Text("Open in Checks").font(.system(size: 10))
+            }
+            Text(BoardDocuments.display(live.manualCheckPath, root: live.root))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+        HStack(spacing: 10) {
+            TextField("note (optional)", text: $manualNote)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .font(.system(size: 11))
+            ManualCheckButton(action: { recordManual(live, status: "passed") }) {
+                Text("Passed")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.phosphor)
+            }
+            .disabled(manualRecording || manualCheckLoading)
+            ManualCheckButton(action: { recordManual(live, status: "failed") }) {
+                Text("Failed")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.alarm)
+            }
+            .disabled(manualRecording || manualCheckLoading)
+        }
+    }
+
+    /// The check file is still on its way: an outcome must not be recorded
+    /// against steps the person has not been shown yet.
+    private var manualCheckLoading: Bool {
+        manualCheckText == nil && !manualCheckFetchFailed
+    }
+
+    private func recordManual(_ live: BoardCard, status: String) {
+        let path = live.manualCheckPath
+        let note = ManualCheckRules.clampedNote(manualNote)
+        manualRecording = true
+        Task { @MainActor in
+            let result = await client.boardManualOutcome(
+                path: path, status: status, note: note)
+            manualRecording = false
+            if result.ok {
+                manualNote = ""
+            } else {
+                state.refusals[live.id] = result.detail
+            }
+            await client.refresh()
+            await loadManualCheck()
         }
     }
 

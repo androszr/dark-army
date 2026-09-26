@@ -169,3 +169,16 @@ and keeps what a person set (`CLAUDE_CODE_DISABLE_TERMINAL_TITLE`,
 own, read off the `env` argument after the strip — `spawn_local`'s or the
 broker allow-list's — never the inherited one. Pinned by
 `test_subprocess_env.py` and `test_ptyhost.py`.
+
+**The PATH, including from a broker older than the fix.** `clean_env` and
+`adopt_login_path` give a child a login shell's PATH (`/etc/paths.d`,
+Homebrew's `/opt/homebrew/bin` among them), but only in code the broker
+actually runs. A broker from before 22 Sep 2026 hands every child launchd's
+bare PATH and never retires while a terminal lives. On 25 Sep 2026 a standing
+Mission Control chat had kept one alive for three days, and every agent it
+opened reported `node` missing. Its `env` allow-list takes no PATH, so
+`PtyHost._login_path_argv` leads the argv with
+`/usr/bin/env PATH=<the app's login PATH>` whenever the hello lacks the
+`hook_sock` key, the mark of a broker that adopts the PATH itself. `env`
+execs in place, so the pid the broker reports is the agent's own. Pinned by
+`test_pty_persist.py`.

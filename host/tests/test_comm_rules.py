@@ -319,8 +319,13 @@ def test_the_mac_rail_says_starting_only_while_opening():
     assert 'if opening { return "starting" }' in phone
 
 
-def test_the_app_has_five_tab_roots_and_the_comm_label():
+def test_comm_is_a_menu_section_not_a_tab():
+    """Comm moved into the Menu grid: four tab roots, no Comm tab, and the
+    Menu's Comm screen still hands `CommView` whether it is in front."""
     app = APP.read_text()
-    assert app.count("PhoneTabRoot(path:") == 5
-    assert app.count('Label("Comm"') == 1
-    assert 'PhoneTabRoot(path: "~/comm"' in app
+    assert app.count("PhoneTabRoot(path:") == 4
+    assert 'Label("Comm"' not in app
+    assert 'PhoneTabRoot(path: "~/comm"' not in app
+    menu = (APP.parent / "MenuView.swift").read_text()
+    assert "CommView(client: client, selected: selected)" in menu
+    assert "selected: selected && open == section" in menu

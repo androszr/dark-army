@@ -1,6 +1,52 @@
 import Foundation
 
 extension DaemonClient {
+    /// The Checks section: every enrolled project's manual checks, open
+    /// first then newest first, narrowed by a search and a status word.
+    /// `knowledgeReport(root:)`'s shape: the token rides `request(_:)`, a
+    /// 403 is noted, anything else is `nil`.
+    func manualChecks(root: String = "", query: String = "",
+                      status: String = "") async -> ManualChecksReport? {
+        var parts: [String] = []
+        for (key, value) in [("root", root), ("q", query), ("status", status)]
+        where !value.isEmpty {
+            guard let encoded = value.addingPercentEncoding(
+                withAllowedCharacters: Self.knowledgeRootUnreserved)
+            else { return nil }
+            parts.append("\(key)=\(encoded)")
+        }
+        let path = "/api/manual-checks"
+            + (parts.isEmpty ? "" : "?" + parts.joined(separator: "&"))
+        var req = request(path)
+        req.timeoutInterval = 15
+        guard let (data, response) = try? await URLSession.shared.data(for: req) else {
+            return nil
+        }
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        noteAuthRefused(code)
+        guard code == 200 else { return nil }
+        return try? JSONDecoder().decode(ManualChecksReport.self, from: data)
+    }
+
+    /// One check file's text. The daemon re-checks the place and the shape;
+    /// outside an enrolled project's folder the answer is `available: false`
+    /// with the reason in words.
+    func manualCheckText(path: String) async -> ManualCheckDocument? {
+        guard !path.isEmpty,
+              let encoded = path.addingPercentEncoding(
+                withAllowedCharacters: Self.knowledgeRootUnreserved)
+        else { return nil }
+        var req = request("/api/manual-checks?path=\(encoded)")
+        req.timeoutInterval = 15
+        guard let (data, response) = try? await URLSession.shared.data(for: req) else {
+            return nil
+        }
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        noteAuthRefused(code)
+        guard code == 200 else { return nil }
+        return try? JSONDecoder().decode(ManualCheckDocument.self, from: data)
+    }
+
     /// One frame of a Dark Army-owned terminal's screen: the rows dirtied since
     /// `since`, on loopback, with the pane's own size — this read is what
     /// sizes the pty, and the panel is the one owner of that size. Nil on

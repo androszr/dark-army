@@ -35,7 +35,7 @@ def test_every_kind_has_a_sentence_case_here():
     covered = {
         "session_start", "session_end", "session_error", "permission_ask",
         "permission_resolved", "card_dispatched", "card_done", "card_manual",
-        "card_dispatch_failed", "card_plan_attached", "card_plan_approved",
+        "card_manual_outcome", "card_dispatch_failed", "card_plan_attached", "card_plan_approved",
         "card_work_recorded", "access_burst",
     }
     assert covered == set(KINDS)
@@ -109,6 +109,20 @@ def test_card_manual_failed_and_plan():
         == "Add the diary could not start — no session appeared"
     assert sentence("card_plan_attached", title="Add the diary",
                     nickname="Mira") == "Mira attached a plan to Add the diary"
+
+
+def test_card_manual_outcome_names_title_and_outcome_and_no_path():
+    line = sentence("card_manual_outcome", title="The strip fits",
+                    detail={"status": "passed", "note": "looked fine"})
+    assert line == "The strip fits: manual check passed — looked fine"
+    assert sentence("card_manual_outcome", title="The strip fits",
+                    detail={"status": "failed", "note": ""}) \
+        == "The strip fits: manual check failed"
+    # The file's path is never a detail the sentence reads.
+    line = sentence("card_manual_outcome", title="t",
+                    detail={"status": "passed",
+                            "path": "/Users/x/proj/manual-check/a/check.md"})
+    assert "manual-check" not in line and "/" not in line
 
 
 def test_who_falls_back_title_then_provider_then_an_agent():

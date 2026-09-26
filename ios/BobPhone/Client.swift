@@ -334,6 +334,13 @@ final class PhoneClient: ObservableObject {
     /// load-bearing at home, where `timeoutInterval` is an inactivity
     /// timeout and a slow helper answers on a quiet socket.
     static let directProbe: TimeInterval = 4
+    /// The home address's patience on the check-in a person is waiting on —
+    /// a launch or a return (`wakeCheckIn`). At home the Mac answers in
+    /// milliseconds; away, the address is silent and the old eight seconds
+    /// were the wake. The socket is coming up alongside, so a miss here
+    /// costs about this much before the relay answers, and the loop's next
+    /// poll probes home again with the usual patience.
+    static let wakeProbe: TimeInterval = 1
     /// The away deadline for PREPARE, and it is arithmetic rather than a
     /// guess: `card_prepare.TIMEOUT_WITH_ATTACHMENTS_SECONDS` (120) +
     /// `relay_client.IDLE_GAP_MAX` (30, the connector's idle pickup) +
@@ -618,6 +625,12 @@ final class PhoneClient: ObservableObject {
             self.notePhase(Phase.relayWaiting)
         }
         seedRouteFromLastPoll()
+        // The first check-in is the one a person is waiting on
+        // (`wakeCheckIn`). Away last time, the socket comes up now so it can
+        // carry it; home last time, it comes up only if the quick home probe
+        // misses (`pollOnce`) — a home opening costs the relay nothing.
+        wakeCheckIn = true
+        openLineIfLastAway()
         status = .connecting
         task = Task { [weak self] in
             while !Task.isCancelled {
@@ -648,6 +661,13 @@ final class PhoneClient: ObservableObject {
         }
     }
 
+    /// The relay line comes up at once only when the last poll went away;
+    /// after a home poll `pollOnce` opens it if the quick home probe
+    /// misses. One helper, so the start loop itself never reads `via`.
+    private func openLineIfLastAway() {
+        if via == .relay { channel?.socket?.wanted = true }
+    }
+
     /// The app went to the background. Nothing is torn down: the loop, the
     /// channels, the record and the digest stay for a return inside
     /// `BackgroundGrace.window`. Only the moment is written down and the
@@ -671,7 +691,11 @@ final class PhoneClient: ObservableObject {
     func wake() {
         guard departedAt != nil else { return }
         departedAt = nil
-        if via == .relay { channel?.socket?.wanted = true }
+        // Up now when the last poll was away; after a home poll it comes up
+        // only when the quick home probe misses (`pollOnce`), so a home wake
+        // neither opens the relay line nor spends the Mac's wake budget.
+        openLineIfLastAway()
+        wakeCheckIn = true
         guard let record else { return }
         Task { [weak self] in
             guard let self else { return }
@@ -690,6 +714,28 @@ final class PhoneClient: ObservableObject {
             await self.poll(record, probeHome: false)
         }
     }
+
+    /// The app came to the front with the Face ID sheet up: open the socket
+    /// now so it is ready when the unlock's `wake()` asks. Nothing is sent —
+    /// no frame leaves before the unlock — and the Mac, hearing the relay's
+    /// `peer:1`, stops idling its mailbox. `suspend()` closes it again.
+    func prewarm() {
+        guard departedAt != nil, task != nil, via == .relay else { return }
+        channel?.socket?.wanted = true
+    }
+
+    /// The unlock that `prewarm()` opened the line for failed or was
+    /// cancelled: close it again rather than leave it up behind the lock
+    /// until the background grace runs out. A no-op once `wake()` ran.
+    func abandonPrewarm() {
+        guard departedAt != nil else { return }
+        channel?.socket?.wanted = false
+    }
+
+    /// Set by `start()` and `wake()`, spent by the next `pollOnce`: the
+    /// check-in a person is waiting on tries the home address with
+    /// `wakeProbe`'s patience rather than the walk's.
+    private var wakeCheckIn = false
 
     /// A cold launch has no poll history. The last successful poll's route
     /// is on disk (`lastKnownAwayKey`), so a phone that was away last time
@@ -1068,7 +1114,9 @@ final class PhoneClient: ObservableObject {
                     beginSettlingCard(cid)
                 }
                 if refreshAfter { await refreshAfterWrite() }
-                return PhoneActionResult(ok: true, detail: "",
+                // The Mac's report rides back from away exactly as it does
+                // at home: a blank here was the batch Start's lost report.
+                return PhoneActionResult(ok: true, detail: parsed.detail,
                                          revision: parsed.revision,
                                          current: parsed.current)
             }
@@ -1084,6 +1132,14 @@ final class PhoneClient: ObservableObject {
             // refusal already on screen, and the press finally executing
             // hours later when the lease was renewed at home.
             receipts.refuse(mark, detail: refusal, surfaced: firstPress)
+            // Away keys the Mac refused for pace alone are the terminal
+            // pane's to retry (`AwayKeys`), in order and unasked: they are
+            // not a refused press, so no REFUSED line and no note on the
+            // agent screen for keys that land a few seconds later.
+            if action == PhoneActions.terminalInput, fields["bytes"] != nil,
+               refusal == AwayKeys.slowDown {
+                receipts.remove(mark)
+            }
             if answer.status == 409 {
                 await refreshAfterWrite()
             }
@@ -1898,6 +1954,8 @@ final class PhoneClient: ObservableObject {
     }
 
     private func pollOnce(_ record: PairingRecord, probeHome: Bool = true) async {
+        let waking = wakeCheckIn
+        wakeCheckIn = false
         // Away, the relay answers and the home addresses do not, so the
         // relay goes first and the home walk becomes a cheap probe behind
         // it — that probe is the whole homecoming mechanism: a 200 from it
@@ -1922,16 +1980,45 @@ final class PhoneClient: ObservableObject {
         }
         // At home (and on a cold launch that was not away last time): the
         // address on file first with its patient timeout, then whatever
-        // else the Mac offered when it was paired, then the relay.
-        if await pollDirect(record, candidates: candidates,
-                            patientFirst: true) {
+        // else the Mac offered when it was paired, then the relay. On the
+        // check-in a person is waiting on, with a relay to fall back to,
+        // only the address on file and only for `wakeProbe`: the socket is
+        // coming up meanwhile, and the loop's next poll walks the rest.
+        let quick = waking && channel != nil
+        if await pollDirect(record, candidates: quick ? [record.host] : candidates,
+                            patientFirst: true,
+                            firstTimeout: quick ? Self.wakeProbe : nil) {
+            // Home answered. Whatever it said — a refusal or an unreadable
+            // body leaves `via` unassigned — the line `start()` / `wake()`
+            // opened has no work here, so it closes.
+            if via == .lan { channel?.socket?.wanted = false }
             return
         }
         // The home walk found nothing. One relay rung before giving up:
         // the same request, sealed, through the mailbox — never plaintext,
         // never with the device header, and never dressed up as home.
         if let channel {
+            // The quick probe missed on the check-in a person waits on: the
+            // line comes up now, and the request below waits the moment it
+            // takes (`RelaySocket.comingUp`) rather than going the mailbox
+            // way.
+            if quick, departedAt == nil { channel.socket?.wanted = true }
             await pollViaRelay(channel, record: record)
+            // A quick probe that missed is not proof of being away: a Mac
+            // slow to answer or a radio waking from power save takes longer
+            // than `wakeProbe`. The screen is already filled by the relay;
+            // walk every home address now at the ordinary probe length, and
+            // a 200 sets `via = .lan` before the AWAY badge can settle.
+            // Gated on `quick` alone: `wake()` polls with `probeHome: false`,
+            // and a wake is exactly where this walk is needed.
+            if quick {
+                lastFullDirectWalk = Date()
+                notePhase(Phase.homeProbe)
+                if await pollDirect(record, candidates: candidates,
+                                    patientFirst: false), via == .lan {
+                    channel.socket?.wanted = false
+                }
+            }
             return
         }
         // Nothing answered anywhere. Only now is the Mac unreachable.
@@ -2314,7 +2401,8 @@ final class PhoneClient: ObservableObject {
     /// there, because it is the one that ought to answer. Away it is just
     /// another probe, and `Self.directProbe` is what a silent host may cost.
     private func pollDirect(_ record: PairingRecord, candidates: [String],
-                            patientFirst: Bool) async -> Bool {
+                            patientFirst: Bool,
+                            firstTimeout: TimeInterval? = nil) async -> Bool {
         guard let home = homeChannel else { return false }
         for (index, host) in candidates.enumerated() {
             guard case .ok = PhoneActions.homeURL(host: host, port: record.port)
@@ -2329,7 +2417,7 @@ final class PhoneClient: ObservableObject {
             // The address on file keeps the patient timeout; the probes
             // behind it are short, since the whole walk runs inside one poll.
             let timeout: TimeInterval = (patientFirst && index == 0)
-                ? 8 : Self.directProbe
+                ? (firstTimeout ?? 8) : Self.directProbe
             // nil is a transport error: nothing there. Only a failure to
             // *connect* moves the walk on — everything below is this Mac
             // answering.
@@ -2567,7 +2655,9 @@ final class PhoneClient: ObservableObject {
         let since = conversationCache.nextSeq(sid)
         let key = conversationCache.key(sid)
         var body: [String: Any] = [:]
-        body["query"] = "session=\(sid)&since=\(since)&key=\(key)"
+        // A helper's key (`<session>#<agent>`) adds `agent`; a session's
+        // query is unchanged (`ConversationSubject.query`).
+        body["query"] = ConversationSubject.query(key: sid, since: since, cursorKey: key)
         let answer: RelayChannel.Answer?
         if knowsItIsAway, let channel {
             answer = await channel.request(kind: "conversation", body: body,
@@ -3391,6 +3481,139 @@ extension PhoneClient {
         guard record.token == self.record?.token, let answer,
               answer.failure.isEmpty, answer.status == 200 else { return nil }
         return try? JSONDecoder().decode(KnowledgeReport.self, from: answer.body)
+    }
+
+    /// The Mac's Checks section — every enrolled project's manual checks,
+    /// open first then newest first — on `knowledgeReport(root:)`'s shape:
+    /// a sealed **read** on both doors, relay first when away, never on the
+    /// poll or `backgroundRefresh`. Asked when the screen appears and after
+    /// a press. `q` and `status` ride the JSON body.
+    func manualChecks(root: String = "", query: String = "",
+                      status: String = "") async -> ManualChecksReport? {
+        guard let record, !backgroundRun else { return nil }
+        var body: [String: Any] = [:]
+        if !root.isEmpty { body["root"] = root }
+        if !query.isEmpty { body["q"] = query }
+        if !status.isEmpty { body["status"] = status }
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "manual_checks", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(kind: "manual_checks", body: body,
+                                        host: record.host, port: record.port,
+                                        timeout: 10)
+        } else { return nil }
+        guard record.token == self.record?.token, let answer,
+              answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return try? JSONDecoder().decode(ManualChecksReport.self, from: answer.body)
+    }
+
+    /// One check file's text, fetched when it is opened. The path rides the
+    /// sealed JSON body, never a query string, and the Mac re-checks it.
+    func manualCheckText(path: String) async -> ManualCheckDocument? {
+        guard let record, !backgroundRun, !path.isEmpty else { return nil }
+        let body: [String: Any] = ["path": path]
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "manual_checks", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(kind: "manual_checks", body: body,
+                                        host: record.host, port: record.port,
+                                        timeout: 10)
+        } else { return nil }
+        guard record.token == self.record?.token, let answer,
+              answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return try? JSONDecoder().decode(ManualCheckDocument.self, from: answer.body)
+    }
+
+    /// The Mac's scout-report list, newest first, no bodies — on
+    /// `knowledgeReport(root:)`'s shape and `log`'s rule: a **read** on
+    /// both doors, relay first when away, never on the poll or
+    /// `backgroundRefresh`. Asked when the Scouting screen appears — and,
+    /// with a `query`, after a pause in its search line, for the reports
+    /// whose text holds it (`q` in the sealed body, `manualChecks`' shape;
+    /// only against a Mac publishing `scout_reports_body_search_supported`).
+    func scoutReportsIndex(query: String = "") async -> ScoutReportIndex? {
+        guard let record, !backgroundRun else { return nil }
+        var body: [String: Any] = [:]
+        if !query.isEmpty { body["q"] = query }
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "scout_reports", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(kind: "scout_reports", body: body,
+                                        host: record.host, port: record.port,
+                                        timeout: 10)
+        } else { return nil }
+        guard record.token == self.record?.token, let answer,
+              answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return try? JSONDecoder().decode(ScoutReportIndex.self, from: answer.body)
+    }
+
+    /// One scout report's text, fetched when it is opened and at no other
+    /// time. The path rides the sealed JSON body — a path on the relay's
+    /// logs is the thing this avoids — and the Mac re-checks it against the
+    /// set it lists.
+    func scoutReportBody(path: String) async -> ScoutReportBody? {
+        guard let record, !backgroundRun, !path.isEmpty else { return nil }
+        let body: [String: Any] = ["path": path]
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "scout_report", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(kind: "scout_report", body: body,
+                                        host: record.host, port: record.port,
+                                        timeout: 10)
+        } else { return nil }
+        guard record.token == self.record?.token, let answer,
+              answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return try? JSONDecoder().decode(ScoutReportBody.self, from: answer.body)
+    }
+
+    /// Every watched project's plans, newest first, no bodies —
+    /// `scoutReportsIndex`' shape and rule: a **read** on the sealed
+    /// home/away route (relay first when away), asked only when the Plans
+    /// screen appears, never on the poll, the background refresh or the
+    /// widget.
+    func plansIndex() async -> PlanIndex? {
+        guard let record, !backgroundRun else { return nil }
+        let body: [String: Any] = [:]
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "plans", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(kind: "plans", body: body,
+                                        host: record.host, port: record.port,
+                                        timeout: 10)
+        } else { return nil }
+        guard record.token == self.record?.token, let answer,
+              answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return try? JSONDecoder().decode(PlanIndex.self, from: answer.body)
+    }
+
+    /// One plan's text, fetched when it is opened and at no other time.
+    /// The path rides the sealed JSON body, never a query string, and the
+    /// Mac re-checks it against the set it lists.
+    func planBody(path: String) async -> PlanBody? {
+        guard let record, !backgroundRun, !path.isEmpty else { return nil }
+        let body: [String: Any] = ["path": path]
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "plan", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(kind: "plan", body: body,
+                                        host: record.host, port: record.port,
+                                        timeout: 10)
+        } else { return nil }
+        guard record.token == self.record?.token, let answer,
+              answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return try? JSONDecoder().decode(PlanBody.self, from: answer.body)
     }
 
     /// The Mac's access log — every refused knock on the phone doors — on

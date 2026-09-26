@@ -19,7 +19,7 @@ struct NeedsYouActivityWidget: Widget {
         ActivityConfiguration(for: NeedsYouAttributes.self) { context in
             NeedsYouLockScreenView(state: context.state, stale: context.isStale)
                 .activityBackgroundTint(WidgetTheme.bg)
-                .activitySystemActionForegroundColor(WidgetTheme.phosphor)
+                .activitySystemActionForegroundColor(WidgetTheme.accent)
                 .widgetURL(FleetLinks.agent(context.state.sessionId))
         } dynamicIsland: { context in
             DynamicIsland {
@@ -53,8 +53,8 @@ struct NeedsYouActivityWidget: Widget {
                         FleetFiguresLine(state: context.state, stale: context.isStale)
                         if !context.state.work.isEmpty {
                             Text(context.state.work)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(context.isStale ? WidgetTheme.dim : WidgetTheme.phosphor)
+                                .font(.system(size: 12))
+                                .foregroundStyle(context.isStale ? WidgetTheme.muted : WidgetTheme.text)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -67,7 +67,7 @@ struct NeedsYouActivityWidget: Widget {
                 IslandMinimal(state: context.state, stale: context.isStale)
             }
             .widgetURL(FleetLinks.agent(context.state.sessionId))
-            .keylineTint(WidgetTheme.alarm)
+            .keylineTint(WidgetTheme.attention)
         }
     }
 }
@@ -108,8 +108,8 @@ struct NeedsYouLockScreenView: View {
                 }
                 if !state.work.isEmpty {
                     Text(state.work)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(stale ? WidgetTheme.dim : WidgetTheme.phosphor)
+                        .font(.system(size: 11))
+                        .foregroundStyle(stale ? WidgetTheme.muted : WidgetTheme.text)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -196,18 +196,18 @@ struct IslandCount: View {
         HStack(spacing: 3) {
             Image(systemName: glyph)
                 .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(alarm && !stale ? WidgetTheme.alarm : WidgetTheme.dim)
+                .foregroundStyle(alarm && !stale ? WidgetTheme.attention : WidgetTheme.muted)
                 .accessibilityHidden(true)
             FleetCountMark(value: value, alarm: alarm, stale: stale)
         }
     }
 }
 
-/// A one-point phosphor hairline, the pane's row divider.
+/// A one-point Signal hairline, the pane's row divider.
 struct FleetRule: View {
     var body: some View {
         Rectangle()
-            .fill(WidgetTheme.phosphor.opacity(0.25))
+            .fill(WidgetTheme.line)
             .frame(height: 1)
             .accessibilityHidden(true)
     }
@@ -227,11 +227,11 @@ struct FleetFreshness: View {
     var body: some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(stale ? Color.gray : WidgetTheme.phosphor)
+                .fill(stale ? WidgetTheme.muted : WidgetTheme.accent)
                 .frame(width: 6, height: 6)
             age
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(WidgetTheme.dim)
+                .font(.system(size: 10))
+                .foregroundStyle(WidgetTheme.muted)
         }
         .accessibilityHidden(true)
     }
@@ -259,12 +259,12 @@ struct NeedsYouWords: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(state.nickname.isEmpty ? "an agent" : state.nickname)
-                .font(.system(size: 15, weight: .bold, design: .monospaced))
-                .foregroundStyle(stale ? WidgetTheme.dim : WidgetTheme.bright)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(stale ? WidgetTheme.muted : WidgetTheme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Text(state.kindWord)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(stale ? WidgetTheme.dim : WidgetTheme.alarm)
+                .font(.system(size: 12))
+                .foregroundStyle(stale ? WidgetTheme.muted : WidgetTheme.attention)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -283,12 +283,12 @@ struct NeedsYouClock: View {
         if stale || state.since <= 0 {
             Text("\u{2013}")
                 .font(.system(size: size, design: .monospaced))
-                .foregroundStyle(WidgetTheme.dim)
+                .foregroundStyle(WidgetTheme.muted)
         } else {
             Text(state.sinceDate, style: .timer)
                 .font(.system(size: size, design: .monospaced))
                 .monospacedDigit()
-                .foregroundStyle(WidgetTheme.phosphor)
+                .foregroundStyle(WidgetTheme.accent)
                 .multilineTextAlignment(.trailing)
         }
     }
@@ -324,7 +324,7 @@ struct FleetCountsRow: View {
             HStack(spacing: 4) {
                 Image(systemName: glyph)
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(alarm && !stale ? WidgetTheme.alarm : WidgetTheme.dim)
+                    .foregroundStyle(alarm && !stale ? WidgetTheme.attention : WidgetTheme.muted)
                     .accessibilityHidden(true)
                 Text(value.map(String.init) ?? "\u{2013}")
                     .font(.system(size: inline ? 14 : 17, weight: .bold, design: .monospaced))
@@ -332,15 +332,15 @@ struct FleetCountsRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(word)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(WidgetTheme.dim)
+                .font(.system(size: 10))
+                .foregroundStyle(WidgetTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func ink(alarm: Bool) -> Color {
-        if stale { return WidgetTheme.dim }
-        return alarm ? WidgetTheme.alarm : WidgetTheme.bright
+        if stale { return WidgetTheme.muted }
+        return alarm ? WidgetTheme.attention : WidgetTheme.text
     }
 }
 
@@ -353,7 +353,7 @@ struct FleetCountMark: View {
     var body: some View {
         Text(value.map(String.init) ?? "\u{2013}")
             .font(.system(size: 15, weight: .bold, design: .monospaced))
-            .foregroundStyle(stale ? WidgetTheme.dim : (alarm ? WidgetTheme.alarm : WidgetTheme.bright))
+            .foregroundStyle(stale ? WidgetTheme.muted : (alarm ? WidgetTheme.attention : WidgetTheme.text))
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -371,37 +371,37 @@ struct FleetFiguresLine: View {
             if state.hasRate {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(stale ? WidgetTheme.dim : WidgetTheme.amber)
+                    .foregroundStyle(stale ? WidgetTheme.muted : WidgetTheme.text)
                     .accessibilityHidden(true)
                 if let cost = state.costRateWord {
                     Text(cost)
                         .privacySensitive()
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundStyle(stale ? WidgetTheme.dim : WidgetTheme.bright)
+                        .foregroundStyle(stale ? WidgetTheme.muted : WidgetTheme.text)
                 }
                 if let tokens = state.tokensRateWord {
                     Text(tokens)
                         .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(stale ? WidgetTheme.dim : WidgetTheme.phosphor)
+                        .foregroundStyle(stale ? WidgetTheme.muted : WidgetTheme.text)
                 }
                 Spacer(minLength: 6)
                 Text("\(state.costWord) \u{00B7} \(state.tokensWord)")
                     .privacySensitive()
                     .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(WidgetTheme.dim)
+                    .foregroundStyle(WidgetTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(state.costWord)
                     .privacySensitive()
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(stale ? WidgetTheme.dim : WidgetTheme.phosphor)
+                    .foregroundStyle(stale ? WidgetTheme.muted : WidgetTheme.text)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("\u{00B7}")
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(WidgetTheme.dim)
+                    .foregroundStyle(WidgetTheme.muted)
                 Text(state.tokensWord)
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(stale ? WidgetTheme.dim : WidgetTheme.phosphor)
+                    .foregroundStyle(stale ? WidgetTheme.muted : WidgetTheme.text)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

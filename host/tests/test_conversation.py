@@ -14,6 +14,7 @@ from urllib.parse import quote
 import pytest
 
 from dark_army_daemon import conversation
+from dark_army_daemon import session_stats
 from dark_army_daemon.api_server import ApiServer, _Request
 from dark_army_daemon.conversation import (
     KINDS,
@@ -344,6 +345,228 @@ def test_a_shrunk_file_is_reread_whole(tmp_path):
     assert second["turns"][0]["text"] == "fresh"
 
 
+# --- A reply from the panel or the phone is the person's turn ---------------
+
+_DEFAULT = object()
+
+
+def _channel_record(ts, text, *, source="bob", kind="user", as_blocks=False,
+                    origin=_DEFAULT, meta=True, sidechain=False):
+    """The record `reply_to_session` leaves in a Claude transcript, in the
+    shape found on this Mac: `isMeta`, `origin.kind == "channel"`, the words
+    wrapped in the channel's tags."""
+    body = f'<channel source="{source}" kind="{kind}">\n{text}\n</channel>'
+    record = {
+        "type": "user",
+        "timestamp": ts,
+        "isMeta": meta,
+        "isSidechain": sidechain,
+        "origin": {"kind": "channel", "server": source},
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": body}] if as_blocks else body,
+        },
+    }
+    if origin is None:
+        del record["origin"]
+    elif origin is not _DEFAULT:
+        record["origin"] = origin
+    return record
+
+
+def _agent_record(ts, text):
+    return {
+        "type": "assistant",
+        "timestamp": ts,
+        "message": {
+            "role": "assistant",
+            "model": "claude-opus-4-1",
+            "content": [{"type": "text", "text": text}],
+        },
+    }
+
+
+def _fold(*records) -> list:
+    acc = conversation._Accum()
+    for record in records:
+        fold_claude(record, acc)
+    return acc.turns
+
+
+def test_a_panel_reply_is_the_persons_turn_with_the_tag_stripped():
+    turns = _fold(_channel_record("2026-09-06T15:52:44.883Z", "Accept"))
+    assert len(turns) == 1
+    turn = turns[0]
+    assert turn.kind == "user"
+    assert turn.text == "Accept"
+    assert turn.ts > 0
+    assert "<channel" not in turn.text
+    assert "</channel>" not in turn.text
+
+
+def test_a_reply_under_the_new_channel_name_counts_too():
+    turns = _fold(_channel_record(
+        "2026-09-06T15:52:44.883Z", "Accept", source="dark-army",
+    ))
+    assert [(t.kind, t.text) for t in turns] == [("user", "Accept")]
+
+
+def test_a_reply_as_blocks_counts():
+    turns = _fold(_channel_record(
+        "2026-09-06T15:52:44.883Z", "Accept", as_blocks=True,
+    ))
+    assert [(t.kind, t.text) for t in turns] == [("user", "Accept")]
+
+
+def test_a_reply_keeps_its_own_lines_and_inner_markup():
+    words = "Do this:\n1. a\n2. b\n</channel> is not the end"
+    turns = _fold(_channel_record("2026-09-06T15:52:44.883Z", words))
+    assert [(t.kind, t.text) for t in turns] == [("user", words)]
+
+
+@pytest.mark.parametrize("words", ("", "   \n"))
+def test_an_empty_reply_pushes_nothing(words):
+    assert _fold(_channel_record("2026-09-06T15:52:44.883Z", words)) == []
+
+
+def test_a_reply_that_is_only_the_two_tags_pushes_nothing():
+    record = _channel_record("2026-09-06T15:52:44.883Z", "")
+    record["message"]["content"] = '<channel source="bob" kind="user"></channel>'
+    assert _fold(record) == []
+
+
+def test_a_fleet_event_stays_hidden():
+    assert _fold(_channel_record(
+        "2026-09-06T15:52:44.883Z", "Peter finished", kind="fleet",
+    )) == []
+
+
+def _skill_expansion():
+    record = _channel_record("2026-09-06T15:52:44.883Z", "x", origin=None)
+    record["message"]["content"] = [{
+        "type": "text",
+        "text": (
+            "Base directory for this skill: /x\n\nWhen a message arrives as "
+            '<channel source="bob" kind="user">\nAccept\n</channel> treat it '
+            "as the person."
+        ),
+    }]
+    return record
+
+
+def _peer_hand_back():
+    record = _channel_record(
+        "2026-09-06T15:52:44.883Z", "x", origin={"kind": "peer", "from": "x"},
+    )
+    record["message"]["content"] = (
+        "Another Claude session sent a message:\n"
+        '<channel source="bob" kind="user">\nAccept\n</channel>'
+    )
+    return record
+
+
+def _local_command_caveat():
+    return {
+        "type": "user",
+        "timestamp": "2026-09-06T15:52:44.883Z",
+        "isMeta": True,
+        "message": {
+            "role": "user",
+            "content": "<local-command-caveat>Caveat: generated.</local-command-caveat>",
+        },
+    }
+
+
+@pytest.mark.parametrize("record", (
+    pytest.param(_skill_expansion(), id="skill-expansion-no-origin"),
+    pytest.param(_peer_hand_back(), id="peer-hand-back"),
+    pytest.param(_channel_record(
+        "2026-09-06T15:52:44.883Z", "Accept", origin={"kind": "other"},
+    ), id="other-origin"),
+    pytest.param(_channel_record(
+        "2026-09-06T15:52:44.883Z", "Accept", origin="channel",
+    ), id="origin-not-a-dict"),
+    pytest.param(_channel_record(
+        "2026-09-06T15:52:44.883Z", "Accept", origin=None,
+    ), id="tag-without-origin"),
+    pytest.param(_channel_record(
+        "2026-09-06T15:52:44.883Z", "Accept", sidechain=True,
+    ), id="sidechain"),
+    pytest.param(_local_command_caveat(), id="local-command-caveat"),
+))
+def test_the_real_look_alikes_stay_hidden(record):
+    assert _fold(record) == []
+
+
+def test_a_channel_record_without_the_user_tag_stays_hidden():
+    record = _channel_record("2026-09-06T15:52:44.883Z", "x")
+    record["message"]["content"] = "hello"
+    assert _fold(record) == []
+
+
+def test_the_reading_is_session_stats_own():
+    assert conversation._is_channel_user_message is session_stats._is_channel_user_message
+    assert conversation._CHANNEL_USER_RE is session_stats._CHANNEL_USER_RE
+    real = '<channel source="bob" kind="user">\nAccept\n</channel>'
+    assert conversation.channel_reply_text(real) == "Accept"
+    assert conversation.channel_reply_text(
+        '<channel source="dark-army" kind="user">\nAccept\n</channel>\n'
+    ) == "Accept"
+    assert conversation.channel_reply_text(
+        '<channel source="bob" kind="user">\nno close'
+    ) == "no close"
+    assert conversation.channel_reply_text("Accept") == ""
+    assert conversation.channel_reply_text(
+        'Before <channel source="bob" kind="user">\nAccept\n</channel>'
+    ) == ""
+    assert conversation.channel_reply_text(
+        '<channel source="bob" kind="fleet">\nAccept\n</channel>'
+    ) == ""
+
+
+def _write_jsonl(path: Path, *records) -> None:
+    with path.open("a", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(json.dumps(record) + "\n")
+
+
+def test_a_reply_lands_between_the_agents_turns_in_order(tmp_path):
+    path = tmp_path / "claude.jsonl"
+    _write_jsonl(
+        path,
+        _agent_record("2026-09-21T10:00:00.000Z", "Shall I merge?"),
+        _channel_record("2026-09-21T10:01:00.000Z", "Yes, merge it"),
+        _agent_record("2026-09-21T10:02:00.000Z", "Merged."),
+    )
+    turns = _page("claude", path)["turns"]
+    assert [row["kind"] for row in turns] == ["agent", "user", "agent"]
+    assert turns[1]["text"] == "Yes, merge it"
+    assert [row["seq"] for row in turns] == [0, 1, 2]
+    assert turns[0]["ts"] < turns[1]["ts"] < turns[2]["ts"]
+
+
+def test_a_panel_reply_appended_later_is_read_from_the_delta(tmp_path):
+    src = FIXTURES / "claude.jsonl"
+    dest = tmp_path / "claude.jsonl"
+    dest.write_bytes(src.read_bytes())
+    if not dest.read_bytes().endswith(b"\n"):
+        dest.write_bytes(dest.read_bytes() + b"\n")
+    reader = ConversationReader()
+    first = reader.page("claude", str(dest), 0, "")
+    assert reader._caches["claude"].last_folded > 0
+    _write_jsonl(
+        dest,
+        _channel_record("2026-09-21T10:09:00.000Z", "Yes, go on"),
+        _agent_record("2026-09-21T10:10:00.000Z", "Going on."),
+    )
+    second = reader.page("claude", str(dest), first["next_seq"], first["key"])
+    assert reader._caches["claude"].last_folded == 2
+    assert [row["kind"] for row in second["turns"]] == ["user", "agent"]
+    assert second["turns"][0]["text"] == "Yes, go on"
+    fresh = ConversationReader().page("claude", str(dest), 0, "")["turns"]
+    assert fresh == first["turns"] + second["turns"]
+
+
 # --- 11–12, 19: daemon source and marker (filled in with later steps) --------
 
 
@@ -605,7 +828,10 @@ def test_phone_structure_pins():
     assert "conversationCache.forget()" in client
     assert "client.conversationCache.load()" in APP.read_text()
     view = CONV_VIEW.read_text()
-    assert view.count("AnswerBox(") == 1
+    # Two halves of one box (26 Sep 2026): the answer buttons scroll with
+    # the turns, the message composer is pinned beneath the page.
+    assert view.count("AnswerBox(") == 2
+    assert "part: .choices" in view and "part: .composer" in view
     assert "MarkdownText(" in view
     assert ".lineLimit(" not in view
     assert "ProgressView" not in view
@@ -689,7 +915,7 @@ FileHandle.standardOutput.write(data)
         capture_output=True, text=True, timeout=30)
     assert ran.returncode == 0, ran.stderr
     out = json.loads(ran.stdout)
-    assert out["chipsUnhosted"] == ["Conversation", "Details"]
+    assert out["chipsUnhosted"] == ["Main", "Conversation", "Details"]
     assert out["chipsHosted"][-1] == "Terminal"
     assert out["pane"] == "Details"
     tab_term = subprocess.run(
@@ -706,5 +932,193 @@ FileHandle.standardOutput.write(data)
         capture_output=True, text=True, timeout=30)
     conv = json.loads(tab_conv.stdout)
     assert conv["detailTab"] == "Details"
-    assert out["defaultOn"] == "Conversation"
-    assert out["defaultOff"] == "Details"
+    assert out["defaultOn"] == "Main"
+    assert out["defaultOff"] == "Main"
+
+
+# --- a helper's own journal (Comm's helper tabs) ----------------------------
+
+def _helper_lines() -> str:
+    lines = [
+        {"type": "user", "isSidechain": True, "timestamp": "2026-09-25T10:00:00Z",
+         "message": {"role": "user", "content": "Review the pairing door."}},
+        {"type": "assistant", "isSidechain": True, "timestamp": "2026-09-25T10:00:05Z",
+         "message": {"role": "assistant", "model": "claude-opus-5-5",
+                     "content": [{"type": "text", "text": "Reading api_server.py."}]}},
+    ]
+    return "".join(json.dumps(line) + "\n" for line in lines)
+
+
+def _helper_stub(tmp_path, provider="claude"):
+    from dark_army_daemon.daemon import BobDaemon
+
+    transcript = tmp_path / "s1.jsonl"
+    transcript.write_text("")
+    folder = tmp_path / "s1" / "subagents"
+    folder.mkdir(parents=True)
+    (folder / "agent-abc123.jsonl").write_text(_helper_lines())
+
+    class Stub:
+        def __init__(self):
+            self._conversations = ConversationReader()
+            self._session_states = {"s1": {"transcript_path": str(transcript)}}
+            self._codex_records: dict = {}
+
+        def _inbox_session_entry(self, sid):
+            if sid != "s1":
+                return None, False
+            return {"session_id": "s1", "provider": provider}, False
+
+    stub = Stub()
+    stub.conversation_source = BobDaemon.conversation_source.__get__(stub)
+    stub.conversation_page = BobDaemon.conversation_page.__get__(stub)
+    return stub
+
+
+def test_a_helpers_journal_keeps_its_brief_and_a_sessions_still_drops_sidechains(tmp_path):
+    path = tmp_path / "agent.jsonl"
+    path.write_text(_helper_lines())
+    helper = ConversationReader().page("claude", str(path), 0, "", sidechain=True)
+    assert [t["kind"] for t in helper["turns"]] == ["user", "agent"]
+    assert helper["turns"][0]["text"] == "Review the pairing door."
+    assert helper["provider"] == "claude"
+    plain = ConversationReader().page("claude", str(path), 0, "")
+    assert [t["kind"] for t in plain["turns"]] == ["agent"]
+
+
+@pytest.mark.asyncio
+async def test_the_daemon_pages_a_helper_from_its_sessions_own_folder(tmp_path):
+    stub = _helper_stub(tmp_path)
+    page = await stub.conversation_page("s1", 0, "", agent="abc123")
+    assert page["available"] is True
+    assert page["turns"][0]["text"] == "Review the pairing door."
+    assert str(tmp_path) not in json.dumps(page)
+    missing = await stub.conversation_page("s1", 0, "", agent="nope")
+    assert missing == {"available": False, "provider": "claude",
+                       "reason": conversation.NO_HELPER_REASON}
+    for bad in ("../s1", "a/b", "x" * 65, "a.b"):
+        refused = await stub.conversation_page("s1", 0, "", agent=bad)
+        assert refused["available"] is False, bad
+    unknown = await stub.conversation_page("other", 0, "", agent="abc123")
+    assert unknown["reason"] == UNKNOWN_SESSION_REFUSAL
+
+
+@pytest.mark.asyncio
+async def test_a_helper_is_read_only_under_a_claude_session(tmp_path):
+    stub = _helper_stub(tmp_path, provider="codex")
+    page = await stub.conversation_page("s1", 0, "", agent="abc123")
+    assert page["available"] is False
+    assert page["reason"] == conversation.HELPER_PROVIDER_REASON
+
+
+def test_the_door_passes_agent_only_when_asked_and_refuses_a_bad_one():
+    class Daemon(_Daemon):
+        async def conversation_page(self, session, since, key, agent=""):
+            self.calls.append((session, since, key, agent))
+            return dict(self._page)
+
+    daemon = Daemon()
+    srv = ApiServer(daemon, port=0)
+    status, _ = _body(_run(srv._conversation_report_for("session=s1&agent=abc123")))
+    assert status == 200 and daemon.calls[-1] == ("s1", 0, "", "abc123")
+    # A session read still calls with three arguments: an older fake (and
+    # the one above, `_Daemon`) takes no `agent`.
+    old = _Daemon()
+    status, _ = _body(_run(ApiServer(old, port=0)._conversation_report_for("session=s1")))
+    assert status == 200 and old.calls[-1] == ("s1", 0, "")
+    for bad in ("../x", "a.b", "x" * 65, "a%2Fb"):
+        status, out = _body(_run(srv._conversation_report_for(
+            "session=s1&agent=" + bad)))
+        assert status == 400 and "error" in out, bad
+
+
+def test_the_helper_marker_rides_pipeline_writable():
+    from dark_army_daemon.daemon_board import BoardVerbsMixin
+
+    class Stub(BoardVerbsMixin):
+        def _observers_implementing(self, name):
+            return False
+
+        def _board_projects(self):
+            return []
+
+    assert Stub()._pipeline_writable()["subagent_conversation_supported"] is True
+    models = MODELS.read_text()
+    assert ("subagentConversationSupported = "
+            "c.value(.subagentConversationSupported, false)") in models
+
+
+def test_comm_helper_rules_run_under_swiftc(tmp_path):
+    swiftc = shutil.which("swiftc")
+    if not swiftc:
+        pytest.skip("Swift toolchain unavailable")
+    src = CONV_MODELS.read_text()
+    start = src.index("enum ConversationSubject {")
+    harness = r'''
+var out: [String: Any] = [:]
+out["key"] = ConversationSubject.key(session: "s1", agent: "abc")
+out["plainKey"] = ConversationSubject.key(session: "s1")
+let split = ConversationSubject.split("s1#abc")
+out["split"] = [split.session, split.agent]
+out["q"] = ConversationSubject.query(key: "s1#abc", since: 3, cursorKey: "k")
+out["qPlain"] = ConversationSubject.query(key: "s1", since: 0, cursorKey: "")
+let none = CommHelperTabs.tabs(live: [], selected: "", selectedLabel: "", supported: true)
+out["none"] = none.count
+let off = CommHelperTabs.tabs(live: [(id: "a", label: "Explore")], selected: "",
+                              selectedLabel: "", supported: false)
+out["off"] = off.count
+let two = CommHelperTabs.tabs(live: [(id: "a", label: "Explore"), (id: "b", label: "")],
+                              selected: "", selectedLabel: "", supported: true)
+out["two"] = two.map { $0.label }
+let kept = CommHelperTabs.tabs(live: [(id: "a", label: "Explore")], selected: "gone",
+                               selectedLabel: "bc-verifier", supported: true)
+out["kept"] = kept.map { "\($0.label):\($0.live)" }
+out["sel"] = CommHelperTabs.selection("zzz", tabs: two)
+let data = try! JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])
+FileHandle.standardOutput.write(data)
+'''
+    path = tmp_path / "CommHelperProbe.swift"
+    path.write_text("import Foundation\n" + src[start:] + "\n" + harness)
+    exe = tmp_path / "CommHelperProbe"
+    built = subprocess.run([swiftc, str(path), "-o", str(exe)],
+                           capture_output=True, text=True, timeout=180)
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(exe)], capture_output=True, text=True, timeout=30)
+    assert ran.returncode == 0, ran.stderr
+    out = json.loads(ran.stdout)
+    assert out["key"] == "s1#abc" and out["plainKey"] == "s1"
+    assert out["split"] == ["s1", "abc"]
+    assert out["q"] == "session=s1&since=3&key=k&agent=abc"
+    assert out["qPlain"] == "session=s1&since=0&key="
+    assert out["none"] == 0 and out["off"] == 0
+    assert out["two"] == ["Mission Control", "Explore", "b"]
+    assert out["kept"] == ["Mission Control:true", "Explore:true", "bc-verifier:false"]
+    assert out["sel"] == ""
+
+
+def test_comm_draws_helper_tabs_read_only():
+    comm = (PHONE / "CommView.swift").read_text()
+    pane = comm[comm.index("struct HelperConversationPane"):]
+    assert "AnswerBox(" not in pane and "terminal_input" not in pane
+    assert "ConversationSubject.key(session: session, agent: agentId)" in pane
+    assert 'client.watchConversation(nil, ifWatching: key)' in pane
+    assert "subagentConversationSupported" in comm
+    client = CLIENT.read_text()
+    fetch = client[client.index("func fetchConversation("):
+                   client.index("func catchUpConversation(")]
+    assert "ConversationSubject.query(key: sid" in fetch
+
+
+def test_a_card_questions_direction_is_not_the_persons_turn():
+    """26 Sep 2026: a card's question pushed straight to the session carries
+    Dark Army's direction after it; the conversation shows only the question."""
+    from dark_army_daemon import daemon_board
+    for name in ("bob", "dark-army", None):
+        tail = daemon_board.ask_direct_tail(name)
+        lead = ('<channel source="dark-army" kind="user">\nWhy two phases?\n\n'
+                + tail + '\n</channel>')
+        assert conversation.channel_reply_text(lead) == "Why two phases?", name
+    # The sentence inside the person's own words is theirs, and stays.
+    mid = ('<channel source="bob" kind="user">\n"Write one answer; change '
+           'nothing else." is what it said\n</channel>')
+    assert "Write one answer" in conversation.channel_reply_text(mid)

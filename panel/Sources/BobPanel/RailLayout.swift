@@ -22,14 +22,19 @@ enum RailLayout {
         /// History, drawn across the board's pane. The board stays mounted
         /// underneath, the same way the agent's detail does.
         case history
+        /// The Reports tab: the scout-report list, or one report opened,
+        /// drawn across the board's pane. The board stays mounted
+        /// underneath, History's way.
+        case reports
     }
 
-    /// History takes the board's place whatever is selected. The detail
+    /// History and Reports take the board's place whatever is selected. The detail
     /// takes it only on the Agents tab with a row selected. The Comm tab
     /// draws the board beside Mission Control's terminal column. Every
     /// other tab shows the board alone.
     static func leftPane(tab: PanelView.Tab, selected: String?) -> LeftPane {
         if tab == .history { return .history }
+        if tab == .reports { return .reports }
         if tab == .comm { return .mission }
         if tab == .agents, let selected { return .detail(selected) }
         return .board
@@ -46,6 +51,10 @@ enum RailLayout {
         case closeHistoryDay
         /// Leave History and bring the board back.
         case leaveHistory
+        /// Close the report the Reports tab has open; the list comes back.
+        case closeReport
+        /// Leave the Reports tab and bring the board back.
+        case leaveReports
         /// Close the selected agent's detail and bring the board back.
         case deselect
         /// Pop the project drill-in.
@@ -57,17 +66,23 @@ enum RailLayout {
     /// A focused text box is given up first — a picture under a caret must
     /// never close from beneath it — then an open History run, then a
     /// chosen History day, then History itself, then the detail, then the
-    /// drill, then the panel. The History flags default off so a caller
-    /// that does not know about them still compiles.
+    /// drill, then the panel. An open report closes before the Reports tab
+    /// is left, the same two steps. The History and Reports flags default
+    /// off so a caller that does not know about them still compiles; the two
+    /// tabs' flags are never both true (`syncKeyFlags` ands each on `tab`).
     static func escapeRung(editing: Bool, filterActive: Bool,
                            detailOpen: Bool, drilledIn: Bool,
                            historyRun: Bool = false,
                            historyDay: Bool = false,
-                           historyOpen: Bool = false) -> EscapeRung {
+                           historyOpen: Bool = false,
+                           reportOpen: Bool = false,
+                           reportsOpen: Bool = false) -> EscapeRung {
         if editing || filterActive { return .endEditing }
         if historyRun { return .closeHistoryRun }
         if historyDay { return .closeHistoryDay }
         if historyOpen { return .leaveHistory }
+        if reportOpen { return .closeReport }
+        if reportsOpen { return .leaveReports }
         if detailOpen { return .deselect }
         if drilledIn { return .back }
         return .hide

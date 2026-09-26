@@ -562,7 +562,7 @@ def test_the_real_manifests_resource_dirs_are_the_ones_we_expect():
     somebody reformats that file the parse can come back empty and the gate
     goes quiet — this is the tripwire for exactly that."""
     names = sorted(p.name for p in build_check.panel_resource_dirs(ROOT))
-    assert names == ["brand", "portraits"]
+    assert names == ["brand", "portraits", "workshop"]
     assert build_check.manifest_declares_resources(ROOT)
 
 

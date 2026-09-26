@@ -19,9 +19,9 @@ arguments it does not own, and never lets an optional Codex failure undo
 the Claude registration. The pre-rename name `bob-companion-board` is
 removed only when it is exactly the entry the previous build wrote, and a
 foreign one is left with a warning (`docs/channel-tools.md`, *Two names, one
-script*). The server's immutable `--host=codex` mode advertises four verbs,
+script*). The server's immutable `--host=codex` mode advertises five verbs,
 `dark_army_add_card` + `dark_army_close_card` + `dark_army_attach_plan` +
-`dark_army_attach_report`, and `call_tool` enforces the same list; it declares no channel or permission
+`dark_army_attach_report` + `dark_army_needs_manual_check`, and `call_tool` enforces the same list; it declares no channel or permission
 capabilities. `dark_army_close_card` was added on 2026-09-09, on the argument
 `CLAUDE.md` already makes for the Close-terminal door: **it writes a board row
 and types nothing**. Codex's narrowness is about *control* — typing, replying,
@@ -60,6 +60,17 @@ ignores its public pid for titles, keeps the same lowest-idle owner per
 tty, and uses the same unchanged-title cache as every other provider.
 Direct Codex ttys never enter the pid cache.
 
+**Shared-server tabs use the verified native listener instead**
+(`codex_titles.py`). Codex 0.157 writes `source=vscode` roots and the
+app-server owns their journals, so the legacy CLI-only title projection is
+empty even when the session has a name. The loop copies current, non-hidden
+shared-server targets from a completed observation at most 30 seconds old;
+the title worker rechecks each listener's process identity, cwd, port and tty
+twice. A stale/reused target or a tty shared with another root, including a
+legacy CLI root, is withheld. Only private session-to-tty destinations reach
+the existing OSC writer; public PIDs and control capabilities do not change.
+Tests: `test_codex_titles.py`.
+
 ## A Codex row carries no origin line
 
 `BOB_COMPANION_ORIGIN` (`origin.py`) is stamped into the environment of every
@@ -81,6 +92,32 @@ card the session is on still names it through the ordinary board join once
 `_reconcile_board` binds it.
 
 ## Navigation has its own private proof
+
+**Shared-server terminals have a separate terminal-identity route**
+(`codex_terminal.py`, Codex 0.157 observed on 25 Sep 2026). Their journals say
+`originator=codex-tui`, `source=vscode`, `thread_source=user`; the shared
+app-server holds those journals, not the terminal process. On the existing
+snapshot cadence, one background observation reads `mcpServerStatus/list`
+for these root threads over Codex's existing local control socket. The socket
+must belong to this user and its Darwin peer PID must be a native Codex
+app-server. The connected `codex_tui` server's exact IPv4 loopback port must
+have one native TUI listener in the root's cwd, with unchanged process identity
+and tty across two readings. Shared targets are withheld. Discovery is bounded
+to thirty seconds and refreshed at most every fifteen seconds; it never blocks
+the fleet snapshot. Captured roots are ordered by session identity so normal
+activity reordering cannot discard a valid observation. Missing/older servers and malformed replies yield no target.
+Jump re-reads every shared root's endpoint (so a second thread shown in the
+same terminal withdraws the target) and double-checks its listener identity
+within four seconds, then checks the captured roster before the existing editor
+reveal. This evidence grants `can_jump`; human Close additionally requires the
+stopped-turn checks below. It grants no public PID, Stop, reply, typing, board
+attribution or reverse navigation authority. Decoration separately rechecks
+the private targets as described above. It launches
+no Codex server, subscribes to no thread and reads no internal SQLite state.
+Tests: `test_codex_terminal.py`. A changed journal path, cwd or thread id
+invalidates an in-flight result; activity order does not
+(`test_codex_terminal_refresh.py`). Codex reports some threads as unloaded;
+those rows gain no capability.
 
 **Navigation has its own private proof.** `CodexNavigationProof` holds the
 immutable root identity, exact canonical path/device/inode, native PID,
@@ -153,7 +190,25 @@ matched/closed true retires the row and permits the existing human card-finish
 step; refusal or lost reply sends no retry, signal or `/clear`. This changes
 neither explicit-resume controls nor private automatic refinement receipts.
 Agent close-out, board Done/delete automation and absent `by_person` gain no
-new native-close authority. A small cross-process validation/disposal race
+new native-close authority.
+
+Shared-server TUI roots use the same human-only entry and helper guards. Their
+journals are held by the server, so requiring the TUI to hold its journal hid
+Acknowledge & Close even after work completed. The close route now reparses the
+root and retained descendants, pins their journal revisions across a fresh
+terminal endpoint/identity observation, and reads `thread/read` plus the newest
+`thread/turns/list` entry from the verified server. The exact root must be idle
+and its latest turn must match the completed journal turn. The fresh
+observation covers every shared root, so a second thread shown in the same
+terminal withdraws the target. These checks run again immediately before the
+editor write, under `SHARED_CODEX_CLOSE_TIMEOUT` (two bounded server reads);
+a timeout before the write says nothing was sent. Navigation alone cannot
+authorize it. The close records the turn it ended
+(`_closed_codex_turns`): the server outlives the terminal, so there is no
+process identity to compare, and a later turn on the thread is the resume
+that brings the row back. Tests: `test_codex_shared_close.py` runs the existing human-close contract
+against this ownership model, including unconfirmed disposal and late changes.
+A small cross-process validation/disposal race
 remains, as with private refinement close.
 
 **Control is published per row, never inferred.** `codex_rollouts.py`
@@ -216,6 +271,34 @@ a Codex resume-copy action and app/IDE control remain unsupported —
 
 ## Replies to verified stopped native sessions
 
+**Shared-server TUI replies use addressed input** (`codex_input.py`, Codex
+0.157 protocol, observed 25 Sep 2026). The old journal-holder proof cannot
+identify these terminals: their journals belong to the shared app-server.
+Only with `typed_reply` enabled (off, the daemon never opens the socket), a background read on the existing snapshot cadence
+verifies the owner-only local control socket's native app-server peer, exact
+thread id, journal path, cwd, `codex-tui` / `vscode` / `user` root metadata,
+`canAcceptDirectInput=true`, and the newest turn. The private capability
+expires after 30 seconds; no PID or navigation proof grants it.
+
+The existing `reply` verb publishes `channel=true`, `reply_via="codex"` and
+uses `turn/start` for a completed idle turn, or `turn/steer` with
+`expectedTurnId` for an active turn carrying a queued async question.
+Both reach the exact already-loaded thread. Neither resumes/creates a thread,
+changes its model/permissions, sends terminal keys nor grants Close or Stop.
+Synchronous pickers, approval flags, hook-held questions, children and unknown
+input capability refuse. An async question keeps its usual waiting category,
+so the existing phone and Mac reply boxes are sufficient.
+
+Before a single write the daemon rereads the metadata and latest turn, reparses
+the journal and repeats the server identity checks, then rechecks the local
+capability and consumes the session/turn attempt. A timeout or lost reply
+never retries or falls back to typing. Confirmation means the server accepted
+input, not that the assistant acted on it. `turn/start` has no expected-turn
+precondition: a human starting work between the final read and write can make
+the server steer that same thread instead. No settings overrides are sent.
+Tests: `test_codex_input.py`. Live delivery into a real thread is a manual
+check: it needs a person's reply.
+
 With the existing `typed_reply` preference enabled (default off), a native root
 with exact private navigation proof and an affirmatively completed turn may
 publish `channel=true`, `reply_via="typed"`. `can_type` remains false: Codex
@@ -226,9 +309,15 @@ provider identity, preference and immutable snapshot generations are checked
 again before preparation and immediately before the single addressed POST.
 Unresolved or active helpers, ambiguous ownership and questions refuse it.
 
-One compatible project editor bridge (0.1.19+) must repeat unique ancestry,
+One compatible project editor bridge (0.1.21+) must repeat unique ancestry,
 matching tty and unchanged terminal membership/shell PID twice. It sends one
 Ctrl-U + plain text + Enter operation, without focusing or disposing the tab.
+The snapshot and the write select the same unique project bridge. A missing,
+duplicate or older running connection refuses in `interaction_note` with the
+specific recovery: open the project, close extra project windows, or update
+the extension and run **Reload Window** in the affected VS Code window. An
+installed 0.1.21 extension does not update a window already running 0.1.20;
+the lock and ping of that window identify what is actually executing.
 The line must contain at most 2000 characters: no multiline/control characters
 or leading `/!#` commands. Both ends validate. This replaces any existing input
 line. A small cross-process validation/write race with a person typing remains.
@@ -286,8 +375,10 @@ acknowledgements and unknown outputs. Matching answers/cancellation, a real
 user reply, a new turn or an aborted turn release it; synthetic context does not.
 Normal `task_complete` / `task_completed` releases synchronous questions only:
 an async question remains queued in the native client after the assistant ends
-its turn. It stays on the row with all options and continues to block stopped-turn
-reply/close authority. Observed on 23 Sep 2026: the async call and `accepted:true`
+its turn. It stays on the row with all options and blocks close authority, but
+not the reply: the person's next message is its native answer, so
+`stopped_turn(awaiting_answer=True)` opens the typed route (sync pickers,
+permission prompts and hook-held questions still refuse). Observed on 23 Sep 2026: the async call and `accepted:true`
 at 13:22 preceded `task_complete` at 13:24, while the client still showed one
 queued question. `test_async_question_outlives_completed_turn` replays that
 sequence with synthetic content through the shared snapshot, including later

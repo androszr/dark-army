@@ -20,7 +20,9 @@ carries only what differs by assistant. Read the reference for your mode
 |---|---|
 | Plan (the default) | `.claude/skills/ship/references/common.md`, then `.claude/skills/ship/references/plan.md` |
 | Implement (`/ship implement <plan path>`, or a `Plan: <path>` first line) | `.claude/skills/ship/references/common.md`, then `.claude/skills/ship/references/implement.md` |
-| Scout (`/ship scout <brief>`) | `.claude/skills/ship/references/common.md`, then `.claude/skills/ship/references/scout.md` |
+| Batch implement (a `/ship batch: implement …` first line — several Backlog cards started together) | `.claude/skills/ship/references/common.md`, then `.claude/skills/ship/references/implement.md`, whose `## Batch: several cards in one session` runs each card |
+| Batch plan (a `/ship batch: …` first line — several Prep cards refined together) | `.claude/skills/ship/references/common.md`, then `.claude/skills/ship/references/plan.md`, whose `## Batch: several cards in one session` runs each card |
+| Scout (`/ship scout <brief>`, an alias) | `.claude/skills/scout/SKILL.md` alone |
 | A change of mode inside one session ("build it now" after planning) | the other mode's reference, before its first phase |
 
 Nothing here repeats a rule the references state; where this file and a
@@ -41,11 +43,8 @@ Two entry points, and they do not overlap.
 
 A card's leftover idea is not a brief to re-plan. If the prompt names an existing plan, that plan is the brief. An explicit "build it now" outranks the default; a guess never does.
 
-**Scout mode — `/ship scout <brief>`.** No plan, no `bc-planner`, no
-implementation. The deliverable is a report under the project's research
-folder. The board tools it uses are `dark_army_attach_report` then
-`dark_army_close_card`. Promote — turning that report into a build card — is the
-person's.
+`/ship scout <brief>` is an alias: load and follow the scout skill
+(`.claude/skills/scout/SKILL.md`).
 
 ## Agent spawn visual convention
 
@@ -89,8 +88,9 @@ person's.
   the final response plus `<!-- bob-tldr -->` and "Answer in the original Codex
   session", exactly as the references state.
 - **The board:** Codex's restricted board MCP exposes `dark_army_add_card`,
-  `dark_army_attach_plan`, `dark_army_attach_report` and
-  `dark_army_close_card` only; `dark_army_needs_manual_check` is unavailable,
+  `dark_army_attach_plan`, `dark_army_attach_report`,
+  `dark_army_close_card` and a batch's `dark_army_next_card` only;
+  `dark_army_needs_manual_check` is unavailable,
   so an unchecked step is listed under `## Work done` and no
   manual flag is claimed. Grok has the board tools only where Dark Army registered
   them. A session started before the rename carries the same verbs as `bob_*`;

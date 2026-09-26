@@ -293,6 +293,7 @@ struct ComposerView: View {
                         // binding the background tap has nothing to clear and
                         // this is the one keyboard with no way down.
                         .focused($focusedField, equals: "composer.priority")
+                        .hidesKeyboard(when: focusedField == "composer.priority")
                         .padding(6)
                         .overlay(Rectangle().stroke(Theme.hair, lineWidth: 1))
                         .accessibilityLabel("Priority, 0 to 100, empty for no opinion")
@@ -571,8 +572,8 @@ struct ComposerView: View {
         let input = TextField("", text: text,
                               prompt: Text(hint).foregroundStyle(Theme.faint),
                               axis: axis)
-            .font(Theme.mono(13))
-            .foregroundStyle(Theme.phosphor)
+            .font(Theme.prose(17))
+            .foregroundStyle(Theme.text)
             // Prose, so it types like prose: the keyboard fixes typos and
             // starts a sentence with a capital. The pairing screen's host,
             // port and code are identifiers and deliberately keep neither.
@@ -582,8 +583,8 @@ struct ComposerView: View {
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(label)
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.faint)
+                    .font(Theme.prose(14, weight: .medium))
+                    .foregroundStyle(Theme.muted)
                 Spacer(minLength: 0)
                 if let id {
                     MicButton(id: id, text: text)
@@ -777,7 +778,7 @@ struct ComposerView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if preparing && !offline && client.via == .relay {
-                    Text("Writing from away through the relay — this can take up to two minutes.")
+                    Text("Writing from away — this can take up to two minutes.")
                         .font(Theme.mono(12))
                         .foregroundStyle(Theme.faint)
                         .fixedSize(horizontal: false, vertical: true)

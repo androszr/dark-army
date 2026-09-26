@@ -109,10 +109,10 @@ def test_destinations_and_control_bindings_inventory():
     for name in ["BobPhoneApp", "AgentDetailView", "CardDetailView", "ComposerView", "ProfileView",
                  "PipelineView", "WorkRecordView", "CatchUpView", "Pairing",
                  "AgentReportView", "LifecycleReportView", "KnowledgeView",
-                 "AccessLogView"]:
+                 "AccessLogView", "MenuView"]:
         assert ".decryptSurface(" in (PHONE / f"{name}.swift").read_text(), name
     app = (PHONE / "BobPhoneApp.swift").read_text()
-    for tab in ["needs", "fleet", "board", "usage"]:
+    for tab in ["needs", "fleet", "board", "menu"]:
         assert f"selectedTab == .{tab} && sheets.top == nil" in app
     for name in ["CatchUpView", "OutcomeScreens", "ProfileView",
                  "AgentReportView", "LifecycleReportView", "KnowledgeView"]:
@@ -130,18 +130,24 @@ def test_sheet_stills_and_arrivals_only_chrome():
     assert "static let sheetSize: CGFloat = 160" in mark
     agent = (PHONE / "AgentDetailView.swift").read_text()
     card = (PHONE / "CardDetailView.swift").read_text()
-    # The agent sheet's still is smaller and sits beside its text.
+    # The agent sheet's still is smaller and sits beside its text; its size
+    # follows the sheet's height (`AgentSheetLead.stillSize`).
     assert "static let leadPhotoSize: CGFloat = 96" in agent
-    assert "size: Self.leadPhotoSize" in agent
+    assert "size: leadStill" in agent
     assert "PixelMark.sheetSize" in card
     assert agent.count("size: 40") == 1
     identity = agent.split("private var identity: some View", 1)[1].split(
         "private var hostedIdentity", 1)[0]
     assert "PixelMark(" not in identity and "size: 40" not in identity
     assert "photoTucked.toggle()" in identity
-    # The quote is secondary and one line: smaller than the provider
-    # label, shrinking to fit beside the still rather than wrapping.
-    quote = identity.split("Text(quote)", 1)[1].split("}", 1)[0]
+    # The lead's second line is the status line, not the quote.
+    assert "AgentSheetLead.statusLine(" in identity
+    assert "Text(quote)" not in identity
+    # The quote is secondary and one line on Details: smaller than the
+    # facts, shrinking to fit rather than wrapping.
+    rest = agent.split("private var rest: some View", 1)[1].split(
+        "static let hostedStripMaxHeight", 1)[0]
+    quote = rest.split("Text(quote)", 1)[1].split("}", 1)[0]
     assert "Theme.mono(Self.quoteSize)" in quote and "Theme.dim" in quote
     assert ".lineLimit(1)" in quote
     assert ".minimumScaleFactor(Self.quoteMinScale)" in quote
@@ -149,53 +155,33 @@ def test_sheet_stills_and_arrivals_only_chrome():
     assert "static let quoteSize: CGFloat = 10" in agent
     assert "static let quoteMinScale: CGFloat = 0.7" in agent
     assert "private var conversationLead" not in agent
-    body = agent.split("var body: some View", 1)[1].split(
-        "PhoneAgentScreenBar(", 1)[0]
-    assert "if !photoTucked" in body and "size: Self.leadPhotoSize" in body
-    assert agent.count(".modifier(TucksPhotoOnScroll(tucked: $photoTucked))") == 2
+    main = agent.split("private var mainScreen: some View", 1)[1].split(
+        "private var titleLine", 1)[0]
+    assert "if !photoTucked" in main and "size: leadStill" in main
+    assert "TucksPhotoOnScroll" not in agent, "the lead scrolls away with Main's page"
     hosted = agent.split("private var hostedIdentity: some View", 1)[1].split(
         "private var terminalCover", 1)[0]
     assert "size: 40" in hosted
     terminal = agent.split("private var terminalScreen: some View", 1)[1]
     assert "hostedIdentity" in terminal.split("PhoneTerminalPane", 1)[0]
-    # The still is not in the turn list's scroll. One turn is reserved
-    # before the still takes sheet size, so a medium sheet cannot give
-    # the list nothing. The still yields (minHeight 0, no priority above
-    # the list) and the name under the photograph is not clipped off.
-    # Allow/Deny stay above both. The list jumps to the latest line
-    # again once its height is non-zero.
+    # The conversation is one scrolling page — status, header, turns, then
+    # the ask and its answer buttons — over a message composer pinned
+    # beneath it as a stack sibling (26 Sep 2026), never an overlay, so no
+    # part can paint over another. It opens at the foot and a new turn or
+    # the keyboard scrolls back to the answer buttons.
     conv = (PHONE / "ConversationView.swift").read_text()
     conv_body = conv.split("var body: some View", 1)[1].split(
-        "private var messageList", 1)[0]
-    assert "ConversationColumn(turnFloor: Self.oneTurn)" in conv_body
-    # Five slots whatever the header is: a bare `EmptyView` is no child
-    # even framed, and four children drop the column to its fallback,
-    # which stacks the list at full height and clips the answer box off.
-    assert "VStack(spacing: 0) { header }" in conv_body
-    assert "VStack(alignment: .leading, spacing: 0) { statusLines }" in conv_body
-    assert "guard subviews.count == 5" in conv
-    assert conv_body.index("header") < conv_body.index("messageList")
-    assert conv_body.index("messageList") < conv_body.index("AnswerBox(")
-    assert "scrollTo(" not in conv_body
-    assert "ScrollView" not in conv_body
+        "@ViewBuilder private func rowView", 1)[0]
+    assert conv_body.count("ScrollView {") == 1
+    assert "ConversationColumn" not in conv and "BoundedAnswer" not in conv
+    assert conv_body.index("statusLines") < conv_body.index("header")
+    assert conv_body.index("header") < conv_body.index("ForEach(rows)")
+    assert conv_body.index("ForEach(rows)") < conv_body.index("part: .choices")
+    assert conv_body.index("page\n") < conv_body.index("part: .composer")
+    assert ".defaultScrollAnchor(.bottom)" in conv_body
+    assert conv_body.count("scrollTo(Self.answerAnchor, anchor: .bottom)") == 3
     assert "messageWindow" not in conv
-    header_to_list = conv_body.split("header", 1)[1].split("messageList", 1)[0]
-    assert "minHeight: 0" in header_to_list
-    assert "layoutPriority" not in header_to_list
-    assert ".clipped()" not in header_to_list
-    list_to_box = conv_body.split("messageList", 1)[1].split("AnswerBox(", 1)[0]
-    assert "maxHeight: .infinity" in list_to_box
-    assert "oneTurn" in list_to_box
-    assert ".layoutPriority(2)" in conv_body
-    messages = conv.split("private var messageList", 1)[1].split(
-        "private var earlierControl", 1)[0]
-    assert "ScrollView {" in messages
-    assert messages.count("scrollTo(last, anchor: .bottom)") == 3
-    assert messages.index("ScrollView {") < messages.index("GeometryReader")
-    assert messages.index(".background") < messages.index("GeometryReader")
-    assert "frame(height:" not in messages
-    assert "AnswerBox(" not in messages
-    assert conv.count("AnswerBox(") == 1
+    assert conv.count("AnswerBox(") == 2
     ui = (PHONE / "DecryptFeedback.swift").read_text()
     activate = ui.split("func activate(", 1)[1].split("func cancel(", 1)[0]
     assert "begin(kind: .button)" not in activate
@@ -211,6 +197,9 @@ def test_sheet_stills_and_arrivals_only_chrome():
     # not jump when a scramble starts or ends; the rule dims instead.
     surface = ui.split("struct DecryptSurface", 1)[1]
     assert ".safeAreaInset(edge: .top, spacing: 0)" in surface
+    # A sheet draws the caption in its header (`DecryptCaptionHost`), so the
+    # strip is mounted only where no host is present: a tab root.
+    assert "if let feedback, host == nil" in surface
     assert ".overlay(alignment: .top)" not in surface
     assert "if let glyphs" not in chrome
     assert "glyphs != nil ? Theme.phosphor : Theme.rule" in chrome
@@ -270,21 +259,20 @@ def test_board_rows_fold_on_an_ordinary_button_press_and_no_pager_remains():
     assert "feedback?.begin(kind: .screen)" not in text
 
 def test_the_answer_box_can_never_paint_over_the_tabs():
-    """An interview's option cards once took their whole ideal height and the
-    column shifted up by the overflow, drawing them over the lead, the verbs
-    and the tabs (22 Sep 2026). The box is bounded and scrolls; the column
-    never starts above its own top and is clipped to it."""
+    """An interview's option cards once took their whole ideal height and
+    painted over the lead, the verbs and the tabs (22 Sep 2026). The
+    answer buttons sit under the turns, inside the scroll, and the tabs are
+    above the scroll view entirely. The message composer is pinned beneath
+    the scroll as a stack sibling (26 Sep 2026): it shortens the page and
+    cannot paint over it."""
     from pathlib import Path
     conv = (Path(__file__).resolve().parents[2]
             / "ios" / "BobPhone" / "ConversationView.swift").read_text()
     body = conv.split("var body: some View", 1)[1].split(
-        "private var messageList", 1)[0]
-    assert "BoundedAnswer {" in body and ".clipped()" in body
-    layout = conv.split("private struct ConversationColumn: Layout", 1)[1].split(
-        "private struct BoundedAnswer", 1)[0]
-    assert "total - height" not in layout
-    assert "var y = bounds.minY\n" in layout
-    assert "answerRoom * Self.answerShare" in layout
-    bounded = conv.split("private struct BoundedAnswer", 1)[1].split(
-        "struct ConversationTurnRow", 1)[0]
-    assert "ScrollView(.vertical)" in bounded
+        "@ViewBuilder private func rowView", 1)[0]
+    head, scroll = body.split("ScrollView {", 1)
+    assert "part: .choices" in scroll and "part: .choices" not in head
+    assert "part: .composer" in head and "part: .composer" not in scroll
+    assert "VStack(spacing: 0) {\n            page" in head
+    assert "offset(" not in body and "overlay" not in body
+    assert conv.count("AnswerBox(") == 2

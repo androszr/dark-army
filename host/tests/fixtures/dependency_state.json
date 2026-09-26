@@ -1,0 +1,250 @@
+{
+ "_comment": "A trimmed /api/state body for tools/board_link_dependencies.py's tests: every title tools/dependency-maps/ai-viber.txt names (its # planner: lines included) under ai-viber, and a vir-sunset project holding one title twice for the ambiguity case. Ids are fixed digests, never a live board's.",
+ "board": {
+  "cards": [
+   {
+    "id": "9cf876bc035b88e056227d3c095c075b",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Front door and server-side progress: sign-up, email links, guests",
+    "column_name": "in_progress",
+    "revision": 1,
+    "blocked_by": ""
+   },
+   {
+    "id": "08638137a52ea210dce425370782517a",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Build the game foundation: server-owned saves and the live update loop",
+    "column_name": "in_progress",
+    "revision": 2,
+    "blocked_by": ""
+   },
+   {
+    "id": "a1b1581cb265f3583723a5bddf7b5708",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Accounts: automatic player handles and email sign-in (opens the shared board)",
+    "column_name": "backlog",
+    "revision": 3,
+    "blocked_by": ""
+   },
+   {
+    "id": "120dd65b244036601b38810ad019725f",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Production mail for sign-in links",
+    "column_name": "backlog",
+    "revision": 4,
+    "blocked_by": ""
+   },
+   {
+    "id": "652c7395c4017517c17b3a649cf03244",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Verified email required to take jobs from the shared board",
+    "column_name": "backlog",
+    "revision": 5,
+    "blocked_by": ""
+   },
+   {
+    "id": "942574f72ff33193e7383fcc9ebe0f9e",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Account settings: rename, change email, sign out everywhere, delete",
+    "column_name": "backlog",
+    "revision": 1,
+    "blocked_by": ""
+   },
+   {
+    "id": "c12e67ddcb77759ec6d7e5c68bd89b8d",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Build the economy core in the simulation",
+    "column_name": "backlog",
+    "revision": 2,
+    "blocked_by": ""
+   },
+   {
+    "id": "26ee50bab63cc9062ae5d985000a99dc",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Add Content v1: real providers, models, launch timeline, gigs and room items",
+    "column_name": "backlog",
+    "revision": 3,
+    "blocked_by": ""
+   },
+   {
+    "id": "b740cfc704b56f3eb7d812d977bd8f02",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Your AI accounts: providers, plans and the Your AI panel from day 1",
+    "column_name": "in_progress",
+    "revision": 4,
+    "blocked_by": ""
+   },
+   {
+    "id": "54449a7c85a7437876fba6ef53ddb556",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Build the first ten minutes: sign-up to first dollar and the starter routes",
+    "column_name": "backlog",
+    "revision": 5,
+    "blocked_by": ""
+   },
+   {
+    "id": "1cf3c33855985fa5407775bd6c126dea",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Build the Cockpit: a dashboard that starts as one button and grows",
+    "column_name": "backlog",
+    "revision": 1,
+    "blocked_by": ""
+   },
+   {
+    "id": "a0ddabb33036cad1f991aa534a0cd2bd",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Build the shared job board: first come first served, limited by bandwidth",
+    "column_name": "backlog",
+    "revision": 2,
+    "blocked_by": ""
+   },
+   {
+    "id": "ba2ea7a871b218ca7e3275998d8c5e69",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Set up the pixel-art pipeline and final starting-room sprites",
+    "column_name": "backlog",
+    "revision": 3,
+    "blocked_by": ""
+   },
+   {
+    "id": "6e29d7523f8dc5ed3174b5aa61bf4564",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Build the Box Room window and Room tab",
+    "column_name": "backlog",
+    "revision": 4,
+    "blocked_by": ""
+   },
+   {
+    "id": "94810fefd84735d1f19bf34c0fe3d811",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Add real-time learning: videos, docs, courses and live keynotes",
+    "column_name": "backlog",
+    "revision": 5,
+    "blocked_by": ""
+   },
+   {
+    "id": "404128161a7ef979bf5188ea33cb734e",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Build the Newsroom: real AI news, summarised with sources, in the News tab",
+    "column_name": "backlog",
+    "revision": 1,
+    "blocked_by": ""
+   },
+   {
+    "id": "7a90e28ae54d3b61a801df4e3e8ffa5e",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Scout: newsroom guardrails — news rights, fair use of names, fact-checking",
+    "column_name": "done",
+    "revision": 2,
+    "blocked_by": ""
+   },
+   {
+    "id": "2d5f34b85293073b997c5f714b4d6802",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Try the Director offline on a month of real AI news",
+    "column_name": "done",
+    "revision": 3,
+    "blocked_by": ""
+   },
+   {
+    "id": "e06ba1168b9448ec4853af5aec1427c6",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Build Newsroom v1: real AI news in the News tab and the feed",
+    "column_name": "backlog",
+    "revision": 4,
+    "blocked_by": ""
+   },
+   {
+    "id": "6e49ff3e0138dd2505ec385769df89a6",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Build the balance harness: many bot players in one world",
+    "column_name": "backlog",
+    "revision": 5,
+    "blocked_by": ""
+   },
+   {
+    "id": "d6f38fd641e75f8fa995ce6bc5d023bf",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Wire the Cockpit's buttons to real game actions",
+    "column_name": "backlog",
+    "revision": 1,
+    "blocked_by": ""
+   },
+   {
+    "id": "d6e6ef4646d5f10d37fa71289dd7661d",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Draw the over-the-shoulder and profile room views",
+    "column_name": "backlog",
+    "revision": 2,
+    "blocked_by": ""
+   },
+   {
+    "id": "0b64b1b1ab063d6a1635976e76da14e5",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Source gig pay from real Fiverr and Upwork listings",
+    "column_name": "backlog",
+    "revision": 3,
+    "blocked_by": ""
+   },
+   {
+    "id": "2458b7694ef1b29f4fd4ca5f240dd3ba",
+    "project": "ai-viber",
+    "root": "/fixture/ai-viber",
+    "title": "Play the real launch timeline on the Classic calendar",
+    "column_name": "backlog",
+    "revision": 4,
+    "blocked_by": ""
+   },
+   {
+    "id": "82dc377f666ae3483d51c5e7b17bc148",
+    "project": "vir-sunset",
+    "root": "/fixture/vir-sunset",
+    "title": "Duplicate title",
+    "column_name": "backlog",
+    "revision": 1,
+    "blocked_by": ""
+   },
+   {
+    "id": "a89e9a0db48ca8660619d8a8b7592326",
+    "project": "vir-sunset",
+    "root": "/fixture/vir-sunset",
+    "title": "Duplicate title",
+    "column_name": "backlog",
+    "revision": 1,
+    "blocked_by": ""
+   },
+   {
+    "id": "60683da442e9b65b320557ab9f0ad9c6",
+    "project": "vir-sunset",
+    "root": "/fixture/vir-sunset",
+    "title": "Unique title",
+    "column_name": "backlog",
+    "revision": 1,
+    "blocked_by": ""
+   }
+  ]
+ }
+}

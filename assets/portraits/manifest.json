@@ -19,7 +19,7 @@
   "sawa",
   "franio",
   "zosia",
-  "pty\u015b",
+  "ptys",
   "overwatch"
  ],
  "portraits": {
@@ -101,7 +101,7 @@
    "sha256": "4f41ebe537bd6e30fe5d3c13d5b99d22702896dacec360ee852b8354e86d7cd6",
    "width": 512
   },
-  "pty\u015b": {
+  "ptys": {
    "bytes": 434683,
    "height": 512,
    "sha256": "46b1768cba6a2251b74bde5a8f4899a5d97d02d7f8a47a15ed93cdc7b5bbac43",

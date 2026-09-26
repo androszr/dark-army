@@ -1,0 +1,65 @@
+* { box-sizing: border-box; }
+:root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { margin: 0; background: var(--signal-canvas); color: var(--signal-text); font-size: 14px; line-height: 1.5; }
+button, input, textarea { font: inherit; }
+button { cursor: pointer; }
+.masthead { padding: 30px clamp(18px, 5vw, 52px); border-bottom: 1px solid var(--signal-line); background: var(--signal-surface); }
+.eyebrow, .spec-label, .card-meta, .badge, .running, .waiting, footer { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: .09em; }
+.eyebrow { color: var(--signal-accent); }
+h1 { font-size: clamp(28px, 4vw, 44px); line-height: 1.12; margin: 10px 0; letter-spacing: -.035em; }
+h2 { font-size: 22px; margin: 4px 0 16px; letter-spacing: -.02em; }
+h3 { font-size: 17px; margin: 10px 0 6px; }
+p { margin: 0; }
+.masthead p { max-width: 68ch; color: var(--signal-muted); }
+code, .terminal { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+code { color: var(--signal-accent); }
+main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding: clamp(18px, 4vw, 36px); max-width: 1380px; margin: auto; }
+.panel { min-width: 0; background: var(--signal-surface); border: 1px solid var(--signal-line); border-radius: var(--signal-radii-card); padding: clamp(16px, 3vw, 26px); }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.section-head h2 { margin-bottom: 0; }
+.note { color: var(--signal-muted); font-size: 13px; margin: 10px 0 18px; }
+.token-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 12px; margin-top: 20px; }
+.token-control { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--signal-line); border-radius: var(--signal-radii-control); background: var(--signal-raised); }
+.token-control label { font-size: 12px; font-weight: 600; }
+.token-control small { color: var(--signal-muted); }
+.token-control input { width: 100%; min-height: 36px; background: var(--signal-well); color: var(--signal-text); border: 1px solid var(--signal-control); border-radius: var(--signal-radii-control); padding: 5px 8px; }
+.token-control input[type=color] { padding: 3px; cursor: pointer; }
+.button { display: inline-flex; align-items: center; justify-content: center; min-height: var(--signal-size-desktopControl); padding: 7px 14px; border-radius: var(--signal-radii-control); border: 1px solid var(--signal-line); font-weight: 650; text-align: center; }
+.button.primary { background: var(--signal-accent); color: var(--signal-accentInk); border-color: var(--signal-accent); }
+.button.secondary { background: var(--signal-raised); color: var(--signal-text); }
+.button.danger { background: transparent; color: var(--signal-danger); border-color: var(--signal-danger); }
+.button.quiet { background: transparent; color: var(--signal-muted); border-color: transparent; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, .file-button:focus-within { outline: 2px solid var(--signal-attention); outline-offset: 3px; }
+.actions { justify-content: flex-start; margin: 20px 0 10px; }
+.file-button { cursor: pointer; position: relative; }
+.file-button input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.export-label, .field-label { display: block; font-weight: 600; margin: 14px 0 6px; }
+#export-json { width: 100%; min-height: 95px; resize: vertical; background: var(--signal-well); color: var(--signal-text); border: 1px solid var(--signal-control); border-radius: var(--signal-radii-control); padding: 10px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#message { min-height: 22px; color: var(--signal-attention); }
+.specimens { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; margin-top: 18px; }
+.specimen { min-width: 0; background: var(--signal-canvas); border: 1px solid var(--signal-line); border-radius: var(--signal-radii-card); padding: 18px; }
+.spec-label { color: var(--signal-muted); margin-bottom: 16px; }
+.attention { display: flex; gap: 8px; align-items: center; color: var(--signal-attention); margin-bottom: 16px; }
+.attention span:last-child { margin-left: auto; font-size: 12px; }
+.status-dot { width: 7px; height: 7px; background: var(--signal-attention); border-radius: 50%; }
+.card { background: var(--signal-raised); border: 1px solid var(--signal-line); border-radius: var(--signal-radii-card); padding: 16px; }
+.card-meta { color: var(--signal-accent); }
+.card-meta span { color: var(--signal-muted); }
+.card p { color: var(--signal-muted); }
+.card-foot { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 16px; color: var(--signal-muted); font-size: 12px; }
+.badge { color: var(--signal-accent); border: 1px solid var(--signal-control); border-radius: var(--signal-radii-control); padding: 3px 6px; white-space: nowrap; }
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.field { width: 100%; min-height: 38px; background: var(--signal-well); color: var(--signal-text); border: 1px solid var(--signal-control); border-radius: var(--signal-radii-control); padding: 8px; }
+details { border-top: 1px solid var(--signal-line); margin-top: 18px; padding-top: 12px; }
+summary { cursor: pointer; color: var(--signal-accent); }
+details p { color: var(--signal-muted); padding: 8px 0; }
+.fleet-row { display: flex; gap: 9px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--signal-line); }
+.fleet-row div { display: grid; flex: 1; }
+.fleet-row small { color: var(--signal-muted); }
+.avatar { display: grid; place-items: center; width: 32px; height: 32px; background: var(--signal-raised); border: 1px solid var(--signal-line); border-radius: var(--signal-radii-control); color: var(--signal-accent); }
+.running { color: var(--signal-accent); }
+.waiting { color: var(--signal-attention); }
+.terminal { margin-top: 16px; padding: 12px; color: var(--signal-muted); background: var(--signal-well); border-radius: var(--signal-radii-control); overflow: auto; white-space: nowrap; }
+.terminal span { color: var(--signal-text); }
+footer { text-align: center; color: var(--signal-muted); padding: 16px 0 30px; }
+@media(max-width: 700px) { body { font-size: 17px; } .masthead { padding: 22px 16px; } main { padding: 14px; } .button { min-height: var(--signal-size-phoneControl); } .token-control input { min-height: var(--signal-size-phoneTarget); } }

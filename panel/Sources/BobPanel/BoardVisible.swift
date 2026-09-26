@@ -50,10 +50,18 @@ struct BoardVisible: Equatable {
         out.narrowed = !state.projectFilter.isEmpty
             || !state.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         for column in BoardColumn.allCases {
+            // The selecting row draws its ticked cards first, so a batch
+            // being gathered sits together at the top of Prep or Backlog.
+            let ticked = state.selectingRow == column
+                ? state.rowSelection : []
             let cards = board.cards(in: column.rawValue)
                 .filter { state.showsProject($0.project) }
                 .filter { state.matches($0) }
-                .sorted { cardOrder($0, $1, column: column) }
+                .sorted { a, b in
+                    let ta = ticked.contains(a.id), tb = ticked.contains(b.id)
+                    if ta != tb { return ta }
+                    return cardOrder(a, b, column: column)
+                }
             out.byColumn[column] = cards
             if !cards.isEmpty { out.anyVisible = true }
         }

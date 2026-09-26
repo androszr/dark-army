@@ -67,7 +67,8 @@ final class SnapshotStreamTests: XCTestCase {
 
     func testEverySectionIsCoveredByTheCarryRule() {
         // The set the decoder marks and the set the client copies are the
-        // same twelve — the daemon's `_OMITTABLE_SECTIONS` minus `mesh`.
+        // same twelve — the daemon's `_OMITTABLE_SECTIONS` minus `mesh` and `power`,
+        // which the panel does not decode.
         XCTAssertEqual(Snapshot.Section.allCases.count, 12)
         XCTAssertEqual(Set(Self.sectionSamples.map(\.0)),
                        Set(Snapshot.Section.allCases))

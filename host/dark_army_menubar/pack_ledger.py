@@ -36,6 +36,11 @@ _DEFAULTS = {
     # .gitignore (pack_gitignore.canonical). A row an older build wrote has
     # none and reads as never offered.
     "gitignore_offered": [],
+    # Per filled-in file (pack_render.PROJECT_FILLED_KEYS), the digest of
+    # the managed region the pack last wrote there. A row an older build
+    # wrote has none, so a region that differs from today's render reads as
+    # the project's own and is left alone.
+    "pack_digests": {},
     "installed_at": 0.0,
     "last_sync_at": 0.0,
     "last_result": "",
@@ -117,9 +122,18 @@ def published() -> list[dict]:
     return out
 
 
+def digests_of(row) -> dict:
+    """A row's ``pack_digests`` as a fresh ``{str: str}``; ``{}`` when absent."""
+    raw = row.get("pack_digests") if isinstance(row, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): str(value) for key, value in raw.items()
+            if isinstance(value, str) and value}
+
+
 def _apply(row: dict, *, profile=None, prefix=None, project=None,
            app=None, gitnexus_repo=None, settings_allow_owned=None,
-           gitignore_offered=None, last_result=None, last_sync_at=None, installed_at=None,
+           gitignore_offered=None, pack_digests=None, last_result=None, last_sync_at=None, installed_at=None,
            touch: bool = True) -> None:
     if profile is not None:
         row["profile"] = str(profile)
@@ -135,6 +149,8 @@ def _apply(row: dict, *, profile=None, prefix=None, project=None,
         row["settings_allow_owned"] = [str(item) for item in settings_allow_owned]
     if gitignore_offered is not None:
         row["gitignore_offered"] = [str(item) for item in gitignore_offered]
+    if pack_digests is not None:
+        row["pack_digests"] = digests_of({"pack_digests": pack_digests})
     if last_result is not None:
         row["last_result"] = str(last_result)
     if installed_at is not None:
@@ -204,6 +220,7 @@ def update(
     gitnexus_repo: Optional[str] = None,
     settings_allow_owned: Optional[list] = None,
     gitignore_offered: Optional[list] = None,
+    pack_digests: Optional[dict] = None,
     last_result: Optional[str] = None,
     last_sync_at: Optional[float] = None,
     installed_at: Optional[float] = None,
@@ -225,6 +242,7 @@ def update(
                gitnexus_repo=gitnexus_repo,
                settings_allow_owned=settings_allow_owned,
                gitignore_offered=gitignore_offered,
+               pack_digests=pack_digests,
                last_result=last_result, last_sync_at=last_sync_at,
                installed_at=installed_at, touch=True)
         data["projects"] = projects
@@ -242,6 +260,7 @@ def remember(
     gitnexus_repo: Optional[str] = None,
     settings_allow_owned: Optional[list] = None,
     gitignore_offered: Optional[list] = None,
+    pack_digests: Optional[dict] = None,
     last_result: Optional[str] = None,
     last_sync_at: Optional[float] = None,
     installed_at: Optional[float] = None,
@@ -254,7 +273,8 @@ def remember(
         reserved["root"], profile=profile, prefix=prefix, project=project,
         app=app, gitnexus_repo=gitnexus_repo,
         settings_allow_owned=settings_allow_owned,
-        gitignore_offered=gitignore_offered, last_result=last_result,
+        gitignore_offered=gitignore_offered, pack_digests=pack_digests,
+        last_result=last_result,
         last_sync_at=last_sync_at, installed_at=installed_at)
     if updated is None:
         raise PackLedgerError("that project is no longer syncing")

@@ -822,3 +822,74 @@ async def test_a_current_broker_is_not_warned_about(caplog):
         await host.disconnect()
         server.close()
         await server.wait_closed()
+
+
+async def _start_through(hello: bytes) -> list:
+    """The argv a stand-in broker greeting with ``hello`` is asked to run."""
+    import json
+    sock = _short_sock()
+    seen: list = []
+
+    async def serve(reader, writer):
+        writer.write(hello)
+        await writer.drain()
+        line = await asyncio.wait_for(reader.readline(), timeout=2.0)
+        msg = json.loads(line)
+        seen.append(msg["argv"])
+        writer.write((json.dumps({"id": msg["id"], "ok": True, "pid": 1,
+                                  "handle": ""}) + "\n").encode())
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(serve, path=sock)
+    host = PtyHost(persist=True, sock_path=sock, hook_sock="/tmp/x/hook.sock")
+    try:
+        ok, _detail, _pid = await host.start("/tmp", ["/bin/echo", "hi"], "x")
+        assert ok
+    finally:
+        await host.disconnect()
+        server.close()
+        await server.wait_closed()
+    return seen[0]
+
+
+@pytest.mark.asyncio
+async def test_an_old_broker_is_handed_a_login_path_in_the_argv(monkeypatch):
+    """A broker from before `adopt_login_path` gives its children launchd's
+    bare PATH and cannot be told otherwise through `env`, so the agent is
+    started through `/usr/bin/env PATH=…` (25 Sep 2026: `node` missing)."""
+    from dark_army_daemon import subprocess_env
+    monkeypatch.setattr(subprocess_env, "login_path_entries",
+                        lambda *a: ["/opt/homebrew/bin"])
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    argv = await _start_through(b'{"hello": true, "pid": 0, "terminals": []}\n')
+    assert argv == ["/usr/bin/env", "PATH=/usr/bin:/bin:/opt/homebrew/bin",
+                    "/bin/echo", "hi"]
+
+
+@pytest.mark.asyncio
+async def test_a_current_broker_is_handed_the_argv_unchanged():
+    # The key's presence is the mark, an empty value included.
+    argv = await _start_through(
+        b'{"hello": true, "pid": 0, "hook_sock": "", "terminals": []}\n')
+    assert argv == ["/bin/echo", "hi"]
+
+
+def test_the_login_path_argv_runs_with_that_path_and_keeps_its_pid():
+    """What the old broker does with the argv: exec it under a bare PATH.
+    `env` sets PATH and execs in place, so the child sees the login PATH
+    and the pid the broker reports is the program's own."""
+    import subprocess
+    host = PtyHost(persist=True, sock_path=_short_sock())
+    argv = host._login_path_argv(
+        ["/bin/sh", "-c", 'echo "$$ $PATH"; ps -o comm= -p $$'])
+    proc = subprocess.Popen(argv, env={"PATH": "/usr/bin:/bin"},
+                            stdout=subprocess.PIPE, text=True)
+    out, _ = proc.communicate(timeout=10)
+    first, comm = out.strip().splitlines()
+    pid, path = first.split(" ", 1)
+    assert int(pid) == proc.pid
+    assert "sh" in comm
+    from dark_army_daemon import subprocess_env
+    for entry in subprocess_env.login_path_entries():
+        assert entry in path.split(":")

@@ -55,7 +55,19 @@ final class DecryptFeedback: ObservableObject {
     }
 }
 
+/// Where a sheet draws the arrival caption for the surface inside it. The
+/// sheet frame owns one and puts it in its content's environment; a
+/// `DecryptSurface` under it publishes its identity here on arrival and mounts
+/// no strip of its own, so a sheet reserves no band under its title — the
+/// caption plays in the frame's header row instead. Tab roots have no host
+/// and keep their strip exactly as before.
+@MainActor
+final class DecryptCaptionHost: ObservableObject {
+    @Published var surface: String?
+}
+
 private struct DecryptOwnerKey: EnvironmentKey { static let defaultValue: DecryptFeedback? = nil }
+private struct DecryptCaptionHostKey: EnvironmentKey { static let defaultValue: DecryptCaptionHost? = nil }
 private struct DecryptActiveKey: EnvironmentKey { static let defaultValue = true }
 extension EnvironmentValues {
     var decryptFeedback: DecryptFeedback? {
@@ -63,6 +75,9 @@ extension EnvironmentValues {
     }
     var decryptActive: Bool {
         get { self[DecryptActiveKey.self] } set { self[DecryptActiveKey.self] = newValue }
+    }
+    var decryptCaptionHost: DecryptCaptionHost? {
+        get { self[DecryptCaptionHostKey.self] } set { self[DecryptCaptionHostKey.self] = newValue }
     }
 }
 
@@ -153,6 +168,7 @@ private struct DecryptSurface: ViewModifier {
     let name: String
     @Environment(\.decryptFeedback) private var feedback
     @Environment(\.decryptActive) private var active
+    @Environment(\.decryptCaptionHost) private var host
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduced
     @State private var appeared = false
@@ -162,13 +178,16 @@ private struct DecryptSurface: ViewModifier {
             .background {
                 DecryptAppearance(arrived: {
                     appeared = true
+                    host?.surface = identity
                     if active && scenePhase == .active { feedback?.setReduced(reduced); feedback?.arrive(identity) }
                 }, departed: {
-                    appeared = false; feedback?.cancel(surface: identity)
+                    appeared = false; releaseHost(); feedback?.cancel(surface: identity)
                 }).allowsHitTesting(false).accessibilityHidden(true)
             }
+            // Inside a sheet the frame's header draws the caption (`host`),
+            // so the strip is mounted only where no host is present.
             .safeAreaInset(edge: .top, spacing: 0) {
-                if let feedback { DecryptChrome(feedback: feedback, surface: identity, active: active) }
+                if let feedback, host == nil { DecryptChrome(feedback: feedback, surface: identity, active: active) }
             }
             .onChange(of: active) { _, value in
                 if value && appeared && scenePhase == .active { feedback?.arrive(identity) }
@@ -179,7 +198,13 @@ private struct DecryptSurface: ViewModifier {
                 else { feedback?.cancel(surface: identity) }
             }
             .onChange(of: reduced) { _, value in feedback?.setReduced(value) }
-            .onDisappear { feedback?.cancel(surface: identity) }
+            .onDisappear { releaseHost(); feedback?.cancel(surface: identity) }
+    }
+
+    /// Clears the host only while it still names this surface: the next
+    /// sheet's content may already have arrived and published its own.
+    private func releaseHost() {
+        if host?.surface == identity { host?.surface = nil }
     }
 }
 

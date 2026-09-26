@@ -552,6 +552,39 @@ async def test_the_drain_starts_the_head_when_the_files_come_free(
 
 
 @pytest.mark.asyncio
+async def test_the_drain_starts_the_head_once_the_runner_flags_a_manual_check(
+        daemon, project, monkeypatch):
+    """A card whose work is done and which waits only on a person's hand
+    check counts as done for the queue: the next card starts while the
+    flagged one stays In progress, its session still audible. End to end
+    through the store's own `flag_manual`, not a hand-set field."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    shared = _plan(project, "shared", ["host/a.py"])
+    running = _make(store, root=str(project), title="running", plan_path=shared)
+    store.update(running["id"], {"link_state": "live", "session_id": "s1",
+                                 "column_name": "in_progress"})
+    _hear(d, "s1")
+    waiting = _make(store, root=str(project), title="waiting", plan_path=shared)
+    await d.dispatch_card(waiting["id"])
+    assert store.get(waiting["id"])["queue_state"] == "queued"
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == []
+
+    flagged, detail = store.flag_manual(running["id"], "s1",
+                                        "1. Open the page and look.")
+    assert flagged is not None, detail
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == [waiting["id"]]
+    d._dispatch_attempts.pop(waiting["id"], None)
+    await d._flush_queue_dispatches()
+    assert opened == ["waiting"]
+    assert store.get(waiting["id"])["link_state"] == "dispatching"
+    assert store.get(running["id"])["column_name"] == "in_progress"
+
+
+@pytest.mark.asyncio
 async def test_the_drain_holds_on_a_transient_refusal_and_does_not_dequeue(
         daemon, project, monkeypatch):
     """The cooldown and the in-flight bounds pass on their own. Dequeuing on
@@ -1315,3 +1348,406 @@ async def test_an_auto_start_on_a_full_project_queues_and_the_drain_starts_it(
     after = store.get(card["id"])
     assert after["column_name"] == "in_progress"
     assert after["link_state"] == "dispatching"
+
+
+# --- card dependencies: the gate queues, the drain starts it once met ---------
+#
+# `docs/card-dependencies.md`. Every case drives `dispatch_card` with
+# `dispatch.spawn` stubbed, so "no terminal opened" and "it started" are
+# asserted where they can be: on the list the stub appends to.
+
+from dark_army_daemon import board as board_mod            # noqa: E402
+from dark_army_daemon.daemon import _already_queued_reason  # noqa: E402
+
+
+def _dependent_pair(store, project, *, dep_column="backlog"):
+    """A planned card and the planned card it waits on, one project."""
+    dep = _make(store, root=str(project), title="the foundation",
+                plan_path=_plan(project, "foundation", ["host/a.py"]))
+    if dep_column != "backlog":
+        store.update(dep["id"], {"column_name": dep_column})
+    card = _make(store, root=str(project), title="the waiter",
+                 plan_path=_plan(project, "waiter", ["host/b.py"]))
+    got, detail = store.update(card["id"], {"blocked_by": dep["id"]})
+    assert got is not None, detail
+    return dep, card
+
+
+@pytest.mark.asyncio
+async def test_start_on_a_card_whose_dependency_is_not_done_queues_it_and_names_the_dependency(
+        daemon, project, monkeypatch):
+    """The success criterion's first half: the press is accepted, the card
+    is queued where it stands, the sentence names what it waits for, and no
+    terminal opens — although the project has a free place."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    dep, card = _dependent_pair(store, project)
+    assert store.get(card["id"])["queue_state"] == ""
+
+    ok, detail = await d.dispatch_card(card["id"])
+    assert not ok
+    assert detail == ('Queued — Dark Army will start it once "the foundation" '
+                      "is done")
+    assert opened == [], "a card waiting on another must not open a terminal"
+    got = store.get(card["id"])
+    assert got["queue_state"] == "queued"
+    assert got["column_name"] == "backlog"
+    # The badge a frame later is the same sentence.
+    state = d._build_board_state()
+    by_id = {c["id"]: c for c in state["cards"]}
+    assert by_id[card["id"]]["queue_reason"] == detail
+
+
+@pytest.mark.asyncio
+async def test_a_second_press_on_a_dependency_held_card_says_it_is_already_queued(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    _dep, card = _dependent_pair(store, project)
+    await d.dispatch_card(card["id"])
+    stamp = store.get(card["id"])["queued_at"]
+
+    ok, detail = await d.dispatch_card(card["id"])
+    assert not ok
+    assert detail == _already_queued_reason(1, True)
+    assert store.get(card["id"])["queued_at"] == stamp
+    assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_the_drain_holds_a_dependency_held_card_silently(
+        daemon, project, monkeypatch):
+    """No candidate while the dependency is unfinished, and a replay says
+    nothing and writes nothing — the card stays queued, no orange line."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    _dep, card = _dependent_pair(store, project)
+    await d.dispatch_card(card["id"])
+    assert store.get(card["id"])["queue_state"] == "queued"
+
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == []
+    before = store.get(card["id"])
+    ok, detail = await d.dispatch_card(card["id"], queued_replay=True)
+    assert (ok, detail) == (False, "")
+    after = store.get(card["id"])
+    assert after["queue_state"] == "queued"
+    assert after["dispatch_error"] == ""
+    assert after["queued_at"] == before["queued_at"]
+    assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_held_card_starts_when_done(
+        daemon, project, monkeypatch):
+    """The success criterion's second half: the dependency reaches Done and
+    the next reconcile starts the queued card, with no second press."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    dep, card = _dependent_pair(store, project)
+    await d.dispatch_card(card["id"])
+    assert store.get(card["id"])["queue_state"] == "queued"
+    assert opened == []
+
+    store.update(dep["id"], {"column_name": "done"})
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == [card["id"]]
+    await d._flush_queue_dispatches()
+    assert opened == ["the waiter"]
+    got = store.get(card["id"])
+    assert got["queue_state"] == "" and got["link_state"] == "dispatching"
+    assert got["column_name"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_held_card_starts_on_manual_check(
+        daemon, project, monkeypatch):
+    """Finished and waiting only on a person's check counts as met — the
+    moment the dependency's own MANUAL CHECK badge lights, not when it
+    reaches Done."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    dep, card = _dependent_pair(store, project)
+    store.update(dep["id"], {"link_state": "live", "session_id": "s1",
+                             "column_name": "in_progress"})
+    _hear(d, "s1")
+    await d.dispatch_card(card["id"])
+    assert store.get(card["id"])["queue_state"] == "queued"
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == []
+
+    flagged, detail = store.flag_manual(dep["id"], "s1", "1. Open it and look.")
+    assert flagged is not None, detail
+    # The session is heard but not in the `running` bucket: it has stopped.
+    d._agents_snapshot_cache = {"running": [], "waiting": [{"session_id": "s1"}]}
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == [card["id"]]
+    await d._flush_queue_dispatches()
+    assert opened == ["the waiter"]
+    assert store.get(dep["id"])["column_name"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_flagged_while_its_session_still_works_holds(
+        daemon, project, monkeypatch):
+    """A flag raised mid-turn is not finished: while the dependency's
+    session is in the `running` bucket and heard, the card keeps waiting —
+    the badge's own predicate, so the tile and the gate agree."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    dep, card = _dependent_pair(store, project)
+    store.update(dep["id"], {"link_state": "live", "session_id": "s1",
+                             "column_name": "in_progress"})
+    _hear(d, "s1")
+    store.flag_manual(dep["id"], "s1", "1. Open it and look.")
+    d._agents_snapshot_cache = {"running": [{"session_id": "s1"}]}
+
+    ok, detail = await d.dispatch_card(card["id"])
+    assert not ok and "the foundation" in detail
+    assert store.get(card["id"])["queue_state"] == "queued"
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == []
+    assert opened == []
+    by_id = {c["id"]: c for c in d._build_board_state()["cards"]}
+    assert by_id[card["id"]]["dependencies"][0]["met"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_dependency_counts_as_met(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    dep, card = _dependent_pair(store, project)
+    ok, _detail = store.delete(dep["id"])
+    assert ok
+    assert store.get(card["id"])["queue_state"] == ""
+
+    ok, detail = await d.dispatch_card(card["id"])
+    assert ok, detail
+    assert opened == ["the waiter"]
+    # The stored id is left alone: a restore should still mean something.
+    assert dep["id"] in board_mod.parse_ids(store.get(card["id"])["blocked_by"])
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_held_card_never_blocks_the_card_behind_it(
+        daemon, project, monkeypatch):
+    """A waits on B and was queued first. Were A counted as "ahead", B could
+    never start and A would wait for B for ever — the 23 Aug deadlock one
+    rung on. B starts; A stays queued."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    running = _make(store, root=str(project), title="running",
+                    plan_path=_plan(project, "running", ["host/r.py"]))
+    store.update(running["id"], {"link_state": "live", "session_id": "s1",
+                                 "column_name": "in_progress"})
+    _hear(d, "s1")
+    b = _make(store, root=str(project), title="B",
+              plan_path=_plan(project, "b", ["host/b.py"]))
+    a = _make(store, root=str(project), title="A",
+              plan_path=_plan(project, "a", ["host/a.py"]))
+    store.update(a["id"], {"blocked_by": b["id"]})
+    await d.dispatch_card(a["id"])
+    await d.dispatch_card(b["id"])
+    assert store.get(a["id"])["queue_state"] == "queued"
+    assert store.get(b["id"])["queue_state"] == "queued"
+    assert store.get(a["id"])["queued_at"] <= store.get(b["id"])["queued_at"]
+
+    store.update(running["id"], {"link_state": "ended"})
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == [b["id"]]
+    await d._flush_queue_dispatches()
+    assert opened == ["B"]
+    assert store.get(a["id"])["queue_state"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_press_is_not_held_behind_a_dependency_held_card(
+        daemon, project, monkeypatch):
+    """The "no overtaking" rung counts only cards that could start: with a
+    free place, a press on B starts at once although A — waiting on B — is
+    already in the line."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    b = _make(store, root=str(project), title="B",
+              plan_path=_plan(project, "b", ["host/b.py"]))
+    a = _make(store, root=str(project), title="A",
+              plan_path=_plan(project, "a", ["host/a.py"]))
+    store.update(a["id"], {"blocked_by": b["id"]})
+    await d.dispatch_card(a["id"])
+    assert store.get(a["id"])["queue_state"] == "queued"
+
+    ok, detail = await d.dispatch_card(b["id"])
+    assert ok, detail
+    assert opened == ["B"]
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_hold_in_one_project_leaves_another_alone(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    _dep, card = _dependent_pair(store, project)
+    await d.dispatch_card(card["id"])
+    other = _make(store, root=str(project), title="elsewhere", project="other",
+                  plan_path=_plan(project, "other", ["host/o.py"]))
+    other_q = _make(store, root=str(project), title="other queued",
+                    project="other",
+                    plan_path=_plan(project, "other-q", ["host/q.py"]))
+    store.update(other_q["id"], {"queue_state": "queued", "queued_at": 1.0})
+
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == [other_q["id"]]
+    ok, detail = await d.dispatch_card(other["id"])
+    assert not ok  # behind its own project's queued card, not the hold
+    assert store.get(card["id"])["queue_state"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_the_ninth_press_on_a_dependency_held_card_is_refused_in_the_stores_words(
+        daemon, project, monkeypatch):
+    """`MAX_QUEUED_PER_PROJECT` stands: the ninth press is refused with the
+    store's sentence and the card is left with no `queue_state`."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    _dep, card = _dependent_pair(store, project)
+    for i in range(board_mod.MAX_QUEUED_PER_PROJECT):
+        filler = _make(store, root=str(project), title=f"filler {i}")
+        store.update(filler["id"], {"queue_state": "queued",
+                                    "queued_at": float(i + 1)})
+
+    ok, detail = await d.dispatch_card(card["id"])
+    assert not ok
+    assert detail == (f"bob already has {board_mod.MAX_QUEUED_PER_PROJECT} "
+                      "cards queued")
+    assert store.get(card["id"])["queue_state"] == ""
+    assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_start_project_queues_a_dependency_held_card_and_reports_it(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    dep, card = _dependent_pair(store, project)
+
+    ok, detail = await d.start_project(str(project))
+    assert ok, detail
+    assert detail.splitlines()[0] == "2 started or queued"
+    assert opened == ["the foundation"]
+    assert store.get(card["id"])["queue_state"] == "queued"
+    assert store.get(dep["id"])["link_state"] == "dispatching"
+
+
+def _flagged_dependency(d, store, project):
+    """A dependency bound to `s1`, flagged for a manual check by `s1`."""
+    dep, card = _dependent_pair(store, project)
+    store.update(dep["id"], {"link_state": "live", "session_id": "s1",
+                             "column_name": "in_progress"})
+    _hear(d, "s1")
+    flagged, detail = store.flag_manual(dep["id"], "s1", "1. Open it and look.")
+    assert flagged is not None, detail
+    assert flagged["manual_session_id"] == "s1"
+    return dep, card
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_flagged_then_reset_to_backlog_holds(
+        daemon, project, monkeypatch):
+    """The check failed and the card went back to Backlog; its steps stay on
+    the card, but it is not finished."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    dep, card = _flagged_dependency(d, store, project)
+    store.update(dep["id"], {"column_name": "backlog", "link_state": "",
+                             "session_id": ""})
+    d._agents_snapshot_cache = {"running": [], "waiting": []}
+    assert store.get(dep["id"])["manual_steps"]
+
+    ok, detail = await d.dispatch_card(card["id"])
+    assert not ok and '"the foundation"' in detail
+    assert store.get(card["id"])["queue_state"] == "queued"
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == []
+    assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_flagged_then_restarted_for_rework_holds(
+        daemon, project, monkeypatch):
+    """A rework run re-binds a new session while the old steps stay; that
+    session waiting between turns is not the flagged run finishing — and
+    `dispatching` on the way there is not either."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    dep, card = _flagged_dependency(d, store, project)
+    await d.dispatch_card(card["id"])
+    store.update(dep["id"], {"link_state": "dispatching"})
+    d._agents_snapshot_cache = {"running": [], "waiting": []}
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == []
+
+    store.bind_session(dep["id"], "s2")
+    _hear(d, "s2")
+    d._agents_snapshot_cache = {"running": [], "waiting": [{"session_id": "s2"}]}
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == []
+    by_id = {c["id"]: c for c in d._build_board_state()["cards"]}
+    assert by_id[card["id"]]["dependencies"][0]["met"] is False
+    assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_is_not_read_as_met_before_the_first_agents_snapshot(
+        daemon, project, monkeypatch):
+    """In the seconds after a restart no agents snapshot has arrived, so who
+    is working is unknown: a flagged dependency whose session is bound reads
+    as still working, and a person's press waits rather than starting."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    _dep, card = _flagged_dependency(d, store, project)
+    d._agents_snapshot_cache = {}
+
+    ok, detail = await d.dispatch_card(card["id"])
+    assert not ok and '"the foundation"' in detail
+    assert opened == []
+    assert store.get(card["id"])["queue_state"] == "queued"
+    # Once the snapshot arrives and the session has stopped, it goes.
+    d._agents_snapshot_cache = {"running": [], "waiting": [{"session_id": "s1"}]}
+    d._decide_queue_dispatches(store.cards())
+    assert d._queue_candidates == [card["id"]]
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_held_card_pressed_during_the_cooldown_names_the_dependency(
+        daemon, project, monkeypatch):
+    """`dispatch.guard`'s transient refusal (here the cooldown) still queues,
+    and a card that also waits on an unfinished card says which one rather
+    than blaming a full project."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    _dep, card = _dependent_pair(store, project)
+    d._dispatch_attempts[card["id"]] = time.time()
+
+    ok, detail = await d.dispatch_card(card["id"])
+    assert not ok
+    assert detail == ('Queued — Dark Army will start it once "the foundation" '
+                      "is done")
+    assert store.get(card["id"])["queue_state"] == "queued"
+    assert opened == []

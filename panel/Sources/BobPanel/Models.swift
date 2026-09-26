@@ -666,6 +666,11 @@ struct Agent: Decodable, Identifiable, Equatable {
     /// Empty for every provider but Claude and for a session that has finished
     /// nothing yet — absent must decode empty, never blank the pane.
     var lastReport = ""
+    /// The same report split into its labelled parts by the daemon
+    /// (`work_report.py`) — Asked, Changed, Verified, Unchecked, Card and a
+    /// one-line `headline`. `nil` where there is no report or the daemon is
+    /// older than the key; drawn through `WorkReport`, never re-parsed here.
+    var workReport: WorkReport.Parsed?
     /// The finished list's own word for this row — `done`, `cut`, `lost`
     /// or `end` (`session_stats.finish_word`), published by the daemon on
     /// finished rows only and drawn verbatim. "done" was the one word every
@@ -709,6 +714,7 @@ struct Agent: Decodable, Identifiable, Equatable {
         case lastText = "last_text"
         case lastSummary = "last_summary"
         case lastReport = "last_report"
+        case workReport = "work_report"
         case finishWord = "finish_word"
         case reviewReports = "review_reports"
         case reviewReportsOmitted = "review_reports_omitted"
@@ -782,6 +788,7 @@ struct Agent: Decodable, Identifiable, Equatable {
         lastText = c.value(.lastText, "")
         lastSummary = c.value(.lastSummary, "")
         lastReport = c.value(.lastReport, "")
+        workReport = c.maybe(.workReport)
         finishWord = c.value(.finishWord, "")
         reviewReports = c.value(.reviewReports, [])
         reviewReportsOmitted = c.value(.reviewReportsOmitted, 0)

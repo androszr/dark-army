@@ -27,8 +27,11 @@ ADAPTERS = {'.claude': '.claude/skills/ship/SKILL.md',
             '.agents': '.agents/skills/ship/SKILL.md'}
 LOCAL_REFERENCES = ('.claude/skills/ship/references/common.md',
                     '.claude/skills/ship/references/plan.md',
-                    '.claude/skills/ship/references/implement.md',
-                    '.claude/skills/ship/references/scout.md')
+                    '.claude/skills/ship/references/implement.md')
+#: `/ship scout` is an alias: ship's scout mode loads the scout skill's own
+#: adapter, which carries its reference and checker beside it.
+SCOUT_SKILL = '.claude/skills/scout/SKILL.md'
+SCOUT_REFERENCE = '.claude/skills/scout/references/scout.md'
 
 
 def resolved(provider):
@@ -42,9 +45,12 @@ def workflows():
     for profile in ('web', 'ios', 'both'):
         rendered = pack_render.render(profile, 'xx', 'fixture-project')
         assert rendered['.agents/skills/ship/SKILL.md'] == rendered['.claude/skills/ship/SKILL.md']
-        for reference in ('common', 'plan', 'implement', 'scout'):
+        for reference in ('common', 'plan', 'implement'):
             assert rendered[f'.agents/skills/ship/references/{reference}.md'] == \
                 rendered[f'.claude/skills/ship/references/{reference}.md']
+        for name in ('SKILL.md', 'references/scout.md', 'scout_check.py'):
+            assert rendered[f'.agents/skills/scout/{name}'] == \
+                rendered[f'.claude/skills/scout/{name}']
         yield profile, ship_efficiency.resolve_rendered_workflow(
             rendered, '.agents/skills/ship/SKILL.md')
 
@@ -54,12 +60,22 @@ def test_both_local_adapters_load_the_same_references_per_mode():
     first, and each mode loads exactly common plus its own reference."""
     for provider, adapter in ADAPTERS.items():
         text = (ROOT / adapter).read_text()
-        for mode in ('plan', 'implement', 'scout'):
+        for mode in ('plan', 'implement'):
             refs = ship_efficiency.workflow_reference_set(adapter, text, mode)
             assert refs == [LOCAL_REFERENCES[0],
                             f'.claude/skills/ship/references/{mode}.md'], (provider, mode)
-        for reference in LOCAL_REFERENCES:
+        refs = ship_efficiency.workflow_reference_set(adapter, text, 'scout')
+        assert refs == [SCOUT_SKILL], provider
+        assert '`/ship scout <brief>` is an alias' in text, provider
+        for reference in LOCAL_REFERENCES + (SCOUT_SKILL, SCOUT_REFERENCE):
             assert (ROOT / reference).is_file()
+    # The old scout mode files moved into the scout skill.
+    assert not (ROOT / '.claude/skills/ship/references/scout.md').exists()
+    assert not (ROOT / '.claude/skills/ship/scout_check.py').exists()
+    # Codex has its own scout adapter pointing at the shared reference.
+    codex = (ROOT / '.agents/skills/scout/SKILL.md').read_text()
+    assert SCOUT_REFERENCE in codex
+    assert '.claude/skills/scout/scout_check.py' in codex
     # A mode change is an explicit load of the other reference.
     for provider in ADAPTERS:
         adapter = (ROOT / ADAPTERS[provider]).read_text()
@@ -217,7 +233,7 @@ def _check_local_workflow(provider, text):
     assert '| `bc-security-reviewer` | — |' in banner_map
     assert '`security.txt`' in banner_map
     _check_development_and_graph_gates(_section(text, 'Gates'))
-    close = _section(text, 'Phase 7b: close the card, if and only if everything was checked')
+    close = _section(text, 'Phase 7b: close the card once every check ran or is written down as a check file')
     assert 'no integration or security reviewer returned `BLOCK`' in close
     assert 'no required capability or review remains incomplete' in close
     packet = _section(text, 'The handoff packet')

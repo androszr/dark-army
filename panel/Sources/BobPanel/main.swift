@@ -161,6 +161,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var settingsWindow: SettingsWindowController!
     /// The one reused knowledge window, following Settings → Projects.
     var knowledgeWindow: KnowledgeWindowController!
+    /// The one reused Checks window, following Settings → Projects → Checks
+    /// and a card window's Open in Checks.
+    var manualChecksWindow: ManualChecksWindowController!
     /// The one reused access-log window, following Settings → Security and
     /// the Inbox's Open log.
     var accessLogWindow: AccessLogWindowController!
@@ -273,6 +276,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         knowledgeWindow.onOcclusionChange = { [weak self] in self?.publishSeen() }
         settingsWindow.actions.onKnowledge = { [weak self] root in
             self?.knowledgeWindow.present(root: root)
+        }
+        manualChecksWindow = ManualChecksWindowController(client: client)
+        manualChecksWindow.screenHint = { [weak self] in self?.panel?.screen }
+        manualChecksWindow.onOcclusionChange = { [weak self] in self?.publishSeen() }
+        manualChecksWindow.onReveal = { [weak self] cardId in
+            guard let self else { return }
+            self.show(x: nil, y: nil)
+            self.boardState.requestReveal(cardId)
+        }
+        settingsWindow.actions.onManualChecks = { [weak self] root in
+            self?.manualChecksWindow.present(root: root)
+        }
+        boardState.onOpenManualCheck = { [weak self] path in
+            self?.manualChecksWindow.present(path: path)
         }
         accessLogWindow = AccessLogWindowController(client: client)
         accessLogWindow.screenHint = { [weak self] in self?.panel?.screen }
@@ -482,6 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         cardWindow?.applyScale(percent)
         knowledgeWindow?.applyScale(percent)
+        manualChecksWindow?.applyScale(percent)
         accessLogWindow?.applyScale(percent)
     }
 
@@ -514,6 +532,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.forceClose()
         PairingWindowController.current?.forceClose()
         knowledgeWindow?.forceClose()
+        manualChecksWindow?.forceClose()
         accessLogWindow?.forceClose()
         // Never the app-wide hide here: on a `.regular` app it takes every
         // window down, including the card window this path already closed.
@@ -568,6 +587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.forceClose()
         PairingWindowController.current?.forceClose()
         knowledgeWindow?.forceClose()
+        manualChecksWindow?.forceClose()
         accessLogWindow?.forceClose()
         client.visible = false
         client.boardOpen = false
@@ -653,6 +673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             || (cardWindow?.isVisiblyOnScreen ?? false)
             || (settingsWindow?.isVisiblyOnScreen ?? false)
             || (knowledgeWindow?.isVisiblyOnScreen ?? false)
+            || (manualChecksWindow?.isVisiblyOnScreen ?? false)
             || (accessLogWindow?.isVisiblyOnScreen ?? false)
     }
 

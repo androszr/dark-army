@@ -66,25 +66,25 @@ def _rows(binary: pathlib.Path, directory: pathlib.Path, slugs: list[str]) -> li
         input=json.dumps([{"slug": slug} for slug in slugs]),
         capture_output=True, text=True, timeout=30, check=False)
     assert proc.returncode == 0, proc.stderr or proc.stdout
-    # `URL.lastPathComponent` prints ś decomposed; the slug on the wire is composed.
+    # NFC, so a decomposed file name would still compare equal to the wire's slug.
     return [unicodedata.normalize("NFC", line) for line in proc.stdout.splitlines() if line]
 
 
 def test_ptys_resolves_inside_the_portraits_directory_and_a_climb_does_not(face_bin, tmp_path):
-    """`ptyś` is a file in the folder. `../ptyś`, `mrrobot` and an empty
+    """`ptys` is a file in the folder. `../ptys`, `mrrobot` and an empty
     slug are not, and the hit's parent is the portraits directory."""
     portraits = tmp_path / "portraits"
     portraits.mkdir()
-    (portraits / "ptyś.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (portraits / "ptys.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     (portraits / "vex.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     # A portrait sitting *beside* the folder must not be reachable by climbing.
-    (tmp_path / "ptyś.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (tmp_path / "ptys.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     rows = _rows(face_bin, portraits, [
-        "ptyś", "vex", "../ptyś", "..", ".", "", "mrrobot", "dom",
-        "ptyś/../vex", "cipher",
+        "ptys", "vex", "../ptys", "..", ".", "", "mrrobot", "dom",
+        "ptys/../vex", "cipher",
     ])
     assert rows == [
-        "HIT ptyś.png inside",
+        "HIT ptys.png inside",
         "HIT vex.png inside",
         "MISS", "MISS", "MISS", "MISS", "MISS", "MISS", "MISS",
         "MISS",  # cipher is on the roster, and the file is not there

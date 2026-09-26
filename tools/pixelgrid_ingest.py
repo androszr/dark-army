@@ -77,7 +77,7 @@ except ImportError:                                   # pragma: no cover
 CAST = (
     "cipher", "vex", "ledger", "mira", "hex", "relay", "forge",
     "watch", "audit", "proxy", "quiet", "nyx", "canon", "velvet",
-    "androll", "captcha", "sawa", "franio", "zosia", "ptyś",
+    "androll", "captcha", "sawa", "franio", "zosia", "ptys",
     "overwatch",
 )
 STATES = ("work", "sleep", "alert")

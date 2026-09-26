@@ -232,12 +232,18 @@ the closing note's second sentence states how the result meets, or does not
 meet, that criterion. One plain sentence; the verifier's `Success criterion`
 row is its source, and the person, not you, decides whether it is accepted.
 
-**And flag the card.** If this run is working a Dark Army board card and the tool
-`dark_army_needs_manual_check` is available, call it with those same steps so the
-board shows the card is waiting on a person — a badge on the card, not a
-sentence in a terminal somebody has to scroll back to. Call it **instead of**
-`dark_army_close_card`, never as well as it: a card with an outstanding check is not
-done. Born before the rename: `bob_*`.
+**And flag the card, then close it.** If this run is working a Dark Army board
+card, a check you could not make is written first as its own file,
+`manual-check/<YYYY-MM-DD>-<slug>/check.md` at the project root, in the shape
+the implement reference gives (the answer block, `## Steps`, `## Why not
+automated`), and `python3 .claude/skills/ship/manual_check.py` on it prints
+`ok`. Then, when the tool `dark_army_needs_manual_check` is available, call it
+with those same steps and the file's absolute path, so the board shows the
+check is waiting on a person — a badge on the card, not a sentence in a
+terminal somebody has to scroll back to — and **then** `dark_army_close_card`:
+a card with an open check goes to Done, and the check waits in the Checks
+section until a person records Passed or Failed. Flag first, close second;
+never one instead of the other. Born before the rename: `bob_*`.
 
 ## Releasing is not your job
 

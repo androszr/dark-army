@@ -218,7 +218,12 @@ def test_every_acting_control_dims_and_the_pressed_one_relabels():
     # control that dims with the rest.
     # 17 on 22 Sep 2026: DONE & CLOSE above the folds on an ended run
     # joined as an acting control that dims with the rest.
-    assert text.count(".disabled(sending)") == 17
+    # 19 on 25 Sep 2026: PASSED and FAILED on a card flagged with a check
+    # file joined as two armed acting controls that dim with the rest.
+    # 21 with card dependencies (`docs/card-dependencies.md`): WAITS ON's ✕
+    # and its Add… picker are acting controls and dim with the rest; the
+    # picker relabels with the press's mark (the `.dependencies` slot).
+    assert text.count(".disabled(sending)") == 21
     assert "private var sending: Bool { settlingHere }" in text
     assert text.count(".disabled(settlingHere)") == 1
     assert "pendingStartWhenPlanned = nil" in text, (

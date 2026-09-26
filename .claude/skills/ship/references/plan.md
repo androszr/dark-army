@@ -272,3 +272,35 @@ verbatim, as the last line of your final message (that line is what files
 the tab under Idle rather than *Needs you*). Never retry a refusal and
 never `/clear`. Editing the project copy does not update the
 installed helper.
+
+## Batch: several cards in one session
+
+Entered when the prompt's first line begins `/ship batch:` — Dark Army's
+Refine on several ticked Prep cards. The prompt lists `## Card k of n —
+<title>` blocks, each with a `Card id:` line, the card's summary,
+instructions and `Objective:` lines. Every card is its own refinement, but
+the person is asked **once, at the start**, and the plans are written
+**in parallel**:
+
+1. Phase 1 for **every** card before any planner runs: assess each card
+   (at most 3 questions per card), then ask them all together — one
+   question call carrying as many as it takes (Claude: up to 4 per
+   `AskUserQuestion`, calls back to back), every question's text
+   prefixed `Card k of n — <title>: `. A card needing none records its
+   assumptions. Never ask again once planning starts.
+2. Phase 2 for every card: its plan path from its title, distinct across
+   the batch (suffix on a clash within it, as on disk).
+3. Phase 3 for every card **at once**: one `bc-planner` spawn per card in
+   the same message (parallel), each with its own answers, its own
+   `plan_path` and one extra packet line, `card_id: <that Card id>`; the
+   planner writes it into the plan's `- **Card:**` header.
+4. As each planner returns: Phase 4 on its plan, then Phase 5, attach
+   **immediately** — `dark_army_attach_plan({ path })`, no card argument,
+   the header names the card — so an early exit leaves every finished
+   card attached. A BLOCK holds only that card: attach the rest, then end
+   the turn with one `<!-- bob-tldr -->` naming every blocked card; on the
+   answer, resume Phase 4 for those cards alone.
+
+Never file a new card for a batch member; a refused attach is reported in
+the summary and that card stays in Prep. The summary names every card and
+the column it actually landed in. Phase 5b runs once, after the last card.

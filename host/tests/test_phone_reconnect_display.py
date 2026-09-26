@@ -320,25 +320,14 @@ def test_the_background_path_gains_nothing():
 
 
 def test_no_new_theme_token():
-    """The reconnect bar composes its look from the shipped palette alone.
-
-    What is pinned is what the name says: **no new token**. It used to be
-    asserted as `git diff --stat` over the two `Theme.swift` files being
-    empty, which is a claim about the working tree rather than about the
-    palette — it fails the moment anybody edits either file for any reason at
-    all, and `plans/2026-09-06-phone-dynamic-type-and-voiceover.md` edits the
-    phone's `mono` on purpose. So the instrument is now the token list itself:
-    the two files declare the same colour tokens, and it is the set the app
-    shipped with. The drift between the two files stays
-    `test_phone_theme_drift.py`'s job.
-    """
+    """The reconnect bar adds no private color outside generated Signal."""
     token = re.compile(r"static let (\w+) = Color\(")
-    phone = set(token.findall(_read(ROOT / "ios" / "BobPhone" / "Theme.swift")))
+    phone = set(token.findall(_read(ROOT / "ios" / "BobPhone" / "SignalTokens.generated.swift")))
     panel = set(token.findall(
-        _read(ROOT / "panel" / "Sources" / "BobPanel" / "Theme.swift")))
+        _read(ROOT / "panel" / "Sources" / "BobPanel" / "SignalTokens.generated.swift")))
     assert phone, "no colour tokens parsed; the needle has rotted"
     assert phone == panel, phone ^ panel
     assert phone == {
-        "bg", "bar", "well", "phosphor", "phosphorBright", "dim", "faint",
-        "hair", "rule", "alarm", "amber", "card",
-    }, "a new colour token was added; the bar composes from the shipped set"
+        "canvas", "surface", "raised", "well", "text", "muted", "accent",
+        "accentInk", "line", "control", "attention", "danger",
+    }, "the generated Signal palette changed without revisiting reconnect"

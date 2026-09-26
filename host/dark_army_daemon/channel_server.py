@@ -96,10 +96,10 @@ NAMES = (CURRENT_NAME, LEGACY_NAME)
 #: `bob_add_card` under `bob`. A process offers only its own prefix.
 TOOL_PREFIX = {CURRENT_NAME: "dark_army_", LEGACY_NAME: "bob_"}
 
-#: The eight verbs, in the order `tools/list` offers them to Claude.
+#: The ten verbs, in the order `tools/list` offers them to Claude.
 VERBS = ("add_card", "close_card", "attach_plan", "attach_report",
          "needs_manual_check", "answer_card", "knowledge_read",
-         "knowledge_write")
+         "knowledge_write", "request_start", "next_card")
 
 
 def _known_name(name) -> str:
@@ -330,6 +330,14 @@ CARD_TOOL_NAME = tool_name("add_card")
 #: model field would ride silently into that press and choose which
 #: differently priced model their money is spent on. Every agent-filed card is
 #: Default, and a person who wants another model picks it on the card.
+#:
+#: `depends_on` is annotation of the same kind as `stages`: it links the new
+#: card to cards already on the board, mints nothing, and can only ever hold
+#: a card a person later presses Start on. Its bounds are the store's
+#: `MAX_BLOCKERS` and `MAX_TITLE_CHARS`, restated because this file is
+#: copied out and runs with no package to import them from.
+DEPENDS_ON_MAX_ITEMS = 8
+DEPENDS_ON_MAX_CHARS = 200
 CARD_TOOL = {
     "name": CARD_TOOL_NAME,
     "description": (
@@ -393,6 +401,20 @@ CARD_TOOL = {
                                      "Use this whenever you file a card for "
                                      "a finished plan, and never write the "
                                      "plan's path into notes instead.")},
+            # The cards this one waits on, for a card filed *without* a plan
+            # (a planned card takes them from its `Depends on:` header). No
+            # capability: the daemon resolves each entry within the card's
+            # own project and the store refuses a cycle, a self-wait or
+            # another project; a dependency only ever *holds* a card a person
+            # has pressed Start on. The worst a forged value achieves is a
+            # Prep card that waits on something — visible on the card.
+            "depends_on": {"type": "array",
+                           "maxItems": DEPENDS_ON_MAX_ITEMS,
+                           "items": {"type": "string",
+                                     "maxLength": DEPENDS_ON_MAX_CHARS},
+                           "description": ("ids or exact titles of cards in "
+                                           "the same project that must finish "
+                                           "first")},
         },
         "required": ["title"],
     },
@@ -442,6 +464,9 @@ ATTACH_TOOL_NAME = tool_name("attach_plan")
 #: runs, nothing is typed anywhere, and the human still reads the card and
 #: drags it. Strictly less than `dark_army_close_card` already tolerates. Admitting
 #: a `card_id` here would delete that justification, not widen an API.
+#: A session refining several cards at once names its card through the plan
+#: file's `- **Card:**` header, never through this call, and the daemon lets
+#: that header choose only among the cards it bound to the session itself.
 #:
 #: There is no `session_id` (a caller does not get to say who it is) and no
 #: `column` (there is one destination and it is Backlog — the Prep column's
@@ -453,7 +478,9 @@ ATTACH_TOOL = {
         "session was started to refine (or the one it filed with "
         "dark_army_add_card a moment ago). Give the plan file's path inside this "
         "project. The card moves from Prep to Backlog with the plan on it — "
-        "do not also create a second card for the same plan."
+        "do not also create a second card for the same plan. When this "
+        "session is refining several cards at once, the plan's header line "
+        "`- **Card:** <id>` says which card this plan is for."
     ),
     "inputSchema": {
         "type": "object",
@@ -484,17 +511,22 @@ REPORT_TOOL = {
     "name": REPORT_TOOL_NAME,
     "description": (
         "Attach the report this scout session wrote to the Dark Army board card "
-        "it is bound to (dark_army_attach_report). Give the report file's path "
-        "inside this project. The card stays In progress; then "
-        "dark_army_close_card with the report's path in the note."
+        "it is bound to (dark_army_attach_report). The report lives at "
+        "scout/<YYYY-MM-DD>-<slug>/report.md in this project; give its "
+        "absolute path. A report under scout/ must pass "
+        "python3 .claude/skills/scout/scout_check.py or it is refused. The "
+        "card stays In progress; then dark_army_close_card with the "
+        "report's absolute path in the note."
     ),
     "inputSchema": {
         "type": "object",
         "properties": {
             "path": {"type": "string", "maxLength": 1024,
                      "description": ("The report's path — a Markdown file "
-                                     "inside this project, absolute or "
-                                     "relative to the project root.")},
+                                     "inside this project, normally "
+                                     "scout/<YYYY-MM-DD>-<slug>/report.md; "
+                                     "absolute preferred, or relative to "
+                                     "the project root.")},
         },
         "required": ["path"],
     },
@@ -509,7 +541,9 @@ CLOSE_TOOL = {
         "anything is left for a person to try by hand, say nothing and leave "
         "the card in progress. It closes the one card this session is bound "
         "to and can touch no other; the note is the single sentence somebody "
-        "reading the Done column will see under your name."
+        "reading the Done column will see under your name. In a batch of "
+        "cards, this closes the card Dark Army shows In progress for you; "
+        "call dark_army_next_card afterwards."
     ),
     "inputSchema": {
         "type": "object",
@@ -528,12 +562,16 @@ CLOSE_TOOL = {
 #: thing about the same card. Named for what it does to Dark Army, like its siblings.
 MANUAL_TOOL_NAME = tool_name("needs_manual_check")
 
-#: One property, and the omissions are `CLOSE_TOOL`'s security property made in
-#: this verb's terms — with strictly less to buy back.
+#: Two properties — the steps, and the optional `path` of the check file the
+#: session wrote under the project's `manual-check/` folder, which the daemon
+#: re-validates (inside the card's root, in that folder, passing
+#: `manual_check.check`) — and the omissions are `CLOSE_TOOL`'s security
+#: property made in this verb's terms — with strictly less to buy back.
 #:
 #: **There is no `card_id`.** The daemon resolves the card from the calling
 #: session, through `_channel_session(port)`, and refuses everything else: no
-#: attribution, no card, more than one open card, or a card already in Done.
+#: attribution, no card, more than one open card, or more than one Done card
+#: that session closed when it has no open one.
 #: What a forger who reaches this port achieves is a badge and a paragraph of
 #: steps on a card that session is *already executing* — no column moves, no
 #: session starts, nothing is typed anywhere, and a person clears it with one
@@ -550,8 +588,12 @@ MANUAL_TOOL = {
     "description": (
         "Say that the work on this session's Dark Army board card is finished but "
         "something is left for a person to check by hand, and give them the "
-        "steps. Use it instead of dark_army_close_card, not as well as it: a card "
-        "with an outstanding check stays in progress. Write the steps as a "
+        "steps. First write the check file at "
+        "manual-check/<YYYY-MM-DD>-<slug>/check.md and run "
+        "python3 .claude/skills/ship/manual_check.py on it; call this with the "
+        "steps and that file's path, then call dark_army_close_card: a card "
+        "with an open check goes to Done, and the check waits in the Checks "
+        "section until a person records Passed or Failed. Write the steps as a "
         "numbered list a non-developer could follow - what to open, what to "
         "press, what they should see - and end with one line saying why a "
         "test could not do it. If you can check it in code instead, do that "
@@ -565,6 +607,11 @@ MANUAL_TOOL = {
                                       "beginning 'Why not automated:'. Plain "
                                       "words, one action per line, naming the "
                                       "surface and what should happen.")},
+            "path": {"type": "string", "maxLength": 1024,
+                     "description": ("Absolute path of the check file you "
+                                     "wrote at manual-check/<YYYY-MM-DD>-"
+                                     "<slug>/check.md, checked with python3 "
+                                     ".claude/skills/ship/manual_check.py.")},
         },
         "required": ["steps"],
     },
@@ -678,6 +725,69 @@ KNOWLEDGE_WRITE_TOOL = {
         },
         "required": ["key", "answer"],
     },
+}
+
+
+#: The ninth tool: Mission Control asking the person to start a card.
+#: Named for what it does to Dark Army, like its siblings.
+START_ASK_TOOL_NAME = tool_name("request_start")
+
+#: **This starts nothing**, and that is the whole of its security property.
+#: The card id crosses the wire — the one board verb where it does — because
+#: the verb's only effect is an entry on Needs you, on the Mac and the phone,
+#: that opens the card; the person's own press on START is what starts it
+#: (`BoardVerbsMixin.ask_start`), and Dismiss is their No. What a forger who
+#: reaches this port achieves is an entry somebody dismisses. The daemon
+#: refuses every caller but the Mission Control session. Claude only: Codex's
+#: helper is the narrower board list and Mission Control is a Claude session.
+START_ASK_TOOL = {
+    "name": START_ASK_TOOL_NAME,
+    "description": (
+        "Ask the person to start one Dark Army board card. This does not start "
+        "it: the card appears on the person's Needs you list, on the Mac and "
+        "the phone, as 'start asked', and it starts only when they open it "
+        "and press START themselves (Dismiss says no). Use it when the person "
+        "asked you to start a card. Only Mission Control may call it. Give "
+        "the card's id, as /api/board or /api/state shows it."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "card_id": {"type": "string", "maxLength": 64,
+                        "description": "The card's id."},
+        },
+        "required": ["card_id"],
+    },
+}
+
+
+#: The tenth tool: a batch session saying it has finished (or is leaving) the
+#: card it is on and is ready for the next. Named for what it does to Dark
+#: Army, like its siblings.
+NEXT_TOOL_NAME = tool_name("next_card")
+
+#: **No properties at all**, and the omission is `CLOSE_TOOL`'s security
+#: property made in this verb's terms. The port is the addressing and the
+#: scope is the defence: the daemon resolves the calling session through
+#: `_channel_session(port)` and moves only *that* session on to the next card
+#: of the batch the person ticked at the press — a card they already chose for
+#: it. What a forger who reaches this port achieves is this session skipping
+#: ahead in its own batch, with the card it left marked as ended work for a
+#: person to look at. It starts nothing and names no card; admitting a
+#: `card_id` would turn an unauthenticated socket into a way to bind any
+#: session to any card. Codex gets it on the close verb's argument: it writes
+#: a board row and types nothing.
+NEXT_TOOL = {
+    "name": NEXT_TOOL_NAME,
+    "description": (
+        "In a batch of Dark Army board cards, call this after closing the "
+        "card you are on (dark_army_needs_manual_check first if a check is "
+        "left, then dark_army_close_card), or after deciding to leave it "
+        "unclosed. Dark Army binds you to the next waiting card and answers "
+        "with its title and plan, or says the batch is finished. It starts "
+        "nothing and takes no card id."
+    ),
+    "inputSchema": {"type": "object", "properties": {}},
 }
 
 
@@ -822,9 +932,23 @@ def _tools_for_host(host: str) -> list[dict]:
         # reaches the port achieves is moving a card that session is already
         # bound to — strictly less than `close_terminal` already tolerates
         # from the same host.
-        return [CARD_TOOL, CLOSE_TOOL, ATTACH_TOOL, REPORT_TOOL]
+        #
+        # `dark_army_needs_manual_check` joins on the same argument and for
+        # the same cost: without it a Codex run whose only open item was a
+        # hand-check could neither close its card nor release its place, so
+        # the project's queue waited on it. It writes steps on the one card
+        # the session is bound to and moves nothing, attributed by the same
+        # fresh proof as the close.
+        #
+        # `dark_army_next_card` joins on the close verb's argument too: it
+        # moves the calling session on to the next card of the batch the
+        # person ticked, writes board rows and types nothing, attributed by
+        # the same fresh proof.
+        return [CARD_TOOL, CLOSE_TOOL, ATTACH_TOOL, REPORT_TOOL, MANUAL_TOOL,
+                NEXT_TOOL]
     return [CARD_TOOL, CLOSE_TOOL, ATTACH_TOOL, REPORT_TOOL, MANUAL_TOOL,
-            ANSWER_TOOL, KNOWLEDGE_READ_TOOL, KNOWLEDGE_WRITE_TOOL]
+            ANSWER_TOOL, KNOWLEDGE_READ_TOOL, KNOWLEDGE_WRITE_TOOL,
+            START_ASK_TOOL, NEXT_TOOL]
 
 
 def host_from_argv(argv=None) -> str:
@@ -1461,7 +1585,69 @@ class ChannelServer:
             return self._call_knowledge_read(args)
         if verb == "knowledge_write":
             return self._call_knowledge_write(args)
+        if verb == "request_start":
+            return self._call_request_start(args)
+        if verb == "next_card":
+            return self._call_next_card(args)
         return self._tool_result(f"unknown tool: {name}", is_error=True)
+
+    def _call_next_card(self, args: dict) -> dict:
+        """`dark_army_next_card`. See `NEXT_TOOL`: no card id crosses this
+        boundary, and `args` is ignored entirely — the schema declares no
+        properties, and honouring one that arrived anyway would be the first
+        step towards naming somebody else's card."""
+        reply = self.call_daemon({
+            "type": "board_next_request",
+            # The port is the whole of the addressing: the daemon resolves
+            # *who is asking* and moves only that session on.
+            "port": self.port,
+            "pid": os.getppid(),
+        })
+        if reply is None:
+            return self._tool_result(
+                "Dark Army did not answer — no card was bound.", is_error=True)
+        if not reply.get("ok"):
+            return self._tool_result(
+                str(reply.get("detail") or "Dark Army refused to move on."),
+                is_error=True)
+        if not reply.get("card_id"):
+            return self._tool_result("No card left; the batch is finished.")
+        title = str(reply.get("title") or "").strip() or "untitled"
+        plan = str(reply.get("plan_path") or "").strip()
+        rank = int(reply.get("rank") or 0)
+        size = int(reply.get("size") or 0)
+        return self._tool_result(
+            f"Now on card {rank} of {size}: {title} — Plan: {plan}")
+
+    def _call_request_start(self, args: dict) -> dict:
+        """`dark_army_request_start`. See `START_ASK_TOOL`: it asks, it never
+        starts. The empty-id refusal is local as well as at the daemon,
+        `_call_close_card`'s reasoning."""
+        card_id = str(args.get("card_id") or "").strip()[:64]
+        if not card_id:
+            return self._tool_result("name the card by its id", is_error=True)
+        reply = self.call_daemon({
+            "type": "board_start_ask_request",
+            # Who is asking is resolved by the daemon from the port, never
+            # said here.
+            "port": self.port,
+            "pid": os.getppid(),
+            "card_id": card_id,
+        })
+        if reply is None:
+            return self._tool_result(
+                "Dark Army did not answer — nothing was asked.", is_error=True)
+        if not reply.get("ok"):
+            return self._tool_result(
+                str(reply.get("detail") or "Dark Army refused the ask."),
+                is_error=True)
+        title = str(reply.get("title") or "").strip()
+        where = f" ({title})" if title else ""
+        return self._tool_result(
+            f"Asked{where}: the card is on the person's Needs you list as "
+            "'start asked'. It has not started — it starts when they open it "
+            "and press START, and Dismiss is their no. Tell them that; do not "
+            "ask again unless they say so.")
 
     def _call_knowledge_read(self, args: dict) -> dict:
         """`dark_army_knowledge_read`. No project crosses this boundary — see
@@ -1571,7 +1757,7 @@ class ChannelServer:
         if not steps:
             return self._tool_result("a manual check needs its steps",
                                      is_error=True)
-        reply = self.call_daemon({
+        message = {
             "type": "board_manual_request",
             # The port is the whole of the addressing. There is deliberately no
             # card id: the daemon resolves *who is asking* and flags only the
@@ -1579,7 +1765,13 @@ class ChannelServer:
             "port": self.port,
             "pid": os.getppid(),
             "steps": steps,
-        })
+        }
+        # The check file rides only when one was named: an empty path sends
+        # exactly the message this verb sent before the argument existed.
+        path = str(args.get("path") or "").strip()[:1024]
+        if path:
+            message["path"] = path
+        reply = self.call_daemon(message)
         if reply is None:
             return self._tool_result(
                 "Dark Army did not answer — the card was not flagged.", is_error=True)
@@ -1590,9 +1782,10 @@ class ChannelServer:
         title = str(reply.get("title") or "").strip()
         where = f" ({title})" if title else ""
         return self._tool_result(
-            f"Flagged on Dark Army's board{where} — the card stays in progress "
-            "wearing a manual-check badge with your steps on it, until a "
-            "person presses Mark checked.")
+            f"Flagged on Dark Army's board{where} — the card wears a "
+            "manual-check badge with your steps on it until a person records "
+            "the outcome. Now close the card with dark_army_close_card: a card "
+            "with an open check goes to Done.")
 
     def _call_attach_plan(self, args: dict) -> dict:
         """`dark_army_attach_plan`. No card id crosses this boundary — see
@@ -1719,6 +1912,18 @@ class ChannelServer:
                        if str(v).strip()][:12]
             if isinstance(args.get("stages"), list)
             else str(args.get("stages") or "")[:600],
+            # Ids or exact titles, resolved by the daemon within the card's
+            # own project. Clamped here for `stages`' reason: the payload
+            # stays bounded whatever JSON the model emitted, and a lone string
+            # is one reference rather than a refusal.
+            "depends_on": [str(v).strip()[:DEPENDS_ON_MAX_CHARS]
+                           for v in (args.get("depends_on") or [])
+                           if isinstance(v, (str, int)) and str(v).strip()
+                           ][:DEPENDS_ON_MAX_ITEMS]
+            if isinstance(args.get("depends_on"), list)
+            else ([str(args.get("depends_on")).strip()[:DEPENDS_ON_MAX_CHARS]]
+                  if isinstance(args.get("depends_on"), str)
+                  and str(args.get("depends_on")).strip() else []),
         })
         if reply is None:
             return self._tool_result(
@@ -1728,11 +1933,18 @@ class ChannelServer:
                 str(reply.get("detail") or "Dark Army refused the card."),
                 is_error=True)
         where = reply.get("project") or "this project"
+        # The card is filed whatever became of its links; a list the daemon
+        # could not resolve is said here in its own words, after the rest.
+        links = str(reply.get("dependencies_detail") or "").strip()
+        links_note = (f" Its links to other cards were not saved: {links}. "
+                      "Tell the person which cards it should wait on."
+                      if links else "")
         if reply.get("plan_attached"):
             return self._tool_result(
                 f"Added to Dark Army's Backlog under {where} with the plan "
                 "attached. Nothing runs until a human presses Start. Do not "
-                f"call {tool_name('attach_plan', self.name)} for this plan.")
+                f"call {tool_name('attach_plan', self.name)} for this plan."
+                + links_note)
         if str(args.get("plan") or "").strip():
             return self._tool_result(
                 f"Added to Dark Army's Prep column under {where}, but the plan "
@@ -1740,13 +1952,13 @@ class ChannelServer:
                 + (str(reply.get("plan_detail") or "").strip()
                    or "Dark Army did not say why")
                 + ". Tell the person which card and which plan, and do not "
-                "file the card again.",
+                "file the card again." + links_note,
                 is_error=True)
         return self._tool_result(
             f"Added to Dark Army's Prep column under {where}. Nothing runs until a "
             "human acts on it — it still needs refining into a plan. (A plan "
             "this session has already written goes on the card with this "
-            "tool's `plan` argument, not in its notes.)")
+            "tool's `plan` argument, not in its notes.)" + links_note)
 
     def handle_stdio_message(self, msg) -> None:
         if not isinstance(msg, dict):

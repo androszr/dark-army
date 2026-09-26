@@ -106,4 +106,39 @@ final class OriginRowTests: XCTestCase {
         """)
         XCTAssertEqual(a.subagentSummary, "+2 · bc-verifier · Rename the ladder")
     }
+
+    func testFleetRowNamesTheWorkingHelperBeforeTheTask() throws {
+        let a = try agent("""
+        {"session_id": "s1", "name": "Implement memory door soundtrack",
+         "subagents": 1, "subagent_rows": [
+          {"agent_id": "a1", "subagent_type": "vs-implementer", "activity": "working"}]}
+        """)
+        XCTAssertEqual(ProcessRow.commandText(for: a),
+                       "vs-implementer · Implement memory door soundtrack")
+    }
+
+    func testFleetRowPutsTheTitleOnItsOwnLineUnderTheHelper() throws {
+        let a = try agent("""
+        {"session_id": "s1", "name": "Implement memory door soundtrack",
+         "subagents": 1, "subagent_rows": [
+          {"agent_id": "a1", "subagent_type": "vs-implementer", "activity": "working"}]}
+        """)
+        let lines = ProcessRow.commandLines(for: a)
+        XCTAssertEqual(lines.top, "vs-implementer")
+        XCTAssertEqual(lines.title, "Implement memory door soundtrack")
+
+        let bare = try agent(#"{"session_id": "s1", "name": "Mobile cards", "tab_gone": true}"#)
+        XCTAssertEqual(ProcessRow.commandLines(for: bare).top, "tab gone")
+        XCTAssertEqual(ProcessRow.commandLines(for: bare).title, "Mobile cards")
+
+        let resting = try agent(#"{"session_id":"s1","name":"Mobile cards","work_report":{"labelled":true,"headline":"Changed: x"}}"#)
+        XCTAssertEqual(ProcessRow.commandLines(for: resting, category: .sleeping).title,
+                       "Mobile cards")
+        XCTAssertEqual(ProcessRow.commandLines(for: resting, category: .sleeping).top, "")
+    }
+
+    func testFleetRowKeepsItsTaskWhenNoHelperIsRunning() throws {
+        let a = try agent(#"{"session_id": "s1", "name": "Implement memory door soundtrack"}"#)
+        XCTAssertEqual(ProcessRow.commandText(for: a), "Implement memory door soundtrack")
+    }
 }

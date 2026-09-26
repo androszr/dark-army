@@ -38,15 +38,37 @@ struct PanelView: View {
         /// The desk-only report over `history.db`. Back on 20 Sep 2026 after
         /// a same-day removal; the phone never had it and still does not.
         case history = "History"
+        /// Every scout report Dark Army lists, newest first, and one opened
+        /// as a document — the wide pane (`ScoutReportsPane`); the rail
+        /// holds the search and the project rows (`ScoutReportsRail`).
+        case reports = "Reports"
     }
 
     @State private var tab: Tab = .inbox
+    /// The one-line shortcut legend under the brand bar, opened by the
+    /// **keys** chip or `?` (`TriageLegend`, drawn from `TriageKeys`).
+    @State private var keysLegendShown = false
+    /// Reduce Motion, read once here and handed to every `Motion` call.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// History's own lenses. They do not refetch: the report is already
     /// in hand, and the fold reads it again.
     @State private var historyLens: LedgerLens = .spent
     @State private var historyPerson = ""
     @State private var historyDay = ""
     @State private var historyRun = ""
+    /// The Reports tab's search line, project row and open report. The
+    /// list itself is shared by the rail (projects, counts) and the pane.
+    @State private var reportsSearch = ""
+    @State private var reportsProject = ""
+    @State private var openReportPath = ""
+    @State private var reportsIndex = ScoutReportIndex()
+    /// The text search's hits and whether one is in flight — hoisted so the
+    /// rail's count and the pane's list read one merged list.
+    @State private var reportsHits = ScoutReportIndex()
+    @State private var reportsSearching = false
+    @State private var reportsDetail = ""
+    /// Bumped by the rail's Refresh; part of the pane's load key.
+    @State private var reportsReload = 0
     /// The project tab the overview is showing. Keyed by the `ProjectTab`
     /// itself (a name) rather than by index, so a vanished
     /// neighbour cannot slide the highlight onto someone else.
@@ -294,7 +316,8 @@ struct PanelView: View {
                     // would slide `waitingSince` forward a second per second
                     // and freeze the age `InboxView` draws from it.
                     now: snapshot.agentsStamp,
-                    acks: snapshot.inbox.available ? snapshot.inbox.acks : [])
+                    acks: snapshot.inbox.available ? snapshot.inbox.acks : [],
+                    fleet: snapshot.agents)
     }
 
     private var inboxGroups: [InboxGroup] { Inbox.groups(inboxItems) }
@@ -490,7 +513,7 @@ struct PanelView: View {
     /// arrow keys have to walk: the process table, in arrival order with
     /// waiters in place. History draws no rows, so the arrows walk nothing.
     private var visibleItems: [VisibleItem] {
-        if tab == .history || tab == .comm { return [] }
+        if tab == .history || tab == .comm || tab == .reports { return [] }
         return processRows.map { VisibleItem(row: $0, region: .list) }
     }
 
@@ -553,7 +576,9 @@ struct PanelView: View {
     private var scaffold: some View {
         VStack(spacing: 0) {
             BrandBar(client: client, board: board,
-                     attention: inboxItems.count)
+                     attention: inboxItems.count,
+                     keysShown: keysLegendShown,
+                     onKeys: { keysLegendShown.toggle() })
             .onChange(of: board.searchFocused) { _, focused in
                 keys.editing = focused || filterFocused || stripEditing
             }
@@ -561,6 +586,19 @@ struct PanelView: View {
             // monitor stands aside so the arrows reach the row.
             .onChange(of: board.switcherFocused) { _, holder in
                 keys.controlFocused = holder != nil
+            }
+            if keysLegendShown {
+                // The same list the key monitor reads, so every key named
+                // here does what it says.
+                Text(TriageLegend.line)
+                    .font(Theme.mono(10))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 5)
+                    .background(Theme.bar)
+                    .accessibilityLabel("Keyboard shortcuts: " + TriageLegend.line)
             }
             if snapshot.board.available {
                 ProjectSwitchStrip(board: board, names: snapshot.board.projectNames)
@@ -752,6 +790,9 @@ struct PanelView: View {
         // highlight stays on it — following the status was the highlight-jump.
         .onChange(of: selected) { _, now in
             if stripEditing { setStripEditing(false) }
+            // A new selection is where Return and Space act: a control
+            // focused before it gives up its claim (one cursor, never two).
+            FocusedControls.shared.clear()
             // The focus hold is about one row, and it ends the moment the
             // selection is somewhere else — by key, by click, or by the row
             // going away.
@@ -813,9 +854,11 @@ struct PanelView: View {
         case .right:
             move2D(dx: 1, dy: 0)
         case .nextTab:
-            cycleTab(1)
+            cycleRailTab(1)
         case .prevTab:
-            cycleTab(-1)
+            cycleRailTab(-1)
+        case .toggleKeys:
+            keysLegendShown.toggle()
         case .back:
             popDrill()
         case .deselect:
@@ -828,6 +871,11 @@ struct PanelView: View {
             syncKeyFlags()
         case .leaveHistory:
             leaveHistory()
+        case .closeReport:
+            openReportPath = ""
+            syncKeyFlags()
+        case .leaveReports:
+            leaveReports()
         case .open:
             if let item = selectedItem {
                 if item.region == .band {
@@ -921,22 +969,23 @@ struct PanelView: View {
     private func scrollToSelected() {
         guard let selected, visibleItems.contains(where: { $0.id == selected })
         else { return }
-        withAnimation(.snappy(duration: 0.12)) {
+        Motion.animate(.snappy(duration: 0.12), reduced: reduceMotion) {
             scroller?.scrollTo(selected, anchor: .center)
         }
     }
 
-    private func cycleTab(_ step: Int) {
-        // Same predicate as a clickable strip: hidden, greyed, or on
-        // Inbox or History, Tab must not retarget a project the user cannot see.
-        guard tab == .agents, projectsVisible, filter.isEmpty else { return }
-        let tabs = projectTabs
-        guard !tabs.isEmpty else { return }
+    /// ⌃Tab / ⌃⇧Tab: the rail's tabs — Inbox, Agents, Comm, History,
+    /// Reports — in order, wrapping, exactly as pressing the tab would. A
+    /// plain Tab is AppKit's since 25 Sep 2026 and walks the drawn buttons;
+    /// a project tab is one of those buttons.
+    private func cycleRailTab(_ step: Int) {
+        let all = Tab.allCases
+        guard let i = all.firstIndex(of: tab) else { return }
+        let count = all.count
+        let next = all[(i + step % count + count) % count]
         actions.disarm()
-        let current = resolvedTab ?? tabs[0]
-        guard let i = tabs.firstIndex(of: current) else { return }
-        let count = tabs.count
-        selectTab(tabs[(i + step % count + count) % count])
+        if next == .history || next == .reports { selected = nil }
+        tab = next
     }
 
     /// Fold or unfold the project shelf. The disclosure chevron is the one
@@ -959,7 +1008,7 @@ struct PanelView: View {
             syncKeyFlags()
             return
         }
-        withAnimation(.snappy(duration: 0.18)) {
+        Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
             showProjects = visible
         }
         syncKeyFlags()
@@ -975,6 +1024,8 @@ struct PanelView: View {
         keys.historyRun = tab == .history && !historyRun.isEmpty
         keys.historyDay = tab == .history && !historyDay.isEmpty
         keys.historyOpen = tab == .history
+        keys.reportOpen = tab == .reports && !openReportPath.isEmpty
+        keys.reportsOpen = tab == .reports
     }
 
     /// Leave History the way the Board control does: the board comes back,
@@ -987,6 +1038,26 @@ struct PanelView: View {
         selected = nil
         tab = .inbox
         syncKeyFlags()
+    }
+
+    /// Leave the Reports tab the way History is left: the board comes back
+    /// and the open report closes. The search and the list are kept, so a
+    /// return finds them where they were.
+    private func leaveReports() {
+        openReportPath = ""
+        reportsHits = ScoutReportIndex()
+        reportsSearching = false
+        selected = nil
+        tab = .inbox
+        syncKeyFlags()
+    }
+
+    /// The key that reloads the report list: the tab shown, the board's set
+    /// of attached reports (a scout attaching one moves it) and Refresh.
+    private var reportsLoadKey: String {
+        let paths = Set(client.snapshot.board.cards.map(\.reportPath)
+            .filter { !$0.isEmpty })
+        return "\(reportsReload)\u{1}" + paths.sorted().joined(separator: "\u{1}")
     }
 
     /// The board, covered by History or a detail and narrowed on Comm.
@@ -1012,6 +1083,9 @@ struct PanelView: View {
                 .allowsHitTesting(!boardCovered)
                 .accessibilityHidden(boardCovered)
                 .cursorAffordances(!boardCovered)
+                // Out of the focus chain too, and claiming nothing: Return
+                // and Space must never press a verb on a covered board.
+                .environment(\.keyboardClaimsSuppressed, boardCovered)
             if tab == .comm {
                 MissionTerminalColumn(
                     client: client,
@@ -1026,6 +1100,21 @@ struct PanelView: View {
                            person: $historyPerson, day: $historyDay,
                            run: $historyRun)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            if case .reports = workspacePane {
+                ScoutReportsPane(client: client, index: $reportsIndex,
+                                 detail: $reportsDetail,
+                                 search: $reportsSearch,
+                                 project: $reportsProject,
+                                 openPath: $openReportPath,
+                                 hits: $reportsHits,
+                                 searching: $reportsSearching,
+                                 loadKey: reportsLoadKey)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Here rather than on `watchOpening`'s chain, which is
+                    // at the type checker's limit: Escape's report rung
+                    // follows the open report.
+                    .onChange(of: openReportPath) { _, _ in syncKeyFlags() }
             }
             if let row = detailRow {
                 let bound = client.snapshot.board
@@ -1064,6 +1153,7 @@ struct PanelView: View {
     private var boardCovered: Bool {
         switch workspacePane {
         case .detail, .history: return true
+        case .reports: return true
         case .board, .mission: return false
         }
     }
@@ -1118,7 +1208,7 @@ struct PanelView: View {
             Trace.log("drill \(name.isEmpty ? "Other" : name)")
         }
         if let id { selected = id }
-        withAnimation(.snappy(duration: 0.18)) {
+        Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
             drilled = target
         }
         // Same block as the write — a one-event lag would make Escape hide
@@ -1146,7 +1236,7 @@ struct PanelView: View {
         actions.disarm()
         Trace.log("card open \(agent.nickname)")
         drill(target, selecting: agent.id)
-        withAnimation(.snappy(duration: 0.18)) {
+        Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
             expanded = agent.id
             // Same fresh-ascent reset as `open`: the row must not arrive in
             // the drill-in believing it is on its way down.
@@ -1159,7 +1249,7 @@ struct PanelView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(220))
             guard expanded == agent.id else { return }
-            withAnimation(.snappy(duration: 0.18)) {
+            Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
                 scroller?.scrollTo(agent.id, anchor: .bottom)
             }
         }
@@ -1168,7 +1258,7 @@ struct PanelView: View {
     private func popDrill() {
         guard drilled != nil else { return }
         Trace.log("drill pop")
-        withAnimation(.snappy(duration: 0.18)) {
+        Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
             drilled = nil
         }
         syncKeyFlags()
@@ -1338,7 +1428,7 @@ struct PanelView: View {
         foldProjects(true)
         selectedTab = .project(agent.project)
         selected = agent.id
-        withAnimation(.snappy(duration: 0.18)) {
+        Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
             if row.category == .finished || row.category == .abandoned {
                 collapsed.remove(.category(row.category))
             } else {
@@ -1356,7 +1446,7 @@ struct PanelView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(220))
             guard selected == agent.id else { return }
-            withAnimation(.snappy(duration: 0.18)) {
+            Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
                 scroller?.scrollTo(agent.id, anchor: .center)
             }
         }
@@ -1422,7 +1512,7 @@ struct PanelView: View {
         // which row is current, or ↓ after a click would resume from wherever
         // the keyboard was last, which is somewhere the user is not looking.
         selected = agent.id
-        withAnimation(.snappy(duration: 0.18)) {
+        Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
             expanded = opening ? agent.id : nil
             // An open is the foot of a fresh ascent, so it clears any memo of
             // the last descent — otherwise a row closed and reopened would
@@ -1439,7 +1529,7 @@ struct PanelView: View {
         Task {
             try? await Task.sleep(for: .milliseconds(200))
             guard expanded == agent.id else { return }
-            withAnimation(.snappy(duration: 0.18)) {
+            Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
                 scroll?.scrollTo(agent.id, anchor: .bottom)
             }
         }
@@ -1453,7 +1543,7 @@ struct PanelView: View {
     /// in the same state, or hitting the chevron to fold the message would arm
     /// the *up* rung for the click that follows.
     private func toggleFullText(_ agent: Agent) {
-        withAnimation(.snappy(duration: 0.18)) {
+        Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
             if fullText.contains(agent.id) {
                 fullText.remove(agent.id)
                 folding.insert(agent.id)
@@ -1473,7 +1563,7 @@ struct PanelView: View {
         // chevron and sends no toggle, but a second entry point (a future
         // keyboard binding, say) must not be able to fold it either.
         guard section.isCollapsible else { return }
-        withAnimation(.snappy(duration: 0.18)) {
+        Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) {
             if collapsed.contains(section) {
                 collapsed.remove(section)
             } else {
@@ -1580,7 +1670,7 @@ struct PanelView: View {
         stamps.seen = seen
         let next = Set(seen.keys)
         if next != attentionHold {
-            withAnimation(.snappy(duration: 0.18)) { attentionHold = next }
+            Motion.animate(.snappy(duration: 0.18), reduced: reduceMotion) { attentionHold = next }
         }
         // Outside the equality check, and that is the whole point of the
         // backstop. Armed only on ticks where the held set *changed*, it was
@@ -1746,6 +1836,16 @@ struct PanelView: View {
                 HistoryView(client: client, lens: $historyLens,
                             person: $historyPerson, day: $historyDay,
                             run: $historyRun, onBoard: leaveHistory)
+                    .frame(maxHeight: .infinity)
+            } else if tab == .reports {
+                ScoutReportsRail(index: reportsIndex,
+                                 hits: reportsHits,
+                                 searching: reportsSearching,
+                                 search: $reportsSearch,
+                                 project: $reportsProject,
+                                 onEditing: setStripEditing,
+                                 onRefresh: { reportsReload += 1 },
+                                 onBoard: leaveReports)
                     .frame(maxHeight: .infinity)
             } else if allEmpty {
                 empty
@@ -2010,7 +2110,11 @@ struct PanelView: View {
             onShowCard: bound == nil ? nil
                 : { showCard(session: row.agent.sessionId) },
             onJump: row.agent.isJumpable
-                ? { actions.jump(row.agent, client: client) } : nil)
+                ? { actions.jump(row.agent, client: client) } : nil,
+            // The detail header's own title line, so the row names what
+            // clicking it opens.
+            cardLine: AgentDetailHeader.cardLine(card: bound,
+                                                 sessionId: row.agent.sessionId))
         .id(row.id)
     }
 
@@ -2087,7 +2191,7 @@ struct PanelView: View {
         return HStack(spacing: 0) {
             ForEach(Tab.allCases, id: \.self) { item in
                 Button {
-                    if item == .history { selected = nil }
+                    if item == .history || item == .reports { selected = nil }
                     tab = item
                 } label: {
                     HStack(spacing: 4) {
@@ -2109,6 +2213,7 @@ struct PanelView: View {
                 }
                 .buttonStyle(.plain)
                 .clickable()
+                .reportsKeyboardFocus()
             }
         }
         .overlay(Rectangle().strokeBorder(Theme.hair, lineWidth: 1))

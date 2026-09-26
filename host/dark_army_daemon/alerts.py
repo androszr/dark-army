@@ -33,6 +33,17 @@ The rules, in the order they matter:
   attention, finished — decided here, where the question slot, the card's
   hook and the prompt's tool are all in hand, and never re-derived
   downstream. The phone's buzz reads it for its words and its sound.
+* **A finished report is a quiet banner on the Mac and nothing else.** The
+  `report` rule (`REPORT_RULE`) raises one `finished`-kind alert the moment
+  a `sleeping` row carries a `work_report` (`work_report.py`, published by
+  the daemon beside `last_report`) while it is fresh (quiet inside
+  `FINISHED_IDLE_GRACE_SECONDS`): "<who> finished", the headline as its
+  body, no card, no sound (`notifier.post`), once per report — a report you
+  were looking at, had muted, or that a card carried counts as delivered —
+  never beside a card or a prompt, and outside the per-session
+  cooldown both ways — it neither waits on it nor stamps it, so the next
+  real ask is never swallowed behind it. The phone leg withholds the
+  `finished` kind before any push, as it always has.
 * **And what is needed, in the agent's own words.** `need` is the question
   the agent asked or the one-line summary it left behind — decided here by
   `_need`, mirroring `_kind`'s precedence — and `tool` is the bare name of
@@ -57,7 +68,9 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from . import cast
+from . import work_report
 from .protocol import is_ask_user_question
+from .session_stats import FINISHED_IDLE_GRACE_SECONDS
 
 # Severity that earns an interrupt on its own.
 INTERRUPT_SEVERITIES = {"crit"}
@@ -90,6 +103,15 @@ KINDS = ("security", "permission", "question", "attention", "finished")
 FACE_KINDS = ("question", "permission", "finished")
 KIND_ATTENTION = "attention"
 KIND_SECURITY = "security"
+KIND_FINISHED = "finished"
+
+#: The rule a finished work report raises its one quiet banner under.
+REPORT_RULE = "report"
+#: The bucket a report banner may come from: a row at rest. Never `running`
+#: (a report read before the Stop lands would banner, then the Stop's card
+#: would banner again with the same words), `waiting` (the card speaks
+#: there), `finished` (not considered at all) or `abandoned`.
+REPORT_CATEGORIES = ("sleeping",)
 
 PER_SESSION_COOLDOWN = 300.0     # seconds between alerts about one agent
 MAX_HISTORY = 256                # bounded: one entry per (session, rule) seen
@@ -156,6 +178,47 @@ def _title(nickname: str, project: str) -> str:
     78be5105 needs you" is a log line. The nickname is why identity was built."""
     who = nickname or project or "An agent"
     return f"{who} needs you"
+
+
+def _report_fresh(entry: dict) -> bool:
+    """Whether the row went quiet inside `FINISHED_IDLE_GRACE_SECONDS` — the
+    window in which a report is news. After a restart `_fired` is empty and
+    the transcripts give every quiet row its report back; an hour-old report
+    is history, not a banner. An unreadable figure reads as fresh."""
+    try:
+        idle = float(entry.get("idle_seconds") or 0.0)
+    except (TypeError, ValueError):
+        return True
+    return idle <= FINISHED_IDLE_GRACE_SECONDS
+
+
+def _quiet_before(entry: dict, moment: float, now: float) -> bool:
+    """Whether the row went quiet before `moment` — its `quiet_since`, else
+    `now - idle_seconds`. `moment` 0 (unknown) is never after anything."""
+    if moment <= 0:
+        return False
+    try:
+        quiet = float(entry.get("quiet_since") or 0.0) \
+            or now - float(entry.get("idle_seconds") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return quiet < moment
+
+
+def report_pending(policy: "AlertPolicy", entry: dict) -> bool:
+    """Whether this row's work report could still raise its banner: parsed,
+    fresh, and neither bannered nor stamped delivered yet. The daemon asks
+    it to pick which sleeping sessions the frontmost poll must ask about."""
+    sid = entry.get("session_id") or ""
+    return (bool(sid) and isinstance(entry.get("work_report"), dict)
+            and _report_fresh(entry)
+            and (sid, REPORT_RULE) not in policy._fired)
+
+
+def _title_finished(nickname: str, project: str) -> str:
+    """"Vex finished" — the same who as `_title`, a different verb."""
+    who = nickname or project or "An agent"
+    return f"{who} finished"
 
 
 def marker_current(entry: dict) -> bool:
@@ -271,6 +334,10 @@ class AlertPolicy:
     #: sessions the user has silenced
     _muted: set[str] = field(default_factory=set)
     _counter: int = 0
+    #: When this daemon started (wall clock; 0 = unknown). A work report
+    #: whose row went quiet before then was news for a previous run — its
+    #: key was lost with that run's memory — and is seeded as delivered.
+    started_at: float = 0.0
 
     # ── muting ───────────────────────────────────────────────────────────────
     def mute(self, session_id: str) -> None:
@@ -286,7 +353,8 @@ class AlertPolicy:
     def evaluate(self, snapshot: dict, cards: dict, now: float,
                  suppressed: Iterable[str] = (),
                  prompts: Optional[dict] = None,
-                 panel_focused: Iterable[str] = ()) -> list[Alert]:
+                 panel_focused: Iterable[str] = (),
+                 report_hold: Iterable[str] = ()) -> list[Alert]:
         """Alerts to raise for this tick.
 
         `snapshot` is the assembled agent map, `cards` maps session id to the
@@ -310,6 +378,10 @@ class AlertPolicy:
         """
         out: list[Alert] = []
         skip = set(suppressed) | set(panel_focused)
+        # Sessions whose report banner waits for a frontmost reading taken
+        # after the row went quiet (`daemon._report_hold`): neither fired
+        # nor stamped this tick, so a later reading can still suppress it.
+        hold = set(report_hold)
         live: set[str] = set()
 
         for category, entries in snapshot.items():
@@ -331,13 +403,25 @@ class AlertPolicy:
                 if not sid:
                     continue
                 live.add(sid)
+                card = cards.get(sid)
+                if isinstance(entry.get("work_report"), dict) \
+                        and _quiet_before(entry, self.started_at, now):
+                    self._fired.setdefault((sid, REPORT_RULE), now)
+                # A report already delivered some other way is not news
+                # later: one you were looking at when it landed (muted,
+                # frontmost, the panel's own terminal) or one a card is
+                # carrying — the card's banner has its headline. Stamped
+                # here so looking away, or dismissing the card, raises no
+                # second "finished" banner for the same report.
+                if isinstance(entry.get("work_report"), dict) and (
+                        sid in self._muted or sid in skip or card):
+                    self._fired.setdefault((sid, REPORT_RULE), now)
                 if sid in self._muted or sid in skip:
                     continue
 
                 nickname = entry.get("nickname") or ""
                 project = entry.get("project") or ""
                 subtitle = _subtitle(nickname, project, entry.get("branch") or "")
-                card = cards.get(sid)
 
                 face = cast.character_for(nickname, sid)
                 pose = cast.state_for(category)
@@ -370,11 +454,18 @@ class AlertPolicy:
                 # past, and a sentence aimed at exactly this slot beats a
                 # constant. A `StopFailure` card's message is a real API error
                 # and outranks the summary, which describes the turn before it.
+                #
+                # With no summary, a work report's headline stands in: it is
+                # the agent's own words about the turn, one line long, and
+                # still better than the constant (`work_report.headline_of`).
                 if card and category == "waiting":
                     body = str(card.get("message") or "Waiting for input")
                     summary = str(entry.get("last_summary") or "").strip()
-                    if summary and card.get("hook") in _GENERIC_CARD_HOOKS:
-                        body = summary
+                    if card.get("hook") in _GENERIC_CARD_HOOKS:
+                        if summary:
+                            body = summary
+                        elif work_report.headline_of(entry):
+                            body = work_report.headline_of(entry)
                     alert = self._maybe(sid, "card", now, nickname,
                                         _title(nickname, project),
                                         body,
@@ -411,7 +502,22 @@ class AlertPolicy:
                                         need=need)
                     if alert:
                         out.append(alert)
+                        signalled = True
                         break               # one interruption per agent per tick
+                else:
+                    signalled = False
+                if signalled:
+                    continue
+
+                # Last, and only for a row nobody is being asked anything
+                # about: a finished report. No card, no prompt, not waiting.
+                if (category in REPORT_CATEGORIES and not card and not prompt
+                        and isinstance(entry.get("work_report"), dict)
+                        and _report_fresh(entry) and sid not in hold):
+                    alert = self._report_alert(sid, entry, now, nickname,
+                                               project, subtitle, face, pose)
+                    if alert:
+                        out.append(alert)
 
         self._forget_gone(live)
         return out
@@ -442,6 +548,36 @@ class AlertPolicy:
                      actions=actions, subtitle=subtitle,
                      character=character, state=state, kind=kind,
                      need=need)
+
+    def _report_alert(self, sid: str, entry: dict, now: float, nickname: str,
+                      project: str, subtitle: str, character: str,
+                      state: str) -> Optional[Alert]:
+        """One quiet banner per work report: "<who> finished", the headline
+        as its body.
+
+        Its own path rather than `_maybe`, for the cooldown's sake in both
+        directions. It does not *wait* on `_last_per_session`: a report is
+        news once, and a card that fired two minutes earlier must not
+        swallow it into `_fired` for good. And it does not *stamp* it: a
+        real ask arriving ten seconds after a report is the one thing this
+        app exists for, and a finished banner must never hold it back.
+        Deduped on `(sid, REPORT_RULE)`; `clear_resolved` re-arms the key
+        once the report leaves the row (the person's next prompt), so the
+        next report is news again.
+        """
+        key = (sid, REPORT_RULE)
+        if key in self._fired:
+            return None
+        self._fired[key] = now
+        self._counter += 1
+        body = work_report.headline_of(entry) or "Wrote a work report"
+        return Alert(id=f"{sid}:{REPORT_RULE}:{self._counter}", session_id=sid,
+                     nickname=nickname,
+                     title=_title_finished(nickname, project),
+                     body=body, severity="info", rule=REPORT_RULE,
+                     created_at=now, actions=("reveal", "mute"),
+                     subtitle=subtitle, character=character, state=state,
+                     kind=KIND_FINISHED, need="")
 
     def _permission(self, sid: str, prompt: dict, now: float, nickname: str,
                     project: str, subtitle: str, character: str,
@@ -532,6 +668,11 @@ def clear_resolved(policy: AlertPolicy, snapshot: dict, cards: dict) -> None:
             present = {s.get("rule") for s in (entry.get("signals") or [])}
             if sid in cards and category == "waiting":
                 present.add("card")
+            # The report key holds for as long as the row carries its
+            # report — through `sleeping` and the `finished` bucket alike —
+            # and is released when the next prompt clears it.
+            if isinstance(entry.get("work_report"), dict):
+                present.add(REPORT_RULE)
             # Permission keys are never re-armed here. A prompt is not a signal,
             # so it is never in `present` — clearing its key would re-fire the
             # same banner on every tick the dialog stays open, which is the flap
@@ -546,4 +687,5 @@ def clear_resolved(policy: AlertPolicy, snapshot: dict, cards: dict) -> None:
 
 __all__ = ["Alert", "AlertPolicy", "clear_resolved", "PER_SESSION_COOLDOWN",
            "INTERRUPT_RULES", "INTERRUPT_SEVERITIES", "NEVER_INTERRUPT",
-           "KINDS", "marker_current", "offered_reply"]
+           "KINDS", "KIND_FINISHED", "REPORT_RULE", "marker_current",
+           "offered_reply", "report_pending"]

@@ -1153,10 +1153,11 @@ async def test_a_stream_without_the_slim_query_carries_every_section(server):
 def test_the_omittable_sections_are_state_s_own_sections():
     """The list is auditable in one place, and it is exactly `state()`'s
     top level minus the clock and the two scalars."""
-    assert len(api_mod._OMITTABLE_SECTIONS) == 13
+    assert len(api_mod._OMITTABLE_SECTIONS) == 14
     assert "inbox" in api_mod._OMITTABLE_SECTIONS
     assert "security" in api_mod._OMITTABLE_SECTIONS
     assert "mission" in api_mod._OMITTABLE_SECTIONS
+    assert "power" in api_mod._OMITTABLE_SECTIONS
     assert "generated_at" not in api_mod._OMITTABLE_SECTIONS
     assert "reconciler_available" not in api_mod._OMITTABLE_SECTIONS
     assert "reconciler_error" not in api_mod._OMITTABLE_SECTIONS
@@ -2358,8 +2359,9 @@ def test_the_declared_stages_are_writable_and_the_trail_is_not():
     # lie with a portrait attached.
     assert "crew_trail" not in ApiServer._BOARD_FIELDS
     assert "session_id" not in ApiServer._BOARD_FIELDS
-    # Cards no longer wait on cards: the field is closed at the door.
-    assert "blocked_by" not in ApiServer._BOARD_FIELDS
+    # Cards wait on cards again: a thing a person states about their card,
+    # open at the door, with its refusals at the store.
+    assert "blocked_by" in ApiServer._BOARD_FIELDS
     assert "position" not in ApiServer._BOARD_FIELDS
     assert "board_reorder" in ApiServer.BOARD_ACTIONS
 
@@ -2411,18 +2413,63 @@ async def test_board_reorder_does_not_dispatch(board_server, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_blocked_by_update_is_dropped_at_the_door(board_server):
-    """The retired waiting-on feature: a payload naming `blocked_by` alone is
-    "named fields, all dropped" — a 400, never a stored link."""
+async def test_a_blocked_by_update_stores_the_ids_and_steps_the_revision(
+        board_server):
+    """`board_update` naming `blocked_by` stores the joined ids — one string,
+    newline-separated — and moves the card's change number, which is what
+    both editors' `expected_revision` guards on."""
     srv, _, store = board_server
     a, _ = store.create({"title": "a", "project": "bob", "column_name": "backlog"})
     b, _ = store.create({"title": "b", "project": "bob", "column_name": "backlog"})
+    c, _ = store.create({"title": "c", "project": "bob", "column_name": "backlog"})
+    before = store.get(a["id"])["revision"]
     status, body = await board_fetch(
         "/api/action",
         json.dumps({"action": "board_update", "card_id": a["id"],
-                    "blocked_by": b["id"]}).encode(),
+                    "blocked_by": b["id"] + "\n" + c["id"],
+                    "expected_revision": str(before)}).encode(),
         {"X-Bob-Token": srv.token})
-    assert status == 400, body
+    assert status == 200, body
+    got = store.get(a["id"])
+    assert got["blocked_by"] == b["id"] + "\n" + c["id"]
+    assert got["revision"] == before + 1
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_by_cycle_is_a_409_in_the_stores_words(board_server):
+    srv, _, store = board_server
+    a, _ = store.create({"title": "a", "project": "bob", "column_name": "backlog"})
+    b, _ = store.create({"title": "b", "project": "bob", "column_name": "backlog"})
+    store.update(a["id"], {"blocked_by": b["id"]})
+    status, body = await board_fetch(
+        "/api/action",
+        json.dumps({"action": "board_update", "card_id": b["id"],
+                    "blocked_by": a["id"]}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status == 409, body
+    assert "already wait on each other" in json.loads(body)["detail"]
+    assert store.get(b["id"])["blocked_by"] == ""
+
+
+@pytest.mark.asyncio
+async def test_a_stale_blocked_by_update_is_refused_as_changed(board_server):
+    """The stale-copy guard covers links like any other stated field: a list
+    written against a copy somebody changed since is refused in
+    `CARD_CHANGED_REFUSAL`'s words, and nothing is written."""
+    from dark_army_daemon.board import CARD_CHANGED_REFUSAL
+    srv, _, store = board_server
+    a, _ = store.create({"title": "a", "project": "bob", "column_name": "backlog"})
+    b, _ = store.create({"title": "b", "project": "bob", "column_name": "backlog"})
+    stale = store.get(a["id"])["revision"]
+    store.update(a["id"], {"title": "renamed"})
+    status, body = await board_fetch(
+        "/api/action",
+        json.dumps({"action": "board_update", "card_id": a["id"],
+                    "blocked_by": b["id"],
+                    "expected_revision": str(stale)}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status == 409, body
+    assert json.loads(body)["detail"] == CARD_CHANGED_REFUSAL
     assert store.get(a["id"])["blocked_by"] == ""
 
 
@@ -3799,3 +3846,249 @@ async def test_the_card_read_carries_a_scouts_report_beside_the_plan(server, tmp
         assert "report" not in srv._card_collect(card["id"], with_plan=False)
     finally:
         store.close()
+
+
+# --- board_refine_batch: several Prep cards, one planning session -------------
+
+
+@pytest.mark.asyncio
+async def test_board_refine_batch_routes_card_ids_split_and_deduped(board_server):
+    srv, daemon, store = board_server
+    seen = {}
+
+    async def fake_refine_cards(card_ids):
+        seen["ids"] = card_ids
+        return True, "started"
+
+    daemon.refine_cards = fake_refine_cards
+    status, body = await board_fetch(
+        "/api/action",
+        json.dumps({"action": "board_refine_batch",
+                    "card_ids": " a1, b2 ,,a1,c3 "}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status == 200, body
+    assert json.loads(body) == {"ok": True, "detail": "started"}
+    assert seen["ids"] == ["a1", "b2", "c3"]
+
+
+@pytest.mark.asyncio
+async def test_board_refine_batch_refusal_is_409_in_the_daemons_words(board_server):
+    srv, daemon, store = board_server
+
+    async def refuse(card_ids):
+        return False, "tick at least two Prep cards to refine them together"
+
+    daemon.refine_cards = refuse
+    status, body = await board_fetch(
+        "/api/action",
+        json.dumps({"action": "board_refine_batch", "card_ids": "a1"}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status == 409
+    assert json.loads(body)["detail"].startswith("tick at least two")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [None, "", " , ,", ["a1", "b2"], 7])
+async def test_board_refine_batch_with_no_usable_card_ids_is_400(board_server, value):
+    srv, daemon, store = board_server
+
+    async def never(card_ids):
+        raise AssertionError("a malformed batch reached the daemon")
+
+    daemon.refine_cards = never
+    payload = {"action": "board_refine_batch"}
+    if value is not None:
+        payload["card_ids"] = value
+    status, body = await board_fetch(
+        "/api/action", json.dumps(payload).encode(), {"X-Bob-Token": srv.token})
+    assert status == 400, body
+    assert json.loads(body)["error"] == "no card_ids"
+
+
+def test_board_refine_batch_is_on_both_phone_tuples():
+    """The phone's batch refine (25 Sep 2026): the verb is chosen on both
+    phone tuples — each its own line, once — and in `_LAN_BOARD`, the away
+    list still never exceeding the home one; `card_ids` is envelope, never a
+    card field."""
+    assert "board_refine_batch" in ApiServer.BOARD_ACTIONS
+    assert ApiServer.LAN_ACTIONS.count("board_refine_batch") == 1
+    assert ApiServer.REMOTE_ACTIONS.count("board_refine_batch") == 1
+    assert "board_refine_batch" in ApiServer._LAN_BOARD
+    assert set(ApiServer.REMOTE_ACTIONS) <= set(ApiServer.LAN_ACTIONS)
+    assert "card_ids" in ApiServer._BOARD_ENVELOPE
+    assert "card_ids" not in ApiServer._BOARD_FIELDS
+    assert "batch_id" not in ApiServer._BOARD_FIELDS
+    assert "batch_rank" not in ApiServer._BOARD_FIELDS
+
+
+# --- board_start_batch: several Backlog cards, one implementation session -----
+
+
+@pytest.mark.asyncio
+async def test_board_start_batch_routes_card_ids_to_start_cards(board_server):
+    srv, daemon, store = board_server
+    seen = {}
+
+    async def fake_start_cards(card_ids):
+        seen["ids"] = card_ids
+        return True, "card 1 started · 2 waiting"
+
+    daemon.start_cards = fake_start_cards
+    status, body = await board_fetch(
+        "/api/action",
+        json.dumps({"action": "board_start_batch",
+                    "card_ids": " a1, b2 ,,a1,c3 "}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status == 200, body
+    assert json.loads(body) == {"ok": True,
+                                "detail": "card 1 started · 2 waiting"}
+    assert seen["ids"] == ["a1", "b2", "c3"]
+
+
+@pytest.mark.asyncio
+async def test_board_start_batch_refusal_is_409_in_the_daemons_words(board_server):
+    srv, daemon, store = board_server
+
+    async def refuse(card_ids):
+        return False, "tick at least two planned Backlog cards to start them together"
+
+    daemon.start_cards = refuse
+    status, body = await board_fetch(
+        "/api/action",
+        json.dumps({"action": "board_start_batch", "card_ids": "a1"}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status == 409
+    assert json.loads(body)["detail"].startswith("tick at least two planned")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [None, "", " , ,", ["a1", "b2"], 7])
+async def test_board_start_batch_with_no_usable_card_ids_is_400(board_server, value):
+    srv, daemon, store = board_server
+
+    async def never(card_ids):
+        raise AssertionError("a malformed batch reached the daemon")
+
+    daemon.start_cards = never
+    payload = {"action": "board_start_batch"}
+    if value is not None:
+        payload["card_ids"] = value
+    status, body = await board_fetch(
+        "/api/action", json.dumps(payload).encode(), {"X-Bob-Token": srv.token})
+    assert status == 400, body
+    assert json.loads(body)["error"] == "no card_ids"
+
+
+def test_board_start_batch_is_on_both_phone_tuples():
+    """The phone's batch Start (25 Sep 2026): the verb is chosen on both
+    phone tuples — each its own line, once — and in `_LAN_BOARD`, the away
+    list still never exceeding the home one."""
+    assert "board_start_batch" in ApiServer.BOARD_ACTIONS
+    assert ApiServer.LAN_ACTIONS.count("board_start_batch") == 1
+    assert ApiServer.REMOTE_ACTIONS.count("board_start_batch") == 1
+    assert "board_start_batch" in ApiServer._LAN_BOARD
+    assert set(ApiServer.REMOTE_ACTIONS) <= set(ApiServer.LAN_ACTIONS)
+
+
+@pytest.mark.asyncio
+async def test_a_sealed_home_batch_press_reaches_refine_cards_with_the_split_list(
+        board_server):
+    """Success criterion — "press the batch button and confirm it; exactly
+    one planning terminal opens": the phone's press at home reaches the one
+    daemon verb that spawns once, with the list split, trimmed and deduped
+    exactly as the loopback press is."""
+    srv, daemon, store = board_server
+    seen = []
+
+    async def fake_refine_cards(card_ids):
+        seen.append(card_ids)
+        return True, ""
+
+    daemon.refine_cards = fake_refine_cards
+    status, _, body = await srv._sealed_run(
+        "action", {"action": "board_refine_batch", "card_ids": "a1, b2,a1"},
+        "fixture", actions=srv.LAN_ACTIONS, check_lease=False, record=False)
+    assert status == 200, body
+    assert json.loads(body)["ok"] is True
+    assert seen == [["a1", "b2"]]
+
+
+@pytest.mark.asyncio
+async def test_a_sealed_away_batch_press_needs_the_lease_and_is_recorded(
+        board_server, monkeypatch):
+    """Away the batch rides the lease like every write: a lapsed window is
+    a 403 in the relay's words and the verb is never called; a live one
+    reaches it and the press is listed on the Mac as done remotely."""
+    from dark_army_daemon import relay
+    srv, daemon, store = board_server
+    seen = []
+    recorded = []
+
+    async def fake_refine_cards(card_ids):
+        seen.append(card_ids)
+        return True, ""
+
+    daemon.refine_cards = fake_refine_cards
+    monkeypatch.setattr(daemon, "record_remote_action",
+                        lambda device, action, ok: recorded.append((action, ok)))
+    payload = {"action": "board_refine_batch", "card_ids": "a1,b2"}
+    monkeypatch.setattr(relay, "lease_valid", lambda _device: False)
+    status, _, body = await srv._sealed_run(
+        "action", dict(payload), "fixture", actions=srv.REMOTE_ACTIONS,
+        check_lease=True, record=True)
+    assert status == 403
+    assert json.loads(body)["detail"] == relay.LEASE_REFUSAL
+    assert seen == [] and recorded == []
+    monkeypatch.setattr(relay, "lease_valid", lambda _device: True)
+    status, _, body = await srv._sealed_run(
+        "action", dict(payload), "fixture", actions=srv.REMOTE_ACTIONS,
+        check_lease=True, record=True)
+    assert status == 200, body
+    assert seen == [["a1", "b2"]]
+    assert recorded == [("board_refine_batch", True)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", ["home", "relay"])
+async def test_a_batch_press_with_no_card_ids_is_400_on_the_sealed_door(
+        board_server, door):
+    srv, daemon, store = board_server
+
+    async def never(card_ids):
+        raise AssertionError("a malformed batch reached the daemon")
+
+    daemon.refine_cards = never
+    actions = srv.LAN_ACTIONS if door == "home" else srv.REMOTE_ACTIONS
+    for payload in ({"action": "board_refine_batch"},
+                    {"action": "board_refine_batch", "card_ids": " , "}):
+        status, _, body = await srv._sealed_run(
+            "action", payload, "fixture", actions=actions,
+            check_lease=False, record=False)
+        assert status == 400, body
+        assert json.loads(body)["error"] == "no card_ids"
+
+
+@pytest.mark.asyncio
+async def test_the_phones_sealed_state_carries_the_dependency_links_whole(
+        board_server):
+    """The phone's ✕ and Add… write the whole list back, so the list it
+    reads must be the store's own: `blocked_by` rides the sealed `state`
+    answer unchanged, beside the resolved `dependencies` — a field filter
+    that dropped it would turn the next edit into an overwrite."""
+    srv, daemon, store = board_server
+    a, _ = store.create({"title": "a", "project": "bob", "column_name": "backlog"})
+    b, _ = store.create({"title": "b", "project": "bob", "column_name": "backlog"})
+    c, _ = store.create({"title": "c", "project": "bob", "column_name": "backlog"})
+    store.update(a["id"], {"blocked_by": [b["id"], c["id"]]})
+    daemon._refresh_board_state()
+    for payload in ({}, {"done": "review"}):
+        status, _, body = await srv._sealed_run(
+            "state", payload, "fixture", actions=srv.LAN_ACTIONS,
+            check_lease=False, record=False)
+        assert status == 200
+        cards = {x["id"]: x for x in json.loads(body)["board"]["cards"]}
+        assert cards[a["id"]]["blocked_by"] == b["id"] + "\n" + c["id"]
+        assert [e["id"] for e in cards[a["id"]]["dependencies"]] == [
+            b["id"], c["id"]]
+        assert cards[b["id"]]["dependents_line"] == 'Unblocks: "a"'
+        assert json.loads(body)["board"]["dependencies_supported"] is True

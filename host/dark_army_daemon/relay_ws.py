@@ -123,6 +123,7 @@ class RelaySocketConnector:
         self._supervisor: asyncio.Task | None = None
         self._frame_buckets: dict[str, _Bucket] = {}
         self._write_buckets: dict[str, _Bucket] = {}
+        self._key_buckets: dict[str, _Bucket] = {}
         self._push_buckets: dict[str, _Bucket] = {}
         #: Per-device ordering locks for `_answer`: ctr allocation and the
         #: send are one step, `relay_client._answer`'s reason.
@@ -299,6 +300,17 @@ class RelaySocketConnector:
                                     # nothing is pushed until a fresh
                                     # verified request re-arms it.
                                     self._disarm(device_id)
+                                    if message == "peer:1":
+                                        # Exact, unstripped: the relay drops
+                                        # a client frame only when it starts
+                                        # with `peer:`, so a padded
+                                        # " peer:1" is the phone's own text
+                                        # and may disarm, never arm. The
+                                        # phone woke and opened its line: the
+                                        # mailbox connector stops idling.
+                                        relay.note_phone_arrived(device_id)
+                                    elif message == "peer:0":
+                                        relay.note_phone_left(device_id)
                                     continue
                                 try:
                                     await self._handle_wire(device_id, key, text)
@@ -390,6 +402,7 @@ class RelaySocketConnector:
         # mailbox connector keeps its own pacing (`relay.note_recv_ctr`).
         relay.note_recv_ctr(device_id, int(frame["ctr"]),
                             durable=(kind == "action"), liveness=False)
+        relay.note_phone_proof(device_id)
         if device_id not in self._armed and device_id in self._sockets:
             # The first verified frame on this line arms it: from here the
             # Mac may push the picture down it.
@@ -397,7 +410,8 @@ class RelaySocketConnector:
             self._picture_changed()
         payload = frame.get("body")
         payload = payload if isinstance(payload, dict) else {}
-        if kind == "action" and not self._write_bucket(device_id).take():
+        if kind == "action" and not self._write_bucket(
+                device_id, relay.write_bucket_kind(payload)).take():
             await self._answer(device_id, key, {
                 "re": str(frame.get("id") or ""), "status": 429,
                 "error": _WRITE_LIMIT_REFUSAL,
@@ -725,11 +739,17 @@ class RelaySocketConnector:
             self._frame_buckets[device_id] = bucket
         return bucket
 
-    def _write_bucket(self, device_id: str) -> _Bucket:
-        bucket = self._write_buckets.get(device_id)
+    def _write_bucket(self, device_id: str, kind: str = "writes") -> _Bucket:
+        """The device's write bucket for this kind of action: raw terminal
+        keys draw on their own (`relay.write_bucket_kind`), so typing from
+        away never spends the allowance an answer needs."""
+        keys = kind == "keys"
+        buckets = self._key_buckets if keys else self._write_buckets
+        bucket = buckets.get(device_id)
         if bucket is None:
-            bucket = _Bucket(relay.RELAY_MAX_WRITES_PER_MINUTE)
-            self._write_buckets[device_id] = bucket
+            bucket = _Bucket(relay.RELAY_MAX_KEY_WRITES_PER_MINUTE if keys
+                             else relay.RELAY_MAX_WRITES_PER_MINUTE)
+            buckets[device_id] = bucket
         return bucket
 
     def _push_bucket(self, device_id: str) -> _Bucket:

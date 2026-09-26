@@ -65,7 +65,7 @@ seed it again from the plan header.
 |---|---|---|
 | Backbone | Relay | Hex, Forge |
 | Desk | Vex | Zosia |
-| Pocket | Mira | Ptyś |
+| Pocket | Mira | Ptys |
 | Ledger | Audit | Ledger |
 | Play | Franio | Quiet |
 | Conductor | Velvet | Canon |

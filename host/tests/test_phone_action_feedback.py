@@ -403,7 +403,8 @@ async def test_an_idle_prompt_leaves_the_standing_question_alone():
 def test_codex_hide_uses_existing_scope_and_waits_for_snapshot_removal():
     detail, client = _read(DETAIL), _read(CLIENT)
     assert 'if agent.canHide {' in detail
-    assert 'Hide until this thread changes' in detail
+    # The label is the shared word list's (`Verbs.swift`) since 25 Sep 2026.
+    assert 'Verbs.hide.label' in detail
     assert 'send(PhoneActions.hideSession, ["session_id": agent.sessionId])' in detail
     assert 'PhoneActions.deleteAgent, PhoneActions.hideSession,' in client
     assert 'hideAccepted = true' in detail
@@ -587,7 +588,7 @@ def test_the_quiet_views_still_draw_no_button(name):
     # Only the inventoried navigation controls are exempt. A button with
     # any other action still requires the acting-view feedback contract.
     routes = {
-        "RecentlyView.swift": [".catchUp()", ".agent(agent, category)", ".card(card)"],
+        "RecentlyView.swift": [".agent(agent, category)", ".card(card)"],
         "FleetView.swift": [".catchUp()", ".agent(row.agent, row.category)"],
     }
     routed = 0
@@ -595,7 +596,7 @@ def test_the_quiet_views_still_draw_no_button(name):
         control = f"DecryptButton(action: {{ sheets.show({route}) }})"
         routed += source.count(control)
         source = source.replace(control, "Sheet route")
-    assert routed == {"RecentlyView.swift": 3, "FleetView.swift": 3}.get(name, 0)
+    assert routed == {"RecentlyView.swift": 2, "FleetView.swift": 3}.get(name, 0)
     assert "Button(" not in source, (
         f"{name} grew a button — wire it to the in-flight record and move "
         "it into ACTING_VIEWS")

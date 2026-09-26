@@ -55,8 +55,9 @@ DEFAULT_LARGE = (120, 5_000_000)
 #: With a project baseline, the cuts are these multiples of the medians.
 TYPICAL_RATIO = 1.5
 LARGE_RATIO = 3.0
-#: A context this full turns the line amber on its own.
-CTX_WORRY_PCT = 90
+#: A context this full turns the line amber on its own — the daemon's own
+#: compact line, `signals.CTX_CRIT_PCT`, pinned equal by `test_signals.py`.
+CTX_WORRY_PCT = 85
 #: So do this many fix rounds.
 FIX_ROUNDS_WORRY = 3
 #: The stage whose repeated spawns are fix rounds.

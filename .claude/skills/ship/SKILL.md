@@ -34,7 +34,9 @@ first phase:
 |---|---|
 | Plan (the default) | `references/common.md`, then `references/plan.md` |
 | Implement (`/ship implement <plan path>`, or a `Plan: <path>` first line) | `references/common.md`, then `references/implement.md` |
-| Scout (`/ship scout <brief>`) | `references/common.md`, then `references/scout.md` |
+| Batch implement (a `/ship batch: implement …` first line — several Backlog cards started together) | `references/common.md`, then `references/implement.md`, whose `## Batch: several cards in one session` runs each card |
+| Batch plan (a `/ship batch: …` first line — several Prep cards refined together) | `references/common.md`, then `references/plan.md`, whose `## Batch: several cards in one session` runs each card |
+| Scout (`/ship scout <brief>`, an alias) | `.claude/skills/scout/SKILL.md` alone |
 | A change of mode inside one session ("build it now" after planning) | the other mode's reference, before its first phase |
 
 Nothing here repeats a rule the references state; where this file and a
@@ -47,8 +49,14 @@ reference disagree, the reference wins and this file is the bug.
 `/ship implement <plan path>` — implement mode. Straight to Phase 6 on an
 already-written plan. This is the form a board card dispatches.
 
-`/ship scout <brief>` — scout mode. Investigate, write a report, attach it
-to this card, close the card with the report's path in the note, and stop.
+`/ship batch: …` — plan mode for several Prep cards in one session, one plan
+and one attach per card. The form Refine on several ticked cards dispatches.
+
+`/ship batch: implement …` — implement mode for several planned Backlog cards
+in one session, one card at a time. The form START n TOGETHER dispatches.
+
+`/ship scout <brief>` is an alias: load and follow the scout skill
+(`.claude/skills/scout/SKILL.md`).
 
 ## Modes
 
@@ -79,12 +87,6 @@ If the user explicitly says to implement now, in this session, do it — say in 
 sentence that the usual route is the card, then load `references/implement.md`
 and run Phase 6 on the plan you just wrote. An explicit instruction outranks
 the default; a guess never does.
-
-**Scout mode — `/ship scout <brief>`.** No plan, no `bc-planner`, no
-implementation. The deliverable is a report under the project's research
-folder. The board tools it uses are `dark_army_attach_report` then
-`dark_army_close_card`. Promote — turning that report into a build card — is the
-person's.
 
 ## Agent spawn visual convention
 
@@ -117,9 +119,13 @@ for that agent — the banner marks *a spawn*, not *a phase*.
 - **Questions:** `AskUserQuestion`, for the interview and for the run-budget
   question alike.
 - **The board:** `mcp__dark-army__dark_army_attach_plan`, `…_add_card`,
-  `dark_army_close_card`, `dark_army_needs_manual_check` are in every
-  session; only the channel needs `server:dark-army`. Born before the
+  `dark_army_close_card`, `dark_army_needs_manual_check` and a batch's
+  `dark_army_next_card` are in every session; only the channel needs
+  `server:dark-army`. Born before the
   rename, a session has them as `mcp__bob__bob_*`, and keeps that list.
+  A leftover check is a file, `manual-check/<YYYY-MM-DD>-<slug>/check.md`,
+  checked by `python3 .claude/skills/ship/manual_check.py`, flagged with its
+  path and then closed (`references/implement.md`, Phase 7b).
 - **The gates:** `bash .claude/skills/ship/gate.sh` — the dispatch row, a
   gate run with its log and its budget, the baseline replay by id, the three
   failure classes (`YOURS`, `PRE-EXISTING`, `IN-FLIGHT`) and the lane, one

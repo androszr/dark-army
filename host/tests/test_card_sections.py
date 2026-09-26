@@ -3,7 +3,7 @@
 
 `plans/2026-09-12-card-detail-folds-per-column.md`. The rule itself —
 which stage a card is in, the order of its sections, the leads, the pinned
-three and the closed-row words — is tabled in
+four and the closed-row words — is tabled in
 `panel/Tests/BobPanelTests/CardSectionsTests.swift`. What this file pins is
 what the Swift tests cannot see: that the phone's copy of `CardSections` is
 written exactly as the panel's, that both card screens draw through it and
@@ -72,7 +72,7 @@ def test_the_rule_is_pure_and_lives_in_its_own_file():
     for needle in ("enum Section: String, CaseIterable {",
                    "enum Stage: String, CaseIterable {",
                    "static func stage(column: String, linkState: String,",
-                   "static let pinned: Set<Section> = [.status, .verbs, .queue]",
+                   "static let pinned: Set<Section> = [.status, .verbs, .queue, .dependencies]",
                    "static func order(for stage: Stage) -> [Section]",
                    "static func leads(for stage: Stage) -> Set<Section>",
                    "static func isOpen(_ s: Section, stage: Stage, opened: Set<Section>) -> Bool",
@@ -391,7 +391,7 @@ def test_the_stage_reads_run_active_from_both_views():
 
 def test_the_phone_lead_names_the_assistant_once_the_switcher_is_gone():
     phone = _code(_read(PHONE_VIEW))
-    body = _block(phone, "var body: some View {")
+    body = _block(phone, "private var identityLead: some View {")
     at = body.index("assistantPicker")
     assert "} else if !card.tool.isEmpty {" in body[at:at + 200]
     assert "assistantRecord" in body[at:at + 260]

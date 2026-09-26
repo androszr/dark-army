@@ -18,6 +18,20 @@ enum PhoneActions {
     static let boardClearDone = "board_clear_done"
     static let boardDispatch = "board_dispatch"
     static let boardRefine = "board_refine"
+    /// Route: `BobDaemon.refine_cards` — Refine on several Prep cards with
+    /// one planning session. `card_ids` is comma-joined in board order; the
+    /// Mac runs every Refine guard per card and opens one planning session,
+    /// or refuses the whole press in its own words. Armed then confirmed on
+    /// the Board tab's Prep row, drawn only where the board says
+    /// `refine_batch_supported`.
+    static let boardRefineBatch = "board_refine_batch"
+    /// Route: `BobDaemon.start_cards` — Start on several planned Backlog
+    /// cards with one session, worked one at a time. `card_ids` comma-joined
+    /// in board order; the Mac re-runs every Start guard per card, skips and
+    /// names a failure, opens one session or refuses the whole press in its
+    /// own words. Armed then confirmed on the Board tab's Backlog row, sent
+    /// synchronously, drawn only where the board says `start_batch_supported`.
+    static let boardStartBatch = "board_start_batch"
     /// Route: `BobDaemon.approve_card_plan` — "yes, this wording". The Mac
     /// hashes the plan file again and refuses unless the digest this echoes
     /// back still matches, so an approval is always of a version somebody
@@ -143,6 +157,12 @@ enum PhoneActions {
     /// nothing else. Armed then confirmed here — the Mac's own press is
     /// unarmed — because a thumb must not fire on a card it has not read.
     static let boardManualClear = "board_manual_clear"
+    /// Route: `BobDaemon.record_manual_outcome` — Passed or Failed on a
+    /// check file, with a note. Keyed on the file's path, never a card: the
+    /// Mac writes the file's three status lines only while it still says
+    /// open, and clears every card flagged with it. Armed then confirmed
+    /// here, `boardManualClear`'s thumb rule.
+    static let boardManualOutcome = "board_manual_outcome"
     /// Route: `BobDaemon.review_card` — "I have read this close". The field
     /// is closed, the act is open: `reviewed_at` is stamped only by this
     /// named verb. The press echoes `closed_by` and `close_note`
@@ -258,7 +278,30 @@ enum PhoneInboxAck {
 enum PhoneCardAck {
     static func showsManualClear(card: BoardCard, board: Board) -> Bool {
         board.manualClearWritable && card.manualCheckDue
+            && !card.manualSteps.isEmpty && card.manualCheckPath.isEmpty
+    }
+
+    /// Mark checked on a card flagged with a check file the Mac will no
+    /// longer serve (moved, edited out of shape, outside the project's
+    /// folder) — Passed / Failed would be refused, so the badge needs its
+    /// old way off. The caller supplies "refused" from the on-open read.
+    static func showsManualClearOverRefusedFile(card: BoardCard,
+                                                board: Board) -> Bool {
+        board.manualClearWritable && card.manualCheckDue
+            && !card.manualSteps.isEmpty && !card.manualCheckPath.isEmpty
+    }
+
+    /// Passed / Failed, on a card flagged with a check file, against a Mac
+    /// that takes the press. Mark checked is hidden there.
+    static func showsManualOutcome(card: BoardCard, board: Board) -> Bool {
+        board.manualOutcomeWritable && !card.manualCheckPath.isEmpty
             && !card.manualSteps.isEmpty
+    }
+
+    static func manualOutcomeFields(_ card: BoardCard, status: String,
+                                    note: String) -> [String: String] {
+        ManualOutcomeFields.fields(path: card.manualCheckPath, status: status,
+                                   note: note)
     }
 
     static func showsReview(card: BoardCard, board: Board) -> Bool {
@@ -273,6 +316,23 @@ enum PhoneCardAck {
         ["card_id": card.id,
          "expected_closed_by": card.closedBy,
          "expected_close_note": card.closeNote]
+    }
+}
+
+/// The body of one Passed / Failed press, from the card screen or the
+/// Checks screen alike: the file, the word, the note on one line and
+/// clamped to the Mac's own limit (`MAX_MANUAL_OUTCOME_CHARS`, 400 —
+/// `ManualCheckRules.noteLimit`). Self-contained, so every harness that
+/// compiles this file alone still builds.
+enum ManualOutcomeFields {
+    static let noteLimit = 400
+
+    static func fields(path: String, status: String,
+                       note: String) -> [String: String] {
+        let flat = note.split(whereSeparator: \.isNewline).joined(separator: " ")
+        let clamped = String(flat.trimmingCharacters(in: .whitespaces)
+            .prefix(noteLimit))
+        return ["path": path, "status": status, "note": clamped]
     }
 }
 
@@ -323,8 +383,13 @@ struct PhoneActionResult {
         let revision = obj?["revision"] as? Int
         let current = CardStated(json: obj?["current"] as? [String: Any])
         if code == 200 {
-            return PhoneActionResult(ok: true, detail: "", revision: revision,
-                                     current: current)
+            // A 200's `detail` is the Mac's report of what it did — START n
+            // TOGETHER's "started 4 cards (1 skipped)", START PROJECT's — and
+            // the screens that draw it read it here. Only `detail`: an
+            // `error` key on a success is not a report.
+            return PhoneActionResult(ok: true,
+                                     detail: (obj?["detail"] as? String) ?? "",
+                                     revision: revision, current: current)
         }
         return PhoneActionResult(ok: false, detail: detail, revision: revision,
                                  current: current)

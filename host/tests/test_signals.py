@@ -46,10 +46,49 @@ def test_context_below_the_ceiling_is_silent():
         sg.evaluate_agent(entry(metrics={"ctx_used_pct": 62}), "running"))
 
 
+def test_the_ceiling_is_eighty_five():
+    """The Strands Harness default (`docs/harness-token-policy.md`): the line
+    sits where a compaction still has room to work. 84 is silent, 85 fires,
+    and with no trend to temper it the reading is critical."""
+    assert sg.CTX_CRIT_PCT == 85.0
+    below = sg.evaluate_agent(entry(metrics={"ctx_used_pct": 84}), "running")
+    assert "ctx-full" not in rules(below)
+    at = sg.evaluate_agent(entry(metrics={"ctx_used_pct": 85}), "running")
+    assert by_rule(at, "ctx-full").severity == sg.CRIT
+    calm = sg.evaluate_agent(
+        entry(metrics={"ctx_used_pct": 85},
+              trend={"ctx_runway_seconds": 3600.0}), "running")
+    assert by_rule(calm, "ctx-full").severity == sg.WARN
+
+
+def test_every_client_draws_the_daemons_context_line():
+    """The panel's row and detail, the phone's row and the card's health line
+    each draw the context line by hand. They are pinned here to the one figure
+    the daemon acts on, so the red a person sees and the compact Dark Army
+    types land at the same moment. The usage meters keep their own 90%."""
+    from pathlib import Path
+
+    from dark_army_daemon import run_health
+
+    root = Path(__file__).resolve().parents[2]
+    line = int(sg.CTX_CRIT_PCT)
+    assert run_health.CTX_WORRY_PCT == line
+
+    for rel in ("panel/Sources/BobPanel/ProcessTable.swift",
+                "ios/BobPhone/ProcessTable.swift"):
+        text = (root / rel).read_text()
+        start = text.index("private var ctxColor: Color {")
+        body = text[start:text.index("\n    }\n", start)]
+        assert f"pct >= {line}" in body, rel
+    detail = (root / "panel/Sources/BobPanel/AgentDetailPane.swift").read_text()
+    assert f"static let ctxCrit: Double = {line}" in detail
+
+
 # ── context runway ───────────────────────────────────────────────────────────
 #
-# The number 90% was always standing in for. At 90% you may have forty minutes
-# or two, and only one of those is worth interrupting somebody about.
+# The number the context line was always standing in for. At 85% you may have
+# forty minutes or two, and only one of those is worth interrupting somebody
+# about.
 
 
 def test_a_session_on_course_to_fill_warns_before_it_is_full():

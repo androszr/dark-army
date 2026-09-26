@@ -219,3 +219,41 @@ final class TerminalStripTests: XCTestCase {
         XCTAssertEqual(TerminalStrip.foldLabel(open: true, prompts: 1, questions: 2), "▾ permission")
     }
 }
+
+/// Keys typed away: only a committing key sends at once, the preview reads
+/// like the prompt line, and the budget holds a batch the Mac would refuse.
+final class AwayKeysTests: XCTestCase {
+    func testOnlyCommittingKeysSendAtOnce() {
+        XCTAssertTrue(AwayKeys.flushesAtOnce([UInt8(0x0D)]))          // Enter
+        XCTAssertTrue(AwayKeys.flushesAtOnce(Array("ls\r".utf8)))
+        XCTAssertTrue(AwayKeys.flushesAtOnce([UInt8(0x03)]))          // Ctrl-C
+        XCTAssertTrue(AwayKeys.flushesAtOnce([UInt8(0x04)]))          // Ctrl-D
+        XCTAssertTrue(AwayKeys.flushesAtOnce([UInt8(0x1B)]))          // Escape
+        XCTAssertFalse(AwayKeys.flushesAtOnce([UInt8(0x7F)]))         // Backspace
+        XCTAssertFalse(AwayKeys.flushesAtOnce([UInt8(0x09)]))         // Tab
+        XCTAssertFalse(AwayKeys.flushesAtOnce(Array("\u{1B}[A".utf8))) // Up
+        XCTAssertFalse(AwayKeys.flushesAtOnce(Array("hello".utf8)))
+    }
+
+    func testThePreviewAppliesBackspaceAndSkipsSequences() {
+        let typed = Data("helo".utf8) + Data([0x7F]) + Data("lo \u{1B}[Dż".utf8)
+        XCTAssertEqual(AwayKeys.preview(typed), "hello ż")
+        XCTAssertEqual(AwayKeys.preview(Data([0x7F, 0x7F])), "")
+        XCTAssertEqual(AwayKeys.preview(Data("abcdef".utf8), limit: 3), "def")
+    }
+
+    func testTheBudgetHoldsTheEleventhSendAndRefills() {
+        var budget = AwayKeys.Budget()
+        let start = Date()
+        for _ in 0..<AwayKeys.perMinute {
+            XCTAssertEqual(budget.wait(start), 0)
+            budget.take(start)
+        }
+        let wait = budget.wait(start)
+        XCTAssertGreaterThan(wait, 0)
+        XCTAssertLessThanOrEqual(wait, 60.0 / Double(AwayKeys.perMinute) + 0.01)
+        XCTAssertEqual(budget.wait(start.addingTimeInterval(wait + 0.01)), 0)
+        budget.drain(start.addingTimeInterval(wait + 0.01))
+        XCTAssertGreaterThan(budget.wait(start.addingTimeInterval(wait + 0.02)), 0)
+    }
+}

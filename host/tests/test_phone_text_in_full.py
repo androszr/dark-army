@@ -70,9 +70,10 @@ ALLOWED = {
         "the Comm composer's minimum — five lines of room that grow, "
         "`ComposerView.swift`'s reason",
     ("AgentDetailView.swift", ".lineLimit(1)"):
-        "the cast quote under the agent's name is a one-line caption beside "
-        "the lead still, shrinking to 0.7 before it truncates; it is flavour, "
-        "never the agent's own words (`test_phone_decrypt_motion.py` pins it)",
+        "the cast quote on Details, under the origin lines, is a "
+        "one-line caption shrinking to 0.7 before it truncates; it is "
+        "flavour, never the agent's own words "
+        "(`test_phone_decrypt_motion.py` pins it)",
     ("ComposerView.swift", ".lineLimit(1)"):
         "a TextField's single-line entry policy, not display truncation; iOS "
         "scrolls the field",
@@ -115,7 +116,9 @@ AT_MOST = ("Theme.swift", "FleetView.swift", "BrandBar.swift")
 #: Every `.navigationTitle` argument on the phone, as written. Three of them
 #: were a model field until this sweep; a new screen adds its title here.
 TITLES = {'"new card"', '"profile"', '"PIPELINE"', '"agents"', '"timing"',
-          '"knowledge"', '"access log"'}
+          '"knowledge"', '"access log"', '"usage"', '"comm"',
+          '"scouting"', '"manual checks"', '"scout reports"', '"report"',
+          '"Design system"', '"plans"', '"plan"'}
 
 #: Sheet subjects still appear in full in their content, with no bar title.
 SHEET_HEADERS = (

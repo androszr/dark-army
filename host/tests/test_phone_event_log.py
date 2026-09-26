@@ -5,7 +5,8 @@
 What it pins: `LogEntry` decodes every key the daemon publishes
 (`event_log.PUBLISHED_KEYS` is imported, so the two cannot drift apart
 silently); the client asks for the diary as the sealed `log` kind on both
-legs and defines `fetchLog` exactly once; the Fleet tab calls it; the section
+legs and defines `fetchLog` exactly once; the Fleet tab calls it and offers
+Catch up once, above the fleet and never again inside the section; the section
 remembers its fold; the widget, the background check-in and the push code
 never touch it; the file is in all four project slots; and the view composes
 no sentence of its own.
@@ -112,6 +113,22 @@ def test_the_view_composes_no_sentence():
     assert '" finished' not in view
     assert "Trouble." not in view
 
+
+def test_the_fleet_tab_offers_catch_up_once():
+    """The Catch up link is written once, on the Fleet tab, above the fleet.
+
+    The Recently section is embedded in the same list below FINISHED, so a
+    copy inside it drew the link twice on one screen. Exactly one, not zero:
+    losing the link is as wrong as doubling it."""
+    literal = 'Text("Catch up across projects")'
+    hits = {path.name: _read(path).count(literal)
+            for path in sorted(PHONE.glob("*.swift"))}
+    found = {name: n for name, n in hits.items() if n}
+    assert sum(found.values()) == 1, found
+    assert found == {"FleetView.swift": 1}, found
+    recently = _read(RECENTLY)
+    assert literal not in recently
+    assert "sheets.show(.catchUp())" not in recently
 
 def test_the_view_routes_to_agents_and_cards():
     view = _read(RECENTLY)

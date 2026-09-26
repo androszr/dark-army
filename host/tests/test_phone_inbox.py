@@ -22,6 +22,7 @@ PHONE_AREA_WIRE = PHONE / "AreaWire.swift"
 #: `BoardCard.runFigures` is typed on the byte-pinned `RunFigures.Figures`,
 #: so the models compile with that file beside them (Foundation only).
 PHONE_RUN_FIGURES = PHONE / "RunFigures.swift"
+PHONE_WORK_REPORT = PHONE / "WorkReport.swift"
 NEEDS = PHONE / "NeedsYouView.swift"
 APP = PHONE / "BobPhoneApp.swift"
 ACTIONS = PHONE / "Actions.swift"
@@ -105,6 +106,58 @@ LINKED = {
 }
 
 
+#: Mission Control asked to start two cards; one also has a hand-check, which
+#: outranks the ask. The asked card is ANSWER, beside a real question.
+START_ASKED = {
+    "rows": [
+        {"sessionId": "q1", "nickname": "Ask", "project": "P", "question": "ok?"},
+    ],
+    "prompts": [],
+    "cards": [
+        {"id": "a1", "title": "Asked", "project": "P", "startAskId": "k1"},
+        {"id": "a2", "title": "Both", "project": "P", "startAskId": "k2",
+         "manualCheckDue": True, "manualSteps": "look"},
+        {"id": "a3", "title": "Quiet", "project": "P"},
+    ],
+}
+
+
+#: Dismissals of every shape the buzz gate subtracts (`live_activity.
+#: shown_sessions`): a dismissed waiting row, a question dismissed on its
+#: material and another on stale material, a prompt that no ack can hide, a
+#: dismissed session kept by its card's surviving entry, and the same with
+#: the card dismissed too.
+def _dismissed_mix() -> dict:
+    from dark_army_daemon.inbox_ack import fingerprint
+    return {
+        "rows": [
+            {"sessionId": "w1", "nickname": "Wait", "project": "P"},
+            {"sessionId": "q1", "nickname": "Ask", "project": "P", "question": "ok?"},
+            {"sessionId": "q2", "nickname": "Again", "project": "P", "question": "new?"},
+            {"sessionId": "p1", "nickname": "Perm", "project": "P",
+             "kindHint": "permission"},
+            {"sessionId": "b1", "nickname": "Kept", "project": "P"},
+            {"sessionId": "b2", "nickname": "Gone", "project": "P"},
+        ],
+        "prompts": [{"sessionId": "p1", "requestId": "pr", "summary": "Bash: ls"}],
+        "cards": [
+            {"id": "c1", "title": "Kept card", "project": "P", "sessionId": "b1",
+             "needsYou": True},
+            {"id": "c2", "title": "Gone card", "project": "P", "sessionId": "b2",
+             "needsYou": True},
+        ],
+        "acks": [
+            {"key": "s:w1", "kind": "waiting", "fp": "waiting"},
+            {"key": "s:q1", "kind": "question", "fp": fingerprint("question", "ok?")},
+            {"key": "s:q2", "kind": "question", "fp": fingerprint("question", "old?")},
+            {"key": "s:p1", "kind": "waiting", "fp": "waiting"},
+            {"key": "s:b1", "kind": "waiting", "fp": "waiting"},
+            {"key": "s:b2", "kind": "waiting", "fp": "waiting"},
+            {"key": "c:c2", "kind": "ended_work", "fp": fingerprint("ended_work", "")},
+        ],
+    }
+
+
 def _require_swiftc() -> str:
     swiftc = shutil.which("swiftc")
     if not swiftc:
@@ -180,7 +233,15 @@ struct Agent {
     var questionList: [AgentQuestion] = []
     var currentTool = ""
     var lastSummary = ""
+    var workReport: WorkReport.Parsed? = nil
     var id: String { sessionId }
+}
+// The two shapes `Inbox.items` reads for a work report's headline: the
+// daemon's parsed report on a row, and the fleet an ended card's row is
+// looked up in. The fixtures carry neither, so both stay empty here.
+enum WorkReport { struct Parsed { var headline = "" } }
+struct Agents {
+    func row(session: String) -> (Agent, String)? { nil }
 }
 struct SectionRow {
     let agent: Agent
@@ -208,6 +269,8 @@ struct BoardCard {
     var knownFinishedAt: Double? = nil
     var createdAt: Double = 0
     var doneAt: Double? = nil
+    var startAskId = ""
+    var startAskedAt: Double = 0
 }
 enum BoardColumn: String { case backlog }
 
@@ -274,11 +337,12 @@ struct Fixture: Decodable {
         var refineSessionId = ""
         var manualSteps = ""
         var summary = ""
+        var startAskId = ""
 
         enum CodingKeys: String, CodingKey {
             case id, title, project, needsYou, manualCheckDue, closedBy
             case closeNote, column, planPath, sessionId, refineState
-            case refineSessionId, manualSteps, summary
+            case refineSessionId, manualSteps, summary, startAskId
         }
 
         init(from decoder: Decoder) throws {
@@ -297,6 +361,7 @@ struct Fixture: Decodable {
             refineSessionId = (try? c.decode(String.self, forKey: .refineSessionId)) ?? ""
             manualSteps = (try? c.decode(String.self, forKey: .manualSteps)) ?? ""
             summary = (try? c.decode(String.self, forKey: .summary)) ?? ""
+            startAskId = (try? c.decode(String.self, forKey: .startAskId)) ?? ""
         }
     }
 }
@@ -340,6 +405,7 @@ enum Runner {
             card.closeNote = c.closeNote
             card.closedBy = c.closedBy ?? ""
             card.summary = c.summary
+            card.startAskId = c.startAskId
             return card
         }
         let acks: [InboxAckRecord] = fixture.acks.map { a in
@@ -411,6 +477,7 @@ def _phone_snapshot(payload: dict) -> dict:
             "refine_state": card.get("refineState", ""),
             "manual_steps": card.get("manualSteps", ""),
             "summary": card.get("summary", ""),
+            "start_ask_id": card.get("startAskId", ""),
         }
         cards.append(row)
     out = {
@@ -449,7 +516,8 @@ def binaries(tmp_path_factory):
     phone_bin = folder / "phone-inbox"
     built = subprocess.run(
         [swiftc, str(PHONE_MODELS), str(PHONE_AREA_WIRE), str(PHONE_COLLAB),
-         str(PHONE_RUN_FIGURES), str(PHONE_INBOX), str(phone_main),
+         str(PHONE_RUN_FIGURES), str(PHONE_WORK_REPORT), str(PHONE_INBOX),
+         str(phone_main),
          "-o", str(phone_bin)],
         capture_output=True, text=True, timeout=90)
     assert built.returncode == 0, built.stderr
@@ -461,6 +529,7 @@ def binaries(tmp_path_factory):
     ("card-precedence", CARD_PRECEDENCE),
     ("ready-plan", READY_PLAN),
     ("linked-subject", LINKED),
+    ("start-asked", START_ASKED),
     ("bound-and-waiting", BOUND_AND_WAITING),
 ])
 def test_desktop_and_phone_reducers_agree(binaries, name, payload):
@@ -642,7 +711,8 @@ def test_inbox_ack_is_a_chosen_phone_verb_and_swipe_exists():
     actions_src = ACTIONS.read_text()
     assert "available && wire.dismissable" in actions_src
     assert mod.count("swipeActions") == 1
-    assert 'Label("Dismiss"' in mod
+    # The word is the shared list's (`Verbs.swift`) since 25 Sep 2026.
+    assert 'Label(Verbs.dismiss.label' in mod
     assert "Delete" not in mod
     assert "UserDefaults" not in (PHONE / "Inbox.swift").read_text()
     assert "UserDefaults" not in needs
@@ -698,3 +768,45 @@ def test_project_registers_inbox_and_preserves_concurrent_files():
     # PBXBuildFile; the file reference is the membership pin.
     assert "path = BobPhoneTests/HomeAddressTests.swift" in source
     assert "DEC1510A0000000000000091" in source
+
+
+def test_a_start_ask_is_an_answer_entry_and_a_hand_check_outranks_it(binaries):
+    """Both reducers agree above; this says what they agree on. The asked
+    card is listed once, as ANSWER (kind 0) with wire `startAsked` (5); the
+    card that also has a hand-check is listed as its hand-check; a card with
+    no ask is not listed."""
+    desktop_bin, phone_bin = binaries
+    rows = _run(phone_bin, _phone_snapshot(START_ASKED))
+    assert rows == _run(desktop_bin, START_ASKED)
+    assert ("c:a1", 5, 0) in rows
+    assert ("c:a2", 3, 1) in rows
+    assert not any(key == "c:a3" for key, _, _ in rows)
+
+
+@pytest.mark.parametrize("name", ["five-kind", "bound-and-waiting", "dismissed-mix"])
+def test_the_buzz_gates_dismissed_reading_is_the_phones_list(binaries, name):
+    """The byte-level seam for the buzz gate: the phone's own
+    `PhoneInbox.items(from:)` under swiftc, and `live_activity.
+    shown_sessions` on the same dicts, name the same sessions — every
+    surviving session entry, plus the session of every surviving card entry
+    that `listed_sessions` admits (a card never admits a session alone)."""
+    from dark_army_daemon import live_activity
+    payload = {"five-kind": FIVE_KIND, "bound-and-waiting": BOUND_AND_WAITING,
+               "dismissed-mix": _dismissed_mix()}[name]
+    _, phone_bin = binaries
+    snapshot = _phone_snapshot(payload)
+    items = _run(phone_bin, snapshot)
+    prompts = {p["session_id"]: p for p in snapshot["permissions"]}
+    cards = snapshot["board"]["cards"]
+    listed = live_activity.listed_sessions(snapshot["agents"], prompts, notified=[])
+    card_session = {card["id"]: card["session_id"] for card in cards}
+    by_session = {key[2:] for key, _, _ in items if key.startswith("s:")}
+    by_card = {card_session.get(key[2:], "") for key, _, _ in items
+               if key.startswith("c:")}
+    expected = by_session | (by_card & listed)
+    shown = live_activity.shown_sessions(
+        snapshot["agents"], prompts, notified=[], cards=cards,
+        acks=snapshot.get("inbox", {}).get("acks"))
+    assert shown == expected
+    if name == "dismissed-mix":
+        assert shown == {"q2", "p1", "b1"}

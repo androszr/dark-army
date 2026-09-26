@@ -9,6 +9,11 @@ shape: the **Identity** table (gates), the **Reviewers** table (which domain
 reviewer fires on which paths) and the **Conventions** list (what the
 preflight, the verifier and the reviewers enforce).
 
+Fill this file in. Dark Army keeps it in step with its agent pack only until
+the project edits it: from the first edit on, a resync leaves the whole file
+alone, whatever the marker line above says. To take a newer template later,
+delete the file and resync.
+
 ## Identity
 
 | Field | Value |
@@ -18,6 +23,8 @@ preflight, the verifier and the reviewers enforce).
 | Package manager | <e.g. pnpm 11 (Node 22) / Swift Package Manager / none> |
 {{GATE_ROWS}}
 | Plans | `plans/<YYYY-MM-DD>-<slug>.md` |
+| Scout reports | `scout/<YYYY-MM-DD>-<slug>/report.md` |
+| Manual checks | `manual-check/<YYYY-MM-DD>-<slug>/check.md` |
 | Reference docs | <the docs a planner should read after this one> |
 
 **Every gate must pass before any handoff.** Run them in the order listed —

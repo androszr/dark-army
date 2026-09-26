@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import WebKit
+import UniformTypeIdentifiers
 
 /// The settings page: a search field over headed groups, every group and every
 /// entry read off `SettingsMenuModel.rows(...)` through `SettingsSearch`. Kind
@@ -21,7 +23,7 @@ struct SettingsWindowRoot: View {
                 VStack(alignment: .leading, spacing: 22) {
                     if groups.isEmpty {
                         Text("Nothing matches that")
-                            .font(Theme.mono(12))
+                            .font(Theme.prose(14))
                             .foregroundStyle(Theme.faint)
                     }
                     ForEach(groups) { group in
@@ -35,6 +37,22 @@ struct SettingsWindowRoot: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $state.designSystemOpen) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Design system").font(Theme.prose(16, weight: .semibold))
+                    Spacer()
+                    Button("Close") { state.designSystemOpen = false }
+                        .buttonStyle(.plain)
+                        .clickable()
+                        .accessibilityLabel("Close design system")
+                }
+                .padding(16)
+                SignalWorkshopMac()
+            }
+            .frame(minWidth: 700, minHeight: 600)
+            .background(Theme.canvas)
+        }
         // Escape: clear the query first, then close — the panel's own
         // precedent for a window's cancel action. Zero-size so it draws nothing.
         .background(
@@ -44,6 +62,59 @@ struct SettingsWindowRoot: View {
                 .opacity(0)
                 .accessibilityHidden(true)
         )
+    }
+}
+
+/// File access is limited to the copied SwiftPM workshop directory. There is
+/// no script message handler and no route from web content to DaemonClient.
+private struct SignalWorkshopMac: NSViewRepresentable {
+    func makeCoordinator() -> Guard { Guard() }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let web = WKWebView(frame: .zero)
+        web.navigationDelegate = context.coordinator
+        // Import JSON is an `<input type=file>`: on macOS it opens nothing
+        // unless a UI delegate answers with a panel (review, 25 Sep 2026).
+        web.uiDelegate = context.coordinator
+        if let root = PanelResources.url(folder: "workshop", file: "index.html") {
+            context.coordinator.root = root.deletingLastPathComponent().standardizedFileURL
+            web.loadFileURL(root, allowingReadAccessTo: context.coordinator.root!)
+        }
+        return web
+    }
+
+    func updateNSView(_ web: WKWebView, context: Context) {}
+
+    final class Guard: NSObject, WKNavigationDelegate, WKUIDelegate {
+        var root: URL?
+
+        /// The workshop's Import JSON: one JSON file, never a folder. The
+        /// page itself caps and validates what it reads.
+        func webView(_ webView: WKWebView,
+                     runOpenPanelWith parameters: WKOpenPanelParameters,
+                     initiatedByFrame frame: WKFrameInfo,
+                     completionHandler: @escaping ([URL]?) -> Void) {
+            let panel = NSOpenPanel()
+            panel.allowedContentTypes = [.json]
+            panel.allowsMultipleSelection = false
+            panel.canChooseDirectories = false
+            panel.canChooseFiles = true
+            panel.begin { response in
+                completionHandler(response == .OK ? panel.urls : nil)
+            }
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let root, let url = action.request.url,
+                  action.targetFrame != nil,
+                  url.isFileURL,
+                  url.standardizedFileURL.path.hasPrefix(root.path + "/") else {
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
     }
 }
 
@@ -60,7 +131,7 @@ struct SettingsSearchField: View {
                 .foregroundStyle(Theme.phosphor)
             TextField("search settings", text: $state.query)
                 .textFieldStyle(.plain)
-                .font(Theme.mono(12))
+                .font(Theme.prose(14))
                 .foregroundStyle(Theme.phosphorBright)
                 .focused($focused)
             if !state.query.isEmpty {
@@ -79,6 +150,8 @@ struct SettingsSearchField: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(Theme.well)
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+            .stroke(focused ? Theme.accent : Theme.control, lineWidth: 1))
         .onAppear { focused = true }
         .onChange(of: state.focusRequest) { _, _ in focused = true }
     }
@@ -93,7 +166,7 @@ struct SettingsGroupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(group.title.uppercased())
-                .font(Theme.mono(11, weight: .semibold))
+                .font(Theme.prose(12, weight: .semibold))
                 .foregroundStyle(Theme.dim)
             ForEach(SettingsSearch.items(SettingsSearch.visible(
                 group.entries, open: state.openBlocks, query: state.query))) { item in
@@ -169,7 +242,7 @@ struct SettingsToggleRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Text(row.title)
-                .font(Theme.mono(12))
+                .font(Theme.prose(14))
                 .foregroundStyle(Theme.phosphor)
             Spacer(minLength: 8)
             Toggle("", isOn: Binding(
@@ -245,7 +318,7 @@ struct SettingsChoiceChip: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(Theme.mono(11, weight: on ? .semibold : .regular))
+                .font(Theme.prose(13, weight: on ? .semibold : .regular))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
@@ -273,7 +346,7 @@ struct SettingsInfoRow: View {
 
     var body: some View {
         Text(row.title)
-            .font(Theme.mono(11))
+            .font(Theme.prose(13))
             .foregroundStyle(Theme.faint)
             .textSelection(.enabled)
             .help(row.tooltip)
@@ -312,7 +385,7 @@ struct SettingsBlockHeading: View {
 
     private var label: some View {
         Text(row.title)
-            .font(Theme.mono(11, weight: .semibold))
+            .font(Theme.prose(13, weight: .semibold))
             .foregroundStyle(row.disabled ? Theme.faint : Theme.phosphor)
             .padding(.top, 4)
             .help(row.tooltip)

@@ -25,6 +25,30 @@ struct BoardView: View {
     @State private var clearDoneRefusal = ""
     @State private var query = ""
     @FocusState private var searchFocused: Bool
+    /// Which row is in select mode, `nil` for none — one row at a time, the
+    /// Mac's `selectingRow` shape: `"prep"` (batch Refine) or `"backlog"`
+    /// (batch Start). Each row's SELECT is drawn only while this is nil.
+    @State private var selectingRow: String? = nil
+    /// The ticked card ids, in tick order (the first names the project the
+    /// rest must share); the press sends them in board order.
+    @State private var selection: [String] = []
+    /// The batch press's refusal in the Mac's own words (or the phone's own
+    /// two: the queue's duplicate and a declined Face ID), drawn under the
+    /// batch button. The ticks stay, so one can be fixed and pressed again.
+    @State private var batchRefusal = ""
+    /// The receipt whose refusal was last drawn, so a redraw reads a note
+    /// once (`CardDetailView.noteArrived`'s pattern).
+    @State private var batchNoteSeen = ""
+    /// The Backlog row's synchronous batch Start is out. A synchronous press
+    /// has no receipt, so this — not the queue mark — is its in-flight state.
+    @State private var batchSending = false
+    /// The Mac's report of the last batch Start, verbatim, drawn under the
+    /// Backlog heading outside select mode until the next SELECT or the
+    /// Board goes away.
+    @State private var startReport = ""
+    /// The assistant just picked for every ticked card, held on the tile
+    /// until the board names it on all of them (or a write is refused).
+    @State private var pendingBatchTool: String? = nil
     /// The Board's own project choice, `""` for `ALL` — Fleet's semantics
     /// (`@SceneStorage`, resolved through `FleetProjects.resolve`) under its
     /// own key, so narrowing one tab never narrows the other.
@@ -149,6 +173,11 @@ struct BoardView: View {
                         if !BoardRowFold.drawnFolded(item.id, flipped: rowFlips,
                                                      searching: searching) {
                             rowBody(for: item.id)
+                        } else if selectingRow == item.id {
+                            // The ticks survive a fold, so the selecting
+                            // row's count and CANCEL stay under its heading.
+                            if item.id == "prep" { prepBatchControl }
+                            if item.id == "backlog" { backlogBatchControl }
                         }
                     }
                 }
@@ -160,10 +189,41 @@ struct BoardView: View {
             // Dragging the rows puts the keyboard away too, the way the
             // composer's scroll does.
             .scrollDismissesKeyboard(.interactively)
-            .onDisappear { arm.disarm() }
+            // Leaving the Board keeps the ticks: a person who goes to
+            // another tab and comes back finds the batch where they left it.
+            // Only a waiting confirmation goes.
+            .onDisappear {
+                arm.disarm()
+                startReport = ""
+            }
         }
         .onChange(of: client.snapshot.generatedAt) { _, _ in
             noteClearDoneSnapshot()
+            pruneSelection()
+        }
+        // The search and the project filter keep the ticks — the batch
+        // button's count names every ticked card, drawn or not — and disarm
+        // a waiting press, confirmed over a board no longer on screen.
+        .onChange(of: query) { _, _ in disarmBatch() }
+        .onChange(of: project) { _, _ in disarmBatch() }
+        // A changed set of ticks is a different press: the arm was keyed on
+        // the old list, so it goes rather than firing on a set nobody read.
+        .onChange(of: selection) { _, _ in disarmBatch() }
+        // The batch press left the queue. Landed with nothing said: select
+        // mode is done. Refused: the note below keeps the ticks.
+        .onChange(of: client.queueMark(for: PhoneRowSelection.scope)) { _, mark in
+            // Only the Prep row's own press ends the Prep row's select mode:
+            // a Refine receipt leaving the queue never ends a Backlog one.
+            guard selectingRow == "prep" else { return }
+            if mark == nil && client.queueNote(for: PhoneRowSelection.scope) == nil {
+                leaveSelectMode()
+            }
+        }
+        .onChange(of: client.queueNote(for: PhoneRowSelection.scope)) { _, queued in
+            batchNoteArrived(queued)
+        }
+        .onAppear {
+            batchNoteArrived(client.queueNote(for: PhoneRowSelection.scope))
         }
         .onChange(of: arm.clearDone) { _, id in
             if id == nil { armedClear = nil }
@@ -333,13 +393,12 @@ struct BoardView: View {
                     .foregroundStyle(Theme.faint)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("[ \(item.title) ] \(count)")
-                        .font(Theme.mono(14))
-                        .tracking(0.96)
-                        .foregroundStyle(Theme.phosphor)
-                    Text("// \(item.caption)")
-                        .font(Theme.mono(10))
-                        .foregroundStyle(Theme.faint)
+                    Text("\(item.title)  \(count)")
+                        .font(Theme.prose(18, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Text(item.caption)
+                        .font(Theme.prose(14))
+                        .foregroundStyle(Theme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -366,7 +425,11 @@ struct BoardView: View {
         let cards = board.cards(in: id)
         let visible = visibleCards(in: id)
         if id == "prep" {
+            prepBatchControl
             waitingSection
+        }
+        if id == "backlog" {
+            backlogBatchControl
         }
         if id == "done" {
             clearDoneChrome
@@ -382,8 +445,18 @@ struct BoardView: View {
         } else if visible.isEmpty {
             CommentLine(text: "no cards match")
         } else {
-            cardsStack(visible)
+            cardsStack(tickedFirst(visible, in: id))
         }
+    }
+
+    /// The selecting row draws its ticked cards first, in the row's own
+    /// order among themselves, so a batch being gathered sits together at
+    /// the top of Prep or Backlog. Every other row is untouched.
+    private func tickedFirst(_ cards: [BoardCard], in id: String) -> [BoardCard] {
+        guard selectingRow == id, !selection.isEmpty else { return cards }
+        let ticked = Set(selection)
+        return cards.filter { ticked.contains($0.id) }
+            + cards.filter { !ticked.contains($0.id) }
     }
 
     /// What the finished row says when it draws no cards.
@@ -449,20 +522,407 @@ struct BoardView: View {
         }
     }
 
+    @ViewBuilder
     private func cardLink(_ card: BoardCard) -> some View {
-        // A card on its way out stays where it is, dimmed and saying so,
-        // and the way through to its detail screen is shut: the press
-        // happened on that screen, `apply(result, pop: true)` popped back
-        // here, and re-opening a card being destroyed is not a route.
+        if selectingRow == "prep" && card.column == "prep" {
+            // Select mode: the tile is a tick box, and the press toggles it
+            // rather than opening the card.
+            tickableCard(card)
+        } else if selectingRow == "backlog" && card.column == "backlog" {
+            // The Backlog row's select mode: the same tick box, judged by
+            // the Start rule.
+            tickableCard(card)
+        } else {
+            // A card on its way out stays where it is, dimmed and saying so,
+            // and the way through to its detail screen is shut: the press
+            // happened on that screen, `apply(result, pop: true)` popped back
+            // here, and re-opening a card being destroyed is not a route.
+            let leaving = client.cardLeaving(card.id)
+            DecryptButton(action: { sheets.show(.card(card)) }) {
+                PhoneBoardCard(card: card,
+                               notice: client.boardNotices[card.id] ?? "",
+                               leaving: leaving,
+                               live: liveStageNames(card))
+            }
+            .buttonStyle(.plain)
+            .disabled(leaving)
+        }
+    }
+
+    // MARK: - Select mode (batch Refine on Prep, batch Start on Backlog)
+
+    /// The batch press's queue mark — `QUEUED`, `SENDING…`, `SENT` — or nil.
+    private var batchMark: String? {
+        client.queueMark(for: PhoneRowSelection.scope)
+    }
+
+    /// The row whose ticks `selection` holds — read everywhere a literal
+    /// row would be, so a Backlog tick is never judged by the Prep rule.
+    private var selectingColumn: String { selectingRow ?? "prep" }
+
+    /// Whether the selecting row's press is out: the Prep row's queue mark,
+    /// or the Backlog row's synchronous send.
+    private var pressOut: Bool {
+        selectingRow == "backlog" ? batchSending : batchMark != nil
+    }
+
+    /// The ticked cards, in tick order, off the live board.
+    private var selectedCards: [BoardCard] {
+        let row = board.cards(in: selectingColumn)
+        return selection.compactMap { id in row.first { $0.id == id } }
+    }
+
+    /// The ticked ids in board order: what the press sends and what the
+    /// arm is keyed on, computed the same way on both presses.
+    private var batchIds: [String] {
+        PhoneRowSelection.orderedIds(selected: selection,
+                                     in: board.cards(in: selectingColumn))
+    }
+
+    private func tick(for card: BoardCard) -> PhoneRowSelection.Tick {
+        if selection.contains(card.id) { return .ticked }
+        return PhoneRowSelection.admits(selectingColumn, card: card, given: selectedCards,
+                                        dispatchEnabled: board.dispatchEnabled)
+            ? .open : .barred
+    }
+
+    private func tickableCard(_ card: BoardCard) -> some View {
+        let tick = tick(for: card)
         let leaving = client.cardLeaving(card.id)
-        return DecryptButton(action: { sheets.show(.card(card)) }) {
+        return DecryptButton(action: { toggle(card) }) {
             PhoneBoardCard(card: card,
                            notice: client.boardNotices[card.id] ?? "",
                            leaving: leaving,
-                           live: liveStageNames(card))
+                           live: liveStageNames(card),
+                           tick: tick)
         }
         .buttonStyle(.plain)
-        .disabled(leaving)
+        // A barred card does not tick; nor does anything while the press
+        // is out, so the set that went is the set on screen.
+        .disabled(tick == .barred || leaving || pressOut)
+        .accessibilityLabel((selectingRow == "backlog" ? "Select for batch start: "
+                                                       : "Select for batch refine: ")
+                            + (card.title.isEmpty ? "untitled" : card.title))
+        .accessibilityValue(PhoneBoardCard.tickWord(tick))
+    }
+
+    private func toggle(_ card: BoardCard) {
+        if let index = selection.firstIndex(of: card.id) {
+            selection.remove(at: index)
+        } else if tick(for: card) == .open {
+            selection.append(card.id)
+        }
+    }
+
+    /// Under the Prep heading: SELECT where the Mac takes the batch verb
+    /// and at least two of the drawn cards could be refined — **absent**,
+    /// never inert — or, in select mode, the batch button, CANCEL and the
+    /// note. SELECT is absent too while a batch press is out: a select mode
+    /// entered then would be a greyed QUEUED button over no ticks.
+    @ViewBuilder
+    private var prepBatchControl: some View {
+        if selectingRow != "prep" {
+            if board.refineBatchSupported && batchMark == nil && selectingRow == nil
+                && PhoneRowSelection.offersSelect("prep", cards: visibleCards(in: "prep"),
+                                                  dispatchEnabled: board.dispatchEnabled) {
+                DecryptButton("SELECT") {
+                    arm.disarm()
+                    selection = []
+                    batchRefusal = ""
+                    selectingRow = "prep"
+                }
+                .font(Theme.mono(12, weight: .semibold))
+                .foregroundStyle(Theme.phosphor)
+                .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityLabel("Select Prep cards to refine together")
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    batchButton
+                    // Enabled while the press is out: CANCEL leaves select
+                    // mode and never cancels the queued press, which stays on
+                    // the QUEUE list with its mark and RETRY — a press queued
+                    // offline must not lock the row until reconnect.
+                    DecryptButton("CANCEL") { leaveSelectMode() }
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.faint)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Leave select mode")
+                }
+                batchAssistantRow
+                if !batchRefusal.isEmpty {
+                    Text(batchRefusal)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// In select mode, once a card is ticked: one assistant for every ticked
+    /// card, the card screen's own tile row. A batch runs in one session, so
+    /// the Mac refuses a set naming different assistants; one tap here
+    /// writes the pick to each ticked card that names another one — the
+    /// card screen's `boardUpdate` with `tool` alone, one per card.
+    @ViewBuilder
+    private var batchAssistantRow: some View {
+        let cards = selectedCards
+        if !cards.isEmpty && !board.tools.isEmpty {
+            let shared = PhoneRowSelection.sharedTool(cards)
+            let waiting = pendingBatchTool != nil && shared != pendingBatchTool
+            VStack(alignment: .leading, spacing: 6) {
+                Text(shared.isEmpty && !waiting
+                     ? "assistant for all — the ticked cards differ"
+                     : (waiting ? "assistant for all — sending…" : "assistant for all"))
+                    .font(Theme.mono(11))
+                    .foregroundStyle(shared.isEmpty && !waiting ? .orange : Theme.faint)
+                    .accessibilityHidden(true)
+                PhoneProviderSwitch(tools: board.tools,
+                                    installed: board.installed,
+                                    selected: waiting ? (pendingBatchTool ?? "") : shared,
+                                    sending: waiting,
+                                    pick: setBatchTool)
+                    .disabled(pressOut)
+            }
+            .onChange(of: shared) { _, now in
+                if now == pendingBatchTool { pendingBatchTool = nil }
+            }
+        }
+    }
+
+    /// Writes `tool` to every ticked card naming another assistant. Each is
+    /// queued under its own card's scope, exactly as the card screen's pick,
+    /// so its receipt settles when that card names the tool. The first
+    /// refusal is drawn under the button and lets the tiles go.
+    private func setBatchTool(_ tool: String) {
+        let ids = PhoneRowSelection.retoolIds(selectedCards, to: tool)
+        guard !ids.isEmpty else { return }
+        arm.disarm()
+        batchRefusal = ""
+        pendingBatchTool = tool
+        Task { @MainActor in
+            for id in ids {
+                let result = await client.enqueue(action: PhoneActions.boardUpdate,
+                                                  fields: ["card_id": id, "tool": tool],
+                                                  scope: id)
+                if !result.ok {
+                    pendingBatchTool = nil
+                    batchRefusal = result.detail
+                    return
+                }
+            }
+        }
+    }
+
+    private var batchButton: some View {
+        let count = selection.count
+        let armed = arm.refineBatch != nil
+        let words = batchMark
+            ?? (armed ? PhoneRowSelection.armedVerb("prep", count: count)
+                      : PhoneRowSelection.verb("prep", count: count))
+        return DecryptButton(words) { pressBatch() }
+            .font(Theme.mono(12, weight: .semibold))
+            .foregroundStyle(armed ? Theme.alarm : Theme.phosphorBright)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(count < PhoneRowSelection.minimum || batchMark != nil)
+            .accessibilityLabel(words)
+    }
+
+    /// Armed on the first press, sent on the second. The arm's id is the
+    /// joined list in board order, so a tick changed in between fails the
+    /// confirm and re-arms rather than firing on a set nobody read.
+    private func pressBatch() {
+        let ids = batchIds
+        let key = ids.joined(separator: ",")
+        if arm.confirm(.refineBatch, id: key) {
+            Task { await sendBatch(ids) }
+        } else {
+            batchRefusal = ""
+            arm.arm(.refineBatch, id: key)
+        }
+    }
+
+    /// Written into the queue under one scope and returned at once; the
+    /// board shows every ticked card being planned when it lands. A refused
+    /// enqueue (the duplicate, a declined Face ID) never entered the queue,
+    /// so its words go under the button and the ticks stay.
+    private func sendBatch(_ ids: [String]) async {
+        arm.disarm()
+        batchRefusal = ""
+        let result = await client.enqueue(action: PhoneActions.boardRefineBatch,
+                                          fields: ["card_ids": ids.joined(separator: ",")],
+                                          scope: PhoneRowSelection.scope)
+        if !result.ok { batchRefusal = result.detail }
+    }
+
+    /// The Mac's refusal of the batch press, drawn and therefore read, once
+    /// per receipt. Only while the row is selecting: a note nobody can see
+    /// is not read, and stays STUCK on the QUEUE list with its RETRY.
+    private func batchNoteArrived(_ queued: QueueNote?) {
+        guard selectingRow == "prep", let queued, queued.id != batchNoteSeen else {
+            return
+        }
+        batchNoteSeen = queued.id
+        batchRefusal = queued.text
+        client.readQueueNote(for: PhoneRowSelection.scope)
+    }
+
+    /// Drop ticks the new board no longer allows — never while a press is
+    /// out, whose members stop being tickable the moment the frame shows
+    /// them refining. Judged against the whole row, not what is drawn: a
+    /// search or a project filter hides a ticked card, it does not untick it.
+    private func pruneSelection() {
+        if selectingRow == "backlog" {
+            guard !batchSending else { return }
+            let pruned = PhoneRowSelection.prune("backlog", selected: selection,
+                                                 in: board.cards(in: "backlog"),
+                                                 dispatchEnabled: board.dispatchEnabled)
+            if pruned != selection { selection = pruned }
+            return
+        }
+        guard selectingRow == "prep", batchMark == nil else { return }
+        let pruned = PhoneRowSelection.prune("prep", selected: selection,
+                                             in: board.cards(in: "prep"),
+                                             dispatchEnabled: board.dispatchEnabled)
+        if pruned != selection { selection = pruned }
+    }
+
+    /// A changed set of ticks, search or project is a different press: the
+    /// arm was keyed on the old one, so it goes rather than firing on a set
+    /// nobody read.
+    private func disarmBatch() {
+        if arm.refineBatch != nil || arm.startBatch != nil { arm.disarm() }
+    }
+
+    private func leaveSelectMode() {
+        disarmBatch()
+        selectingRow = nil
+        selection = []
+        batchRefusal = ""
+        pendingBatchTool = nil
+    }
+
+    // MARK: - Batch Start on Backlog
+
+    /// Under the Backlog heading: the Mac's report of the last batch Start;
+    /// SELECT where the Mac takes the batch verb, no row is selecting and at
+    /// least two of the drawn cards could be started — **absent**, never
+    /// inert — or, in select mode, the batch button, CANCEL and the refusal.
+    @ViewBuilder
+    private var backlogBatchControl: some View {
+        if selectingRow != "backlog" {
+            if !startReport.isEmpty {
+                Text(startReport)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(startReport)
+            }
+            if selectingRow == nil && board.startBatchSupported && !batchSending
+                && PhoneRowSelection.offersSelect("backlog", cards: visibleCards(in: "backlog"),
+                                                  dispatchEnabled: board.dispatchEnabled) {
+                DecryptButton("SELECT") {
+                    arm.disarm()
+                    selection = []
+                    batchRefusal = ""
+                    startReport = ""
+                    selectingRow = "backlog"
+                }
+                .font(Theme.mono(12, weight: .semibold))
+                .foregroundStyle(Theme.phosphor)
+                .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityLabel("Select planned cards to start together")
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    startBatchButton
+                    // Disabled while the press is out: a synchronous press
+                    // has no queue row to fall back on, and it returns
+                    // within the client's own timeout.
+                    DecryptButton("CANCEL") { leaveSelectMode() }
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.faint)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .disabled(batchSending)
+                        .accessibilityLabel("Leave select mode")
+                }
+                batchAssistantRow
+                if !batchRefusal.isEmpty {
+                    Text(batchRefusal)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var startBatchButton: some View {
+        let count = selection.count
+        let armed = arm.startBatch != nil
+        let words = batchSending ? "STARTING…"
+            : (armed ? PhoneRowSelection.armedVerb("backlog", count: count)
+                     : PhoneRowSelection.verb("backlog", count: count))
+        return DecryptButton(words) { pressStartBatch() }
+            .font(Theme.mono(12, weight: .semibold))
+            .foregroundStyle(armed ? Theme.alarm : Theme.phosphorBright)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(count < PhoneRowSelection.minimum || batchSending)
+            .accessibilityLabel(words)
+    }
+
+    /// Armed on the first press, sent on the second, keyed on the joined
+    /// list in board order — `pressBatch()`'s rule on its own slot.
+    private func pressStartBatch() {
+        let ids = batchIds
+        let key = ids.joined(separator: ",")
+        if arm.confirm(.startBatch, id: key) {
+            Task { @MainActor in await sendStartBatch(ids) }
+        } else {
+            batchRefusal = ""
+            arm.arm(.startBatch, id: key)
+        }
+    }
+
+    /// Sent synchronously and never banked: a batch Start opens a terminal,
+    /// so it happens at the person's press or not at all — an unreachable
+    /// Mac is a refusal in words and nothing fires later on its own. The
+    /// reply's `detail` is the Mac's report and is drawn whether or not the
+    /// press succeeded, START PROJECT's rule: under the heading on success,
+    /// under the button with the ticks kept on a refusal. `post` refetches
+    /// the board itself, which is where the batch lines come from.
+    private func sendStartBatch(_ ids: [String]) async {
+        arm.disarm()
+        batchRefusal = ""
+        batchSending = true
+        let result = await client.post(action: PhoneActions.boardStartBatch,
+                                       fields: ["card_ids": ids.joined(separator: ",")],
+                                       scope: PhoneRowSelection.startScope)
+        batchSending = false
+        if result.ok {
+            startReport = result.detail
+            selection = []
+            selectingRow = nil
+        } else {
+            batchRefusal = result.detail
+        }
     }
 
     /// The stages running under this card's session right now — the panel's
@@ -658,6 +1118,9 @@ struct PhoneBoardCard: View {
     /// legitimate answer everywhere — the fleet has forgotten the row, or
     /// nothing is running — and reads as "every stage it reached is done".
     var live: Set<String> = []
+    /// The select-mode box, `nil` outside select mode — every other
+    /// constructor is unchanged and draws no box.
+    var tick: PhoneRowSelection.Tick? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -674,9 +1137,17 @@ struct PhoneBoardCard: View {
             // Every line on this tile runs on as far as it needs: these
             // are `VStack` children in a full-width cell, so they wrap
             // without a `fixedSize`, and the column scrolls further.
-            Text("> \(card.title.isEmpty ? "untitled" : card.title)")
-                .font(Theme.mono(13))
-                .foregroundStyle(Theme.phosphorBright)
+            if let tick {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(Self.tickGlyph(tick))
+                        .font(Theme.mono(13, weight: .semibold))
+                        .foregroundStyle(Self.tickColour(tick))
+                        .accessibilityHidden(true)
+                    titleLine
+                }
+            } else {
+                titleLine
+            }
             if card.isScout {
                 Text("SCOUT")
                     .font(Theme.mono(10))
@@ -719,8 +1190,8 @@ struct PhoneBoardCard: View {
             }
             if !card.summary.isEmpty {
                 Text(card.summary)
-                    .font(Theme.mono(12))
-                    .foregroundStyle(Theme.dim)
+                    .font(Theme.prose(14))
+                    .foregroundStyle(Theme.muted)
             }
             // The crew, same view and same style as the Mac's card face.
             // Decoration inside a row that is already one accessibility
@@ -737,6 +1208,24 @@ struct PhoneBoardCard: View {
                 // Verbatim, or the bare word if the Mac sent none. Never a
                 // phone-built sentence — that is how two surfaces disagree.
                 Text(card.queueReason.isEmpty ? "queued" : card.queueReason)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.dim)
+            }
+            // Its place in a batch — the Mac's line, faint while it waits.
+            if !card.batchLine.isEmpty {
+                Text(card.batchLine)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(card.isBatchWaiting ? Theme.faint : Theme.phosphor)
+            }
+            // What this card waits on and what it unblocks — the Mac's two
+            // sentences, verbatim, each only where the Mac sent one.
+            if !card.dependencyLine.isEmpty {
+                Text(card.dependencyLine)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.dim)
+            }
+            if !card.dependentsLine.isEmpty {
+                Text(card.dependentsLine)
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.dim)
             }
@@ -765,13 +1254,47 @@ struct PhoneBoardCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Rectangle().fill(Theme.card))
-        .overlay(Rectangle().strokeBorder(Theme.hair, lineWidth: 1))
+        .padding(SignalTokens.Spacing.md)
+        .background(RoundedRectangle(cornerRadius: Theme.cardRadius).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
+            .strokeBorder(Theme.line, lineWidth: 1))
         .contentShape(Rectangle())
         .opacity(leaving ? 0.45 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spoken)
+    }
+
+    private var titleLine: some View {
+        Text(card.title.isEmpty ? "untitled" : card.title)
+            .font(Theme.prose(17, weight: .semibold))
+            .foregroundStyle(Theme.text)
+    }
+
+    static func tickColour(_ tick: PhoneRowSelection.Tick) -> Color {
+        switch tick {
+        case .ticked: return Theme.phosphorBright
+        case .open: return Theme.phosphor
+        case .barred: return Theme.faint
+        }
+    }
+
+    /// The drawn box: `[x]` ticked, `[ ]` open, `[-]` barred — the shape
+    /// differs, never the colour alone (`tickColour` is the second cue).
+    static func tickGlyph(_ tick: PhoneRowSelection.Tick) -> String {
+        switch tick {
+        case .ticked: return "[x]"
+        case .open: return "[ ]"
+        case .barred: return "[-]"
+        }
+    }
+
+    /// The box in words — the spoken half of the drawn `[x]` / `[ ]` / `[-]`.
+    static func tickWord(_ tick: PhoneRowSelection.Tick) -> String {
+        switch tick {
+        case .ticked: return "ticked"
+        case .open: return "not ticked"
+        case .barred: return "cannot be ticked"
+        }
     }
 
     /// The whole card as one sentence. Every part is a string this card
@@ -782,12 +1305,16 @@ struct PhoneBoardCard: View {
         var parts: [String] = []
         if card.manualCheckDue { parts.append("manual check needed") }
         parts.append(card.title.isEmpty ? "untitled" : card.title)
+        if let tick { parts.append(Self.tickWord(tick)) }
         if !card.project.isEmpty { parts.append(card.project) }
         if !metaLine.isEmpty { parts.append(metaLine) }
         if !card.summary.isEmpty { parts.append(card.summary) }
         if card.queueState == "queued" {
             parts.append(card.queueReason.isEmpty ? "queued" : card.queueReason)
         }
+        if !card.batchLine.isEmpty { parts.append(card.batchLine) }
+        if !card.dependencyLine.isEmpty { parts.append(card.dependencyLine) }
+        if !card.dependentsLine.isEmpty { parts.append(card.dependentsLine) }
         if !card.dispatchError.isEmpty { parts.append(card.dispatchError) }
         // Composed once, in the shared file, so the Mac's tooltip and this
         // sentence cannot come to say different things.

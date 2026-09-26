@@ -153,7 +153,9 @@ def test_the_screen_posts_no_verb_beyond_the_approval():
     phone tuples and armed here), plus `board_promote` — chosen by a person
     on a Done scout card — plus `close_terminal` with `by_person`, the
     DONE & CLOSE press on an ended run (the fleet's own Close, which
-    finishes the card after the tab closes), and nothing else."""
+    finishes the card after the tab closes), plus `board_manual_outcome` —
+    Passed / Failed on a card flagged with a check file, chosen on both
+    phone tuples and armed here — and nothing else."""
     import re
     src = _read(DETAIL)
     named = set(re.findall(r"PhoneActions\.([A-Za-z]+)", src))
@@ -161,7 +163,8 @@ def test_the_screen_posts_no_verb_beyond_the_approval():
     assert named <= {"boardUpdate", "boardReset", "boardDelete",
                      "boardDispatch", "boardRefine", "boardApprovePlan",
                      "boardMessage", "boardManualClear", "boardReview",
-                     "boardPromote", "closeTerminal"}, named
+                     "boardPromote", "closeTerminal",
+                     "boardManualOutcome"}, named
 
 
 def test_the_changed_plan_refusal_has_its_own_matcher_and_label():
@@ -259,3 +262,46 @@ def test_the_phone_still_sorts_no_cards():
     assert body is not None
     assert "sorted" not in body.group(1)
     assert "filter" in body.group(1)
+
+
+# --- the scout's verdict above the report ---------------------------------------
+
+
+def _phone_board_card() -> str:
+    """`struct BoardCard` through the next top-level `struct` in Models."""
+    text = _read(MODELS)
+    start = text.find("struct BoardCard")
+    assert start >= 0
+    rest = text[start:]
+    return rest[:rest.find("\nstruct ", 1)]
+
+
+def _report_section() -> str:
+    """`CardDetailView.reportSection`, up to the next member."""
+    text = _read(DETAIL)
+    start = text.index("private var reportSection")
+    rest = text[start:]
+    stops = [i for i in (rest.find("\n    @ViewBuilder", 1),
+                         rest.find("\n    private ", 1),
+                         rest.find("\n    func ", 1)) if i > 0]
+    return rest[:min(stops)] if stops else rest
+
+
+def test_the_verdict_pair_decodes_tolerantly():
+    card = _phone_board_card()
+    assert card.count('c.value(.reportVerdict, "")') == 1
+    assert card.count('c.value(.reportRecommendation, "")') == 1
+    assert "decode(.reportVerdict" not in card
+    assert "decode(.reportRecommendation" not in card
+
+
+def test_the_report_section_draws_the_verdict_in_full():
+    section = _report_section()
+    assert section.count("ScoutVerdictLine.text(") == 1
+    assert "ScoutVerdictLine.spoken(" in section
+    assert ".lineLimit(" not in section
+
+
+def test_the_phone_carries_the_shared_verdict_rule_once():
+    shared = _read(PHONE / "ScoutReports.swift")
+    assert shared.count("enum ScoutVerdictLine") == 1

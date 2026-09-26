@@ -113,6 +113,10 @@ struct BrandBar: View {
     /// that disagreed with the section would flash red over a list that
     /// had not moved.
     let attention: Int
+    /// Whether the shortcut legend is open under the bar.
+    var keysShown: Bool = false
+    /// The **keys** chip's press; nil draws no chip.
+    var onKeys: (() -> Void)? = nil
 
     private var needsYou: Bool { client.connected && attention > 0 }
     private var snapshotBoard: Board { client.snapshot.board }
@@ -137,6 +141,17 @@ struct BrandBar: View {
                     Text("Dark Army is not allowed to start sessions")
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.faint)
+                }
+                if let onKeys {
+                    // The shortcut legend, one press away: the letter verbs
+                    // are otherwise told to nobody. A view, not a tooltip.
+                    Button("keys", action: onKeys)
+                        .buttonStyle(AlarmOutline(color: keysShown ? Theme.phosphor : Theme.dim,
+                                                  size: 10))
+                        .clickable()
+                        .accessibilityLabel("Keyboard shortcuts")
+                        .reportsKeyboardFocus()
+                        .accessibilityValue(keysShown ? "shown" : "hidden")
                 }
                 SettingsButton(client: client)
                     .frame(width: 20, height: 18)

@@ -12,6 +12,32 @@ after a confirmed press per project.
 - Markers splice `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` /
   `docs/context.md` / `.claude/review.md`; `.claude/settings.json` is a key
   merge of owned `permissions.allow` rows.
+- **A filled-in `docs/context.md` is the project's** (24 Sep 2026, after a
+  resync put the web+iOS template's `pnpm` / `xcodebuild` gate rows over
+  vir-sunset's real `npm` ones). The template is a page of blanks that lives
+  wholly between the markers, so it is in `pack_render.PROJECT_FILLED_KEYS`:
+  `_write_render` rewrites its region only when the file is absent, has no
+  markers yet (the region goes above the project's text), equals today's
+  render, or is byte-for-byte the region the pack last wrote there —
+  `pack_render.managed_digest` (SHA-256 of the region, markers included, CRLF
+  normalised), recorded per key in the ledger row's `pack_digests`. Any other
+  region was edited by the project and the file is left alone, whatever the
+  marker line says. A row an older build wrote has no digests, so an edited
+  region is kept and an unedited one stops taking template changes; deleting
+  the file re-seeds it, as with `SEED_ONCE_KEYS`. Pinned by
+  `test_agent_pack_filled.py`.
+- **An adapted `scripts/` or `.github/workflows/` file is the project's**
+  (24 Sep 2026, after a resync put the iOS profile's stock
+  `check-entitlements.py` and `check-privacy-strings.py` over arpg-web's
+  adapted ones and its gate went red on files nobody there had touched).
+  Same rule as above on the whole file, since these carry no markers:
+  `pack_render.PROJECT_ADAPTED_PREFIXES`, `pack_render.file_digest`
+  (SHA-256, CRLF normalised) in `pack_digests`. The pack writes only when the
+  file is absent, equals today's render, or is exactly what the pack last
+  wrote; a file that differs with no digest on record is kept. Pinned by
+  `test_agent_pack_adapted.py`. The shipped entitlements guard also finds its
+  Debug twin under either `{{APP}}-Debug.entitlements` or
+  `{{APP}}.entitlements`.
 - The ledger is `~/.dark-army/agent-pack.json` (`paths.AGENT_PACK_PATH`,
   in `_PRIVATE_FILES`, 0600).
 - Three `PANEL_ACTIONS` (`install_agent_pack`, `stop_agent_pack_sync`,
@@ -128,8 +154,11 @@ after a confirmed press per project.
   `agent_pack/gitignore.txt`, a sibling of `template/` and never inside it
   (a `template/.gitignore` would be rendered as a pack file and would act on
   this repository's own template tree; `test_agent_pack_contract.py` pins
-  both); a profile folder may add its own `gitignore.txt` (web: `.next/`,
-  `out/`, `.vercel`, `coverage/`; iOS: `xcuserdata/` and friends), read by
+  both); its last group is Dark Army's key folder, `plans/`,
+  `docs/research/`, `/scout/`, `/manual-check/` and the person's private
+  `user-data/` (added 24 Sep 2026, the *starter gitignore user-data* plan); a
+  profile folder may add its own `gitignore.txt` (web: `.next/`, `out/`,
+  `.vercel`, `coverage/`; iOS: `xcuserdata/` and friends), read by
   `pack_render.gitignore_lines`, which `_overlay_profile` never sees.
   After the pack's files are written, `pack_install._offer_gitignore`
   appends the lines the project lacks under one `# managed by Dark Army`
@@ -149,6 +178,43 @@ after a confirmed press per project.
   .gitignore`), which Settings ▸ Projects draws. An existing file's mode is
   kept. Dark Army's own checkout is refused before the merge like every
   other pack write. Pinned by `test_agent_pack_gitignore.py`.
+
+- **Scout reports have a folder, a shape and a checker** (24 Sep 2026,
+  the *scout folder structured reports* plan). Scout is its own skill,
+  `template/.claude/skills/scout/` — `SKILL.md` (`/scout <brief>`; the ship
+  adapter keeps `/ship scout <brief>` as a one-line alias),
+  `references/scout.md` and the checker — mirrored under
+  `.agents/skills/scout/` plus `agents/openai.yaml` like every other skill.
+  The reference writes `scout/<YYYY-MM-DD>-<slug>/report.md` with an answer
+  block and five headings, and the scout runs the checker on it:
+  `template/.claude/skills/scout/scout_check.py`, a placeholder-free byte
+  copy of the daemon's `scout_report` module
+  (`host/dark_army_daemon/scout_report.py`; Dark Army's own
+  `.claude/skills/scout/scout_check.py` is the third copy, and
+  `test_scout_report.py` pins all three equal, stdlib-only and parsing
+  under Python 3.9). It lands 0644 and runs as `python3 <path>`
+  (`executable_keys` is unchanged), and `settings.json` gains one owned
+  allow row (`Bash(python3 .claude/skills/scout/scout_check.py:*)`). The starter
+  block gains `/scout/` after `docs/research/`, which stays — anchored,
+  so a `scout` folder deeper in the project is never ignored. A changed
+  line is a new line, so a project already offered `docs/research/`
+  keeps it and receives `/scout/` on its next launch resync, not at once.
+  `docs/context.md`'s template names the folder in one table row.
+- **A leftover check is a file with a checker** (25 Sep 2026, the *manual
+  check folder* plan). The implement reference's Phase 7b and the
+  implementer brief write each manual check as
+  `manual-check/<YYYY-MM-DD>-<slug>/check.md` (an answer block, `## Steps`,
+  `## Why not automated`), check it, flag the card with its path and then
+  close the card. The checker ships beside the implement reference:
+  `template/.claude/skills/ship/manual_check.py`, a placeholder-free byte
+  copy of `host/dark_army_daemon/manual_check.py` (Dark Army's own
+  `.claude/skills/ship/manual_check.py` is the third copy;
+  `test_manual_check_file.py` pins all three), mirrored under
+  `.agents/skills/ship/`, 0644, run as `python3 <path>`, with one owned allow
+  row (`Bash(python3 .claude/skills/ship/manual_check.py:*)`). The starter
+  block gains `/manual-check/` after `/scout/`, anchored; offer-once, so a
+  project already offered `/scout/` receives it on its next launch resync.
+  `docs/context.md`'s template names the folder in one table row.
 
 Pinned by `host/tests/test_agent_pack_*.py`.
 

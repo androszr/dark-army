@@ -75,13 +75,13 @@ const ID_SHAPE = /^[A-Za-z0-9._:-]{1,120}$/;
 // The live card's leg, pinned to relay_client.ACTIVITY_* / live_activity.KINDS.
 const ACTIVITY_EVENTS = ["update", "end"];
 const ACTIVITY_KINDS = ["permission", "question", "attention"];
-const SLUG_SHAPE = /^[a-z]{0,24}$/;
-// identity.NAMES lowercased, pinned by test_phone_buzz_kinds.py.
-// Not SLUG_SHAPE: that one rejects ptyś, and a faceless Ptyś is the bug.
+// identity.NAMES lowercased, pinned by test_phone_buzz_kinds.py. The one
+// face check for the buzz and the live card alike: a face off this list is
+// dropped, and one the list knows always reaches the phone.
 const FACE_SLUGS = [
   "cipher", "vex", "ledger", "mira", "hex", "relay", "forge", "watch",
   "audit", "proxy", "quiet", "nyx", "canon", "velvet", "androll",
-  "captcha", "sawa", "franio", "zosia", "ptyś",
+  "captcha", "sawa", "franio", "zosia", "ptys",
 ];
 const MAX_NICKNAME_CHARS = 40;
 // A card the Mac has gone quiet on (asleep, relay down) dims after this long
@@ -309,7 +309,8 @@ module.exports = async (req, res) => {
     const slug = String(body.slug || "");
     const sid = body.session_id === undefined ? "" : String(body.session_id);
     const since = body.since === undefined ? 0 : Number(body.since);
-    if (!ACTIVITY_EVENTS.includes(event) || !SLUG_SHAPE.test(slug)
+    if (!ACTIVITY_EVENTS.includes(event)
+        || (slug !== "" && !FACE_SLUGS.includes(slug))
         || (sid !== "" && !ID_SHAPE.test(sid))
         || !Number.isFinite(since) || since < 0
         || (event === "update" && (!ACTIVITY_KINDS.includes(kind)

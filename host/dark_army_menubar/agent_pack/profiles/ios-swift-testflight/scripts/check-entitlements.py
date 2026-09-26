@@ -19,10 +19,19 @@ real key change is. Pass the Debug and Release entitlements paths as arguments
 is tested.
 """
 
+import os
 import plistlib
 import sys
 
-DEBUG = 'ios/Config/{{APP}}.entitlements'
+# The Debug twin goes by either name: `{{APP}}-Debug.entitlements` when the
+# project names both halves by role, `{{APP}}.entitlements` when Xcode's own
+# default was kept. Guessing one and failing on the other turns a naming
+# choice into a red gate on a file the project never touched.
+DEBUG_CANDIDATES = (
+    'ios/Config/{{APP}}-Debug.entitlements',
+    'ios/Config/{{APP}}.entitlements',
+)
+DEBUG = next((path for path in DEBUG_CANDIDATES if os.path.exists(path)), DEBUG_CANDIDATES[-1])
 RELEASE = 'ios/Config/{{APP}}-Release.entitlements'
 # The one key the two files are ALLOWED to disagree on, and the value each
 # must carry. Sandbox for a cabled build, production for anything signed for

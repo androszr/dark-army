@@ -45,7 +45,9 @@ def test_the_terminal_guard_stands_above_every_triage_rung(monitor):
     """Not Escape alone: the guard is above the letter verbs, the arrows
     and Space, so all of them reach the pty."""
     guard = monitor.index("TerminalFocus.holdsCaret(")
-    for rung in ('case " ":', 'case "w":', 'case "s":', "case 126:", "case 36, 76:"):
+    # The letter verbs are one `TriageKeys.intent(` lookup since 25 Sep 2026
+    # (`plans/2026-09-25-usability-accessibility-pass.md`); ⌃Tab is `case 48`.
+    for rung in ("TriageKeys.intent(", "case 48:", "case 126:", "case 36, 76:"):
         assert guard < monitor.index(rung), rung
     # And it is the *only* place the flag is consulted — an Escape-only
     # copy below would be the bug this file records.

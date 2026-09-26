@@ -26,7 +26,8 @@ let package = Package(
             // The brand marks and the photo portraits the panel draws.
             // `assets/cast` is the menu-bar strip's pixel art; the menu bar
             // bakes its own icons from it and the panel never reads it.
-            resources: [.copy("Resources/brand"), .copy("Resources/portraits")],
+            resources: [.copy("Resources/brand"), .copy("Resources/portraits"),
+                        .copy("Resources/workshop")],
             linkerSettings: [
                 // A bare executable has no bundle to read an Info.plist out
                 // of, so it is embedded in a Mach-O section instead. Without

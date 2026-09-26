@@ -1,11 +1,7 @@
 """The phone wears the Mac's look, and it cannot quietly stop.
 
-`ios/BobPhone/Theme.swift` and `ios/BobPhone/Cast.swift` are hand copies of
-`panel/Sources/BobPanel/Theme.swift` and `Cast.swift`. That was a deliberate
-decision — the phone is an Xcode app target, the panel is a SwiftPM module, and
-coupling the two builds to share one file was refused. The price of copying is
-drift, and this test is what was bought instead: edit a colour, a cast name or a
-column caption on one side and the other side fails here.
+The panel and phone have generated Signal tokens from one JSON source. Cast
+and board words still have mirrored source and are checked here for drift.
 
 A **Python** test under `host/tests/`, not an XCTest: `cd host && .venv/bin/pytest`
 is the suite that actually runs on this machine and in every verification pass,
@@ -22,12 +18,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 PANEL_THEME = ROOT / "panel" / "Sources" / "BobPanel" / "Theme.swift"
 PHONE_THEME = ROOT / "ios" / "BobPhone" / "Theme.swift"
+PANEL_TOKENS = PANEL_THEME.with_name("SignalTokens.generated.swift")
+PHONE_TOKENS = PHONE_THEME.with_name("SignalTokens.generated.swift")
 PANEL_CAST = ROOT / "panel" / "Sources" / "BobPanel" / "Cast.swift"
 PHONE_CAST = ROOT / "ios" / "BobPhone" / "Cast.swift"
 PANEL_MARKDOWN = ROOT / "panel" / "Sources" / "BobPanel" / "Markdown.swift"
 PHONE_MARKDOWN = ROOT / "ios" / "BobPhone" / "Markdown.swift"
 PANEL_SPECIALISTS = ROOT / "panel" / "Sources" / "BobPanel" / "Specialists.swift"
 PHONE_SPECIALISTS = ROOT / "ios" / "BobPhone" / "Specialists.swift"
+PANEL_WORK_REPORT = ROOT / "panel" / "Sources" / "BobPanel" / "WorkReport.swift"
+PHONE_WORK_REPORT = ROOT / "ios" / "BobPhone" / "WorkReport.swift"
 PANEL_CARD_SHEET = ROOT / "panel" / "Sources" / "BobPanel" / "BoardCardSheet.swift"
 PHONE_COMPOSER = ROOT / "ios" / "BobPhone" / "ComposerView.swift"
 PANEL_BOARD = ROOT / "panel" / "Sources" / "BobPanel" / "BoardLanes.swift"
@@ -39,8 +39,8 @@ PHONE_DETAIL = ROOT / "ios" / "BobPhone" / "AgentDetailView.swift"
 # failure, never a skip: the interesting drift is one side gaining a colour the
 # other never hears about.
 TOKENS = {
-    "bg", "bar", "well", "phosphor", "phosphorBright", "dim", "faint",
-    "hair", "rule", "alarm", "amber", "card",
+    "canvas", "surface", "raised", "well", "text", "muted", "accent",
+    "accentInk", "line", "control", "attention", "danger",
 }
 
 _COLOUR = re.compile(
@@ -59,14 +59,11 @@ def _read(path: Path) -> str:
 
 
 def _palette(path: Path) -> dict:
-    """token -> (r, g, b, opacity-or-None), plus `corner`."""
+    """Generated semantic token -> RGB, with no hidden alpha."""
     text = _read(path)
     out = {}
     for name, r, g, b, opacity in _COLOUR.findall(text):
         out[name] = (int(r), int(g), int(b), opacity or None)
-    corner = _CORNER.search(text)
-    assert corner, f"no `corner` constant parsed out of {path}"
-    out["corner"] = int(corner.group(1))
     return out
 
 
@@ -78,20 +75,23 @@ def _names(path: Path) -> list:
 
 
 def test_the_palette_is_the_same_palette():
-    panel = _palette(PANEL_THEME)
-    phone = _palette(PHONE_THEME)
+    panel = _palette(PANEL_TOKENS)
+    phone = _palette(PHONE_TOKENS)
     # The preflight the whole test rests on: a future reformat that breaks the
     # regex must fail loudly, not pass vacuously on two empty maps.
-    assert len(panel) >= len(TOKENS) + 1, f"parsed too little from {PANEL_THEME}"
-    assert len(phone) >= len(TOKENS) + 1, f"parsed too little from {PHONE_THEME}"
+    assert len(panel) == len(TOKENS), f"parsed too little from {PANEL_TOKENS}"
+    assert len(phone) == len(TOKENS), f"parsed too little from {PHONE_TOKENS}"
 
-    expected = TOKENS | {"corner"}
+    expected = TOKENS
     assert expected <= set(panel), f"panel is missing {expected - set(panel)}"
     assert expected <= set(phone), f"phone is missing {expected - set(phone)}"
 
     for token in sorted(expected):
         assert panel[token] == phone[token], (
             f"{token} drifted: panel {panel[token]} vs phone {phone[token]}")
+    for name in TOKENS:
+        assert f"SignalTokens.{name}" in _read(PANEL_THEME)
+        assert f"SignalTokens.{name}" in _read(PHONE_THEME)
 
 
 def test_the_parser_would_notice_a_changed_channel():
@@ -101,18 +101,18 @@ def test_the_parser_would_notice_a_changed_channel():
     every comparison above compare nothing to nothing and pass. Never "fix" a
     breakage here by loosening the comparison to whatever happened to parse.
     """
-    panel_text = _read(PANEL_THEME)
-    assert "green: 255 / 255, blue: 124 / 255" in panel_text
+    panel_text = _read(PANEL_TOKENS)
+    assert "green: 232 / 255, blue: 168 / 255" in panel_text
     doctored = panel_text.replace(
-        "Color(red: 124 / 255, green: 255 / 255, blue: 124 / 255)",
-        "Color(red: 125 / 255, green: 255 / 255, blue: 124 / 255)")
+        "Color(red: 155 / 255, green: 232 / 255, blue: 168 / 255)",
+        "Color(red: 156 / 255, green: 232 / 255, blue: 168 / 255)")
     assert doctored != panel_text
 
     found = {n: (int(r), int(g), int(b)) for n, r, g, b, _ in _COLOUR.findall(doctored)}
     real = {n: (int(r), int(g), int(b)) for n, r, g, b, _ in _COLOUR.findall(panel_text)}
     assert len(found) >= len(TOKENS)
     assert found != real
-    assert found["phosphor"] != real["phosphor"]
+    assert found["accent"] != real["accent"]
 
 
 def test_the_cast_is_the_same_cast():
@@ -238,7 +238,8 @@ def test_the_specialist_table_ships_seven_names_and_seven_jobs():
         assert f'"{role}"' in panel, f"role line missing from the table: {role!r}"
 
 
-@pytest.mark.parametrize("path", [PANEL_SPECIALISTS, PHONE_SPECIALISTS])
+@pytest.mark.parametrize("path", [PANEL_SPECIALISTS, PHONE_SPECIALISTS,
+                                  PANEL_WORK_REPORT, PHONE_WORK_REPORT])
 def test_the_shared_file_stays_cross_platform(path):
     """`.help(_:)` is macOS-only and `AppKit`/`UIKit` are one platform each.
 
@@ -259,7 +260,7 @@ POOL_MEMBERS = {
     "sawa": "bc-security-reviewer",
     "captcha": "bc-security-reviewer",
     "franio": "bc-bug-auditor",
-    "ptyś": "bc-bug-auditor",
+    "ptys": "bc-bug-auditor",
     "relay": "bc-implementer",
     "zosia": "bc-verifier",
 }

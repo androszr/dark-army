@@ -89,13 +89,14 @@ struct ReplyBar: View {
 
     /// The route the daemon says the next reply takes, in the placeholder
     /// and the Send button's help — so nobody guesses whether the channel
-    /// was needed. Read verbatim; anything but `"typed"` reads as the channel.
+    /// was needed. The daemon names the route; the panel describes it.
     static func placeholder(replyVia: String) -> String {
         replyVia == "typed" ? "Reply — typed into its terminal…" : "Reply…"
     }
 
     static func sendHelp(replyVia: String) -> String {
-        replyVia == "typed"
+        if replyVia == "codex" { return "Sent directly to this Codex session" }
+        return replyVia == "typed"
             ? "Typed onto this session's own input line in VS Code"
             : "Sent through Dark Army's channel"
     }
@@ -230,9 +231,9 @@ struct QuestionOptionRow: View {
 /// the armed state is never colour-alone.
 struct WrapUpBar: View {
     static let prompt = "Done reading? Close this terminal tab and end the session."
-    static let armedPrompt = "Closes the tab and ends this agent. There is no undo."
-    static let button = "Acknowledge & close terminal"
-    static let armedButton = "Really close the terminal?"
+    static let armedPrompt = Verbs.closeTerminal.noUndo ?? ""
+    static let button = Verbs.closeTerminal.label
+    static let armedButton = Verbs.closeTerminal.armedLabel
 
     let agent: Agent
     @ObservedObject var actions: RowActions
@@ -265,8 +266,9 @@ struct WrapUpBar: View {
                 .controlSize(.small)
                 .tint(armed ? Color.red : nil)
                 .disabled(busy)
+                .reportsKeyboardFocus()
                 .help("Closes this session's terminal tab — the agent ends with it — and dismisses its card. Press twice to confirm.")
-                .accessibilityLabel(armed ? "Confirm close terminal" : "Acknowledge and close terminal")
+                .accessibilityLabel(Verbs.closeTerminal.spoken(armed: armed))
             }
             .padding(.top, 8)
         }
@@ -285,8 +287,8 @@ struct WrapUpBar: View {
 struct LowPriorityBar: View {
     static let prompt = "This session hit its usage limit. Carry on in low priority?"
     static let armedPrompt = "Types the low-priority command into this terminal. Running it twice switches it back off."
-    static let button = "Low priority"
-    static let armedButton = "Really switch to low priority?"
+    static let button = Verbs.lowPriority.label
+    static let armedButton = Verbs.lowPriority.armedLabel
 
     let agent: Agent
     @ObservedObject var actions: RowActions
@@ -310,12 +312,103 @@ struct LowPriorityBar: View {
                 }
                 .controlSize(.small)
                 .tint(armed ? Color.red : nil)
+                .reportsKeyboardFocus()
                 .help("Types /low-priority into this session's terminal and dismisses its card. The command is a toggle — running it twice switches low priority back off. Press twice to confirm.")
-                .accessibilityLabel(armed ? "Confirm switch to low priority" : "Switch to low priority")
+                .accessibilityLabel(Verbs.lowPriority.spoken(armed: armed))
             }
             .padding(.top, 8)
         }
         .buttonStyle(.bordered)
+        .padding(.horizontal, inset)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+    }
+}
+
+/// Stop, drawn where it can be pressed. Before this bar the verb was a
+/// secret letter (S) and its arm was invisible: `RowActions.armedStop` was
+/// read by no view, so neither a pointer nor VoiceOver could stop a session
+/// from the Mac. The same `RowActions.stop` the key sends — one armed row,
+/// one six-second arm, one refusal slot — so the letter and the button are
+/// the same gate. Drawn only where `agent.canStop` says the daemon would
+/// accept the press; the daemon still re-checks by identity.
+struct StopBar: View {
+    static let prompt = "Stop this session? The agent ends at once."
+    static let armedPrompt = "Ends this agent's run now. Press again to confirm."
+
+    let agent: Agent
+    @ObservedObject var actions: RowActions
+    @ObservedObject var client: DaemonClient
+    var inset: CGFloat = 14
+
+    var body: some View {
+        let armed = actions.armedStop == agent.id
+        let busy = actions.isStopping(agent)
+        return ArmedVerbStrip(prompt: armed ? Self.armedPrompt : Self.prompt,
+                              armed: armed, inset: inset) {
+            Button(armed ? Verbs.stop.armedLabel : Verbs.stop.label) {
+                actions.stop(agent, client: client)
+            }
+            .buttonStyle(AlarmOutline(color: Theme.alarm, size: 10))
+            .disabled(busy)
+            .clickable(!busy)
+            .accessibilityLabel(Verbs.stop.spoken(armed: armed))
+        }
+    }
+}
+
+/// Delete, drawn on an abandoned agent — `StopBar`'s twin over
+/// `RowActions.retire` (the R key), which the daemon refuses for anything
+/// not in the `abandoned` bucket at the moment of the press. Deletes the
+/// record of a run that is already over, never the transcript.
+struct DeleteBar: View {
+    static let prompt = "Delete this abandoned agent's record? The transcript is kept."
+    static let armedPrompt = "Deletes the record for good; the transcript stays. Press again to confirm."
+
+    let agent: Agent
+    @ObservedObject var actions: RowActions
+    @ObservedObject var client: DaemonClient
+    var inset: CGFloat = 14
+
+    var body: some View {
+        let armed = actions.armedRetire == agent.id
+        let busy = actions.isStopping(agent)
+        return ArmedVerbStrip(prompt: armed ? Self.armedPrompt : Self.prompt,
+                              armed: armed, inset: inset) {
+            Button(armed ? Verbs.delete.armedLabel : Verbs.delete.label) {
+                actions.retire(agent, client: client)
+            }
+            .buttonStyle(AlarmOutline(color: Theme.alarm, size: 10))
+            .disabled(busy)
+            .clickable(!busy)
+            .accessibilityLabel(Verbs.delete.spoken(armed: armed))
+        }
+    }
+}
+
+/// The strip `StopBar` and `DeleteBar` share: a hairline, the sentence that
+/// says what the press does (alarm ink once armed, so the armed state is
+/// words as well as colour), and the one button.
+private struct ArmedVerbStrip<Control: View>: View {
+    let prompt: String
+    let armed: Bool
+    let inset: CGFloat
+    @ViewBuilder let control: () -> Control
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(Theme.hair).frame(height: 1)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(prompt)
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(armed ? Theme.alarm : Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                control()
+                    .reportsKeyboardFocus()
+            }
+            .padding(.top, 8)
+        }
         .padding(.horizontal, inset)
         .padding(.top, 8)
         .padding(.bottom, 8)

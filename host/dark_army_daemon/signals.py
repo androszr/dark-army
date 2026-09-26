@@ -55,12 +55,16 @@ EDIT_TOOLS = (
 )
 CHURN_EDITS_PER_FILE = 12.0      # 2–5 is normal iterative editing; 12 is a loop
 
-CTX_CRIT_PCT = 90.0              # where auto-compact looms and quality sags
+# The context line: `ctx-full` fires here, and `autocompact.py` types
+# `/compact` on it. 85% (from 90% on 25 Sep 2026, the Strands Harness default,
+# `docs/harness-token-policy.md`) is where a compaction still has room to work;
+# at 90% it lands on a window with barely enough left to rewrite itself.
+CTX_CRIT_PCT = 85.0
 
 # Context *runway*: how long until this session is full at the rate it is
-# currently filling. This is the number 90% was always standing in for — at 90%
-# you may have forty minutes or two, and the two cases want different behaviour
-# from a person. Fed by `samples.SampleRing`, which refuses to produce a slope it
+# currently filling. This is the number the line was always standing in for —
+# at 85% you may have forty minutes or two, and the two cases want different
+# behaviour from a person. Fed by `samples.SampleRing`, which refuses to produce a slope it
 # cannot stand behind, so `trend` is empty far more often than it is not.
 RUNWAY_WARN_SECONDS = 20 * 60.0
 RUNWAY_CRIT_SECONDS = 5 * 60.0

@@ -70,6 +70,9 @@ KINDS = (
     "card_dispatched",
     "card_done",
     "card_manual",
+    # A person recording Passed or Failed on a manual check file — the
+    # outcome, never the file's path.
+    "card_manual_outcome",
     "card_dispatch_failed",
     "card_plan_attached",
     "card_plan_approved",
@@ -198,6 +201,16 @@ def sentence(kind: str, **fields) -> str:
         return f"{_who(merged, use_title=False)} finished the card {title or ''}".rstrip()
     if kind == "card_manual":
         return f"{title or 'a card'} needs a manual check"
+    if kind == "card_manual_outcome":
+        outcome = str(merged.get("status") or "").strip().lower()
+        word = outcome if outcome in ("passed", "failed") else "recorded"
+        text = f"{title or 'a card'}: manual check {word}"
+        note = " ".join(str(merged.get("note") or "").split())
+        if note and note.lower() != "none":
+            if len(note) > MAX_DESCRIPTION_CHARS:
+                note = note[:MAX_DESCRIPTION_CHARS - 1] + "…"
+            text += f" — {note}"
+        return text
     if kind == "card_dispatch_failed":
         error = str(merged.get("error") or "").strip()
         head = f"{title or 'a card'} could not start"

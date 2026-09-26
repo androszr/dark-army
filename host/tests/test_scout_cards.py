@@ -3,18 +3,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import threading
 from pathlib import Path
 
 import pytest
 
 from dark_army_daemon import channel_server as cs
 from dark_army_daemon import dispatch
+from dark_army_daemon import scout_report
 from dark_army_daemon.api_server import ApiServer
 from dark_army_daemon.board import (
-    KIND_LOCKED_REFUSAL, KIND_REFUSAL, MAX_PROMPT_CHARS,
-    REPORT_NOT_SCOUT_REFUSAL, REVISED_COLUMNS, SCOUT_PLAN_REFUSAL,
+    KIND_LOCKED_REFUSAL, KIND_REFUSAL, MAX_PROMPT_CHARS, MAX_SUMMARY_CHARS,
+    MAX_TITLE_CHARS,
+    REPORT_MALFORMED_REFUSAL, REPORT_NOT_SCOUT_REFUSAL, REVISED_COLUMNS, SCOUT_PLAN_REFUSAL,
     BoardStore, SINGLE_WRITER,
 )
 from dark_army_daemon.daemon import BobDaemon
@@ -131,6 +135,24 @@ def test_rings_place_kind_and_report_path():
     assert "kind" in ApiServer._BOARD_FIELDS
     assert "report_path" not in ApiServer._BOARD_FIELDS
     assert {"kind", "report_path"} <= REVISED_COLUMNS
+    # The attached report's verdict line, at v28: `attach_report`'s ring.
+    assert SINGLE_WRITER["report_verdict"] == "attach_report"
+    assert SINGLE_WRITER["report_recommendation"] == "attach_report"
+    assert {"report_verdict", "report_recommendation"} <= REVISED_COLUMNS
+    for field in ("report_verdict", "report_recommendation"):
+        assert field not in BoardStore._WRITABLE
+        assert field not in ApiServer._BOARD_FIELDS
+
+
+def test_update_cannot_write_report_verdict(store):
+    card = _make(store, kind="scout")
+    after, _detail = store.update(card["id"], {"report_verdict": "x",
+                                               "report_recommendation": "build"})
+    stored = store.get(card["id"])
+    assert stored["report_verdict"] == ""
+    assert stored["report_recommendation"] == ""
+    if after is not None:
+        assert after["report_verdict"] == ""
 
 
 def test_update_cannot_write_report_path(store):
@@ -164,6 +186,59 @@ def test_attach_report_replaces_on_second_attach(store):
     attached, detail = store.attach_report(card["id"], "/tmp/b.md", "sess-1")
     assert attached is not None, detail
     assert attached["report_path"] == "/tmp/b.md"
+
+
+def _bound_scout(store):
+    card = _make(store, kind="scout")
+    store.update(card["id"], {
+        "column_name": "in_progress", "session_id": "sess-1"}, bump=False)
+    return card
+
+
+def test_attach_report_stores_verdict_and_recommendation(store):
+    card = _bound_scout(store)
+    before = store.get(card["id"])["revision"]
+    attached, detail = store.attach_report(
+        card["id"], "/tmp/a.md", "sess-1",
+        verdict="X waits on a lock nobody releases.", recommendation="build")
+    assert attached is not None, detail
+    assert attached["report_verdict"] == "X waits on a lock nobody releases."
+    assert attached["report_recommendation"] == "build"
+    assert attached["revision"] == before + 1
+
+
+def test_attach_report_clamps_and_collapses_the_verdict(store):
+    card = _bound_scout(store)
+    long_line = "word " * (MAX_SUMMARY_CHARS // 5 + 50)
+    verdict = "first line\n" + long_line + "\n  third\tline"
+    attached, detail = store.attach_report(
+        card["id"], "/tmp/a.md", "sess-1", verdict=verdict)
+    assert attached is not None, detail
+    stored = attached["report_verdict"]
+    assert "\n" not in stored and "\t" not in stored and "  " not in stored
+    assert stored.startswith("first line word")
+    assert len(stored) <= MAX_SUMMARY_CHARS
+    assert stored == stored.strip()
+
+
+def test_attach_report_drops_an_unknown_recommendation(store):
+    card = _bound_scout(store)
+    attached, _ = store.attach_report(
+        card["id"], "/tmp/a.md", "sess-1", verdict="v", recommendation="ship it")
+    assert attached["report_recommendation"] == ""
+    attached, _ = store.attach_report(
+        card["id"], "/tmp/a.md", "sess-1", verdict="v", recommendation="BUILD")
+    assert attached["report_recommendation"] == "build"
+
+
+def test_attach_report_replaces_the_verdict_on_second_attach(store):
+    card = _bound_scout(store)
+    store.attach_report(card["id"], "/tmp/a.md", "sess-1",
+                        verdict="first", recommendation="build")
+    attached, detail = store.attach_report(card["id"], "/tmp/b.md", "sess-1")
+    assert attached is not None, detail
+    assert attached["report_verdict"] == ""
+    assert attached["report_recommendation"] == ""
 
 
 def test_attach_report_wrong_session_is_refused(store):
@@ -349,7 +424,7 @@ async def test_scout_start_is_not_gated(daemon, monkeypatch):
     assert ok, detail
     assert len(spawns) == 1
     prompt = spawns[0]["argv"][-1]
-    assert prompt.startswith("/ship scout ")
+    assert prompt.startswith("/scout ")
     assert store.get(card["id"])["column_name"] == "in_progress"
 
 
@@ -382,40 +457,40 @@ async def test_update_card_to_in_progress_on_scout_is_not_gated(daemon):
 
 def test_scout_prompt_leads_with_the_title_on_a_one_word_summary():
     """A card titled "Before open report" with the summary `O` opened
-    `/ship scout O` — a brief with nothing in it. The title is the brief
+    `/scout O` — a brief with nothing in it. The title is the brief
     when the summary is under `SCOUT_BRIEF_MIN_WORDS` words; the summary
     still rides, once, on its own line."""
     prompt = dispatch.scout_prompt({
         "kind": "scout", "title": "Before open report", "summary": "O"})
-    assert prompt.startswith("/ship scout Before open report")
+    assert prompt.startswith("/scout Before open report")
     assert "Brief: O" in prompt
     assert "Title:" not in prompt
     # A real summary keeps the lead, and the title follows as before.
     prompt = dispatch.scout_prompt({
         "kind": "scout", "title": "Scout: why X",
         "summary": "why does the strip flicker on wake"})
-    assert prompt.startswith("/ship scout why does the strip flicker on wake")
+    assert prompt.startswith("/scout why does the strip flicker on wake")
     assert "Title: Scout: why X" in prompt
     assert "Brief:" not in prompt
     # No summary at all: the title leads and is not repeated.
     prompt = dispatch.scout_prompt({"kind": "scout", "title": "Why X"})
-    assert prompt == "/ship scout Why X"
+    assert prompt == "/scout Why X"
     # A "Scout:" label on the title is not more brief than the summary.
     prompt = dispatch.scout_prompt({
         "kind": "scout", "title": "Scout: why X", "summary": "why X"})
-    assert prompt.startswith("/ship scout why X\n")
+    assert prompt.startswith("/scout why X\n")
     assert "Title: Scout: why X" in prompt
     # The label is dropped when the title does lead.
     prompt = dispatch.scout_prompt({
         "kind": "scout", "title": "Scout: before open report", "summary": "O"})
-    assert prompt.startswith("/ship scout before open report\n")
+    assert prompt.startswith("/scout before open report\n")
 
 
 def test_scout_prompt_ignores_plan_path():
     prompt = dispatch.start_prompt({
         "kind": "scout", "title": "Scout: why X", "summary": "why X",
         "plan_path": "/tmp/plans/x.md"})
-    assert prompt.startswith("/ship scout why X")
+    assert prompt.startswith("/scout why X")
     assert "/ship implement" not in prompt
 
 
@@ -440,7 +515,7 @@ def test_guard_accepts_a_prep_scout(tmp_path, monkeypatch):
     ok, detail = dispatch.guard(
         card, roots=[str(root)], in_flight=[], now=0)
     assert ok, detail
-    assert dispatch.start_prompt(card).startswith("/ship scout ")
+    assert dispatch.start_prompt(card).startswith("/scout ")
 
 
 # --- Promote ------------------------------------------------------------------
@@ -768,6 +843,10 @@ def test_both_clients_decode_kind_and_report_path_tolerantly():
         assert text.count('c.value(.reportPath, "")') == 1
         assert "decode(.kind" not in text
         assert "decode(.reportPath" not in text
+        assert text.count('c.value(.reportVerdict, "")') == 1
+        assert text.count('c.value(.reportRecommendation, "")') == 1
+        assert "decode(.reportVerdict" not in text
+        assert "decode(.reportRecommendation" not in text
 
 
 def test_starts_unplanned_excludes_a_scout():
@@ -794,11 +873,26 @@ def test_phone_can_refine_excludes_a_scout():
     phone = (ROOT / "ios/BobPhone/CardDetailView.swift").read_text()
     start = phone.index("private var canRefine: Bool {")
     body = phone[start:phone.index("\n    }", start)]
-    assert "&& !card.isScout" in body
+    # The phone's Refine terms live in `PhoneRowSelection` since the Board
+    # tab's batch refine (the tick and the button share one rule), so the
+    # pin follows them there, as the Mac's does below.
+    assert 'PhoneRowSelection.tickable("prep", card: card,' in body
+    rule = (ROOT / "ios/BobPhone/RowSelection.swift").read_text()
+    start = rule.index("static func tickable(")
+    tick = rule[start:rule.index("\n    }", start)]
+    assert "&& !card.isScout" in tick
     panel = (ROOT / "panel/Sources/BobPanel/BoardCardView.swift").read_text()
     start = panel.index("private var canRefine: Bool {")
     body = panel[start:panel.index("\n    }", start)]
-    assert "&& !card.isScout" in body
+    # The Mac's Refine terms live in `RowSelection` since the Prep row's
+    # batch refine (the tick and the button share one rule), so the pin
+    # follows them there: `canRefine` delegates, and the `.prep` case
+    # excludes a scout.
+    assert "RowSelection.tickable(.prep, card: card, chrome: chrome)" in body
+    rule = (ROOT / "panel/Sources/BobPanel/RowSelection.swift").read_text()
+    start = rule.index("case .prep:")
+    prep = rule[start:rule.index("case .backlog", start)]
+    assert "&& !card.isScout" in prep
 
 
 def test_can_promote_requires_done():
@@ -862,3 +956,367 @@ def test_the_phone_outbox_carries_kind_tolerantly():
     outbox = (ROOT / "ios/BobPhone/Outbox.swift").read_text()
     assert outbox.count('kind = c.value(.kind, "")') == 2, "entry and draft"
     assert 'if entry.kind == "scout" { fields["kind"] = entry.kind }' in outbox
+
+
+# --- the scout/ folder: shape on attach, header on Promote -----------------------
+
+CHECKED_REPORT = """# Why X stalls
+
+- **Card:** Scout: why X
+- **Project:** bob
+- **Question:** Why does X stall?
+- **Verdict:** X waits on a lock nobody releases.
+- **Confidence:** high
+- **Recommendation:** build
+- **Follow-up:** Release the lock on error — free X's lock in the failure path
+- **Follow-up:** Log the holder — name who holds X's lock when it stalls
+- **Sources:** host/x.py, the log
+
+## Question
+## What was found
+## Evidence
+## Recommendation
+## Open questions
+"""
+
+
+def _scout_in_progress(store, root):
+    card = _make(store, kind="scout", root=str(root))
+    store.update(card["id"], {
+        "column_name": "in_progress", "session_id": "sess-1"}, bump=False)
+    return card
+
+
+def _quiet(d, monkeypatch):
+    async def publish():
+        return None
+    monkeypatch.setattr(d, "_publish_board", publish)
+
+
+def _write(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+@pytest.mark.asyncio
+async def test_attach_report_under_scout_refuses_a_malformed_report(
+        daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = _write(root / "scout" / "2026-09-24-x" / "report.md",
+                    "# why\n\nprose, no block\n")
+    card = _scout_in_progress(store, root)
+    _quiet(d, monkeypatch)
+    attached, detail = await d.attach_report_by_session("sess-1", str(report))
+    assert attached is None
+    assert detail.startswith(REPORT_MALFORMED_REFUSAL)
+    assert "missing" in detail and "Verdict" in detail
+    assert "scout_check.py" in detail
+    assert store.get(card["id"])["report_path"] == ""
+
+
+@pytest.mark.asyncio
+async def test_attach_report_under_scout_accepts_a_checked_report(
+        daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = _write(root / "scout" / "2026-09-24-x" / "report.md",
+                    CHECKED_REPORT)
+    _scout_in_progress(store, root)
+    _quiet(d, monkeypatch)
+    attached, detail = await d.attach_report_by_session("sess-1", str(report))
+    assert attached is not None, detail
+    assert os.path.isabs(attached["report_path"])
+    assert attached["report_path"] == os.path.realpath(str(report))
+
+
+@pytest.mark.asyncio
+async def test_attach_report_outside_scout_is_not_checked(
+        daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = _write(root / "docs" / "research" / "why.md", "# why\n")
+    # Neither a look-alike folder nor a file named after it is inside scout/.
+    lookalike = _write(root / "scouting" / "report.md", "# why\n")
+    _scout_in_progress(store, root)
+    _quiet(d, monkeypatch)
+    attached, detail = await d.attach_report_by_session("sess-1", str(report))
+    assert attached is not None, detail
+    attached, detail = await d.attach_report_by_session(
+        "sess-1", str(lookalike))
+    assert attached is not None, detail
+    assert d._report_shape_refusal(str(root), str(root / "scout.md")) == ""
+
+
+@pytest.mark.asyncio
+async def test_report_path_is_always_absolute(daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = _write(root / "scout" / "2026-09-24-x" / "report.md",
+                    CHECKED_REPORT)
+    card = _scout_in_progress(store, root)
+    _quiet(d, monkeypatch)
+    attached, detail = await d.attach_report_by_session(
+        "sess-1", "scout/2026-09-24-x/report.md")
+    assert attached is not None, detail
+    stored = store.get(card["id"])["report_path"]
+    assert os.path.isabs(stored)
+    assert stored == os.path.realpath(str(report))
+
+
+def _promotable(d, store, root, monkeypatch, report, **kw):
+    scout = _done_scout(store, report, root=str(root), **kw)
+    monkeypatch.setattr(d, "_known_project_roots",
+                        lambda: {os.path.realpath(str(root))})
+    _quiet(d, monkeypatch)
+    return scout
+
+
+@pytest.mark.asyncio
+async def test_promote_reads_the_header(daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    root.mkdir()
+    report = os.path.realpath(str(_write(
+        root / "scout" / "2026-09-24-x" / "report.md", CHECKED_REPORT)))
+    scout = _promotable(d, store, root, monkeypatch, report)
+    new, detail = await d.promote_card(scout["id"])
+    assert new is not None, detail
+    assert new["title"] == "Release the lock on error"
+    assert new["summary"] == "X waits on a lock nobody releases."
+    assert new["kind"] == ""
+    assert new["column_name"] == "prep"
+    assert new["prompt"].startswith(
+        f"From report: {report}\n\nRecommendation: build (high confidence)")
+    assert "Question: Why does X stall?" in new["prompt"]
+    assert "- Log the holder — name who holds X's lock when it stalls" \
+        in new["prompt"]
+    # The twin check still reads the lead line.
+    again, detail = await d.promote_card(scout["id"])
+    assert again is None and detail.startswith("already promoted")
+
+
+@pytest.mark.asyncio
+async def test_promote_without_a_header_is_unchanged(
+        daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = str(_write(root / "docs" / "research" / "why.md",
+                        "# why\n\nprose\n"))
+    scout = _promotable(d, store, root, monkeypatch, report, summary="why X")
+    new, detail = await d.promote_card(scout["id"])
+    assert new is not None, detail
+    assert new["title"] == "why X"
+    assert new["summary"] == "why X"
+    assert new["prompt"].startswith(
+        f"From report: {report}\n\nReport: {report}\n\n")
+    assert BoardVerbsMixin._promoted_fields(scout, "L", {}) == \
+        BoardVerbsMixin._promoted_fields(scout, "L")
+
+
+@pytest.mark.asyncio
+async def test_promote_header_clamp_keeps_the_lead(
+        daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    root.mkdir()
+    report = os.path.realpath(str(_write(
+        root / "scout" / "2026-09-24-x" / "report.md", CHECKED_REPORT)))
+    scout = _promotable(d, store, root, monkeypatch, report,
+                        prompt="x" * (MAX_PROMPT_CHARS - 10))
+    new, detail = await d.promote_card(scout["id"])
+    assert new is not None, detail
+    assert new["prompt"].startswith("From report: " + report + "\n\n")
+    assert len(new["prompt"]) <= MAX_PROMPT_CHARS
+
+
+def test_promoted_title_from_a_follow_up_is_clamped():
+    card = {"title": "Scout: why X", "summary": "why X"}
+    header = {"verdict": "v", "follow_ups": [{"title": "t" * 500,
+                                              "summary": "s"}]}
+    fields = BoardVerbsMixin._promoted_fields(card, "L", header)
+    assert len(fields["title"]) == MAX_TITLE_CHARS
+    empty = {"verdict": "v", "follow_ups": [{"title": "", "summary": "s"}]}
+    assert BoardVerbsMixin._promoted_fields(card, "L", empty)["title"] == "why X"
+
+
+@pytest.mark.asyncio
+async def test_attach_report_under_scout_is_checked_whatever_the_case(
+        daemon, tmp_path, monkeypatch):
+    """A macOS disk is case-insensitive: `Scout/` is the `scout/` folder,
+    so a report written there is checked, not waved through."""
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = _write(root / "Scout" / "2026-09-24-x" / "report.md",
+                    "# why\n\nprose, no block\n")
+    _scout_in_progress(store, root)
+    _quiet(d, monkeypatch)
+    attached, detail = await d.attach_report_by_session("sess-1", str(report))
+    assert attached is None
+    assert detail.startswith(REPORT_MALFORMED_REFUSAL)
+    assert d._report_shape_refusal(
+        str(root), os.path.realpath(str(root)) + "/SCOUT/x/report.md") != ""
+
+
+@pytest.mark.asyncio
+async def test_promote_with_a_report_replaced_by_a_fifo_is_headerless(
+        daemon, tmp_path, monkeypatch):
+    """A FIFO put where the report was must neither hang the press nor
+    hold the board's write lock."""
+    d, store = daemon
+    root = tmp_path / "proj"
+    path = _write(root / "scout" / "2026-09-24-x" / "report.md",
+                  CHECKED_REPORT)
+    report = os.path.realpath(str(path))
+    scout = _promotable(d, store, root, monkeypatch, report, summary="why X")
+    path.unlink()
+    os.mkfifo(report)
+    new, detail = await asyncio.wait_for(d.promote_card(scout["id"]), 10)
+    assert new is not None, detail
+    assert new["title"] == "why X"
+    assert new["prompt"].startswith(
+        f"From report: {report}\n\nReport: {report}\n\n")
+    assert not d._board_write_lock.locked()
+    # The bounded read itself refuses a FIFO without blocking.
+    assert await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(
+        None, scout_report.read_header, report), 10) == {}
+
+
+@pytest.mark.asyncio
+async def test_promote_with_a_report_replaced_by_a_link_out_is_headerless(
+        daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    path = _write(root / "scout" / "2026-09-24-x" / "report.md",
+                  CHECKED_REPORT)
+    report = os.path.realpath(str(path))
+    outside = _write(tmp_path / "elsewhere" / "report.md", CHECKED_REPORT)
+    scout = _promotable(d, store, root, monkeypatch, report, summary="why X")
+    path.unlink()
+    os.symlink(str(outside), report)
+    new, detail = await asyncio.wait_for(d.promote_card(scout["id"]), 10)
+    assert new is not None, detail
+    assert new["title"] == "why X"
+    assert new["summary"] == "why X"
+    assert "Recommendation:" not in new["prompt"]
+
+
+def test_scout_start_opens_the_scout_skill_and_codex_is_told_where_it_is():
+    card = {"kind": "scout", "title": "Scout: why X", "tool": "codex",
+            "summary": "why does X stall after a wake"}
+    prompt = dispatch.start_prompt(card)
+    assert prompt.startswith("/scout why does X stall after a wake\n")
+    assert "/ship scout" not in prompt
+    assert "Read .agents/skills/scout/SKILL.md in this project" in prompt
+    assert ".agents/skills/ship/SKILL.md" not in prompt
+    claude = dispatch.start_prompt({**card, "tool": "claude"})
+    assert "SKILL.md" not in claude
+
+
+# --- the verdict on the card face ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_attach_report_by_session_records_the_header(
+        daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = _write(root / "scout" / "2026-09-25-x" / "report.md",
+                    CHECKED_REPORT)
+    card = _scout_in_progress(store, root)
+    _quiet(d, monkeypatch)
+    attached, detail = await d.attach_report_by_session("sess-1", str(report))
+    assert attached is not None, detail
+    stored = store.get(card["id"])
+    assert stored["report_verdict"] == "X waits on a lock nobody releases."
+    assert stored["report_recommendation"] == "build"
+
+
+@pytest.mark.asyncio
+async def test_attach_report_by_session_prose_report_records_nothing(
+        daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = _write(root / "docs" / "research" / "why.md", "# why\n\nprose\n")
+    card = _scout_in_progress(store, root)
+    _quiet(d, monkeypatch)
+    attached, detail = await d.attach_report_by_session("sess-1", str(report))
+    assert attached is not None, detail
+    stored = store.get(card["id"])
+    assert stored["report_path"] == os.path.realpath(str(report))
+    assert stored["report_verdict"] == ""
+    assert stored["report_recommendation"] == ""
+
+
+@pytest.mark.asyncio
+async def test_attach_report_by_session_reads_the_header_on_the_executor(
+        daemon, tmp_path, monkeypatch):
+    """The header read is a blocking file open, so it hops like the shape
+    check above it — never inline on the loop."""
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = _write(root / "scout" / "2026-09-25-x" / "report.md",
+                    CHECKED_REPORT)
+    _scout_in_progress(store, root)
+    _quiet(d, monkeypatch)
+    loop_thread = []
+    read_threads = []
+    real = scout_report.read_header
+
+    def spy(path):
+        read_threads.append(threading.get_ident())
+        return real(path)
+
+    monkeypatch.setattr(scout_report, "read_header", spy)
+    loop_thread.append(threading.get_ident())
+    attached, detail = await d.attach_report_by_session("sess-1", str(report))
+    assert attached is not None, detail
+    assert read_threads and read_threads[0] != loop_thread[0]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_card_carries_the_verdict(
+        daemon, tmp_path, monkeypatch):
+    d, store = daemon
+    root = tmp_path / "proj"
+    report = _write(root / "scout" / "2026-09-25-x" / "report.md",
+                    CHECKED_REPORT)
+    card = _scout_in_progress(store, root)
+    _quiet(d, monkeypatch)
+    attached, detail = await d.attach_report_by_session("sess-1", str(report))
+    assert attached is not None, detail
+    trimmed = BoardVerbsMixin._trim_card_for_snapshot(store.get(card["id"]))
+    assert trimmed["report_verdict"] == "X waits on a lock nobody releases."
+    assert trimmed["report_recommendation"] == "build"
+    state = d._refresh_board_state()
+    by_id = {c["id"]: c for c in state["cards"]}
+    assert by_id[card["id"]]["report_verdict"] == (
+        "X waits on a lock nobody releases.")
+    assert by_id[card["id"]]["report_recommendation"] == "build"
+
+
+def _block_after(text: str, needle: str, span: int = 700) -> str:
+    at = text.find(needle)
+    assert at >= 0, needle
+    return text[at:at + span]
+
+
+def test_the_three_surfaces_draw_the_verdict_through_the_shared_rule():
+    tile = (ROOT / "panel/Sources/BobPanel/BoardCardView.swift").read_text()
+    sheet = (ROOT / "panel/Sources/BobPanel/BoardCardSheet.swift").read_text()
+    phone = (ROOT / "ios/BobPhone/CardDetailView.swift").read_text()
+    for text in (tile, sheet, phone):
+        assert text.count("ScoutVerdictLine.text(") == 1
+        assert "ScoutVerdictLine.spoken(" in text
+    # The tile draws one line, cut short at the end.
+    tile_block = _block_after(tile, "ScoutVerdictLine.text(")
+    assert ".lineLimit(1)" in tile_block
+    assert ".truncationMode(.tail)" in tile_block
+    # The card window draws it under the heading, before the branches.
+    section = sheet[sheet.find("private var reportSection"):]
+    assert section.find("ScoutVerdictLine.text(") < section.find(
+        "if live.reportPath.isEmpty {")
+    # The phone draws it in full.
+    phone_block = _block_after(phone, "ScoutVerdictLine.text(")
+    assert ".lineLimit(" not in phone_block.split("if let report")[0]

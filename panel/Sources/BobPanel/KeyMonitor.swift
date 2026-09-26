@@ -52,6 +52,12 @@ extension AppDelegate {
                 || self.knowledgeWindow?.isKey == true {
                 return event
             }
+            // **And the Checks window**, same two-test shape: its search and
+            // note fields are editors with no caret guard of their own.
+            if self.manualChecksWindow?.owns(event.window) == true
+                || self.manualChecksWindow?.isKey == true {
+                return event
+            }
             // **And the access-log window**, same two-test shape and the
             // same place in the ladder.
             if self.accessLogWindow?.owns(event.window) == true
@@ -172,7 +178,8 @@ extension AppDelegate {
                 if self.panel?.attachedSheet != nil { return event }
                 // The rank is `RailLayout.escapeRung`'s, table-tested: a
                 // text box is given up first, then an open History run,
-                // then a chosen History day, then History itself, then
+                // then a chosen History day, then History itself, then an
+                // open report, then the Reports tab, then
                 // the selected agent's detail, then the drill, then the
                 // panel hides.
                 switch RailLayout.escapeRung(editing: self.keys.editing,
@@ -181,7 +188,9 @@ extension AppDelegate {
                                              drilledIn: self.keys.drilledIn,
                                              historyRun: self.keys.historyRun,
                                              historyDay: self.keys.historyDay,
-                                             historyOpen: self.keys.historyOpen) {
+                                             historyOpen: self.keys.historyOpen,
+                                             reportOpen: self.keys.reportOpen,
+                                             reportsOpen: self.keys.reportsOpen) {
                 case .endEditing:
                     // A filter is a thing you back out of before the panel is,
                     // even when the field itself no longer has focus.
@@ -203,6 +212,10 @@ extension AppDelegate {
                     self.keys.send(.closeHistoryDay)
                 case .leaveHistory:
                     self.keys.send(.leaveHistory)
+                case .closeReport:
+                    self.keys.send(.closeReport)
+                case .leaveReports:
+                    self.keys.send(.leaveReports)
                 case .deselect:
                     self.keys.send(.deselect)
                 case .back:
@@ -211,6 +224,21 @@ extension AppDelegate {
                     self.hide()
                 }
                 return nil
+            }
+            // **Tab is AppKit's**: a plain Tab or ⇧Tab walks the keyboard
+            // focus between the drawn buttons (Full Keyboard Access), so it
+            // is never consumed here. The rail's tabs moved to ⌃Tab / ⌃⇧Tab,
+            // the browser's chord, and only while no text box holds the caret.
+            switch event.keyCode {
+            case 48:                                          // ⌃Tab / ⌃⇧Tab
+                let chord = event.modifierFlags.intersection([.command, .control, .option])
+                guard chord == .control, !self.keys.editing,
+                      !DictationFocus.isEditing(event.window ?? NSApp.keyWindow) else {
+                    return event
+                }
+                self.keys.send(event.modifierFlags.contains(.shift) ? .prevTab : .nextTab)
+                return nil
+            default: break
             }
             guard !modified else { return event }
 
@@ -235,6 +263,21 @@ extension AppDelegate {
             guard !DictationFocus.isEditing(event.window ?? NSApp.keyWindow) else {
                 return event
             }
+            // A control Tabbed onto (Full Keyboard Access) takes Return and
+            // Space: they press it, not the selected row. The decision is
+            // `TriageKeys.handsToControl`'s; with nothing focused it is no.
+            if TriageKeys.handsToControl(keyCode: event.keyCode,
+                                         characters: event.charactersIgnoringModifiers,
+                                         controlFocused: FocusedControls.shared.holdsFocus) {
+                return event
+            }
+            // An arrow moves the selection, so it ends the focused control's
+            // claim and takes the focus off it: the selection and the focus
+            // are never two cursors (`TriageKeys.endsControlFocus`).
+            if TriageKeys.endsControlFocus(keyCode: event.keyCode) {
+                FocusedControls.shared.clear()
+                self.panel?.makeFirstResponder(nil)
+            }
 
             switch event.keyCode {
             case 126: self.keys.send(.up);   return nil   // ↑
@@ -245,24 +288,17 @@ extension AppDelegate {
             switch event.keyCode {
             case 123: self.keys.send(.left);  return nil  // ←
             case 124: self.keys.send(.right); return nil  // →
-            case 48:                                          // Tab
-                if event.modifierFlags.contains(.shift) {
-                    self.keys.send(.prevTab)
-                } else {
-                    self.keys.send(.nextTab)
-                }
-                return nil
             default: break
             }
-            switch event.charactersIgnoringModifiers?.lowercased() {
-            case " ":  self.keys.send(.open);        return nil
-            case "d":  self.keys.send(.dismiss);     return nil
-            case "s":  self.keys.send(.stop);        return nil
-            case "r":  self.keys.send(.retire);      return nil
-            case "w":  self.keys.send(.wrapUp);      return nil
-            case "/":  self.keys.send(.focusFilter); return nil
-            default:   return event
+            // The letter verbs are one table (`TriageKeys`), the same list
+            // the keys legend draws; a character it does not name — a plain
+            // Tab among them — is handed back to AppKit.
+            if let chars = event.charactersIgnoringModifiers?.lowercased(),
+               let intent = TriageKeys.intent(for: chars) {
+                self.keys.send(intent)
+                return nil
             }
+            return event
         }
     }
 }

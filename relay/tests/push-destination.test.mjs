@@ -290,7 +290,7 @@ test('the activity leg answers ok shape=2 and the alert leg still answers ok',as
 });
 // One agent's question carries that agent's face. `vex` is on identity.NAMES.
 // The plain-language example `dom` is not, after the 22 Sep rebrand, so it
-// sets neither key — the same rule as `mrrobot`. `ptyś` is kept: the live
+// sets neither key — the same rule as `mrrobot`. `ptys` is kept: the live
 // card's slug shape rejects it, and this list does not.
 test('a question with a roster face sets mutable-content 1 and top-level face', async () => {
   const h = harness();
@@ -298,10 +298,10 @@ test('a question with a roster face sets mutable-content 1 and top-level face', 
   assert.equal(h.sent[0].body.face, 'vex');
   assert.equal(h.sent[0].body.aps['mutable-content'], 1);
 });
-test('ptyś is kept as a face', async () => {
+test('ptys is kept as a face', async () => {
   const h = harness();
-  assert.equal((await h.run({face: 'ptyś'})).statusCode, 200);
-  assert.equal(h.sent[0].body.face, 'ptyś');
+  assert.equal((await h.run({face: 'ptys'})).statusCode, 200);
+  assert.equal(h.sent[0].body.face, 'ptys');
   assert.equal(h.sent[0].body.aps['mutable-content'], 1);
 });
 test('a name that is not an agent sets neither mutable-content nor face', async () => {
@@ -329,4 +329,11 @@ test('the alert leg still answers 502 apple refused for every apple non-200, 5xx
     const h=harness([apple]); const res=await h.run({});
     assert.equal(res.statusCode,502,`apple ${apple}`); assert.equal(res.text,'apple refused',`apple ${apple}`);
   }
+});
+
+test('the live card keeps a non-ASCII cast face and still refuses a stranger',async()=>{
+  const h=harness(); assert.equal((await activity(h,{nickname:'Ptys', slug:'ptys'})).statusCode,200);
+  assert.equal(h.sent[0].body.aps['content-state'].slug,'ptys');
+  const bad=harness(); assert.equal((await activity(bad,{slug:'stranger'})).statusCode,400);
+  assert.equal(bad.sent.length,0);
 });

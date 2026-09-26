@@ -20,6 +20,14 @@ import SwiftUI
 /// the row is re-read from the snapshot by `mission.sessionId` on every
 /// body pass, so a `/clear` successor follows.
 ///
+/// **Helpers.** While Mission Control has helpers running, a tab strip sits
+/// under the identity line — Mission Control, then one tab per helper
+/// (`CommHelperTabs`). A helper's tab is its own conversation, read-only
+/// and paged from the helper's journal (`ConversationSubject`'s
+/// `<session>#<agent>` key on the one watched conversation); the chips, the
+/// composer and End stay on Mission Control's tab, because a helper takes
+/// no typed line. A helper that finishes while its tab is open keeps it.
+///
 /// Every word of state is `CommRules`' (byte-pinned to the Mac); every write
 /// rides `client.post` — the receipt token, home-sealed or relay-first —
 /// and `terminal_input` here is the **text** route: one line, then Enter.
@@ -36,6 +44,11 @@ struct CommView: View {
     @State private var sending = false
     @State private var openedThisVisit = false
     @State private var terminalShown = false
+    /// The helper tab showing, by agent id; `""` is Mission Control.
+    @State private var helper = ""
+    /// The label the selected helper had while live, so its tab keeps a
+    /// name after it finishes.
+    @State private var helperLabel = ""
     @StateObject private var arm = Arm()
     @FocusState private var composerFocused: Bool
 
@@ -59,7 +72,106 @@ struct CommView: View {
         row?.0 ?? Agent.stub(sessionId: mission.sessionId)
     }
 
+    private var helperTabs: [CommHelperTabs.Tab] {
+        let live = (row?.0.subagentRows ?? []).map { (id: $0.agentId, label: $0.label) }
+        return CommHelperTabs.tabs(
+            live: live, selected: helper, selectedLabel: helperLabel,
+            supported: client.snapshot.board.subagentConversationSupported
+                && mission.alive)
+    }
+
+    private var selectedHelper: SubagentRow? {
+        row?.0.subagentRows.first { $0.agentId == helper }
+    }
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let tabs = helperTabs
+            if !tabs.isEmpty {
+                tabStrip(tabs)
+            }
+            if !helper.isEmpty, tabs.contains(where: { $0.id == helper }) {
+                HelperConversationPane(
+                    client: client,
+                    session: mission.sessionId,
+                    agentId: helper,
+                    label: CommHelperTabs.label(helperLabel, id: helper),
+                    row: selectedHelper,
+                    selected: selected)
+                    .id(helper)
+            } else {
+                missionColumn
+            }
+        }
+        .background(Theme.bg)
+        .onAppear {
+            openedThisVisit = false
+            openIfNeeded(force: false)
+        }
+        .onChange(of: selected) { _, isSelected in
+            if isSelected {
+                openedThisVisit = false
+                openIfNeeded(force: false)
+            } else {
+                arm.disarm()
+            }
+        }
+        .onDisappear { arm.disarm() }
+        .fullScreenCover(isPresented: $terminalShown) {
+            terminalScreen
+                .environment(\.decryptActive, true)
+                .onAppear { client.watchTerminal(mission.sessionId) }
+                .onDisappear { client.watchTerminal(nil) }
+        }
+        .onChange(of: helperTabs.map(\.id)) { _, _ in
+            let next = CommHelperTabs.selection(helper, tabs: helperTabs)
+            if next != helper { helper = next }
+        }
+        .onChange(of: selectedHelper?.label ?? "") { _, label in
+            if !label.isEmpty { helperLabel = label }
+        }
+    }
+
+    /// Mission Control, then each helper. Scrolls sideways when the names
+    /// outgrow the width; the showing tab is bright and underlined.
+    private func tabStrip(_ tabs: [CommHelperTabs.Tab]) -> some View {
+        VStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(tabs, id: \.id) { tab in
+                        let on = tab.id == helper
+                        DecryptButton(action: { choose(tab) }) {
+                            VStack(spacing: 3) {
+                                Text(tab.live ? tab.label : "\(tab.label) · done")
+                                    .font(Theme.mono(12, weight: on ? .semibold : .regular))
+                                    .foregroundStyle(on ? Theme.phosphorBright : Theme.dim)
+                                Rectangle()
+                                    .fill(on ? Theme.phosphorBright : Color.clear)
+                                    .frame(height: 2)
+                            }
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(tab.id.isEmpty ? "Mission Control"
+                                            : "Helper \(tab.label)\(tab.live ? "" : ", finished")")
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+                .padding(.horizontal, 10)
+            }
+            Rectangle().fill(Theme.hair).frame(height: 1)
+        }
+    }
+
+    private func choose(_ tab: CommHelperTabs.Tab) {
+        helper = tab.id
+        helperLabel = tab.id.isEmpty ? "" : tab.label
+        composerFocused = false
+    }
+
+    private var missionColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("# darkarmy · mission control")
@@ -99,28 +211,10 @@ struct CommView: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(Theme.bg)
         .overlay(ScanlineOverlay())
         .decryptSurface("CommView")
-        .onAppear {
-            openedThisVisit = false
-            openIfNeeded(force: false)
-        }
-        .onChange(of: selected) { _, isSelected in
-            if isSelected {
-                openedThisVisit = false
-                openIfNeeded(force: false)
-            } else {
-                arm.disarm()
-            }
-        }
-        .onDisappear { arm.disarm() }
-        .fullScreenCover(isPresented: $terminalShown) {
-            terminalScreen
-                .environment(\.decryptActive, true)
-                .onAppear { client.watchTerminal(mission.sessionId) }
-                .onDisappear { client.watchTerminal(nil) }
-        }
     }
 
     static let olderMacSentence = "This Mac's Dark Army is too old for Mission Control."
@@ -344,5 +438,171 @@ struct CommView: View {
             let result = await client.post(action: PhoneActions.missionEnd)
             if !result.ok { note = result.detail }
         }
+    }
+}
+
+/// One of Mission Control's helpers, read-only: who it is, what it is on,
+/// then its own turns — the brief it was handed first — drawn with the
+/// conversation screen's rows. It watches `<session>#<agent>` on the one
+/// watched conversation, so the ordinary check-in keeps it current; it
+/// takes the watch on appear and gives back only its own.
+struct HelperConversationPane: View {
+    @ObservedObject var client: PhoneClient
+    let session: String
+    let agentId: String
+    let label: String
+    /// The live row; nil once the helper has finished.
+    let row: SubagentRow?
+    /// Whether the Comm tab is the one showing.
+    let selected: Bool
+
+    @State private var expanded: Set<Int> = []
+    @State private var openRuns: Set<Int> = []
+    @State private var atBottom = true
+
+    private var key: String { ConversationSubject.key(session: session, agent: agentId) }
+
+    private var turns: [ConversationTurn] { client.conversationCache.turns(key) }
+
+    private var rows: [ConversationFold.Row] {
+        ConversationFold.rows(Array(turns.suffix(300)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            lead
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            Rectangle().fill(Theme.hair).frame(height: 1)
+            list
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Theme.bg)
+        .overlay(ScanlineOverlay())
+        .onAppear { take() }
+        .onDisappear { client.watchConversation(nil, ifWatching: key) }
+        .onChange(of: selected) { _, isSelected in
+            if isSelected { take() } else { client.watchConversation(nil, ifWatching: key) }
+        }
+        .onChange(of: client.conversationWatching) { _, watching in
+            // Back in front with the watch gone: take it again.
+            guard selected, watching == nil else { return }
+            take()
+        }
+    }
+
+    private func take() {
+        guard selected, !session.isEmpty else { return }
+        client.watchConversation(key)
+        let own = key
+        Task { await client.catchUpConversation(own) }
+    }
+
+    private var lead: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("helper · \(label)\(row == nil ? " · done" : "")")
+                .font(Theme.mono(13, weight: .medium))
+                .foregroundStyle(Theme.phosphorBright)
+                .fixedSize(horizontal: false, vertical: true)
+            if let row, !row.description.isEmpty {
+                Text(row.description)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let row, !row.activity.isEmpty {
+                HStack(spacing: 8) {
+                    Text(row.activity)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.faint)
+                        .fixedSize(horizontal: false, vertical: true)
+                    AgentChatterView(.caret, wait: .sending, seed: agentId,
+                                     spoken: "\(label) is working")
+                        .id(agentId)
+                }
+            }
+            Text("read-only · a helper takes no typed line")
+                .font(Theme.mono(10))
+                .foregroundStyle(Theme.faint)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var list: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if turns.isEmpty {
+                        Text(emptyLine)
+                            .font(Theme.mono(11))
+                            .foregroundStyle(Theme.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    let shown = rows
+                    ForEach(shown) { item in
+                        rowView(item)
+                            .id(item.id)
+                            .onAppear { if item.id == shown.last?.id { atBottom = true } }
+                            .onDisappear { if item.id == shown.last?.id { atBottom = false } }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onAppear {
+                if let last = rows.last?.id { proxy.scrollTo(last, anchor: .bottom) }
+            }
+            .onChange(of: turns.count) { _, _ in
+                guard atBottom, let last = rows.last?.id else { return }
+                proxy.scrollTo(last, anchor: .bottom)
+            }
+        }
+    }
+
+    private var emptyLine: String {
+        if let reason = client.conversationUnavailable[key], !reason.isEmpty {
+            return "// no messages yet — \(reason)"
+        }
+        return "// no messages yet"
+    }
+
+    @ViewBuilder private func rowView(_ item: ConversationFold.Row) -> some View {
+        switch item {
+        case .turn(let turn):
+            ConversationTurnRow(
+                turn: turn, nickname: label,
+                expanded: expanded.contains(turn.seq),
+                result: result(for: turn),
+                onToggle: { toggle(turn.seq) })
+        case .run(let tools):
+            ConversationRunRow(
+                tools: tools,
+                open: ConversationFold.runIsOpen(tools, id: item.id,
+                                                 openRuns: openRuns, expanded: expanded),
+                nickname: label,
+                expanded: expanded,
+                result: { result(for: $0) },
+                onToggleRun: {
+                    if ConversationFold.runIsOpen(tools, id: item.id,
+                                                  openRuns: openRuns, expanded: expanded) {
+                        openRuns.remove(item.id)
+                        for tool in tools { expanded.remove(tool.seq) }
+                    } else {
+                        openRuns.insert(item.id)
+                    }
+                },
+                onToggleTool: { toggle($0) })
+        }
+    }
+
+    private func result(for turn: ConversationTurn) -> ConversationTurn? {
+        guard turn.kind == "tool", expanded.contains(turn.seq),
+              !turn.callId.isEmpty else { return nil }
+        return turns.first { $0.kind == "result" && $0.callId == turn.callId }
+    }
+
+    private func toggle(_ seq: Int) {
+        if expanded.contains(seq) { expanded.remove(seq) } else { expanded.insert(seq) }
     }
 }

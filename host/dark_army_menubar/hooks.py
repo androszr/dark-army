@@ -188,10 +188,10 @@ NOTIFY_SCRIPT = textwrap.dedent('''\
     # nobody — finished work must end with a report the person can read in the
     # terminal, not a wiped screen. The shape is dictated verbatim so two
     # sessions in two projects produce recognisably the same thing; the labels
-    # are pinned by a test. The report is for the person in the terminal and
-    # is never *interpreted*; the daemon's one use of it is the heading, which
-    # `session_stats._work_report` slices on so a finished piece of work
-    # survives the chatter that follows it (`last_report`). This text must
+    # are pinned by a test. The report is for the person in the terminal; the
+    # daemon slices it on the heading (`session_stats._work_report`, into
+    # `last_report`) and structures it for drawing (`work_report.py`), and
+    # infers no state from it. This text must
     # never contain a
     # literal bob-actions or bob-tldr HTML comment (a contract test splits
     # stdout on the first such marker).
@@ -225,17 +225,20 @@ NOTIFY_SCRIPT = textwrap.dedent('''\
         "before the rename) is available, finishing the work means calling "
         "it - "
         "the close is the required last act of the work, not an optional "
-        "extra - but only when every check passed and nothing is left "
-        "unchecked. Give it a note of one or two sentences distilled from "
+        "extra, whether or not a check is left for a person. Give it a note "
+        "of one or two sentences distilled from "
         "the report's Asked and Verified lines; the note is clamped at 400 "
         "characters, so never paste the report itself. Then add one more "
-        "line, **Card:**, saying you moved it to Done. When any check was "
-        "skipped or is left outstanding, do not call it: the **Card:** line "
-        "instead says you left the card open and why, naming the unchecked "
-        "items. No card or no such tool means no Card line. When you leave "
-        "a check outstanding and a tool for flagging your card is "
-        "available, call it with those same numbered steps so the board "
-        "shows the card is waiting on a person. "
+        "line, **Card:**, saying you moved it to Done. When a check is left "
+        "outstanding, first write it as its own file at "
+        "manual-check/<YYYY-MM-DD>-<slug>/check.md in the project - the "
+        "answer block, the numbered steps and the reason - and run python3 "
+        ".claude/skills/ship/manual_check.py on it where the project has "
+        "that checker; when a tool for flagging your card is available, "
+        "call it with those same numbered steps and the file's path so the "
+        "board shows the check is waiting on a person, then call the close "
+        "tool; the **Card:** line names the check file. No card or no such "
+        "tool means no Card line. "
         "Keep the whole report under 25 lines. This report ends the "
         "work: it is not a question, so put no bob-tldr and no bob-actions "
         "comment on that message."

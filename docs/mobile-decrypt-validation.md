@@ -15,7 +15,7 @@ or label replacement was introduced. The source inventory in
 
 | Family | Integration and boundary |
 |---|---|
-| Four tabs, initial unlocked arrival, resumed drafts and deep links | `PhoneTabRoot.decryptSurface`, gated per stack by `selectedTab` and notification presentation. `ContentView` routing ownership and draft identities remain unchanged. |
+| Four tabs (Needs you, Fleet, Board, Menu), initial unlocked arrival, resumed drafts and deep links | `PhoneTabRoot.decryptSurface`, gated per stack by `selectedTab` and notification presentation. `ContentView` routing ownership and draft identities remain unchanged. |
 | Agent, card, composer, profile | Destination `decryptSurface` beside the literal title. A UIKit appearance observer reports completed arrivals and departures, including back navigation. |
 | Pipeline, Catch up, saved decision, work-record file | Destination `decryptSurface`; live saved decisions delegate to the existing card/agent destination. |
 | Notification presentation/dismissal | Existing notification sheet and nested card/agent/Catch-up/saved decision destinations; presenting the sheet gates the underlying tabs, dismissal restores the visible stack. |

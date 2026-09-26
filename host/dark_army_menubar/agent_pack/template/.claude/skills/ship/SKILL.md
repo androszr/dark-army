@@ -40,8 +40,15 @@ tool; if the named one is absent, do the fallback.
 `/ship implement <plan path>` — implement mode. Straight to Phase 6 on an
 already-written plan. This is the form a board card dispatches.
 
-`/ship scout <brief>` — scout mode. Investigate, write a report, attach it
-to this card, close the card with the report's path in the note, and stop.
+`/ship batch: …` — plan mode for several Prep cards in one session, one plan
+and one attach per card. The form Refine on several ticked cards dispatches.
+
+`/ship batch: implement …` — implement mode for several planned Backlog cards
+in one session, one card at a time (`dark_army_next_card` between cards). The
+form START n TOGETHER dispatches.
+
+`/ship scout <brief>` is an alias: load and follow the scout skill
+(`.claude/skills/scout/SKILL.md`).
 
 ## Modes
 
@@ -71,13 +78,6 @@ If the user explicitly says to implement now, in this session, do it — say in 
 sentence that the usual route is the card, then run Phase 6 on the plan you just
 wrote. An explicit instruction outranks the default; a guess never does.
 
-**Scout mode — `/ship scout <brief>`.** No plan, no `{{P}}-planner`, no
-implementation. The deliverable is a report under the project's research
-folder. The board tools it uses are `dark_army_attach_report` then
-`dark_army_close_card`. Promote — turning that report into a build card — is the
-person's. A session started before the rename carries the same verbs as
-`bob_*`; a session keeps the tool list it was born with.
-
 **This file is the adapter; the workflow is written once in three references
 beside it.** Read the reference for the mode you are in **completely** before
 its first phase, and nothing here repeats a rule the references state:
@@ -86,7 +86,9 @@ its first phase, and nothing here repeats a rule the references state:
 |---|---|
 | Plan (the default) | `references/common.md`, then `references/plan.md` |
 | Implement (`/ship implement <plan path>`, or a `Plan: <path>` first line) | `references/common.md`, then `references/implement.md` |
-| Scout (`/ship scout <brief>`) | `references/common.md`, then `references/scout.md` |
+| Batch implement (a `/ship batch: implement …` first line — several Backlog cards started together) | `references/common.md`, then `references/implement.md`, whose `## Batch: several cards in one session` runs each card |
+| Batch plan (a `/ship batch: …` first line — several Prep cards refined together) | `references/common.md`, then `references/plan.md`, whose `## Batch: several cards in one session` runs each card |
+| Scout (`/ship scout <brief>`, an alias) | `.claude/skills/scout/SKILL.md` alone |
 | A change of mode inside one session ("build it now" after planning) | the other mode's reference, before its first phase |
 
 `gate.sh` beside this file is the implement mode's gate helper — the

@@ -288,9 +288,9 @@ def test_forget_mid_write_does_not_reinsert(tmp_path, monkeypatch):
     assert ok, detail
     real = pack_install._write_render
 
-    def wrapped(root_arg, mapping, *, owned):
+    def wrapped(root_arg, mapping, **kwargs):
         pack_ledger.forget(folder)
-        return real(root_arg, mapping, owned=owned)
+        return real(root_arg, mapping, **kwargs)
 
     monkeypatch.setattr(pack_install, "_write_render", wrapped)
     pack_install.resync_all()

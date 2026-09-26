@@ -74,8 +74,8 @@ final class BoardFilterRedrawTests: XCTestCase {
             let lines = lines()
             // OCR splits `[ PREP ] 5` unpredictably and reads 0 as Ø.
             let text = lines.joined(separator: " ").replacingOccurrences(of: "Ø", with: "0")
-            let pattern = title.uppercased() + #"[\s\]]*(\d+)"#
-            guard let match = text.range(of: pattern, options: .regularExpression)
+            let pattern = title + #"[\s\]]*(\d+)"#
+            guard let match = text.range(of: pattern, options: [.regularExpression, .caseInsensitive])
             else { return nil }
             let digits = text[match].filter(\.isNumber)
             return "\(title), \(digits) cards, folded"

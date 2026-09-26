@@ -94,6 +94,9 @@ host/dark_army_menubar/_version_info.py
 /plans/
 # Scout reports and one-off investigations: same reasoning as plans/.
 /docs/research/
+/scout/
+# Leftover hand-checks an implement run writes (manual-check/<date>-<slug>/check.md): same reasoning.
+/manual-check/
 docs/superpowers/
 docs/pr-analysis/
 

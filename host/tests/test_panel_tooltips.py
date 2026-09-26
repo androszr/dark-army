@@ -1,4 +1,4 @@
-"""The panel's tooltip allowlist: twenty-two keepers, named files, spoken replacements.
+"""The panel's tooltip allowlist: twenty-four keepers, named files, spoken replacements.
 
 Text pins in `test_inbox_surface.py`'s shape: the panel is another language,
 so the only cross-language guard available is to read the Swift off disk.
@@ -13,7 +13,7 @@ EXPECTED = {
     "DraftsSheet.swift": 2,
     "BoardProjectControls.swift": 2,
     "InboxView.swift": 2,
-    "ProcessTable.swift": 2,
+    "ProcessTable.swift": 3,
     "ProviderSwitch.swift": 2,
     "RowBars.swift": 3,
     "SettingsSection.swift": 2,
@@ -38,9 +38,9 @@ def _help_counts():
 
 def test_tooltip_allowlist_is_exactly_the_named_survivors():
     counts = _help_counts()
-    assert sum(EXPECTED.values()) == 23
-    assert sum(counts.values()) == 23, (
-        f"whole-tree {HELP} count is {sum(counts.values())}, not 23: {counts}"
+    assert sum(EXPECTED.values()) == 24
+    assert sum(counts.values()) == 24, (
+        f"whole-tree {HELP} count is {sum(counts.values())}, not 24: {counts}"
     )
     assert counts == EXPECTED, (
         f"{HELP} sites drifted from the allowlist.\n"
@@ -86,6 +86,9 @@ def test_each_keeper_still_carries_its_text():
     assert "before sending" in process
     assert ".help(agent.areaLine)" in process
     assert 'agent.areaLine.isEmpty ? "" : ", " + agent.areaLine' in process
+    # The CMD cell cuts a long title to two lines; the hover gives it whole
+    # (25 Sep 2026).
+    assert '.help(lines.top.isEmpty ? lines.title : "\\(lines.top) · \\(lines.title)")' in process
 
     drafts = _read("DraftsSheet.swift")
     assert "Throw away every draft here, and the files they " in drafts

@@ -70,7 +70,10 @@ def test_the_well_is_built_from_existing_tokens():
     text = _read(PHONE_THEME)
     body = text.split("struct FieldWell: ViewModifier", 1)[1]
     assert len(body) >= 400, "parsed too little of the FieldWell body"
-    assert "focused ? Theme.phosphor : Theme.hair" in body, (
+    # The resting edge is `Theme.faint` since 25 Sep 2026: `hair` measures
+    # 2.43:1 on the ground, under the 3:1 a control's only boundary needs
+    # (`plans/2026-09-25-usability-accessibility-pass.md`, C3).
+    assert "focused ? Theme.phosphor : Theme.faint" in body, (
         "the focused edge is what makes the active field visible")
     assert ".background(Theme.well)" in body, "the well's fill is Theme.well"
     assert ".contentShape(Rectangle())" in body, (
@@ -85,9 +88,11 @@ def test_the_well_added_no_colour_of_its_own():
     so a bespoke `static let wellEdge = Color(red: …)` on the phone would pass
     there and fork the palette. The rule is no new colour literal at all.
     """
-    phone = {name for name, *_ in _COLOUR.findall(_read(PHONE_THEME))}
-    panel = {name for name, *_ in _COLOUR.findall(_read(PANEL_THEME))}
-    assert len(panel) >= 12, f"parsed too little from {PANEL_THEME}"
+    phone = {name for name, *_ in _COLOUR.findall(_read(PHONE_THEME.with_name("SignalTokens.generated.swift")))}
+    panel = {name for name, *_ in _COLOUR.findall(_read(PANEL_THEME.with_name("SignalTokens.generated.swift")))}
+    assert len(panel) >= 12, "generated Signal tokens are missing"
+    assert not _COLOUR.findall(_read(PHONE_THEME)), "phone Theme adds a private color"
+    assert not _COLOUR.findall(_read(PANEL_THEME)), "panel Theme adds a private color"
     assert phone == panel, (
         f"the phone's palette is no longer the panel's: only-phone "
         f"{sorted(phone - panel)}, only-panel {sorted(panel - phone)}")

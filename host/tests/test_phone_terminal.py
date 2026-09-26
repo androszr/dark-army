@@ -453,11 +453,13 @@ def test_the_terminal_tab_draws_no_second_copy_of_the_message():
     assert "body(for: agent)" in rest
     terminal = _code(_block(detail, "private var terminalScreen: some View"))
     assert "body(for: agent)" not in terminal
-    # The still and the name lead the sheet above the tabs now, shared by
-    # both panes, so this scroll starts at the question. It is not a second
-    # copy of the facts (`elsewhereTerminal` stays in `rest`).
+    # The still and the name are Main's page now, the first tab; Details
+    # starts at the question. It is not a second copy of the facts
+    # (`elsewhereTerminal` stays in `rest`).
     assert "identity" not in details
-    assert hosted.index("identity") < hosted.index("PhoneAgentScreenBar(")
+    main = _code(_block(detail, "private var mainScreen: some View"))
+    assert "identity" in main
+    assert hosted.index("PhoneAgentScreenBar(") < hosted.index("mainScreen")
     assert "elsewhereTerminal" not in details
 
 

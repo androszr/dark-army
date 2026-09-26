@@ -670,9 +670,11 @@ def test_an_update_naming_only_unwritable_fields_is_refused(daemon):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_ignores_a_stored_blocked_by(daemon, monkeypatch):
-    """Cards no longer wait on cards. A `blocked_by` left on an old row is
-    not a gate: the press goes through like any other."""
+async def test_a_stored_unmet_dependency_queues_rather_than_dispatching(
+        daemon, monkeypatch):
+    """Cards wait on cards again (`docs/card-dependencies.md`). A press on a
+    card whose dependency is not done is accepted and queued — never refused,
+    never started — and the reply names the card it waits for."""
     d, store = daemon
     blocker = _make(store, title="the blocker")
     card = _make(store, title="once blocked work")
@@ -690,8 +692,10 @@ async def test_dispatch_ignores_a_stored_blocked_by(daemon, monkeypatch):
     monkeypatch.setattr(d, "_known_project_roots",
                         lambda: {"/private/tmp", "/tmp"})
     ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
-    assert ok, detail
-    assert spawned == [1]
+    assert not ok
+    assert '"the blocker"' in detail
+    assert spawned == []
+    assert store.get(card["id"])["queue_state"] == "queued"
 
 
 # --- the return leg: a card arriving in Done wraps up its session -------------
@@ -1113,7 +1117,9 @@ async def test_a_failed_delete_close_still_removes_the_card_and_never_clears(
     assert closes == ["sess-1"]
     assert wraps == []
     assert store.get(card["id"]) is None
-    assert methods == ["get", "delete"]
+    # Two reads — before the lock, and again under it for the batch
+    # judgement (`delete_card`) — and no write but the delete.
+    assert methods == ["get", "get", "delete"]
 
 
 @pytest.mark.asyncio
@@ -2164,6 +2170,31 @@ def test_a_card_past_its_window_gives_up_rather_than_binding(daemon):
     assert after["dispatch_error"]
 
 
+@pytest.mark.parametrize("tool, name", [("codex", "Codex"), ("grok", "Grok")])
+def test_a_codex_or_grok_give_up_names_the_trust_question(daemon, tool, name):
+    """Codex 0.156 stops on "Trust this folder?" before any session exists
+    (the vir-sunset stall of 24 Sep 2026). The give-up line says so and says
+    what to press, rather than a bare "no session appeared"."""
+    d, store = daemon
+    card = _make(store, column_name="in_progress", tool=tool)
+    store.update(card["id"], {"link_state": "dispatching", "dispatched_at": 100.0},
+                 bump=False)
+    assert d._bind_dispatched_card(
+        store.get(card["id"]), {"running": []},
+        now=100.0 + dispatch.DISPATCH_BIND_WINDOW + 1) is True
+    error = store.get(card["id"])["dispatch_error"]
+    assert error.startswith("no session appeared")
+    assert f"{name} may be asking to trust this folder" in error
+    assert error.endswith("press Start again")
+
+
+def test_first_run_hint_is_only_for_codex_and_grok():
+    assert dispatch.first_run_hint("claude") == ""
+    assert dispatch.first_run_hint("") == ""
+    assert dispatch.first_run_hint(None) == ""
+    assert dispatch.first_run_hint("codex", "Refine").endswith("press Refine again")
+
+
 @pytest.mark.asyncio
 async def test_own_terminal_starts_in_an_enrolled_project_with_no_editor_open(daemon, monkeypatch, tmp_path):
     """Gap: Start with the editor closed was still refused. With the
@@ -2729,3 +2760,94 @@ async def test_area_block_captured_after_objective(daemon, monkeypatch, tmp_path
     assert prompt.endswith(dispatch.area_block(card,present))
     assert prompt.index("Objective:") < prompt.index("Area:")
     assert ("Read .claude/leads/backbone.md first." in prompt) is present
+
+
+# --- refine_batch_prompt: several Prep cards in one planning session ----------
+
+
+def _batch_card(k, **kw):
+    card = {"id": f"id{k}", "title": f"Card title {k}",
+            "summary": f"what card {k} is for", "prompt": f"notes {k}",
+            "tool": "claude"}
+    card.update(kw)
+    return card
+
+
+def test_refine_batch_prompt_opens_with_the_batch_head_and_a_block_per_card():
+    cards = [_batch_card(1), _batch_card(2), _batch_card(3)]
+    prompt = dispatch.refine_batch_prompt(cards)
+    assert prompt.startswith(dispatch.BATCH_PROMPT_HEAD)
+    assert prompt.startswith("/ship batch: refine 3 Prep cards")
+    assert dispatch.prompt_refusal("claude", prompt) is None
+    for k in (1, 2, 3):
+        block = (f"## Card {k} of 3 — Card title {k}\nCard id: id{k}\n"
+                 f"Summary: what card {k} is for\nInstructions:\nnotes {k}")
+        assert block in prompt
+    assert prompt.index("## Card 1 of 3") < prompt.index("## Card 2 of 3") \
+        < prompt.index("## Card 3 of 3")
+    # Pure and shared: the blocks are `batch_blocks`' own, verbatim.
+    assert prompt.endswith(dispatch.batch_blocks(cards))
+
+
+def test_refine_batch_prompt_says_the_codex_planning_sentence_once():
+    codex = [_batch_card(1, tool="codex"), _batch_card(2, tool="codex")]
+    prompt = dispatch.refine_batch_prompt(codex)
+    assert prompt.count(".agents/skills/ship/SKILL.md") == 1
+    assert dispatch.prompt_refusal("codex", prompt) is None
+    claude = dispatch.refine_batch_prompt([_batch_card(1), _batch_card(2)])
+    assert ".agents/skills/ship/SKILL.md" not in claude
+
+
+def test_refine_batch_prompt_carries_each_cards_objective_and_skips_repeats():
+    cards = [_batch_card(1, beneficiary="Ops", success_criterion="No pages."),
+             _batch_card(2, summary="Card title 2", prompt="")]
+    prompt = dispatch.refine_batch_prompt(cards)
+    first, second = prompt.split("## Card 2 of 2")
+    assert "Objective:\nWho benefits: Ops\nSuccess criterion: No pages." in first
+    assert "Objective:" not in second
+    # A summary that only repeats the title, and empty instructions, add no line.
+    assert "Summary:" not in second and "Instructions:" not in second
+
+
+def test_refine_prompt_is_untouched_by_the_batch_form():
+    card = _batch_card(1)
+    assert dispatch.refine_prompt(card) == (
+        "/ship what card 1 is for\n\nTitle: Card title 1\n\n"
+        "Instructions:\nnotes 1")
+
+
+# --- implement_batch_prompt: several Backlog cards in one session -------------
+
+
+def test_implement_batch_prompt_opens_with_the_head_and_a_plan_per_block():
+    cards = [_batch_card(k, plan_path=f"/p/plans/{k}.md") for k in (1, 2, 3)]
+    prompt = dispatch.implement_batch_prompt(cards)
+    assert prompt.startswith(dispatch.BATCH_PROMPT_HEAD + "implement 3 Backlog "
+                             "cards in this one session")
+    assert "dark_army_next_card" in prompt.splitlines()[0]
+    first = next(line for line in prompt.splitlines() if line.strip())
+    assert not first.startswith("Plan:"), \
+        "a Plan: first line would enter single-card implement mode"
+    for k in (1, 2, 3):
+        assert (f"## Card {k} of 3 — Card title {k}\nCard id: id{k}\n"
+                f"Plan: /p/plans/{k}.md\n") in prompt
+    assert prompt.endswith(dispatch.batch_blocks(cards))
+    assert dispatch.prompt_refusal("claude", prompt) is None
+    assert dispatch.prompt_refusal("codex", prompt) is None
+
+
+def test_batch_blocks_names_a_plan_only_where_the_card_has_one():
+    planless = [_batch_card(1), _batch_card(2)]
+    assert "Plan:" not in dispatch.batch_blocks(planless)
+    # The refinement's blocks are exactly what they were before the line.
+    assert dispatch.batch_blocks(planless).startswith(
+        "## Card 1 of 2 — Card title 1\nCard id: id1\nSummary: ")
+    mixed = [_batch_card(1, plan_path="/p/a.md"), _batch_card(2)]
+    blocks = dispatch.batch_blocks(mixed)
+    assert blocks.count("Plan:") == 1
+    assert "Card id: id1\nPlan: /p/a.md\n" in blocks
+
+
+def test_start_prompt_is_untouched_by_the_batch_implement_form():
+    card = _batch_card(1, plan_path="/p/plans/1.md")
+    assert dispatch.start_prompt(card).startswith("Plan: /p/plans/1.md\n\n")

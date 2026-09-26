@@ -507,7 +507,17 @@ def test_the_client_opens_the_socket_on_screen_and_away_only():
     suspend = client.split("func suspend()")[1].split("\n    func ")[0]
     assert "channel?.socket?.wanted = false" in suspend
     wake = client.split("func wake()")[1].split("\n    private func ")[0]
-    assert "if via == .relay { channel?.socket?.wanted = true }" in wake
+    # Away last time, the line comes up at once; home last time, only when
+    # the quick home probe misses (`pollOnce`) — review, 25 Sep 2026.
+    assert "openLineIfLastAway()" in wake
+    assert "wakeCheckIn = true" in wake
+    assert "openLineIfLastAway()" in start
+    helper = client.split("private func openLineIfLastAway()")[1].split("\n    }")[0]
+    assert "if via == .relay { channel?.socket?.wanted = true }" in helper
+    assert "wakeCheckIn = true" in start
+    prewarm = client.split("func prewarm()")[1].split("\n    }")[0]
+    assert "guard departedAt != nil, task != nil, via == .relay" in prewarm
+    assert "client.prewarm()" in _read(PHONE / "BobPhoneApp.swift")
     push = client.split("private func tookPush(")[1].split("\n    private func ")[0]
     assert "guard departedAt == nil, knowsItIsAway" in push
     assert "applyState(body, record: record, route: .relay)" in push

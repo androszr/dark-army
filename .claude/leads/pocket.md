@@ -14,4 +14,4 @@ Before handing work back:
 - Never grant an action because a control is visible; keep authorization and sealed transport checks at their existing doors.
 - Run phone target membership, parser and simulator checks; name any touch or real-device check that automation cannot establish.
 
-Lead pool, usual lead first: Mira, Ptyś.
+Lead pool, usual lead first: Mira, Ptys.

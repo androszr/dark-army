@@ -3,9 +3,14 @@ import LocalAuthentication
 
 /// The Face ID / passcode gate in front of remote *writes*.
 ///
-/// `LAContext.evaluatePolicy(.deviceOwnerAuthentication)` before the first
-/// write that would travel through the relay, then a five-minute grace so an
-/// arm-then-confirm pair is not double-prompted. The gate is deliberately on
+/// **The app-open unlock is the face (25 Sep 2026).** `LockGate.unlock()`
+/// succeeding calls `grantForSession()`, and from then until the app locks
+/// again (`LockGate.lock()` → `reset()`) every remote write proceeds with no
+/// second prompt: one Face ID per opening, not one per action. Only a write
+/// made without that unlock — none today, but the gate fails closed —
+/// falls back to `LAContext.evaluatePolicy(.deviceOwnerAuthentication)` and
+/// its five-minute grace. The Mac still checks the device token, the away
+/// lease and `REMOTE_ACTIONS` per request. The gate is deliberately on
 /// the write path and **not** on the relay key itself: guarding the Keychain
 /// record with `SecAccessControl` biometry would prompt on every background
 /// read poll, and reads are allowed from away by design.
@@ -19,6 +24,14 @@ final class RemoteAuth {
     static let graceSeconds: TimeInterval = 300
 
     private var lastSuccess: Date?
+    /// Set by a successful app-open unlock, cleared by `reset()`.
+    private var sessionGranted = false
+
+    /// The app-open unlock succeeded: remote writes need no further face
+    /// until the app locks (`reset()`).
+    func grantForSession() {
+        sessionGranted = true
+    }
 
     /// True while the Face ID / passcode sheet for a remote write may be up.
     /// The sheet drives the scene `.inactive` exactly as a consent alert
@@ -37,6 +50,7 @@ final class RemoteAuth {
     /// Whether a remote write may proceed. Prompts when the grace has
     /// lapsed; a refusal or an unavailable authenticator fails closed.
     func authorize(reason: String = "Confirm it's you to act on your Mac from away") async -> Bool {
+        if sessionGranted { return true }
         if let last = lastSuccess,
            Date().timeIntervalSince(last) < Self.graceSeconds {
             return true
@@ -65,5 +79,6 @@ final class RemoteAuth {
     /// put down.
     func reset() {
         lastSuccess = nil
+        sessionGranted = false
     }
 }

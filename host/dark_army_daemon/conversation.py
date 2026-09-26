@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import threading
 import time
@@ -20,7 +21,13 @@ from .ai_title import _SYNTHETIC_PROMPT_PREFIXES, _first_text
 from .codex_rollouts import _is_synthetic_prompt, _text, _tool_input
 from .grok_chat import _USER_QUERY_RE, _genuine_user_prompt, _user_content
 from .grok_usage import DeltaCache
-from .session_stats import _ACTIONS_RE, _TLDR_RE, _is_tool_result
+from .session_stats import (
+    _ACTIONS_RE,
+    _CHANNEL_USER_RE,
+    _TLDR_RE,
+    _is_channel_user_message,
+    _is_tool_result,
+)
 
 KINDS = ("user", "agent", "tool", "result", "note")
 PAGE_TURNS = 150
@@ -34,11 +41,21 @@ TOOL_BRIEF_CHARS = 120
 RESULT_SUMMARY_CHARS = 160
 UNKNOWN_SESSION_REFUSAL = "Dark Army is not watching that session"
 NO_TRANSCRIPT_REASON = "Dark Army has not found this session's transcript yet"
+NO_HELPER_REASON = "Dark Army has not found this helper's transcript yet"
+HELPER_PROVIDER_REASON = "Only a Claude Code session's helpers can be read here"
+#: A helper id as the wire may carry it: Claude Code's are hex. The shape is
+#: the path guard — the id becomes ``agent-<id>.jsonl`` under the session's
+#: own ``subagents`` folder and can name nothing else.
+AGENT_ID_RE = r"[A-Za-z0-9_-]{1,64}"
+#: The reader's cache key for helpers' journals — not a provider.
+SIDECHAIN = "claude-sidechain"
 
 _TOOL_BRIEF_KEYS = (
     "command", "file_path", "path", "pattern", "query", "url",
     "description", "prompt",
 )
+#: The close of the wrapper Dark Army's channel puts around a reply.
+CHANNEL_CLOSE_TAG = "</channel>"
 
 
 def _ts_epoch(value) -> float:
@@ -97,6 +114,32 @@ def file_key(path: str, first_ts: float) -> str:
 
 def _strip_markers(text: str) -> str:
     return _ACTIONS_RE.sub(" ", _TLDR_RE.sub(" ", text or ""))
+
+
+def channel_reply_text(lead: str) -> str:
+    """The person's words inside a channel `kind="user"` record: the opening
+    tag and the trailing close removed, the ends trimmed. ``""`` when ``lead``
+    does not open with the tag. Only the trailing close goes; an inner
+    ``</channel>`` is the person's own text."""
+    m = _CHANNEL_USER_RE.match(lead or "")
+    if m is None:
+        return ""
+    body = lead[m.end():].strip()
+    if body.endswith(CHANNEL_CLOSE_TAG):
+        body = body[: -len(CHANNEL_CLOSE_TAG)].strip()
+    # A card's question pushed straight to the session carries Dark Army's
+    # own direction after it (`daemon_board.ask_direct_tail`): the person
+    # never typed that, so it is not drawn as their turn.
+    tail = _ASK_DIRECT_TAIL_RE.search(body)
+    if tail is not None:
+        body = body[: tail.start()].rstrip()
+    return body
+
+
+#: `daemon_board.ask_direct_tail`, either tool name; matched only at the end.
+_ASK_DIRECT_TAIL_RE = re.compile(
+    r"\s*Answer this question about your card through "
+    r"\w+_answer_card\. Write one answer; change nothing else\.\Z")
 
 
 def _join_text_blocks(content) -> str:
@@ -201,7 +244,12 @@ def _push(acc: _Accum, kind: str, ts: float, **fields: Any) -> None:
     ))
 
 
-def fold_claude(obj: dict, acc: _Accum) -> None:
+def fold_claude(obj: dict, acc: _Accum, *, sidechain: bool = False) -> None:
+    """One Claude Code journal line. ``sidechain`` is a helper's own
+    journal (``subagents/agent-<id>.jsonl``), where **every** line carries
+    ``isSidechain`` — the brief the helper was handed included — so the
+    session reader's skip would hide the one prompt that says what the
+    helper is doing."""
     otype = obj.get("type")
     ts = _ts_epoch(obj.get("timestamp"))
     msg = obj.get("message")
@@ -223,12 +271,23 @@ def fold_claude(obj: dict, acc: _Accum) -> None:
                     result_bytes=len(raw),
                 )
             return
-        if obj.get("isMeta") is True or obj.get("isSidechain") is True:
+        if obj.get("isSidechain") is True and not sidechain:
             return
         text = _join_text_blocks(content) if not isinstance(content, str) else content
         if not isinstance(text, str):
             text = ""
         lead = text.lstrip()
+        if obj.get("isMeta") is True:
+            # A reply typed in Dark Army's panel or on the phone:
+            # `reply_to_session`'s `kind="user"` channel event, written as an
+            # `isMeta` record with `origin.kind == "channel"`. It is the
+            # person's turn, drawn without the wrapper. `kind="fleet"` and
+            # every other meta record stay out.
+            if _is_channel_user_message(obj, lead):
+                body = channel_reply_text(lead)
+                if body:
+                    _push(acc, "user", ts, text=body)
+            return
         if lead.startswith(_SYNTHETIC_PROMPT_PREFIXES):
             return
         if text.strip():
@@ -370,6 +429,10 @@ def _fold_claude_line(line: str, acc: _Accum) -> None:
     _fold_line(fold_claude, line, acc)
 
 
+def _fold_claude_sidechain_line(line: str, acc: _Accum) -> None:
+    _fold_line(lambda obj, a: fold_claude(obj, a, sidechain=True), line, acc)
+
+
 def _fold_codex_line(line: str, acc: _Accum) -> None:
     _fold_line(fold_codex, line, acc)
 
@@ -392,10 +455,16 @@ class ConversationReader:
             "claude": DeltaCache(_Accum, _fold_claude_line, _finalize, CACHE_FILES),
             "codex": DeltaCache(_Accum, _fold_codex_line, _finalize, CACHE_FILES),
             "grok": DeltaCache(_Accum, _fold_grok_line, _finalize, CACHE_FILES),
+            # A helper's own journal: Claude's shape, sidechain lines kept.
+            SIDECHAIN: DeltaCache(_Accum, _fold_claude_sidechain_line,
+                                  _finalize, CACHE_FILES),
         }
         self._lock = threading.Lock()
 
-    def page(self, provider: str, path: str, since: int, key: str) -> dict:
+    def page(self, provider: str, path: str, since: int, key: str,
+             *, sidechain: bool = False) -> dict:
+        """``sidechain`` reads a Claude Code helper's own journal; the page
+        still says ``provider: "claude"``."""
         provider = provider or "claude"
         if not path:
             return {
@@ -413,7 +482,8 @@ class ConversationReader:
                 "reason": NO_TRANSCRIPT_REASON,
                 "provider": provider,
             }
-        cache = self._caches.get(provider) or self._caches["claude"]
+        cache = (self._caches[SIDECHAIN] if sidechain
+                 else self._caches.get(provider) or self._caches["claude"])
         with self._lock:
             acc = cache.get(path)
             acc.key = file_key(path, acc.first_ts)

@@ -38,6 +38,12 @@ final class BoardCollapseLayoutTests: XCTestCase {
             return view.subviews.lazy.compactMap { scrollView(in: $0) }.first
         }
         settle()
+        if let capturePath = ProcessInfo.processInfo.environment["SIGNAL_BOARD_CAPTURE"] {
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: capturePath))
+        }
         let scroll = try XCTUnwrap(scrollView(in: host))
         let document = try XCTUnwrap(scroll.documentView)
         XCTAssertGreaterThan(document.frame.height, scroll.contentView.bounds.height)

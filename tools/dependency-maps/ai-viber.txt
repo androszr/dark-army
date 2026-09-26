@@ -1,0 +1,22 @@
+# ai-viber dependency map — run: python3 tools/board_link_dependencies.py --project ai-viber --map tools/dependency-maps/ai-viber.txt
+Front door and server-side progress: sign-up, email links, guests <- Build the game foundation: server-owned saves and the live update loop
+Accounts: automatic player handles and email sign-in (opens the shared board) <- Front door and server-side progress: sign-up, email links, guests
+Production mail for sign-in links <- Accounts: automatic player handles and email sign-in (opens the shared board)
+Verified email required to take jobs from the shared board <- Accounts: automatic player handles and email sign-in (opens the shared board)
+Account settings: rename, change email, sign out everywhere, delete <- Accounts: automatic player handles and email sign-in (opens the shared board)
+Build the economy core in the simulation <- Build the game foundation: server-owned saves and the live update loop
+Add Content v1: real providers, models, launch timeline, gigs and room items <- Build the economy core in the simulation
+Your AI accounts: providers, plans and the Your AI panel from day 1 <- Add Content v1: real providers, models, launch timeline, gigs and room items
+Build the first ten minutes: sign-up to first dollar and the starter routes <- Your AI accounts: providers, plans and the Your AI panel from day 1
+Build the Cockpit: a dashboard that starts as one button and grows <- Build the first ten minutes: sign-up to first dollar and the starter routes
+Build the shared job board: first come first served, limited by bandwidth <- Build the first ten minutes: sign-up to first dollar and the starter routes
+Set up the pixel-art pipeline and final starting-room sprites <- Build the first ten minutes: sign-up to first dollar and the starter routes
+Build the Box Room window and Room tab <- Build the Cockpit: a dashboard that starts as one button and grows | Set up the pixel-art pipeline and final starting-room sprites
+Add real-time learning: videos, docs, courses and live keynotes <- Build the Cockpit: a dashboard that starts as one button and grows
+Build the Newsroom: real AI news, summarised with sources, in the News tab <- Scout: newsroom guardrails — news rights, fair use of names, fact-checking | Try the Director offline on a month of real AI news
+Build Newsroom v1: real AI news in the News tab and the feed <- Scout: newsroom guardrails — news rights, fair use of names, fact-checking | Try the Director offline on a month of real AI news
+Build the balance harness: many bot players in one world <- Build the economy core in the simulation
+# planner: Wire the Cockpit's buttons to real game actions <- Build the Cockpit: a dashboard that starts as one button and grows
+# planner: Draw the over-the-shoulder and profile room views <- Set up the pixel-art pipeline and final starting-room sprites
+# planner: Source gig pay from real Fiverr and Upwork listings <- Add Content v1: real providers, models, launch timeline, gigs and room items
+# planner: Play the real launch timeline on the Classic calendar <- Add Content v1: real providers, models, launch timeline, gigs and room items

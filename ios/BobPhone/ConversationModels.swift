@@ -155,3 +155,76 @@ enum ConversationRows {
         }
     }
 }
+
+/// What the conversation cache and the watch are keyed by: a session, or
+/// one of its helpers. A helper is `<session>#<agent id>` — one string, so
+/// the cache, the watch and the unavailable-reason map need no second key,
+/// and a helper's turns never land in its parent's cache. `#` is in no
+/// session id any provider mints, and the cache's file-name guard (no `/`,
+/// no `..`) still holds.
+enum ConversationSubject {
+    static let separator: Character = "#"
+
+    static func key(session: String, agent: String = "") -> String {
+        agent.isEmpty ? session : "\(session)\(separator)\(agent)"
+    }
+
+    /// `(session, agent)`; `agent` is `""` for a session's own key.
+    static func split(_ key: String) -> (session: String, agent: String) {
+        guard let cut = key.firstIndex(of: separator) else { return (key, "") }
+        return (String(key[..<cut]), String(key[key.index(after: cut)...]))
+    }
+
+    /// The `conversation` read's query for a watched key. `agent` rides
+    /// only for a helper, so a session's query is byte-for-byte what it
+    /// always was.
+    static func query(key: String, since: Int, cursorKey: String) -> String {
+        let (session, agent) = split(key)
+        var q = "session=\(session)&since=\(since)&key=\(cursorKey)"
+        if !agent.isEmpty { q += "&agent=\(agent)" }
+        return q
+    }
+}
+
+/// Comm's tab strip: Mission Control first, then one tab per helper it has
+/// running. Pure, so the phone's rules run under `swiftc` in the host suite.
+enum CommHelperTabs {
+    struct Tab: Equatable {
+        var id: String      // "" is Mission Control itself
+        var label: String
+        var live: Bool
+    }
+
+    /// `live` is the mission row's helpers in spawn order, `(agent id,
+    /// label)`. A selected helper that has just finished keeps its tab —
+    /// marked not live — so the screen being read does not vanish under
+    /// the thumb; any other finished helper drops off. No tabs at all
+    /// (an empty array) when there is nothing to switch to or the Mac
+    /// cannot serve a helper's turns.
+    static func tabs(live: [(id: String, label: String)], selected: String,
+                     selectedLabel: String, supported: Bool) -> [Tab] {
+        guard supported else { return [] }
+        var out = [Tab(id: "", label: "Mission Control", live: true)]
+        var seen = Set<String>()
+        for row in live where !row.id.isEmpty && !seen.contains(row.id) {
+            seen.insert(row.id)
+            out.append(Tab(id: row.id, label: label(row.label, id: row.id), live: true))
+        }
+        if !selected.isEmpty, !seen.contains(selected) {
+            out.append(Tab(id: selected, label: label(selectedLabel, id: selected),
+                           live: false))
+        }
+        return out.count > 1 ? out : []
+    }
+
+    /// The selection after the helpers changed: the same helper while it
+    /// has a tab, else Mission Control.
+    static func selection(_ selected: String, tabs: [Tab]) -> String {
+        tabs.contains(where: { $0.id == selected }) ? selected : ""
+    }
+
+    static func label(_ label: String, id: String) -> String {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? String(id.prefix(8)) : trimmed
+    }
+}

@@ -438,7 +438,11 @@ TODO_MARK_GAP = 3.5      # ...and its distance from them, matched to USAGE_MARK_
 # buys ~10pt of headroom over that reading, at the cost of a status item up to
 # 20pt wider at its fullest, crowding the user's other menu-bar items by that
 # much. That trade is a judgement, not a calculation.
-STRIP_BUDGET_PT = 300.0
+# Raised again from 300 when the to-do count reached three digits: at 100 cards
+# the same full reading measures 300.2pt — the third digit is 8pt — and the
+# ladder dropped the Codex cluster for a fifth of a point. 310 restores the
+# ~10pt of headroom over the widest everyday reading (three-digit to-do count).
+STRIP_BUDGET_PT = 310.0
 
 # The usage clusters this strip can draw.
 ALL_USAGE_BRANDS = frozenset({"claude", "grok", "codex"})

@@ -63,7 +63,7 @@ def test_the_face_is_the_roster_at_every_end():
     slugs = re.search(r"static let slugs: \[String\] = \[(.*?)\]", swift, re.S)
     assert slugs, "no slug list in NotificationFace.swift"
     assert tuple(re.findall(r'"([^"]+)"', slugs.group(1))) == expected
-    assert "ptyś" in expected
+    assert "ptys" in expected
 
 
 def test_the_two_ends_clamp_the_work_line_at_the_same_length():

@@ -77,6 +77,12 @@ enum ReceiptEffect: Codable, Equatable {
     /// Refine settling on the 200 alone put the button back to "Refine"
     /// before the frame said a planner had it.
     case cardRefining(cardId: String)
+    /// `.cardRefining` for a batch Refine (`board_refine_batch`): judged by
+    /// **every** card, so the mark stays SENT until the frame shows each
+    /// ticked card's planner at work. A member the board no longer lists
+    /// reads not-landed, `.cardRefining`'s own guard, so a card deleted
+    /// mid-flight leaves the press SENT until the effect deadline.
+    case cardsRefining(cardIds: [String])
     /// Nothing on the board or the fleet says whether this landed
     /// (`register_push_token`, `prepare_card`). Settles on acceptance.
     case none
@@ -210,6 +216,7 @@ struct Receipt: Identifiable, Codable, Equatable {
         case PhoneActions.boardClearDone: return "Clear all done items"
         case PhoneActions.boardDispatch: return "Start a card"
         case PhoneActions.boardRefine: return "Refine a card"
+        case PhoneActions.boardRefineBatch: return "Refine several cards together"
         case PhoneActions.boardApprovePlan: return "Approve a plan"
         case PhoneActions.boardUnqueue: return "Take a card out of the line"
         case PhoneActions.boardQueueMove: return "Move a card up the line"
@@ -835,6 +842,8 @@ final class ReceiptLedger: ObservableObject {
                 || !card.refineSessionId.isEmpty
                 || !card.planPath.isEmpty
                 || card.column != "prep"
+        case .cardsRefining(let cardIds):
+            return cardIds.allSatisfy { landed(.cardRefining(cardId: $0), in: snapshot) }
         }
     }
 
@@ -878,6 +887,14 @@ final class ReceiptLedger: ObservableObject {
             return card.isEmpty ? .none : .cardLinked(cardId: card)
         case PhoneActions.boardRefine:
             return card.isEmpty ? .none : .cardRefining(cardId: card)
+        case PhoneActions.boardRefineBatch:
+            // The batch rides one comma-joined `card_ids`, the Mac's own
+            // parse: split, trimmed, empties dropped.
+            let ids = (fields["card_ids"] ?? "")
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            return ids.isEmpty ? .none : .cardsRefining(cardIds: ids)
         case PhoneActions.boardUpdate:
             guard !card.isEmpty else { return .none }
             if let column = fields["column_name"], !column.isEmpty {

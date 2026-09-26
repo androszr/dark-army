@@ -20,6 +20,7 @@ import pytest
 
 from dark_army_daemon import alerts, cast, devices, fleet_figures, live_activity, paths, relay
 from dark_army_daemon import relay_client
+from dark_army_daemon import inbox_ack
 from dark_army_daemon.api_server import ApiServer
 from dark_army_daemon.daemon import BobDaemon
 
@@ -233,6 +234,139 @@ def test_waiters_admits_exactly_the_listed_live_rows():
     assert admitted == listed & live == {"w1", "w2", "p1", "n1", "zn"}
 
 
+# --- shown_sessions: the listed set less the person's dismissals ---------------
+
+
+def _ack(key, kind, material=""):
+    return {"key": key, "kind": kind, "fp": inbox_ack.fingerprint(kind, material)}
+
+
+def _three_rungs():
+    snap = {"waiting": [_row("w1", "Vex")],
+            "running": [_row("p1", "Mira"), _row("n1", "Cal"), _row("r1", "Bea")],
+            "sleeping": [_row("z1", "Zed")]}
+    prompts = {"p1": {"request_id": "r1"}, "gone": {"request_id": "r2"}}
+    return snap, prompts, ["n1"]
+
+
+def test_shown_sessions_with_no_acks_is_listed_sessions():
+    snap, prompts, notified = _three_rungs()
+    listed = live_activity.listed_sessions(snap, prompts, notified)
+    assert live_activity.shown_sessions(snap, prompts, notified) == listed
+    assert live_activity.shown_sessions(snap, prompts, notified, cards=[], acks=[]) == listed
+    assert live_activity.shown_sessions(None, None) == set()
+
+
+def test_a_dismissed_waiting_row_is_not_shown():
+    snap, prompts, notified = _three_rungs()
+    acks = [_ack("s:w1", "waiting")]
+    shown = live_activity.shown_sessions(snap, prompts, notified, acks=acks)
+    assert shown == {"p1", "n1", "gone"}
+
+
+def test_a_dismissed_row_admitted_by_a_notification_card_is_not_shown():
+    """A running row admitted only by its notification card draws a
+    `waiting` entry on the phone too, fingerprint `waiting`."""
+    snap, prompts, notified = _three_rungs()
+    acks = [_ack("s:n1", "waiting")]
+    shown = live_activity.shown_sessions(snap, prompts, notified, acks=acks)
+    assert "n1" not in shown and "w1" in shown
+
+
+def test_a_dismissed_question_is_matched_on_ids_else_texts():
+    with_ids = {"waiting": [_row("q1", "Vex", questions=[
+        {"id": "t1", "text": "Which?"}, {"id": "t2", "text": "And?"}])]}
+    acked = [_ack("s:q1", "question", "t1|t2")]
+    assert live_activity.shown_sessions(with_ids, {}, acks=acked) == set()
+    no_ids = {"waiting": [_row("q1", "Vex", questions=[
+        {"text": "Which?"}, {"id": "t2", "text": "And?"}])]}
+    acked = [_ack("s:q1", "question", "Which?|And?")]
+    assert live_activity.shown_sessions(no_ids, {}, acks=acked) == set()
+
+
+def test_an_ack_on_an_old_question_does_not_hide_a_new_one():
+    snap = {"waiting": [_row("q1", "Vex", questions=[{"id": "t9", "text": "New?"}])]}
+    stale = [_ack("s:q1", "question", "t1")]
+    assert live_activity.shown_sessions(snap, {}, acks=stale) == {"q1"}
+
+
+def test_a_waiting_ack_does_not_hide_a_row_that_now_asks():
+    snap = {"waiting": [_row("q1", "Vex", questions=[{"text": "Now?"}])]}
+    acks = [_ack("s:q1", "waiting")]
+    assert live_activity.shown_sessions(snap, {}, acks=acks) == {"q1"}
+
+
+def test_a_prompted_row_is_never_hidden_by_a_waiting_ack():
+    snap, prompts, notified = _three_rungs()
+    acks = [_ack("s:p1", "waiting"), _ack("s:p1", "permission")]
+    assert "p1" in live_activity.shown_sessions(snap, prompts, notified, acks=acks)
+
+
+def test_an_orphan_prompt_is_never_hidden():
+    snap, prompts, notified = _three_rungs()
+    acks = [_ack("s:gone", "waiting"), _ack("s:gone", "permission")]
+    assert "gone" in live_activity.shown_sessions(snap, prompts, notified, acks=acks)
+
+
+def test_the_flat_question_is_fingerprinted_like_the_phone():
+    row = _row("q1", "Vex", questions=[])
+    row["question"] = {"text": "Flat?"}
+    snap = {"waiting": [row]}
+    assert live_activity.shown_sessions(
+        snap, {}, acks=[_ack("s:q1", "question", "Flat?")]) == set()
+    # A `waiting` ack does not match: the phone's kind is `question`.
+    assert live_activity.shown_sessions(
+        snap, {}, acks=[_ack("s:q1", "waiting")]) == {"q1"}
+
+
+def test_a_dismissed_session_with_a_surviving_card_stays_shown():
+    snap = {"waiting": [_row("w1", "Vex")]}
+    card = {"id": "c1", "needs_you": True, "session_id": "w1"}
+    session_ack = _ack("s:w1", "waiting")
+    card_ack = _ack("c:c1", "ended_work")
+    assert live_activity.shown_sessions(
+        snap, {}, cards=[card], acks=[session_ack]) == {"w1"}
+    assert live_activity.shown_sessions(
+        snap, {}, cards=[card], acks=[session_ack, card_ack]) == set()
+    # Dismissing only the card lets the session's own entry stand.
+    assert live_activity.shown_sessions(
+        snap, {}, cards=[card], acks=[card_ack]) == {"w1"}
+
+
+def test_a_hand_check_dismissed_on_old_steps_keeps_the_session_shown():
+    snap = {"waiting": [_row("w1", "Vex")]}
+    card = {"id": "c2", "manual_check_due": True, "session_id": "w1",
+            "manual_steps": "1. Open it."}
+    acks = [_ack("s:w1", "waiting"), _ack("c:c2", "manual_check", "1. Open it.")]
+    assert live_activity.shown_sessions(snap, {}, cards=[card], acks=acks) == set()
+    card["manual_steps"] = "1. Open it again."
+    assert live_activity.shown_sessions(snap, {}, cards=[card], acks=acks) == {"w1"}
+
+
+def test_a_card_never_adds_a_session_listed_sessions_left_out():
+    snap = {"running": [_row("r1", "Bea")]}
+    cards = [{"id": "c1", "needs_you": True, "session_id": "r1"},
+             {"id": "c2", "needs_you": True, "session_id": "ghost"}]
+    acks = [_ack("s:x", "waiting")]
+    assert live_activity.shown_sessions(snap, {}, cards=cards, acks=acks) == set()
+    assert live_activity.shown_sessions(snap, {}, notified=["ghost"],
+                                        cards=cards, acks=acks) == set()
+
+
+def test_the_composer_ignores_acks_the_accepted_drift():
+    """`waiters` / `subject` take no acks: the Live Activity's drift is a
+    recorded decision (`docs/phone-contract.md`), and Bearings subtracts
+    acks after `waiters`. The buzz gate alone reads `shown_sessions`."""
+    import inspect
+    assert "acks" not in inspect.signature(live_activity.waiters).parameters
+    assert "acks" not in inspect.signature(live_activity.subject).parameters
+    snap = {"waiting": [_row("w1", "Vex")]}
+    acks = [_ack("s:w1", "waiting")]
+    assert live_activity.shown_sessions(snap, {}, acks=acks) == set()
+    assert [w["session_id"] for w in live_activity.waiters(snap, {})] == ["w1"]
+    assert live_activity.subject(snap, {})["session_id"] == "w1"
+
+
 def test_a_question_with_no_text_is_not_a_question():
     snap = {"waiting": [_row("q1", "Mira", 5, questions=[{"text": ""}])]}
     out = live_activity.subject(snap, {})
@@ -412,8 +546,11 @@ def test_the_activity_kinds_are_a_subset_of_the_buzz_kinds_at_every_end():
     assert tuple(re.findall(r'"(\w+)"', found.group(1))) == relay_client.ACTIVITY_KINDS
     found = re.search(r'const ACTIVITY_EVENTS = \[(.*?)\];', text)
     assert tuple(re.findall(r'"(\w+)"', found.group(1))) == relay_client.ACTIVITY_EVENTS
-    assert "const SLUG_SHAPE = /^[a-z]{0,24}$/;" in text
-    assert relay_client.ACTIVITY_SLUG_SHAPE.pattern == r"^[a-z]{0,24}$"
+    # The live card's face is the closed cast list at both ends, never an
+    # ASCII shape that once blanked a non-ASCII name's portrait.
+    assert "SLUG_SHAPE" not in text
+    assert '(slug !== "" && !FACE_SLUGS.includes(slug))' in text
+    assert not hasattr(relay_client, "ACTIVITY_SLUG_SHAPE")
 
 
 # --- the token ledger --------------------------------------------------------------
@@ -606,8 +743,8 @@ async def test_a_400_from_an_old_mailbox_is_a_live_card_failure_on_its_own_recor
 @pytest.mark.asyncio
 async def test_the_outcome_names_why_it_did_not_land(tmp_path):
     """`push_activity_outcome`: the daemon's retry rule turns on the class.
-    Refused (a 4xx, Apple's 502, an undeployed route) is not worth sending
-    again; unreachable (no answer, a 5xx) is; skipped left nothing."""
+    Refused (a 4xx, an undeployed route) is not worth sending again; dead
+    (Apple's 502) is not worth sending anything to; unreachable (no answer, a 5xx) is; skipped left nothing."""
     conn, _d, calls = _connector(tmp_path)
     body = {"event": "update", **_state()}
     assert await conn.push_activity_outcome("dev-1", body) == "skipped"   # no token
@@ -618,7 +755,7 @@ async def test_the_outcome_names_why_it_did_not_land(tmp_path):
         (200, b"ok", "landed"), (204, b"", "landed"),
         (400, b"bad request", "refused"), (401, b"unauthorized", "refused"),
         (404, b"<html>", "refused"), (503, b"unconfigured", "refused"),
-        (502, b"apple refused", "refused"),
+        (502, b"apple refused", "dead"),
         (503, b"unavailable", "unreachable"), (500, b"", "unreachable"),
     ]:
         conn._answer = (status, reply)
@@ -630,7 +767,8 @@ async def test_the_outcome_names_why_it_did_not_land(tmp_path):
     assert await conn.push_activity_outcome("dev-1", body) == "unreachable"
     conn._push_bucket("dev-1")._tokens = 0.0
     assert await conn.push_activity_outcome("dev-1", body) == "skipped"
-    assert set(relay_client.ACTIVITY_OUTCOMES) == {"landed", "refused", "unreachable", "skipped"}
+    assert set(relay_client.ACTIVITY_OUTCOMES) == {"landed", "refused", "dead",
+                                                   "unreachable", "skipped"}
 
 
 @pytest.mark.asyncio
@@ -798,7 +936,7 @@ async def test_an_unreachable_end_is_retried_on_the_clock_and_a_landed_one_is_no
 
 @pytest.mark.asyncio
 async def test_a_refused_body_is_sent_once_per_distinct_state(monkeypatch):
-    """An old mailbox (every POST a 400) or a dead token (Apple's 502):
+    """An old mailbox (every POST a 400) or a wrong push secret (401):
     the same body is never sent twice. Each distinct picture costs one
     attempt; a pass with the same picture costs nothing, however many."""
     d = _glued(monkeypatch, {"waiting": [_row("s1", "Vex", 30)]})
@@ -988,6 +1126,29 @@ async def test_a_refusal_landing_after_a_fresh_registration_is_discarded_too(mon
     _push(d)
     await _settle()
     assert d._live_activity_attempt["phone-1"][1] == "refused"
+
+
+@pytest.mark.asyncio
+async def test_a_dead_token_ends_the_card_until_the_phone_registers_again(monkeypatch):
+    """Apple refusing the token (iOS ended the activity at eight hours) is
+    an end: a changed picture sends nothing more — the fleet figures move
+    every minute, and each used to cost a 502 — until a fresh registration."""
+    d = _glued(monkeypatch, {"waiting": [_row("s1", "Vex", 30)]})
+    d._relay_connector.answer = "dead"
+    _push(d)
+    await _settle()
+    assert d._live_activity_last["phone-1"] == "ended"
+    assert "phone-1" not in d._live_activity_attempt
+    for waiting in ([_row("s2", "Cipher", 400)], [], [_row("s3", "Hex", 5)]):
+        _push(d, {"waiting": waiting})
+        await _settle()
+    assert len(d._relay_connector.pushed) == 1
+    d._relay_connector.answer = "landed"
+    d.forget_live_activity("phone-1")
+    _push(d, {"waiting": [_row("s3", "Hex", 5)]})
+    await _settle()
+    assert len(d._relay_connector.pushed) == 2
+    assert d._live_activity_last["phone-1"] != "ended"
 
 
 @pytest.mark.asyncio
@@ -1568,7 +1729,7 @@ def test_fleet_face_falls_back_to_a_carded_waiter():
     counted in "need you" but skipped by `subject`; the fleet card still
     draws that agent's face, as an attention face. `subject` itself — the
     face-only card's rule — is unchanged."""
-    snapshot = {"waiting": [{"session_id": "s1", "nickname": "Ptyś",
+    snapshot = {"waiting": [{"session_id": "s1", "nickname": "Ptys",
                              "name": "build", "idle_seconds": 30,
                              "quiet_since": 1000.0}]}
     cards = [{"session_id": "s1", "manual_check_due": True}]
@@ -1576,7 +1737,7 @@ def test_fleet_face_falls_back_to_a_carded_waiter():
     face = live_activity.fleet_face(snapshot, {}, cards=cards)
     assert face["session_id"] == "s1"
     assert face["kind"] == "attention"
-    assert face["nickname"] == "Ptyś"
+    assert face["nickname"] == "Ptys"
     assert face["quiet_since"] == 1000.0
     assert live_activity.fleet_face({"waiting": []}, {}, cards=cards) is None
     # A real subject still wins.
@@ -1614,3 +1775,20 @@ def test_fleet_state_carries_the_per_hour_rates_only_when_said():
     # A rate moving alone is a figures-only change: it waits the interval.
     moved = dict(said, cost_usd_hour=5.0)
     assert live_activity.figures_only_change(moved, said)
+
+
+@pytest.mark.asyncio
+async def test_ptys_keeps_her_face_on_the_live_card(tmp_path):
+    """25 Sep 2026: the live card for Ptys drew an empty tile — her name
+    was spelled with a non-ASCII letter then, and the slug check blanked
+    it before it left the Mac. The face is the cast list, so every name keeps its portrait and
+    anything else is still dropped."""
+    conn, _d, calls = _connector(tmp_path)
+    relay.note_activity_token("dev-1", "ab" * 32, "dev")
+    for slug, sent in (("ptys", "ptys"), ("vex", "vex"), ("stranger", ""),
+                       ("Vex", ""), ("", "")):
+        calls.clear()
+        assert await conn.push_activity(
+            "dev-1", {"event": "update", **_state(slug=slug)}) is True
+        assert calls[0][2]["slug"] == sent, slug
+

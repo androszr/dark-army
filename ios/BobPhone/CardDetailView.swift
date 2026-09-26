@@ -196,6 +196,10 @@ struct PhoneCardDetailView: View {
     /// board frame agrees or when the Mac refuses. View state only: never
     /// sent, never cached, and the card is still the authority.
     @State private var pendingStartWhenPlanned: Bool?
+    /// The note typed under Passed / Failed on a card flagged with a check
+    /// file, and which of the two the arm is holding. View state only.
+    @State private var manualNote = ""
+    @State private var manualOutcomeArmed = ""
     /// The assistant and the model the person just tapped, held on screen
     /// as the selection while the press is on its way. The same idiom as
     /// the tick above and for the same reason: the receipt for either
@@ -219,7 +223,7 @@ struct PhoneCardDetailView: View {
     private enum Pressed {
         case start, startHere, done, refine, delete, move, tool, model
         case save, approve, message, startWhenPlanned
-        case manualClear, review, promote
+        case manualClear, manualOutcome, review, promote, dependencies
     }
 
     private var board: Board { client.snapshot.board }
@@ -317,6 +321,12 @@ struct PhoneCardDetailView: View {
             && card.queueState != "queued"
             && card.sessionId.isEmpty
             && !isBusy
+            // A card waiting its turn in a batch, or dragged out of the
+            // line, is started by the batch or by Leave batch on the Mac,
+            // not by this button. The Mac refuses a press made off a stale
+            // picture with its batch-waiting refusal, which arrives on the
+            // receipt and is drawn by `noteArrived` as any other refusal.
+            && !card.holdsBatchMark
     }
 
     /// START HERE: spawn Dark Army's own terminal for a card that has none
@@ -328,15 +338,12 @@ struct PhoneCardDetailView: View {
             && !board.ownTerminalEnabled
     }
 
+    /// The Board tab's tick rule is this button's rule: one function, so a
+    /// card the Prep row lets you tick for a batch is exactly a card whose
+    /// own screen offers Refine (`PhoneRowSelection.tickable`).
     private var canRefine: Bool {
-        board.dispatchEnabled
-            && card.column == "prep"
-            && card.planPath.isEmpty
-            && !card.isScout
-            && card.refineState != "dispatching"
-            && card.refineState != "live"
-            && card.sessionId.isEmpty
-            && card.linkState != "dispatching"
+        PhoneRowSelection.tickable("prep", card: card,
+                                   dispatchEnabled: board.dispatchEnabled)
     }
 
     /// Same as the Mac's `doneClears`: a live (or dispatching) arrival in
@@ -359,51 +366,69 @@ struct PhoneCardDetailView: View {
             && card.column != "done"
     }
 
+    /// The card's own column decides the lead order through the phone
+    /// sheet's rule table, the same rule that opens it at half height.
+    private var statusFirst: Bool { PhoneSheet.answers(.card, card.column) }
+
+    /// The portrait, the card's name, the SCOUT tag, the summary, the meta
+    /// line and the assistant row: drawn first on most cards, under the
+    /// pinned sections on a card answered from half height.
+    @ViewBuilder private var identityLead: some View {
+        if let face = sheetFace {
+            PixelMark(character: face.character, state: face.state,
+                      size: PixelMark.sheetSize)
+                .frame(maxWidth: .infinity)
+        }
+        Text(card.title.isEmpty ? "untitled" : card.title)
+            .font(Theme.prose(20, weight: .semibold))
+            .foregroundStyle(Theme.text)
+        if card.isScout {
+            Text("SCOUT")
+                .font(Theme.mono(10))
+                .foregroundStyle(Theme.phosphor)
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .overlay(Rectangle().strokeBorder(Theme.faint, lineWidth: 1))
+        }
+        // The summary in full — `fullSummary` prefers the fetched
+        // row, then the phone's own copy, over the frame's, which
+        // the Mac clips at `BOARD_SNAPSHOT_SUMMARY_CHARS` with no
+        // ellipsis. Drawn here once; Instructions carries the
+        // prompt alone.
+        if !fullSummary.isEmpty {
+            Text(fullSummary)
+                .font(Theme.prose(16))
+                .foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        if !metaLine.isEmpty {
+            Text(metaLine)
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.dim)
+        }
+        if canRetool {
+            assistantPicker
+        } else if !card.tool.isEmpty {
+            assistantRecord
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                // The lead five first — the card's name, its summary, the
-                // assistant row, where it stands and the one next action —
-                // then its sections in the order `CardSections` gives this
-                // stage: one MORE row with everything else behind it,
-                // Delete last. The refusal lines stay under the list
-                // whatever the stage.
-                if let face = sheetFace {
-                    PixelMark(character: face.character, state: face.state,
-                              size: PixelMark.sheetSize)
-                        .frame(maxWidth: .infinity)
-                }
-                Text(card.title.isEmpty ? "untitled" : card.title)
-                    .font(Theme.mono(15, weight: .medium))
-                    .foregroundStyle(Theme.phosphorBright)
-                if card.isScout {
-                    Text("SCOUT")
-                        .font(Theme.mono(10))
-                        .foregroundStyle(Theme.phosphor)
-                        .padding(.horizontal, 5).padding(.vertical, 2)
-                        .overlay(Rectangle().strokeBorder(Theme.faint, lineWidth: 1))
-                }
-                // The summary in full — `fullSummary` prefers the fetched
-                // row, then the phone's own copy, over the frame's, which
-                // the Mac clips at `BOARD_SNAPSHOT_SUMMARY_CHARS` with no
-                // ellipsis. Drawn here once; Instructions carries the
-                // prompt alone.
-                if !fullSummary.isEmpty {
-                    Text(fullSummary)
-                        .font(Theme.mono(13))
-                        .foregroundStyle(Theme.dim)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
-                if !metaLine.isEmpty {
-                    Text(metaLine)
-                        .font(Theme.mono(12))
-                        .foregroundStyle(Theme.dim)
-                }
-                if canRetool {
-                    assistantPicker
-                } else if !card.tool.isEmpty {
-                    assistantRecord
+                // The lead first — the portrait and the card's name, its
+                // summary, the meta line and the assistant row — then where
+                // it stands and the one next action, then its sections in
+                // the order `CardSections` gives this stage: one MORE row
+                // with everything else behind it, Delete last. A card in In
+                // progress is answered from half height, so its lead sits
+                // under the pinned sections instead (`statusFirst`, the
+                // sheet table's own rule): the status and the message box
+                // are the first screen. The order follows the column, never
+                // the detent, so nothing reshuffles under a drag. The
+                // refusal lines stay under the list whatever the stage.
+                if !statusFirst {
+                    identityLead
                 }
                 ForEach(CardSections.order(for: stage), id: \.self) { s in
                     foldedSection(s)
@@ -411,6 +436,12 @@ struct PhoneCardDetailView: View {
                     // fold: the one press that ends a finished run.
                     if s == .status, showsDoneClose {
                         doneCloseButton
+                    }
+                    // After the last pinned section (WAITS ON, in every
+                    // order), above MORE: the lead of a card being
+                    // answered from half height.
+                    if s == .dependencies, statusFirst {
+                        identityLead
                     }
                 }
                 if !note.isEmpty {
@@ -428,6 +459,7 @@ struct PhoneCardDetailView: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(Theme.bg)
         .overlay(ScanlineOverlay())
         // An inline bar title ellipsises and cannot wrap, so the bar says
@@ -552,6 +584,10 @@ struct PhoneCardDetailView: View {
         // (`messageSection`'s own gate), so the row would open on nothing.
         case .thread: return canMessageSession && nextAction != .reply
         case .queue: return card.queueState == "queued"
+        // The rows and the Unblocks line; the Add picker lives under EDIT
+        // CARD, so a card with no links draws no empty section here.
+        case .dependencies:
+            return !card.dependencies.isEmpty || !card.dependents.isEmpty
         case .timeline: return board.cardTimelineSupported && cardFull?.timeline != nil
         case .danger: return true
         }
@@ -613,6 +649,7 @@ struct PhoneCardDetailView: View {
                 modelPicker
             }
             editorSection
+            dependencyPicker
         case .instructions: instructionsSection
         case .crew: crewSection
         case .thread: messageSection
@@ -620,12 +657,108 @@ struct PhoneCardDetailView: View {
             Text(card.queueReason.isEmpty ? "queued" : card.queueReason)
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.dim)
+        case .dependencies: dependenciesSection
         case .timeline: timelineSection
         case .danger: dangerSection
         case .collaboration:
             CollaborationView(client: client, focus: .card(card.id),
                               initiallyExpanded: true)
         case .more: EmptyView()
+        }
+    }
+
+    // MARK: - Waits on
+
+    /// The cards this one waits on, one row each — the title, the Mac's met
+    /// bit as a word, and ✕ to stop waiting on it where this Mac takes the
+    /// write — then the Mac's Unblocks line, verbatim.
+    @ViewBuilder
+    private var dependenciesSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(card.dependencies) { dep in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(dep.title.isEmpty ? "untitled" : dep.title)
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.phosphor)
+                    Text(Self.dependencyWord(dep))
+                        .font(Theme.mono(11))
+                        .foregroundStyle(dep.met ? Theme.phosphor : Theme.dim)
+                    Spacer(minLength: 8)
+                    if board.dependenciesSupported {
+                        DecryptButton {
+                            setDependencies(card.linkedIds.filter { $0 != dep.id })
+                        } label: {
+                            Text("\u{2715}")
+                                .font(Theme.mono(13))
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.phosphor)
+                        .disabled(sending)
+                        .accessibilityLabel("Stop waiting on \(dep.title.isEmpty ? "untitled" : dep.title)")
+                    }
+                }
+            }
+            if !card.dependentsLine.isEmpty {
+                Text(card.dependentsLine)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.dim)
+            }
+        }
+    }
+
+    /// **Add…** under EDIT CARD: this project's other cards, none in Done,
+    /// none already listed, and nothing once the list holds the store's
+    /// eight. Drawn only where this Mac takes the write
+    /// (`dependencies_supported`), so an older Mac never drops a list at
+    /// its door while the screen says it was saved.
+    @ViewBuilder
+    private var dependencyPicker: some View {
+        let choices = dependencyChoices
+        if board.dependenciesSupported, card.column != "done", !choices.isEmpty {
+            Menu {
+                ForEach(choices) { other in
+                    DecryptButton(other.title.isEmpty ? "untitled" : other.title) {
+                        setDependencies(card.linkedIds + [other.id])
+                    }
+                }
+            } label: {
+                // The press's mark while a link is on its way, the column
+                // and model choosers' relabel rule.
+                Text(pressed == .dependencies ? mark : "WAITS ON \u{00b7} Add\u{2026}")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.phosphor)
+                    .frame(minHeight: 44, alignment: .leading)
+            }
+            .disabled(sending)
+            .accessibilityLabel("Add a card this one waits on")
+        }
+    }
+
+    private var dependencyChoices: [BoardCard] {
+        BoardCard.dependencyChoices(for: card, in: board.cards)
+    }
+
+    /// The Mac's met bit in words — the three `dependency_line` uses. `met`
+    /// is never re-derived here; the column only says *why*.
+    static func dependencyWord(_ dep: CardDependency) -> String {
+        if dep.column == "done" { return "done" }
+        return dep.met ? "check pending" : "not yet"
+    }
+
+    /// Write the whole list, guarded at the revision of the copy on screen,
+    /// so a card changed underneath is refused in the Mac's words rather
+    /// than overwritten. The Mac refuses a loop, a self-wait and another
+    /// project in words, drawn in the note.
+    private func setDependencies(_ ids: [String]) {
+        let live = card
+        Task {
+            let result = await send(PhoneActions.boardUpdate,
+                                    ["card_id": live.id,
+                                     "blocked_by": ids.joined(separator: "\n"),
+                                     "expected_revision": String(live.revision)],
+                                    as: .dependencies)
+            apply(result)
         }
     }
 
@@ -722,6 +855,14 @@ struct PhoneCardDetailView: View {
             .font(Theme.mono(13, weight: .medium))
             .foregroundStyle(stage == .manualCheck ? Theme.amber : Theme.phosphor)
             .fixedSize(horizontal: false, vertical: true)
+        // Its place in a batch — the Mac's line, the tile's words.
+        if !card.batchLine.isEmpty {
+            Text(card.batchLine)
+                .font(Theme.mono(12))
+                .foregroundStyle(card.isBatchWaiting ? Theme.faint : Theme.phosphor)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(card.batchLine)
+        }
         liveState
         // How the run is going — `RunHealthLine.text`, byte-equal with the
         // panel's, the Mac's own reading drawn verbatim with the size word
@@ -775,17 +916,130 @@ struct PhoneCardDetailView: View {
                 .equatable()
                 .foregroundStyle(Theme.dim)
                 .fixedSize(horizontal: false, vertical: true)
-            // The band draws the press on the manual-check stage; this copy
-            // is for a stale note read at any other stage.
-            if nextAction != .markChecked {
-                manualClearButton
+            if !card.manualCheckPath.isEmpty && !manualCheckRefused {
+                manualCheckFile
+            } else {
+                if manualCheckRefused {
+                    Text(manualCheckRefusal)
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.amber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                // The band draws the press on the manual-check stage; this
+                // copy is for a stale note read at any other stage.
+                if nextAction != .markChecked {
+                    manualClearButton
+                }
             }
         }
     }
 
+    /// The check file under the steps, off the on-open read (`reportSection`'s
+    /// branches), then — where this Mac takes the press from a phone —
+    /// **Passed** / **Failed**, each armed then confirmed, with a note. The
+    /// Mac writes the outcome into the file and clears the card's steps.
+    @ViewBuilder
+    private var manualCheckFile: some View {
+        if let check = cardFull?.manualCheck, fetched != nil {
+            if check.available {
+                MarkdownText(source: check.text, base: 12, mono: true)
+                    .equatable()
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(check.reason.isEmpty
+                     ? "that check could not be read" : check.reason)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.dim)
+            }
+        } else {
+            Text(fetched == nil ? "the check is on the Mac — fetching"
+                                : "this Mac does not send the check yet")
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.dim)
+        }
+        Text(card.manualCheckPath)
+            .font(Theme.mono(11))
+            .foregroundStyle(Theme.faint)
+            .textSelection(.enabled)
+        if cardIsLive && PhoneCardAck.showsManualOutcome(card: card, board: board) {
+            TextField("note (optional)", text: $manualNote, axis: .vertical)
+                .font(Theme.mono(13))
+                .foregroundStyle(Theme.phosphor)
+                .padding(8)
+                .background(Theme.well)
+                .hidesKeyboard()
+                .onChange(of: manualNote) { _, value in
+                    if value.count > ManualCheckRules.noteLimit {
+                        manualNote = String(value.prefix(ManualCheckRules.noteLimit))
+                    }
+                }
+            HStack(spacing: 12) {
+                DecryptButton(manualOutcomeLabel("passed")) {
+                    pressManualOutcome("passed")
+                }
+                .buttonStyle(AlarmOutline())
+                .disabled(sending)
+                DecryptButton(manualOutcomeLabel("failed")) {
+                    pressManualOutcome("failed")
+                }
+                .buttonStyle(AlarmOutline())
+                .disabled(sending)
+            }
+        }
+    }
+
+    private func manualOutcomeLabel(_ status: String) -> String {
+        let word = status == "passed" ? "Passed" : "Failed"
+        if pressed == .manualOutcome && manualOutcomeArmed == status { return mark }
+        return arm.manualOutcome != nil && manualOutcomeArmed == status
+            ? word + "?" : word
+    }
+
+    /// Arm, then send — `pressManualClear`'s discipline: the path comes off
+    /// the live card before `confirm`, and the Mac re-checks that the file
+    /// still says open.
+    private func pressManualOutcome(_ status: String) {
+        let fields = PhoneCardAck.manualOutcomeFields(
+            card, status: status, note: manualNote)
+        if manualOutcomeArmed == status
+            && arm.confirm(.manualOutcome, id: card.id) {
+            Task {
+                let result = await send(PhoneActions.boardManualOutcome, fields,
+                                        as: .manualOutcome)
+                if result.ok { manualNote = "" }
+                apply(result)
+            }
+        } else {
+            manualOutcomeArmed = status
+            arm.arm(.manualOutcome, id: card.id)
+        }
+    }
+
+    /// The Mac's on-open read says it will not serve this card's check file
+    /// any more, so Passed / Failed would be refused: Mark checked comes
+    /// back in their place.
+    private var manualCheckRefused: Bool {
+        fetched != nil && cardFull?.manualCheck?.available == false
+    }
+
+    private var manualCheckRefusal: String {
+        let reason = cardFull?.manualCheck?.reason ?? ""
+        return reason.isEmpty ? "the check file cannot be read"
+                              : "the check file cannot be read — \(reason)"
+    }
+
+    /// Mark checked: a card flagged with steps alone, or with a check file
+    /// the Mac will no longer serve.
+    private var offersManualClear: Bool {
+        PhoneCardAck.showsManualClear(card: card, board: board)
+            || (manualCheckRefused
+                && PhoneCardAck.showsManualClearOverRefusedFile(card: card, board: board))
+    }
+
     @ViewBuilder
     private var manualClearButton: some View {
-        if cardIsLive && PhoneCardAck.showsManualClear(card: card, board: board) {
+        if cardIsLive && offersManualClear {
             DecryptButton(manualClearLabel) { pressManualClear() }
                 .buttonStyle(AlarmOutline())
                 .disabled(sending)
@@ -878,6 +1132,20 @@ struct PhoneCardDetailView: View {
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.dim)
         } else {
+            // The verdict the Mac stored at the attach, in full above the
+            // report (`ScoutVerdictLine`, byte-pinned with the Mac). An
+            // older Mac sends no verdict, and nothing is drawn.
+            if let verdict = ScoutVerdictLine.text(
+                verdict: card.reportVerdict,
+                recommendation: card.reportRecommendation) {
+                Text(verdict)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.phosphor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(ScoutVerdictLine.spoken(
+                        verdict: card.reportVerdict,
+                        recommendation: card.reportRecommendation))
+            }
             if let report = cardFull?.report, fetched != nil {
                 if report.available {
                     MarkdownText(source: report.text, base: 12, mono: true)
@@ -1323,7 +1591,7 @@ struct PhoneCardDetailView: View {
             canStart: canStart,
             canReply: canMessageSession,
             canMarkChecked: cardIsLive
-                && PhoneCardAck.showsManualClear(card: card, board: board)
+                && offersManualClear
                 && card.manualCheckDue,
             canMarkDone: card.column == "in_progress" && !isBusy,
             canReview: cardIsLive && PhoneCardAck.showsReview(card: card, board: board))
@@ -2009,6 +2277,7 @@ struct PhoneCardDetailView: View {
                     .font(Theme.mono(13))
                     .foregroundStyle(Theme.phosphorBright)
                     .textFieldStyle(.plain)
+                    .hidesKeyboard()
                     .padding(6)
                     .overlay(Rectangle().stroke(Theme.hair, lineWidth: 1))
                     // `TextField("", …)` has an *empty* label.
@@ -2082,6 +2351,7 @@ struct PhoneCardDetailView: View {
                             .font(Theme.mono(13))
                             .foregroundStyle(Theme.phosphorBright)
                             .textFieldStyle(.plain)
+                            .hidesKeyboard()
                             .padding(10)
                             .frame(minHeight: 44)
                             .overlay(Rectangle().stroke(Theme.hair, lineWidth: 1))
@@ -2094,6 +2364,7 @@ struct PhoneCardDetailView: View {
                             .font(Theme.mono(12))
                             .foregroundStyle(Theme.dim)
                             .scrollContentBackground(.hidden)
+                            .hidesKeyboard()
                             .frame(minHeight: 88)
                             .overlay(Rectangle().stroke(Theme.hair, lineWidth: 1))
                             .onChange(of: draftSummary) { _, _ in draftTouched = true }
@@ -2120,6 +2391,7 @@ struct PhoneCardDetailView: View {
                                 .foregroundStyle(Theme.phosphorBright)
                                 .textFieldStyle(.plain)
                                 .keyboardType(.numberPad)
+                                .hidesKeyboard()
                                 .padding(10)
                                 .frame(minHeight: 44)
                                 .overlay(Rectangle().stroke(Theme.hair, lineWidth: 1))
@@ -2141,6 +2413,7 @@ struct PhoneCardDetailView: View {
                             .font(Theme.mono(12))
                             .foregroundStyle(Theme.dim)
                             .scrollContentBackground(.hidden)
+                            .hidesKeyboard()
                             .frame(minHeight: 200)
                             .overlay(Rectangle().stroke(Theme.hair, lineWidth: 1))
                             .onChange(of: draftPrompt) { _, _ in draftTouched = true }
@@ -2427,6 +2700,11 @@ enum CardSections {
         /// lines). Drawn on every scout: the report once it is attached,
         /// and a line saying the scout is still out until then.
         case report = "REPORT"
+        /// The cards this one waits on, whether each is done, and the cards
+        /// it unblocks (added 24 Sep 2026, after REPORT so the earlier labels
+        /// keep their lines). Pinned beside QUEUED, because a card held by a
+        /// dependency says so in the queued line and the reason sits here.
+        case dependencies = "WAITS ON"
     }
 
     /// Where the card is in its life. Four columns, with In progress split
@@ -2466,49 +2744,52 @@ enum CardSections {
 
     /// Drawn open wherever they appear, with no chevron: a chevron is a
     /// promise that something is behind it, and these are never hidden.
-    static let pinned: Set<Section> = [.status, .verbs, .queue]
+    /// WAITS ON is pinned beside QUEUED and, like it, draws nothing on a
+    /// card with nothing to say.
+    static let pinned: Set<Section> = [.status, .verbs, .queue, .dependencies]
 
-    /// The full order per stage: the pinned three and the stage's lead
+    /// The full order per stage: the pinned four and the stage's lead
     /// first, then MORE, then everything MORE hides, Delete always last.
     /// QUEUED is in every order because a queued card does not move — a
     /// Prep card pressed Start waits in Prep — and it draws nothing unless
-    /// the card is queued. `.more` appears exactly once in every order and
+    /// the card is queued. WAITS ON follows QUEUED in every order for the
+    /// same reason. `.more` appears exactly once in every order and
     /// everything after it is behind that one row until it is pressed.
     static func order(for stage: Stage) -> [Section] {
         switch stage {
         case .prep:
-            return [.status, .verbs, .queue, .more, .report, .editor, .objective,
+            return [.status, .verbs, .queue, .dependencies, .more, .report, .editor, .objective,
                     .instructions, .crew, .otherVerbs, .collaboration, .timeline,
                     .attachments, .documents, .thread, .danger]
         case .backlog:
-            return [.status, .verbs, .queue, .more, .plan, .report, .editor,
+            return [.status, .verbs, .queue, .dependencies, .more, .plan, .report, .editor,
                     .objective, .instructions, .crew, .otherVerbs, .collaboration,
                     .timeline, .documents, .attachments, .thread, .danger]
         case .running:
-            return [.status, .verbs, .queue, .more, .report, .session, .thread,
+            return [.status, .verbs, .queue, .dependencies, .more, .report, .session, .thread,
                     .manualCheck, .workRecord, .plan, .instructions, .editor,
                     .crew, .run, .otherVerbs, .objective, .collaboration,
                     .timeline, .attachments, .documents, .danger]
         case .manualCheck:
-            return [.status, .manualCheck, .verbs, .queue, .more, .workRecord,
+            return [.status, .manualCheck, .verbs, .queue, .dependencies, .more, .workRecord,
                     .report, .run, .plan, .instructions, .editor, .crew, .session,
                     .thread, .otherVerbs, .objective, .collaboration, .timeline,
                     .attachments, .documents, .danger]
         case .ended:
-            return [.status, .report, .verbs, .queue, .more, .workRecord, .run,
+            return [.status, .report, .verbs, .queue, .dependencies, .more, .workRecord, .run,
                     .manualCheck, .closeSignature, .plan, .instructions, .editor,
                     .session, .thread, .crew, .otherVerbs, .objective,
                     .collaboration, .timeline, .attachments,
                     .documents, .danger]
         case .done:
-            return [.status, .closeSignature, .report, .verbs, .queue, .more,
+            return [.status, .closeSignature, .report, .verbs, .queue, .dependencies, .more,
                     .objective, .workRecord, .run, .plan, .instructions, .crew,
                     .session, .thread, .editor, .otherVerbs, .collaboration,
                     .timeline, .attachments, .documents, .danger]
         }
     }
 
-    /// Open by default at this stage; the pinned three are implied. Three
+    /// Open by default at this stage; the pinned four are implied. Three
     /// exceptions to "everything behind MORE", and only three: a card waiting
     /// on your check opens with the check's steps, because the steps are the
     /// next action; a finished card opens with its close note, because
@@ -2643,6 +2924,8 @@ enum CardSections {
         var documents = 0
         var manualNote = false
         var crewStages = 0
+        /// How many cards this one waits on, for `WAITS ON · 2`.
+        var dependencies = 0
         /// How long the card has existed, already formatted (`"3d 4h"`), so
         /// the closed TIMELINE row reads `TIMELINE · 3d 4h`. `""` unknown.
         var age = ""
@@ -2669,6 +2952,8 @@ enum CardSections {
         case .attachments: return facts.attachments > 0 ? "\(facts.attachments)" : ""
         case .documents: return facts.documents > 0 ? "\(facts.documents)" : ""
         case .crew: return facts.crewStages > 0 ? "\(facts.crewStages)" : ""
+        case .dependencies:
+            return facts.dependencies > 0 ? "\(facts.dependencies)" : ""
         case .manualCheck: return facts.manualNote ? "note" : ""
         case .timeline: return facts.age
         case .more: return facts.hidden > 0 ? "\(facts.hidden)" : ""

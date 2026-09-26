@@ -31,6 +31,7 @@ from .protocol import (
 )
 from .session_stats import clamp_questions, clip, finished_quietly
 from . import session_stats as ss
+from . import work_report
 from .ai_title import first_user_prompt, session_display_name
 from .socket_server import SocketServer, HOOK_IPC_PORT
 from . import access_log
@@ -41,6 +42,9 @@ from . import buzz_ledger
 from . import board_workflow
 from . import board_queue
 from . import codex_rollouts
+from . import codex_terminal
+from . import codex_titles
+from . import codex_input
 from . import channel_server
 from . import conversation
 from . import devices
@@ -60,6 +64,7 @@ from . import fleet_figures
 from . import live_activity
 from . import mission
 from . import origin
+from . import power_source
 from . import paths as paths_mod
 from . import relay
 from . import relay_client
@@ -110,6 +115,9 @@ class RefinementCloseReceipt:
 
 REFINEMENT_CLOSE_SECONDS = 600.0
 REFINEMENT_CLOSE_TIMEOUT = 8.0
+# A shared-server Codex close reads Codex's server twice (the up-front check
+# and the extension's before-write check), each bounded at four seconds.
+SHARED_CODEX_CLOSE_TIMEOUT = 2 * 4.0 + 6.0
 
 
 logger = logging.getLogger("dark-army")
@@ -944,6 +952,27 @@ def _start_project_report(started: int, queued: int, already: int,
     return "\n".join(lines)
 
 
+def _start_batch_report(head_title: str, waiting: int, skips: list) -> str:
+    """What one press of START n TOGETHER answers, in words. Pure.
+
+    `_start_project_report`'s rule for the batch-implement press: composed
+    here, drawn verbatim by the panel. The first line names the card the
+    one session opened on and how many wait behind it; then one
+    `<title> — <refusal>` line per skipped card, up to
+    `START_PROJECT_MAX_LINES`, then `…and k more`. `skips` are
+    `(title, refusal)` pairs and every refusal is the daemon's own.
+    """
+    head = str(head_title or "").strip() or "untitled"
+    lines = [f"{head} started · {max(0, int(waiting or 0))} waiting"]
+    skips = list(skips or [])
+    for title, detail in skips[:START_PROJECT_MAX_LINES]:
+        name = str(title or "").strip() or "untitled"
+        lines.append(f"{name} — {str(detail or '').strip()}")
+    if len(skips) > START_PROJECT_MAX_LINES:
+        lines.append(f"…and {len(skips) - START_PROJECT_MAX_LINES} more")
+    return "\n".join(lines)
+
+
 _ORDINALS = ("first", "second", "third", "fourth",
              "fifth", "sixth", "seventh", "eighth")
 
@@ -969,6 +998,75 @@ def _already_queued_reason(position: int, autostart: bool) -> str:
     tail = ("Dark Army will start it when a place frees up" if autostart
             else "press Start when a place frees up")
     return f"Already queued — {ordinal} in line for this project; {tail}"
+
+
+def _quoted_titles(titles, joiner: str = " and ") -> str:
+    """`"X"`, `"X" and "Y"`, `"X", "Y" and "Z"` — the one way a sentence
+    here names cards. Blank titles read `untitled` rather than `""`."""
+    names = [f'"{str(t or "").strip() or "untitled"}"' for t in (titles or ())]
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + joiner + names[-1]
+
+
+def _dependency_reason(titles, autostart: bool) -> str:
+    """What a card queued behind an unmet dependency says, in one sentence.
+
+    `_queue_reason`'s sibling for the other reason a queued card waits: not a
+    full project but a card that has to finish first, named by title — the
+    person linked those cards and is owed the name, where the slot rule has
+    no single holder to name. Composed here for `_queue_reason`'s reason: the
+    refusal a press answers with and the badge the card wears a frame later
+    are one sentence, drawn verbatim by both clients.
+
+    The same promise head as `_queue_reason` (with the drain off nobody is
+    coming, so it says "press Start"), then **"once … done"** rather than
+    "when … finishes": `when` is `_queue_reason`'s word for a place freeing,
+    and a different word keeps the two waits apart on the card. It never
+    begins with the plan gate's or the stale-copy refusal's opening words —
+    both clients match those by prefix.
+    """
+    head = ("Queued — Dark Army will start it" if autostart
+            else "Queued — press Start")
+    names = [str(t or "").strip() for t in (titles or ())]
+    if not names:
+        return f"{head} once the cards it waits on are done"
+    verb = "is" if len(names) == 1 else "are"
+    return f"{head} once {_quoted_titles(names)} {verb} done"
+
+
+def _dependency_line(entries) -> str:
+    """`Waits on: "X" (done) · "Y" (not yet)` — a card's dependencies as the
+    tile and the card screen draw them, verbatim, on both clients.
+
+    One word per dependency, and the word is the met rule
+    (`board_queue.dependency_met`) spelt out: `done` for a card in Done,
+    `check pending` for one finished and waiting only on a person's manual
+    check (met, and the reason it is met is worth seeing), `not yet`
+    otherwise. `""` for none, so the line is absent rather than empty.
+    """
+    parts = []
+    for entry in entries or ():
+        title = str((entry or {}).get("title") or "").strip() or "untitled"
+        if str(entry.get("column_name") or "") == "done":
+            word = "done"
+        elif entry.get("met"):
+            word = "check pending"
+        else:
+            word = "not yet"
+        parts.append(f'"{title}" ({word})')
+    if not parts:
+        return ""
+    return "Waits on: " + " · ".join(parts)
+
+
+def _dependents_line(titles) -> str:
+    """`Unblocks: "A" · "B"` — the cards waiting on this one. `""` for none,
+    so the line is absent rather than empty."""
+    names = [f'"{str(t or "").strip() or "untitled"}"' for t in (titles or ())]
+    if not names:
+        return ""
+    return "Unblocks: " + " · ".join(names)
 
 
 # The pause between consecutive keystrokes when answering an AskUserQuestion.
@@ -1121,6 +1219,12 @@ SNAPSHOT_REFRESH_SECONDS = 10.0
 # change bypasses the floor so a new tab does not wait a minute for its facts.
 PROJECT_FACTS_INTERVAL = 60.0
 
+# How often `_power_source_snapshot` re-runs `pmset -g batt`. A minute is the
+# phone's own full-resync floor, and the reading is quantised (whole percent,
+# a word for the state, no time estimate), so it is never news on its own
+# clock — only when the battery actually moved.
+POWER_SOURCE_INTERVAL = 60.0
+
 # The two hooks whose card is the daemon's stock "Waiting for input" — the same
 # pair the parked-turn suppression in _handle_message reasons about, and the one
 # kind of card the waiting hysteresis is allowed to withhold: a StopFailure is
@@ -1163,6 +1267,13 @@ CHANNEL_MESSAGE_TYPES = (
     # reason: they ride a `tools/call` and an unanswered id is a session
     # waiting for ever.
     "knowledge_read_request", "knowledge_write_request",
+    # Mission Control asking for a card to be started. Answered like the
+    # board verbs; it starts nothing (`BoardVerbsMixin.ask_start`).
+    "board_start_ask_request",
+    # A batch session moving on to its next card. Answered like the board
+    # verbs; it binds a card the person already chose and starts nothing
+    # (`BoardVerbsMixin.advance_batch_by_session`).
+    "board_next_request",
 )
 LIFECYCLE_EVENTS = frozenset({
     "session_start", "add", "dismiss", "compact",
@@ -1184,6 +1295,10 @@ LIFECYCLE_EVENTS = frozenset({
 # short enough that walking away re-arms the alerts within a few seconds.
 FRONTMOST_POLL_SECONDS = 4.0
 FRONTMOST_TRUST_SECONDS = 15.0
+# How long a fresh work report's banner may wait for a frontmost reading
+# taken after its row went quiet (`_report_hold`): one poll to be asked, one
+# to spare, and the slow refresh that re-evaluates. Past it, fail open.
+REPORT_FRONTMOST_WAIT_SECONDS = 2 * FRONTMOST_POLL_SECONDS + SNAPSHOT_REFRESH_SECONDS
 
 # The phone leg's two always-on gates (22 Sep 2026, S6 and S7 in
 # the false-buzz investigation of 20 Sep 2026; stated
@@ -1257,10 +1372,9 @@ FINISHED_RETENTION_SECONDS = 30 * 60.0
 
 
 # How long a live session must be quiet before it reads as finished rather than
-# merely sleeping. Must stay well under the staleness timeout (300s) or a
-# session would be evicted before it ever crossed the grace, and the live
-# half of the section would never appear.
-FINISHED_IDLE_GRACE_SECONDS = 120.0
+# merely sleeping — `session_stats.FINISHED_IDLE_GRACE_SECONDS`, the one number
+# `alerts.py` also reads for a work report's freshness.
+FINISHED_IDLE_GRACE_SECONDS = ss.FINISHED_IDLE_GRACE_SECONDS
 
 # Bound on the tombstone store. Retention already bounds it in practice; this is
 # the backstop for a machine churning through sessions faster than they expire.
@@ -1652,6 +1766,16 @@ class BobDaemon(BoardVerbsMixin):
         # wholesale rather than mutated, which is why neither needs a lock.
         self._frontmost_pids: set = set()
         self._frontmost_at: float = 0.0
+        # The sessions that reading was asked about, and the sleeping rows
+        # whose fresh work report still waits on one (`alerts.report_pending`,
+        # written by the executor after each evaluation) — both replaced
+        # wholesale, the same pattern. A report is bannered only once a
+        # reading asked about *it* was taken after it went quiet.
+        self._frontmost_asked: set = set()
+        self._report_candidates: set = set()
+        # When this daemon started, for the alert policy: a work report whose
+        # row went quiet before a restart is not announced again.
+        self._started_wall: float = time.time()
         # Whether the panel's docked sidebar is on screen, and when it last
         # said so. Written on the panel's stdout reader thread (in the menu-bar
         # process, via note_panel_visible), read from the executor by
@@ -1715,6 +1839,11 @@ class BobDaemon(BoardVerbsMixin):
         # given a second gate. Pruned on FINISHED_RETENTION_SECONDS — the
         # same clock as the tombstone this note exists to protect.
         self._closed_ids: dict[str, tuple[float, Optional[int], Optional[float]]] = {}
+        # sid → the turn a shared-server Codex close ended. Those threads have
+        # no process identity to compare, so a new turn on the thread is the
+        # resume (`_codex_thread_resumed_after_close`). Lives and dies with
+        # the `_closed_ids` entry beside it.
+        self._closed_codex_turns: dict[str, str] = {}
         # sid → monotonic stamp of a `/low-priority` Dark Army typed and saw land.
         # Written on the loop (inside `low_priority_session`), read on the
         # executor for `can_low_priority`; a stale read is one frame of a
@@ -2496,6 +2625,10 @@ class BobDaemon(BoardVerbsMixin):
         store.ack(key, kind, fingerprint)
         if key.startswith("s:"):
             await self._settle_acknowledged_session(key[2:], kind)
+        if kind == "start_asked" and key.startswith("c:"):
+            # Dismiss on an asked start is the person's No: the ask goes,
+            # rather than lingering hidden until it times out.
+            await self.drop_start_ask(key[2:])
         await self._wake_surfaces()
         return True, ""
 
@@ -2773,7 +2906,8 @@ class BobDaemon(BoardVerbsMixin):
                         "board_attach_request", "board_attach_report_request",
                         "board_manual_request",
                         "board_answer_request",
-                        "knowledge_read_request", "knowledge_write_request"):
+                        "knowledge_read_request", "knowledge_write_request",
+                        "board_start_ask_request", "board_next_request"):
                 # These ride a `tools/call`. Refused *with a reply*: an
                 # unanswered id is a session waiting for ever, which is worse
                 # than the thing being prevented.
@@ -2825,6 +2959,10 @@ class BobDaemon(BoardVerbsMixin):
             return await self._handle_knowledge_read_request(msg)
         if msg.get("type") == "knowledge_write_request":
             return await self._handle_knowledge_write_request(msg)
+        if msg.get("type") == "board_start_ask_request":
+            return await self._handle_board_start_ask_request(msg)
+        if msg.get("type") == "board_next_request":
+            return await self._handle_board_next_request(msg)
         if msg.get("event") == "statusline":
             return self._handle_statusline(msg)
         return None
@@ -3930,25 +4068,45 @@ class BobDaemon(BoardVerbsMixin):
     def _codex_reply_candidate(self, session_id):
         """Snapshot eligibility only; every write repeats exact-holder observation."""
         record = self._codex_records.get(session_id)
-        if not self.typed_reply_enabled:
-            return None, "Replies through the terminal are off in Settings. Reply in the original Codex session."
         if record is None or record.is_child:
             return None, "Reply in the original Codex session; this is not an interactive root."
-        if (record.stats.question or record.stats.questions or self._questions.get(session_id)
+        if not self.typed_reply_enabled:
+            return None, ("Replies to Codex are off in Settings. Enable replies through the terminal "
+                          "to reply here, or answer in the original Codex session.")
+        # A queued `request_user_input_async` question on a finished turn is
+        # answered by the person's next ordinary message — the parser releases
+        # it on a real user reply — so the reply route stays open for it and
+        # the row's reply box and choice words become the answer. A
+        # synchronous question is a live picker in the terminal, where a typed
+        # line and its Enter would land on the highlighted option: still
+        # refused. So is a permission prompt or a hook-held question.
+        queued = record.question_async
+        if (((record.stats.question or record.stats.questions or self._questions.get(session_id))
+                and not queued)
                 or self._pending_questions.get(session_id) or session_id in self._prompts_by_session()):
             return None, "Dark Army can show this Codex question. Answer it in the original Codex session."
-        if not codex_rollouts.stopped_turn(record):
+        if codex_terminal.roots((record,)):
+            expected = codex_input.candidate(record)
+            proof = getattr(self, "_codex_input_proofs", {}).get(session_id)
+            if (expected is None or proof is None or proof.candidate != expected
+                    or time.monotonic() - proof.observed_at > codex_input.MAX_AGE_SECONDS
+                    or session_id in self._session_states or session_id in self._agent_records
+                    or session_id in self._grok_records):
+                return None, "Codex has not confirmed that this thread can receive a reply. Waiting for its local server."
+            if self._codex_reply_attempts.get(session_id) == (record.thread_id, record.turn_id):
+                return None, "A reply was already submitted for this turn; check the original Codex session before sending again."
+            return proof, ""
+        if not codex_rollouts.stopped_turn(record, awaiting_answer=queued):
             return None, "That Codex turn is still active or its completion is unverified. Reply in the original Codex session."
-        proof = self._codex_human_close_candidate(session_id)
+        proof = self._codex_human_close_candidate(session_id, awaiting_answer=queued)
         if proof is None:
             return None, "The Codex terminal or its helpers cannot be verified. Reply in the original Codex session."
         key = (record.thread_id, record.turn_id)
         if self._codex_reply_attempts.get(session_id) == key:
             return None, "A reply was already submitted for this turn; check the original Codex session before sending again."
-        if not vscode_reveal.can_reply_native_terminal(proof.pid, proof.root.cwd):
-            floor = ".".join(str(n) for n in vscode_reveal.NATIVE_REPLY_MIN_VERSION)
-            return None, (f"Reply requires one compatible editor connection ({floor} or later) "
-                          "for this Codex terminal.")
+        connection, detail = vscode_reveal.native_reply_connection(proof.pid, proof.root.cwd)
+        if connection is None:
+            return None, detail
         return proof, ""
 
     async def _reply_native_codex(self, session_id, text):
@@ -3961,8 +4119,13 @@ class BobDaemon(BoardVerbsMixin):
             return False, detail
         if session_id in self._answering:
             return False, "Already submitting a reply to this session. Check its terminal."
+        if isinstance(expected, codex_input.Proof):
+            return await self._reply_shared_codex(session_id, text, expected)
         record = captured[0][session_id]
         turn_id = record.turn_id
+        # Only a queued async question may stand while the reply goes in;
+        # the fresh re-parse below applies the same rule to its own reading.
+        queued = record.question_async
         children = tuple((r.thread_id, Path(r.path), r.parent_thread_id, r.turn_id)
                          for r in self._refinement_descendants(record))
         key = (record.thread_id, turn_id)
@@ -3981,7 +4144,8 @@ class BobDaemon(BoardVerbsMixin):
             def observe():
                 return codex_rollouts.refinement_close_observation(
                     tuple(r.root for r in captured[1]), expected.root,
-                    expected.journal, turn_id, children, require_stopped=True)
+                    expected.journal, turn_id, children, require_stopped=True,
+                    awaiting_answer=queued)
             fresh = await asyncio.get_running_loop().run_in_executor(None, observe)
             if fresh is None or fresh != expected or not current():
                 return False
@@ -4022,6 +4186,63 @@ class BobDaemon(BoardVerbsMixin):
         finally:
             self._answering.discard(session_id)
             self._schedule_agents_push()
+
+    async def _reply_shared_codex(self, session_id, text, expected):
+        key = (expected.candidate.root.thread_id, expected.candidate.turn_id)
+
+        def current():
+            proof, _ = self._codex_reply_candidate(session_id)
+            return (isinstance(proof, codex_input.Proof)
+                    and proof.candidate == expected.candidate
+                    and proof.peer == expected.peer and proof.socket == expected.socket)
+
+        def consume():
+            if self._codex_reply_attempts.get(session_id) == key:
+                return False
+            self._codex_reply_attempts[session_id] = key
+            return True
+
+        self._answering.add(session_id)
+        try:
+            return await codex_input.submit(expected, text, current, consume)
+        finally:
+            self._answering.discard(session_id)
+            self._schedule_agents_push()
+
+    def _refresh_codex_input(self):
+        # With replies off Dark Army never talks to Codex's server at all
+        # (`docs/codex-contract.md`), and a proof from before stays unused.
+        if not self.typed_reply_enabled:
+            self._codex_input_proofs, self._codex_input_roots = {}, None
+            return
+        task = getattr(self, "_codex_input_task", None)
+        if task is not None and not task.done():
+            return
+        # Sorted like `codex_terminal.roots`: activity reorders the roster
+        # without changing what there is to read.
+        captured = tuple(sorted(
+            (c for r in self._codex_records.values()
+             if (c := codex_input.candidate(r)) is not None),
+            key=lambda c: c.root.session_id))
+        now = time.monotonic()
+        if (captured == getattr(self, "_codex_input_roots", None)
+                and now - getattr(self, "_codex_input_at", 0) < codex_input.REFRESH_SECONDS):
+            return
+        self._codex_input_roots, self._codex_input_at = captured, now
+
+        async def observe():
+            proofs = await codex_input.observe(captured)
+            previous = getattr(self, "_codex_input_proofs", {})
+            self._codex_input_proofs = {
+                sid: p for sid, p in proofs.items()
+                if codex_input.candidate(self._codex_records.get(sid)) == p.candidate}
+            # Freshness alone buys no frame; only a changed capability does.
+            def capabilities(values):
+                return {sid: (p.candidate, p.peer, p.socket) for sid, p in values.items()}
+            if capabilities(previous) != capabilities(self._codex_input_proofs):
+                self._schedule_agents_push()
+
+        self._codex_input_task = asyncio.create_task(observe())
 
     async def _reply_by_typing(self, session_id: str,
                                text: str) -> tuple[bool, str]:
@@ -4207,11 +4428,11 @@ class BobDaemon(BoardVerbsMixin):
                 descendants.append(child)
                 remaining.remove(child)
 
-    def _refinement_busy(self, record):
+    def _refinement_busy(self, record, *, awaiting_answer=False):
         finished = {r.thread_id for r in self._codex_records.values()
                     if r.parent_thread_id == record.thread_id and r.turn_id
                     and not r.turn_active and not r.stats.question and not r.stats.questions}
-        return (bool(record.stats.question or record.stats.questions)
+        return (codex_rollouts.question_blocks(record, awaiting_answer)
                 or codex_rollouts.has_unsettled_path_children(record, self._codex_records.values())
                 or any(a.activity not in ("completed", "shutdown", "errored") and aid not in finished
                        for aid, a in record.stats.agents.items()))
@@ -4334,15 +4555,22 @@ class BobDaemon(BoardVerbsMixin):
                 return False, "The close reply timed out; the terminal may have closed. No retry was sent."
             return False, "Planning terminal validation timed out. Left open."
 
-    def _codex_human_close_candidate(self, session_id):
-        """Cheap snapshot facts; no new journal parsing or process scan per row."""
+    def _codex_human_close_candidate(self, session_id, *, awaiting_answer=False):
+        """Cheap snapshot facts; no new journal parsing or process scan per row.
+
+        `awaiting_answer` is passed by the reply route only (see
+        `codex_rollouts.stopped_turn`); a close never passes it.
+        """
         record = self._codex_records.get(session_id)
         proof = self._navigation_proof_current(session_id)
+        if proof is None and not awaiting_answer:
+            proof = self._codex_terminal_current(session_id)
         if (record is None or proof is None or record.is_child
-                or not codex_rollouts.stopped_turn(record)
+                or not codex_rollouts.stopped_turn(record, awaiting_answer=awaiting_answer)
                 or session_id in self._session_states or session_id in self._agent_records
                 or session_id in self._grok_records or session_id in self._prompts_by_session()
-                or self._pending_questions.get(session_id) or self._refinement_busy(record)):
+                or self._pending_questions.get(session_id)
+                or self._refinement_busy(record, awaiting_answer=awaiting_answer)):
             return None
         descendants = self._refinement_descendants(record)
         if descendants is None or any(not codex_rollouts.stopped_turn(child)
@@ -4374,6 +4602,20 @@ class BobDaemon(BoardVerbsMixin):
         async def validate():
             if not current():
                 return False
+            if isinstance(expected, codex_terminal.Target):
+                before = await asyncio.to_thread(
+                    codex_terminal.stopped_journals, expected.root, turn_id, children)
+                if before is None or not current():
+                    return False
+                # Every shared root, not only this one: a second thread shown
+                # in the same terminal withdraws both, so Close never ends a
+                # terminal that is running another thread's turn.
+                fresh = await codex_terminal.resolve(
+                    codex_terminal.roots(self._codex_records.values()),
+                    recheck=True, stopped_turns={session_id: turn_id})
+                after = await asyncio.to_thread(
+                    codex_terminal.journal_revisions, expected.root, children)
+                return (fresh.get(session_id) == expected and before == after and current())
             def observe():
                 return codex_rollouts.refinement_close_observation(
                     tuple(r.root for r in captured[1]), expected.root,
@@ -4381,11 +4623,15 @@ class BobDaemon(BoardVerbsMixin):
             fresh = await asyncio.get_running_loop().run_in_executor(None, observe)
             return fresh == expected and fresh is not None and current()
 
+        shared = isinstance(expected, codex_terminal.Target)
+        sent = False
         try:
-            async with asyncio.timeout(REFINEMENT_CLOSE_TIMEOUT):
+            async with asyncio.timeout(SHARED_CODEX_CLOSE_TIMEOUT if shared
+                                       else REFINEMENT_CLOSE_TIMEOUT):
                 async with self._dispatch_lock, self._board_write_lock:
                     if not await validate():
                         return False, "The Codex session or exact terminal changed. Left open."
+                    sent = True
                     reply = await vscode_reveal.close_refinement_terminal(
                         expected.pid, expected.tty, expected.root.cwd, validate)
                     if not (isinstance(reply, dict) and reply.get("matched") is True
@@ -4395,10 +4641,15 @@ class BobDaemon(BoardVerbsMixin):
                                     if isinstance(reply, dict) else "no reply")
                         return False, ("The editor could not confirm this Codex terminal closed. "
                                        "It may still be open; no retry or clear was sent.")
-                    self._note_closed(session_id, pid=expected.pid, create_time=expected.create_time)
+                    created = expected.created if shared else expected.create_time
+                    self._note_closed(session_id, pid=expected.pid, create_time=created)
+                    if shared:
+                        self._closed_codex_turns.setdefault(session_id, turn_id)
                     self._settle_codex_stop(session_id, "closed", observed=record)
                     return True, ""
         except TimeoutError:
+            if not sent:
+                return False, "Checking this Codex terminal took too long; nothing was sent. Left open."
             return False, "Codex terminal close timed out; it may still be open. No retry was sent."
 
     async def close_session_terminal(self, session_id: str, *,
@@ -4441,6 +4692,9 @@ class BobDaemon(BoardVerbsMixin):
                 # refused. Best-effort and silent — it never raises into the
                 # close and never changes the close's answer.
                 await self._finish_card_for_closed_session(session_id)
+                # And whatever the card or the agent still had on Needs
+                # you goes with it, as Dismiss would take it.
+                await self._settle_closed_session(session_id)
             return True, ""
         if detail == "no pid":
             return False, "Dark Army has no process on record for this session."
@@ -5993,6 +6247,7 @@ class BobDaemon(BoardVerbsMixin):
         # It exists again, so any record of it having ended is now wrong.
         self._finished.pop(session_id, None)
         self._closed_ids.pop(session_id, None)
+        self._closed_codex_turns.pop(session_id, None)
         # `busy_since` spans a stretch of work. A wait for the human is a
         # pause inside the stretch; any other resting state ends it.
         if entry["state"] in ("working", "thinking"):
@@ -6094,6 +6349,14 @@ class BobDaemon(BoardVerbsMixin):
         entry = self._session_states.setdefault(
             session_id, {"state": "thinking", "last_event": now})
         entry.update(state="thinking", last_event=now, prompted=True)
+        # The person moved the session on: the wait they dismissed (or
+        # settled from a card) is over, so the next one must list and buzz.
+        store = getattr(self, "_inbox_acks", None)
+        if store is not None:
+            try:
+                store.forget_waiting(session_id)
+            except Exception:  # pragma: no cover - a hide never fails a hook
+                logger.debug("forget_waiting %s failed", session_id[:8], exc_info=True)
         # The harness takes no prompt while a child of the last turn still
         # runs, so whatever children it had are done, including any whose
         # SubagentStop never arrived and any async ones still owed an answer.
@@ -7089,6 +7352,7 @@ class BobDaemon(BoardVerbsMixin):
                 self._hidden_codex.pop(sid, None)
             visible[sid] = record
             self._closed_ids.pop(sid, None)
+            self._closed_codex_turns.pop(sid, None)
             if tomb is not None and (
                     resumed
                     or (record.process_seen is True
@@ -8023,6 +8287,35 @@ class BobDaemon(BoardVerbsMixin):
         roots = codex_rollouts.project_title_roots((record,))
         return proof if roots == (proof.root,) else None
 
+    def _codex_terminal_current(self, session_id: str):
+        target = getattr(self, "_codex_terminals", {}).get(session_id)
+        record = self._codex_records.get(session_id)
+        if (target is None or record is None or self._closed_by_bob(session_id)
+                or self._hidden_codex.get(session_id) == (record.path, record.revision)):
+            return None
+        return target if codex_terminal.roots((record,)) == (target.root,) else None
+
+    async def _refresh_codex_terminals(self):
+        task = getattr(self, "_codex_terminal_task", None)
+        if task is not None and not task.done():
+            return
+        captured = codex_terminal.roots(self._codex_records.values())
+        now = time.monotonic()
+        if (captured == getattr(self, "_codex_terminal_roots", None)
+                and now - getattr(self, "_codex_terminals_at", 0) < codex_terminal.REFRESH_SECONDS):
+            return
+        self._codex_terminal_roots = captured
+        self._codex_terminals_at = now
+        async def observe():
+            targets = await codex_terminal.resolve(captured)
+            targets = (targets if captured == codex_terminal.roots(
+                self._codex_records.values()) else {})
+            self._codex_titles_observed_at = time.monotonic()
+            if targets != getattr(self, "_codex_terminals", {}):
+                self._codex_terminals = targets
+                self._schedule_agents_push()
+        self._codex_terminal_task = asyncio.create_task(observe())
+
     def _legacy_navigation_input(self, session_id: str):
         """Copy only immutable legacy routing facts on the daemon loop."""
         state = self._session_states.get(session_id) or {}
@@ -8084,10 +8377,11 @@ class BobDaemon(BoardVerbsMixin):
         return (targets, uncertain) if for_board else targets
 
     async def _board_request_session_fresh(self, port: int) -> Optional[str]:
-        """Only add/attach/close spend fresh native-holder attribution, off the
-        loop. Close is here because it is open to Codex and it moves a card to
-        Done: the strongest of the three claims must not rest on the thinnest
-        of the attributions."""
+        """Only add/attach/close/manual spend fresh native-holder attribution,
+        off the loop. Close is here because it is open to Codex and it moves a
+        card to Done: the strongest of the claims must not rest on the thinnest
+        of the attributions. Manual is here because it is open to Codex and it
+        releases the card's place in its project's queue."""
         entry = self._channels.get(port)
         if not entry or entry.get("host") != channel_server.HOST_CODEX:
             return self._board_request_session(port)
@@ -8159,10 +8453,20 @@ class BobDaemon(BoardVerbsMixin):
         try:
             async with asyncio.timeout(5.0):
                 if session_id in self._codex_records:
-                    captured = self._navigation_capture()
-                    targets = await self._fresh_navigation_targets(captured)
-                    target = targets.get(session_id)
-                    pid = target.pid if target is not None else None
+                    terminal = self._codex_terminal_current(session_id)
+                    if terminal is not None:
+                        roots = codex_terminal.roots(self._codex_records.values())
+                        targets = await codex_terminal.resolve(roots, recheck=True)
+                        target = targets.get(session_id)
+                        pid = (target.pid if target == terminal
+                               and self._codex_terminal_current(session_id) == terminal
+                               and roots == codex_terminal.roots(self._codex_records.values())
+                               else None)
+                    else:
+                        captured = self._navigation_capture()
+                        targets = await self._fresh_navigation_targets(captured)
+                        target = targets.get(session_id)
+                        pid = target.pid if target is not None else None
                 else:
                     pid = await asyncio.get_running_loop().run_in_executor(
                         None, self._legacy_navigation_pid,
@@ -8414,7 +8718,8 @@ class BobDaemon(BoardVerbsMixin):
             return {
                 "can_stop": match_kind == "explicit_resume",
                 "can_jump": match_kind in ("explicit_resume", "unique_cwd") or bool(
-                    self._navigation_proof_current(record.session_id)),
+                    self._navigation_proof_current(record.session_id)
+                    or self._codex_terminal_current(record.session_id)),
                 "can_hide": match_kind != "explicit_resume",
                 "can_resume": False,
             }
@@ -8726,6 +9031,43 @@ class BobDaemon(BoardVerbsMixin):
         self._project_facts_names = set(names)
         return facts
 
+    def _power_source_snapshot(self) -> dict:
+        """The host Mac's power source, re-read on `POWER_SOURCE_INTERVAL`.
+        Executor-only: `power_source.read()` spawns `pmset`.
+
+        The memo is **rebound, never mutated** — `power_snapshot()` copies
+        it on the loop while this may be running. A raising read keeps the
+        last reading rather than blanking the phone's line.
+
+        Aged on **both** clocks: `time.monotonic()` stops while the Mac
+        sleeps, so a pre-sleep reading would pass for fresh for a minute
+        after the lid opens; the wall clock (`_power_wall`) catches that,
+        and a wall clock that went backwards re-reads too."""
+        cache = self.__dict__.setdefault("_power", power_source.unavailable())
+        at = self.__dict__.setdefault("_power_at", None)
+        wall_at = self.__dict__.setdefault("_power_wall", None)
+        now = time.monotonic()
+        wall = time.time()
+        if (at is not None and wall_at is not None
+                and now - at < POWER_SOURCE_INTERVAL
+                and 0 <= wall - wall_at < POWER_SOURCE_INTERVAL):
+            return cache
+        try:
+            reading = power_source.read()
+        except Exception:
+            logger.debug("power source read failed", exc_info=True)
+            return cache
+        self._power = dict(reading)
+        self._power_at = now
+        self._power_wall = wall
+        return self._power
+
+    def power_snapshot(self) -> dict:
+        """The `power` section of `/api/state`: the host Mac's battery as
+        `power_source.parse` states it. On the loop; a copy of the memo the
+        executor rebinds, `{"available": False}` before the first read."""
+        return dict(self.__dict__.get("_power") or power_source.unavailable())
+
     def _registry_cached(self) -> dict:
         """`session_registry.read_registry()`, reused for up to
         `FULL_PUSH_INTERVAL_SECONDS`. Executor only (`_enrich_agent_stubs`);
@@ -8849,7 +9191,19 @@ class BobDaemon(BoardVerbsMixin):
         for stub, transcript, stats in parsed:
             sid = stub["session_id"]
             reg = registry.get(sid)
-            name = self._session_name(sid, stub, transcript, reg)
+            # Mission Control is always called Mission Control. It is one
+            # standing chat, so a title drawn from its latest question (or
+            # from the first message after a `/clear`) would rename it every
+            # few turns and hide it among the fleet. The origin stamp — live
+            # state first, then the tombstone's copy — is the same test the
+            # origin line below uses, and it also spares the title helper a
+            # call it would only have thrown away.
+            if origin.parse(
+                    (self._session_states.get(sid) or {}).get("origin")
+                    or stub.get("origin") or "").get("by") == "mission":
+                name = mission.NAME
+            else:
+                name = self._session_name(sid, stub, transcript, reg)
             entry = {k: v for k, v in stub.items()
                      if k not in ("_category", "_codex_stats",
                                   "_codex_metrics", "origin")}
@@ -8987,6 +9341,13 @@ class BobDaemon(BoardVerbsMixin):
             # the same heading from chat_history. Empty when nothing has
             # finished yet; cleared by the person's next prompt.
             entry["last_report"] = stats.last_report
+            # The same report split into its labelled parts, once, here —
+            # the row, the banner, the inbox and both clients' details draw
+            # this one shape and none re-parses the text (`work_report.py`;
+            # it structures what is drawn and decides no state). Absent
+            # where there is no report.
+            if stats.last_report:
+                entry["work_report"] = work_report.parse(stats.last_report)
             # The finished list's own word — "done" only where a report
             # says so (`session_stats.finish_word`). Composed here, after
             # the report is known, and drawn verbatim by both clients; an
@@ -9094,7 +9455,8 @@ class BobDaemon(BoardVerbsMixin):
                 and not self._questions.get(sid)
             )
             typed_ok = typed_ok or codex_reply
-            entry["reply_via"] = ("typed" if typed_ok
+            entry["reply_via"] = ("codex" if codex_reply and isinstance(proof, codex_input.Proof)
+                                  else "typed" if typed_ok
                                   else ("channel" if channel_ok else ""))
             entry["channel"] = bool(channel_ok or typed_ok)
             # Whether Dark Army can dispose this session's VS Code terminal tab.
@@ -9389,7 +9751,10 @@ class BobDaemon(BoardVerbsMixin):
         # alert fires once, when something changes, to be *delivered*.
         from . import alerts as alerting
 
-        policy = self.__dict__.setdefault("_alert_policy", alerting.AlertPolicy())
+        policy = self.__dict__.get("_alert_policy")
+        if policy is None:
+            policy = self._alert_policy = alerting.AlertPolicy(
+                started_at=getattr(self, "_started_wall", 0.0))
         cards = dict(self._active_notifications)
         alerting.clear_resolved(policy, out, cards)
         # Open permission prompts ride into the same evaluation rather than
@@ -9410,10 +9775,13 @@ class BobDaemon(BoardVerbsMixin):
         # to say how long after the previous alert about this session the
         # new one came (`cooldown_gap`). Same thread, no other reader.
         before = dict(policy._last_per_session)
+        report_hold = self._report_hold(policy, out)
         raised = policy.evaluate(out, cards, time.time(),
                                  suppressed=self._alert_suppressed(out),
                                  prompts=prompt_facts,
-                                 panel_focused=self._panel_focused_sessions())
+                                 panel_focused=self._panel_focused_sessions(),
+                                 report_hold=report_hold)
+        self._update_report_candidates(policy, out)
         if raised:
             # Bounded, and ordered oldest first: the tail is a record of what was
             # decided, kept so a surface that arrives late can see it.
@@ -9450,6 +9818,10 @@ class BobDaemon(BoardVerbsMixin):
         out["project_facts"] = self._project_facts_snapshot(
             {(row.get("project") or "")
              for bucket in out.values() for row in bucket})
+        # The host Mac's battery: a side effect on `self`, not a key on
+        # `out` — the agents snapshot is the fleet, not the machine. Read
+        # here so the one executor hop per push refreshes it.
+        self._power_source_snapshot()
         return out
 
     def _decide_auto_compacts(self, snapshot: dict) -> None:
@@ -9954,22 +10326,51 @@ class BobDaemon(BoardVerbsMixin):
         return provider, path or "", sid
 
     async def conversation_page(self, session_id: str, since: int = 0,
-                                key: str = "") -> dict:
-        """One page of a published session's conversation.
+                                key: str = "", agent: str = "") -> dict:
+        """One page of a published session's conversation — or, with
+        ``agent``, of one of its helpers' own journals.
 
         Resolve the source on the loop, then one executor hop into
         ``ConversationReader.page``. An unknown session is refused in
         words without touching disk.
+
+        **A helper is read only under a session Dark Army publishes**, and
+        only from that session's own ``subagents`` folder: ``agent`` must
+        match ``conversation.AGENT_ID_RE`` (re-checked here, whatever the
+        door checked) and names ``agent-<id>.jsonl`` there and nothing
+        else. It need not still be live — a helper that just finished is
+        still worth reading — but its file must exist. Claude Code only.
         """
         provider, path, sid = self.conversation_source(session_id)
         if not sid:
             return {"available": False,
                     "reason": conversation.UNKNOWN_SESSION_REFUSAL}
+        sidechain = False
+        if agent:
+            if not re.fullmatch(conversation.AGENT_ID_RE, agent):
+                return {"available": False,
+                        "reason": conversation.NO_HELPER_REASON}
+            if provider != "claude":
+                return {"available": False, "provider": provider,
+                        "reason": conversation.HELPER_PROVIDER_REASON}
+            loop = asyncio.get_running_loop()
+
+            def _helper_file(parent=path):
+                # A filesystem stat: off the loop, like the page read itself.
+                folder = ss._subagents_dir(parent)
+                found = folder / f"agent-{agent}.jsonl" if folder else None
+                return found if found is not None and found.is_file() else None
+
+            helper = await loop.run_in_executor(None, _helper_file)
+            if helper is None:
+                return {"available": False, "provider": provider,
+                        "reason": conversation.NO_HELPER_REASON}
+            path, sidechain = str(helper), True
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             functools.partial(self._conversations.page, provider, path,
-                              since, key))
+                              since, key, sidechain=sidechain))
 
     def terminal_frame(self, session_id: str, since: int = -1,
                        cols: Optional[int] = None, rows: Optional[int] = None,
@@ -10270,7 +10671,7 @@ class BobDaemon(BoardVerbsMixin):
         `terminal_input` with `bytes`), which shows the dialog `1` or `y`
         answers and sends Ctrl-C and Escape as a person would at the desk.
         Away, the gates are pairing, the lease, Face ID, the receipt token
-        and `RELAY_MAX_WRITES_PER_MINUTE`.
+        and `RELAY_MAX_KEY_WRITES_PER_MINUTE` (raw keys' own bucket).
 
         **Line** (`text`) keeps every refusal for an older phone app: a
         **leading slash** is typed from both doors, the same way the desk
@@ -10395,6 +10796,54 @@ class BobDaemon(BoardVerbsMixin):
                         out.add(sid)
         return out
 
+    def _update_report_candidates(self, policy, snapshot: dict) -> None:
+        """The sleeping reporters still undecided after this evaluation: the
+        frontmost poll asks about them next (`_suppression_candidates`).
+        Executor thread; the set is replaced wholesale."""
+        from . import alerts as alerting
+        self._report_candidates = {
+            entry.get("session_id") for entry in snapshot.get("sleeping") or []
+            if isinstance(entry, dict) and entry.get("session_id")
+            and alerting.report_pending(policy, entry)}
+
+    def _report_hold(self, policy, snapshot: dict) -> set:
+        """Sleeping reporters whose `report` banner must wait this tick: no
+        frontmost reading that asked about the session has been taken since
+        it went quiet, so "you are looking at it" cannot be ruled out.
+
+        Only a session the poll can ask about (a recorded pid) is held, and
+        only for `REPORT_FRONTMOST_WAIT_SECONDS` after it went quiet: past
+        that the hold fails open, as every frontmost rule here does — a
+        withheld banner is the expensive way to be wrong. Executor thread;
+        reads the loop's wholesale-replaced scalars.
+        """
+        from . import alerts as alerting
+        now = time.time()
+        asked_at = float(getattr(self, "_frontmost_at", 0.0) or 0.0)
+        asked = getattr(self, "_frontmost_asked", None) or set()
+        held: set = set()
+        for entry in snapshot.get("sleeping") or []:
+            if not isinstance(entry, dict):
+                continue
+            sid = entry.get("session_id") or ""
+            if not sid or not alerting.report_pending(policy, entry):
+                continue
+            st = self._session_states.get(sid) or {}
+            pid = st.get("pid")
+            if not (isinstance(pid, int) and pid > 1):
+                continue
+            try:
+                quiet = float(entry.get("quiet_since") or 0.0) \
+                    or now - float(entry.get("idle_seconds") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if now - quiet > REPORT_FRONTMOST_WAIT_SECONDS:
+                continue
+            if sid in asked and asked_at >= quiet:
+                continue
+            held.add(sid)
+        return held
+
     def _suppression_candidates(self) -> dict:
         """session_id -> pid for the sessions an alert could currently be about.
 
@@ -10415,6 +10864,10 @@ class BobDaemon(BoardVerbsMixin):
         # withheld interruption is the expensive direction to be wrong, and
         # this at least keeps repeat prompts from the same dialog suppressed.
         wanted |= set(self._prompts_by_session())
+        # A sleeping row whose fresh work report has not been bannered yet:
+        # the `report` rule must not tell you about the terminal in front of
+        # you, and without a reading about this pid it could not know.
+        wanted |= set(getattr(self, "_report_candidates", ()) or ())
         out = {}
         for sid in wanted:
             st = self._session_states.get(sid)
@@ -10442,7 +10895,13 @@ class BobDaemon(BoardVerbsMixin):
                 found = await vscode_reveal.frontmost_session_pids(
                     list(candidates.values()))
                 self._frontmost_pids = found
+                self._frontmost_asked = set(candidates)
                 self._frontmost_at = time.time()
+                # A held work report can now be decided: evaluate at once
+                # rather than on the next slow refresh.
+                if set(getattr(self, "_report_candidates", ()) or ()) \
+                        & self._frontmost_asked:
+                    self._schedule_agents_push()
             except Exception:
                 # Never fatal, and never sticky: an unreachable window must not
                 # leave a session suppressed.
@@ -10798,9 +11257,11 @@ class BobDaemon(BoardVerbsMixin):
             logger.debug("board change counter unavailable", exc_info=True)
             return 0
 
-    def _apply_terminal_titles(self, snapshot: dict, codex_title_roots) -> None:
+    def _apply_terminal_titles(self, snapshot: dict, codex_title_roots,
+                               shared_targets=()) -> None:
         """Resolve private Codex destinations and write all titles on a worker."""
         codex_title_ttys = codex_rollouts.resolve_title_ttys(codex_title_roots)
+        codex_title_ttys = codex_titles.title_ttys(shared_targets, codex_title_ttys)
         self._titles.apply(snapshot, codex_title_ttys)
 
     async def _push_agents_snapshot(self) -> None:
@@ -10846,6 +11307,8 @@ class BobDaemon(BoardVerbsMixin):
                 self._codex_records.values()
             )
             if full:
+                self._refresh_codex_input()
+                await self._refresh_codex_terminals()
                 captured = self._navigation_capture()
                 try:
                     proofs = await asyncio.wait_for(loop.run_in_executor(
@@ -10917,8 +11380,17 @@ class BobDaemon(BoardVerbsMixin):
                 self._phone_resize_ignored.discard(handle)
         if full:
             try:
+                # Copy immutable, still-visible targets on the loop. Never let
+                # the worker read the mutable roster or grant a public PID.
+                shared_targets = ()
+                if time.monotonic() - getattr(self, "_codex_titles_observed_at", 0) < 30:
+                    shared_targets = tuple(
+                        target for sid in self._codex_records
+                        if (target := self._codex_terminal_current(sid)) is not None
+                    )
                 await loop.run_in_executor(
-                    None, self._apply_terminal_titles, snapshot, codex_title_roots
+                    None, self._apply_terminal_titles, snapshot, codex_title_roots,
+                    shared_targets
                 )
             except Exception:
                 logger.debug("terminal title update failed", exc_info=True)
@@ -11161,7 +11633,8 @@ class BobDaemon(BoardVerbsMixin):
            no further; the phone's Needs you list and badge still show it.
         2. An alert whose session the phone's Needs you list does not show
            (`live_activity.listed_sessions`: a live row waiting, prompted
-           or carded, or a prompt with no row) is written down
+           or carded, or a prompt with no row — less the entries the person
+           dismissed, `live_activity.shown_sessions`) is written down
            `withheld:unlisted` and goes no further — the phone would sweep
            it away at its next check-in (`clearDeliveredIfQuiet`). A stall or
            context warning on a busy agent stops here; a `security` row never
@@ -11648,21 +12121,28 @@ class BobDaemon(BoardVerbsMixin):
         return generation
 
     def _phone_listed_sessions(self) -> set[str] | None:
-        """The session ids the phone's Needs you list shows right now —
-        `live_activity.listed_sessions` over the same three inputs
-        `_activity_subject` hands `subject` (the published buckets, the
-        alert policy's prompt view, the sessions holding a *published*
-        notification card). Re-derives nothing; loop thread, or plain sync
-        code in a test.
+        """The session ids the phone's Needs you list shows right now, after
+        its dismissals — the listed set less every dismissed entry, over the
+        four inputs `_activity_subject` hands `subject` (the published
+        buckets, the alert policy's prompt view, the sessions holding a
+        *published* notification card, the last published board's cards)
+        plus the ack store's own rows — the ones section ``inbox`` publishes
+        to the phone, read directly so the leg never prunes the store.
+        Re-derives nothing; loop thread, or plain sync code in a test. A
+        daemon with no ack store gates on the listed set alone.
 
         ``None`` when an input cannot be read: the unlisted rung then gates
         nothing, S6's rule — a fault never silences the phone."""
         try:
             notified = [str(n.get("session_id") or "")
                         for n in self._notification_snapshot()]
-            listed = live_activity.listed_sessions(
+            cards = (getattr(self, "_board_state", None) or {}).get("cards") or []
+            store = getattr(self, "_inbox_acks", None)
+            acks = store.records() if store is not None else []
+            listed = live_activity.shown_sessions(
                 getattr(self, "_agents_snapshot_cache", None) or {},
-                self._prompts_by_session(), notified=notified)
+                self._prompts_by_session(), notified=notified,
+                cards=cards, acks=acks)
             self._listed_fault_logged = False
             return listed
         except Exception:
@@ -11750,6 +12230,10 @@ class BobDaemon(BoardVerbsMixin):
         even a new subject — until the phone registers a fresh token, which
         clears the mark (`forget_live_activity`). A device just (re)registered
         has no memory, so the first pass after registration sends an update.
+
+        **A dead token ends the card.** Apple refusing the token (the
+        mailbox's 502, `"dead"`) marks the device ``"ended"`` like a landed
+        end: a different state would be refused just the same.
 
         **A refusal is remembered, not retried.** The last body sent and its
         outcome sit in `_live_activity_attempt`: the same body refused (a
@@ -11882,6 +12366,12 @@ class BobDaemon(BoardVerbsMixin):
             self._live_activity_last[device_id] = remember
             self._live_activity_attempt.pop(device_id, None)
             self._live_activity_sent_at[device_id] = time.monotonic()
+        elif outcome == "dead":
+            # Apple refused the token itself (iOS ends an activity at eight
+            # hours): every later state would be refused too, and the fleet
+            # figures change each minute, so it is treated as an end.
+            self._live_activity_last[device_id] = "ended"
+            self._live_activity_attempt.pop(device_id, None)
         elif outcome in ("refused", "unreachable"):
             self._live_activity_attempt[device_id] = (
                 dict(body), outcome, time.monotonic())
@@ -12186,6 +12676,11 @@ class BobDaemon(BoardVerbsMixin):
         note = self._closed_ids.get(record.session_id)
         if note is None:
             return False
+        closed_turn = self._closed_codex_turns.get(record.session_id)
+        if closed_turn is not None:
+            # A shared-server thread: the server outlives the terminal, so
+            # only a turn after the one closed says the person came back.
+            return bool(record.turn_id) and record.turn_id != closed_turn
         _, closed_pid, closed_created = note
         ident = record.process_identity
         if ident is None:
@@ -12429,6 +12924,7 @@ class BobDaemon(BoardVerbsMixin):
         for sid, note in list(self._closed_ids.items()):
             if now_mono - note[0] > FINISHED_RETENTION_SECONDS:
                 del self._closed_ids[sid]
+                self._closed_codex_turns.pop(sid, None)
         if len(self._finished) > MAX_FINISHED_RECORDS:
             keep = sorted(
                 self._finished.items(), key=lambda kv: kv[1]["finished_mono"], reverse=True

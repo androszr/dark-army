@@ -575,7 +575,7 @@ final class OutboxStore: ObservableObject {
         pendingResumeTab = nil
         resumeTab = nil
         guard let d = draft, d.open, d.worthKeeping else { return }
-        let tab = PhoneTab(rawValue: d.tab) ?? .needs
+        let tab = PhoneTab(stored: d.tab) ?? .needs
         pendingResumeTab = tab
         resumeTab = tab
         resumeSignal &+= 1

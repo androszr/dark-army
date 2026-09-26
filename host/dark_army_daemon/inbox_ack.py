@@ -26,7 +26,10 @@ logger = logging.getLogger("dark-army")
 # `plan_ready` and `awaiting_review` are no longer inbox kinds (the Backlog
 # tab and the Done column carry them); an old client's ack for either is
 # refused as an unknown kind, never honoured.
-ACK_KINDS = frozenset({"question", "waiting", "ended_work", "manual_check"})
+# `start_asked` is Mission Control asking for a card to be started: Dismiss
+# is the person's No, and the daemon drops the ask with it.
+ACK_KINDS = frozenset({"question", "waiting", "ended_work", "manual_check",
+                       "start_asked"})
 NEVER_KINDS = frozenset({"permission"})
 MAX_INBOX_ACKS = 64
 
@@ -60,6 +63,38 @@ def question_material(questions: list) -> str:
     return "|".join(str(q.get("text") or "") for q in nonempty)
 
 
+def question_list(row) -> list:
+    """The row's questions as the phone reads them — `Agent.questionList`:
+    ``questions`` when it is a non-empty list, else the flat ``question``
+    when that dict carries text (what a Grok or Codex row publishes), else
+    nothing. The one place the fallback lives on the Python side."""
+    if not isinstance(row, dict):
+        return []
+    questions = row.get("questions")
+    if isinstance(questions, list) and questions:
+        return list(questions)
+    question = row.get("question")
+    if isinstance(question, dict) and str(question.get("text") or ""):
+        return [question]
+    return []
+
+
+def ack_set(records) -> set[tuple[str, str, str]]:
+    """``{(key, kind, fp)}`` from ack rows — `InboxAckStore.records()` or
+    the published ``inbox.acks``. A row missing any of the three is
+    skipped, as is anything that is not a dict."""
+    out = set()
+    for row in records or ():
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("key") or "")
+        kind = str(row.get("kind") or "")
+        fp = str(row.get("fp") or "")
+        if key and kind and fp:
+            out.add((key, kind, fp))
+    return out
+
+
 def valid_key(key: str) -> bool:
     return isinstance(key, str) and (
         (key.startswith("s:") or key.startswith("c:")) and len(key) > 2)
@@ -89,6 +124,12 @@ def card_kind_and_fp(card: dict) -> Optional[tuple[str, str]]:
     if card.get("manual_check_due"):
         steps = str(card.get("manual_steps") or "")
         return "manual_check", fingerprint("manual_check", steps)
+    # Last, and only on a card that is neither: an asked start is a card
+    # nobody has started, so it cannot be ended work or a hand-check.
+    # The material is the ask's own id, so a second ask is a new subject.
+    ask_id = str(card.get("start_ask_id") or "")
+    if ask_id:
+        return "start_asked", fingerprint("start_asked", ask_id)
     return None
 
 
@@ -128,6 +169,22 @@ class InboxAckStore:
         if not sid:
             return
         self.forget_key("s:" + sid)
+
+    def forget_waiting(self, sid: str) -> None:
+        """Drop the session's hide when it is a `waiting` one. Waiting's
+        fingerprint is the fixed token `"waiting"`, so without this a
+        dismissed wait — or one settled by Mark reviewed, Mark checked or
+        Acknowledge & close — would hide every later wait for the life of
+        the session. A new prompt starts a new turn, and its wait is news."""
+        if not sid:
+            return
+        key = "s:" + sid
+        with self._lock:
+            current = self._acks.get(key)
+            if current is None or current[0] != "waiting":
+                return
+            del self._acks[key]
+            self._save_locked()
 
     def forget_key(self, key: str) -> None:
         with self._lock:
@@ -211,6 +268,7 @@ __all__ = [
     "ACK_KINDS", "NEVER_KINDS", "MAX_INBOX_ACKS",
     "INBOX_ACK_STALE_REFUSAL", "INBOX_ACK_KIND_REFUSAL",
     "INBOX_ACK_MISSING_REFUSAL",
-    "fingerprint", "question_material", "valid_key",
+    "fingerprint", "question_material", "question_list", "ack_set",
+    "valid_key",
     "session_kind_and_fp", "card_kind_and_fp", "InboxAckStore",
 ]

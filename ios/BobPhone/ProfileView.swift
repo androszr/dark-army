@@ -246,6 +246,7 @@ struct ProfileView: View {
                 .foregroundStyle(Theme.phosphor)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
+                .hidesKeyboard()
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .profileRow()

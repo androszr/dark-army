@@ -570,6 +570,54 @@ async def test_a_push_that_went_through_arms_a_held_poll(mailbox, monkeypatch):
         await conn.stop()
 
 
+def test_the_phone_opening_its_socket_arms_the_held_polls(monkeypatch):
+    """`peer:1` — the phone woke and opened its line — arms the held polls
+    for `PEER_ARM_SECONDS`, a buzz's length, and no longer (25 Sep 2026)."""
+    monkeypatch.setattr(relay_client, "PEER_ARM_SECONDS", 90)
+    monkeypatch.setattr(relay_client, "IDLE_GAP_START", 5)
+    monkeypatch.setattr(relay_client, "IDLE_GAP_MAX", 30)
+    assert relay_client._next_gap(_NOW, 0.0, 0.0, 5, _NOW - 10) == (True, 0.0, 5)
+    assert relay_client._next_gap(_NOW, 0.0, 0.0, 5, _NOW - 91) == (False, 5, 10)
+    assert relay_client._next_gap(_NOW, 0.0, 0.0, 5) == (False, 5, 10)
+
+
+@pytest.mark.asyncio
+async def test_the_phone_waking_cuts_the_idle_sleep_short(mailbox, monkeypatch):
+    """An idle channel sleeps its gap between plain polls; the socket
+    relay's `peer:1` wakes it at once and its next poll is a held one. The
+    gap is set far past the test's deadline, so only the wake can pass."""
+    monkeypatch.setattr(relay_client, "IDLE_GAP_START", 60.0)
+    monkeypatch.setattr(relay_client, "IDLE_GAP_MAX", 60.0)
+    conn, _srv, _daemon, _key = _build_connector(mailbox)
+    _make_channel_idle()
+    relay._peer_mem.pop("dev-1", None)
+    relay._peer_waiters.pop("dev-1", None)
+
+    def to_mac_polls():
+        with _Mailbox.lock:
+            return [g for g in _Mailbox.gets if "dir=to-mac" in g[1]]
+
+    conn.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not to_mac_polls():
+            await asyncio.sleep(0.02)
+        first = to_mac_polls()
+        assert first and "wait=1" not in first[0][1], first
+        await asyncio.sleep(0.1)  # into the sixty-second idle sleep
+        relay.note_phone_arrived("dev-1")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and len(to_mac_polls()) < 2:
+            await asyncio.sleep(0.02)
+        polls = to_mac_polls()
+        assert len(polls) >= 2, "the wake did not cut the idle sleep"
+        assert "wait=1" in polls[1][1], polls
+    finally:
+        await conn.stop()
+        relay._peer_mem.pop("dev-1", None)
+        relay._peer_waiters.pop("dev-1", None)
+
+
 @pytest.mark.asyncio
 async def test_the_snapshot_carries_health_and_no_secret(connector):
     """`/api/state` is ungated on loopback, served on the LAN door and
@@ -878,7 +926,7 @@ async def test_push_alert_carries_a_clamped_need_line(connector, need, expected)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("face,expected", [
-    ("ptyś", "ptyś"),
+    ("ptys", "ptys"),
     ("vex", "vex"),
     ("../x", None),
     ("mrrobot", None),
@@ -1151,3 +1199,163 @@ async def test_an_unknown_read_kind_is_still_404(connector):
     frame = await _phone_receive(key, url, 0)
     assert frame is not None
     assert frame["body"]["status"] == 404
+
+
+def test_a_peer_word_arms_once_per_budget_unless_the_phone_proves_itself(
+        monkeypatch):
+    """`peer:1` is not a proof — anyone holding the channel id can make the
+    relay say it — so it arms the held polls at most once per
+    `PEER_REARM_SECONDS`; a verified frame on either lane since the last
+    arm lets the next one through (security review, 25 Sep 2026)."""
+    clock = [1_000_000.0]
+    monkeypatch.setattr(relay.time, "time", lambda: clock[0])
+    monkeypatch.setattr(relay, "last_frame_at", lambda _d: 0.0)
+    relay._peer_mem.pop("dev-9", None)
+    relay._proof_mem.pop("dev-9", None)
+    try:
+        assert relay.note_phone_arrived("dev-9") is True
+        first = relay.last_phone_arrived_at("dev-9")
+        # A stranger reconnecting every minute: no new arm, and the held
+        # window lapses once PEER_ARM_SECONDS has passed.
+        for _ in range(5):
+            clock[0] += 60
+            assert relay.note_phone_arrived("dev-9") is False
+        assert relay.last_phone_arrived_at("dev-9") == first
+        held, _gap, _next = relay_client._next_gap(
+            clock[0], 0.0, 0.0, 5, relay.last_phone_arrived_at("dev-9"))
+        assert held is False
+        # The real phone proves itself on the socket: the next wake arms.
+        clock[0] += 1
+        relay.note_phone_proof("dev-9")
+        clock[0] += 1
+        assert relay.note_phone_arrived("dev-9") is True
+        # A mailbox frame proves it too.
+        clock[0] += 5
+        monkeypatch.setattr(relay, "last_frame_at", lambda _d: clock[0])
+        clock[0] += 1
+        assert relay.note_phone_arrived("dev-9") is True
+        # And with no proof at all, the budget itself runs out.
+        monkeypatch.setattr(relay, "last_frame_at", lambda _d: 0.0)
+        relay._proof_mem.pop("dev-9", None)
+        clock[0] += relay.PEER_REARM_SECONDS
+        assert relay.note_phone_arrived("dev-9") is True
+    finally:
+        relay._peer_mem.pop("dev-9", None)
+        relay._proof_mem.pop("dev-9", None)
+
+
+def test_the_phone_leaving_its_line_ends_the_arm(monkeypatch):
+    """A phone that opened its line at home and closed it on the home
+    answer must not hold the mailbox for `PEER_ARM_SECONDS`: the relay's
+    `peer:0` ends the arm (bug audit, 25 Sep 2026). A verified socket frame
+    is the phone's proof, so the next wake arms again."""
+    clock = [2_000_000.0]
+    monkeypatch.setattr(relay.time, "time", lambda: clock[0])
+    monkeypatch.setattr(relay, "last_frame_at", lambda _d: 0.0)
+    monkeypatch.setattr(relay, "_channel", lambda _d: None)
+    for mem in (relay._peer_mem, relay._peer_left_mem, relay._proof_mem):
+        mem.pop("dev-8", None)
+    try:
+        assert relay.note_phone_arrived("dev-8") is True
+        assert relay.last_phone_arrived_at("dev-8") == clock[0]
+        clock[0] += 3
+        relay.note_phone_left("dev-8")
+        assert relay.last_phone_arrived_at("dev-8") == 0.0
+        held, _g, _n = relay_client._next_gap(
+            clock[0], 0.0, 0.0, 5, relay.last_phone_arrived_at("dev-8"))
+        assert held is False
+        clock[0] += 60
+        relay.note_phone_proof("dev-8")  # a verified socket frame
+        clock[0] += 60
+        assert relay.note_phone_arrived("dev-8") is True
+        assert relay.last_phone_arrived_at("dev-8") == clock[0]
+    finally:
+        for mem in (relay._peer_mem, relay._peer_left_mem, relay._proof_mem):
+            mem.pop("dev-8", None)
+
+
+def test_a_phone_open_at_home_does_not_lift_the_peer_budget(monkeypatch):
+    """A home poll proves the phone every few seconds; were it a proof for
+    the budget, a stranger bouncing its line as the phone would re-arm on
+    each one. Twenty home polls interleaved with twenty `peer:1`s arm once
+    (security review, 25 Sep 2026)."""
+    clock = [3_000_000.0]
+    monkeypatch.setattr(relay.time, "time", lambda: clock[0])
+    monkeypatch.setattr(relay, "last_frame_at", lambda _d: 0.0)
+    monkeypatch.setattr(relay, "_channel", lambda _d: None)
+    for mem in (relay._peer_mem, relay._peer_left_mem, relay._proof_mem):
+        mem.pop("dev-7", None)
+    try:
+        armed = 0
+        for _ in range(20):
+            relay.note_lan_proof("dev-7")
+            clock[0] += 45
+            armed += relay.note_phone_arrived("dev-7")
+            clock[0] += 45
+        assert armed == 1
+    finally:
+        for mem in (relay._peer_mem, relay._peer_left_mem, relay._proof_mem):
+            mem.pop("dev-7", None)
+
+
+def test_raw_keys_draw_on_their_own_bucket_kind():
+    """26 Sep 2026: raw terminal keys are counted apart from every other
+    write, so typing from away cannot spend an answer's allowance."""
+    assert relay.write_bucket_kind(
+        {"action": "terminal_input", "session_id": "s", "bytes": "aGk="}) == "keys"
+    # The line route is a sentence, not a keystroke: it stays a write.
+    assert relay.write_bucket_kind(
+        {"action": "terminal_input", "session_id": "s", "text": "hi"}) == "writes"
+    for odd in ("", 0, False, [], {}, None):
+        assert relay.write_bucket_kind({
+            "action": "terminal_input", "bytes": odd, "text": "ls",
+        }) == "writes", odd
+    assert relay.write_bucket_kind({"action": "dismiss"}) == "writes"
+    assert relay.write_bucket_kind({}) == "writes"
+    assert relay.RELAY_MAX_KEY_WRITES_PER_MINUTE <= relay.RELAY_MAX_FRAMES_PER_MINUTE
+    # Both doors in split the same way: the mailbox and the socket relay.
+    import inspect
+    from dark_army_daemon import relay_ws
+    for module in (relay_client, relay_ws):
+        src = inspect.getsource(module)
+        assert "relay.write_bucket_kind(payload)" in src, module.__name__
+        assert "self._key_buckets" in src, module.__name__
+
+
+@pytest.mark.asyncio
+async def test_a_spent_write_bucket_still_lets_keys_through_and_back(
+        connector, monkeypatch):
+    """With every ordinary write refused, a keystroke batch still runs; with
+    the key bucket spent, an answer still runs. Each refusal is the Mac's
+    own 429 sentence, never a silent drop."""
+    conn, srv, key, url = connector
+
+    async def lan_run(action, payload, device_id=""):
+        return 200, "application/json", b'{"ok": true}'
+
+    monkeypatch.setattr(srv, "_lan_run", lan_run)
+    monkeypatch.setattr(relay, "RELAY_MAX_WRITES_PER_MINUTE", 0)
+    await _phone_send(key, url, 1, "action",
+                      {"action": "dismiss", "session_id": "s1"})
+    refused = await _phone_receive(key, url, 0)
+    assert refused["body"]["status"] == 429
+    assert refused["body"]["error"] == relay_client._WRITE_LIMIT_REFUSAL
+    await _phone_send(key, url, 2, "action",
+                      {"action": "terminal_input", "session_id": "s1",
+                       "bytes": "aGk="})
+    landed = await _phone_receive(key, url, refused["ctr"])
+    assert landed["body"]["status"] == 200
+
+    conn._write_buckets.clear()
+    conn._key_buckets.clear()
+    monkeypatch.setattr(relay, "RELAY_MAX_WRITES_PER_MINUTE", 10)
+    monkeypatch.setattr(relay, "RELAY_MAX_KEY_WRITES_PER_MINUTE", 0)
+    await _phone_send(key, url, 3, "action",
+                      {"action": "terminal_input", "session_id": "s1",
+                       "bytes": "aGk="})
+    keys_refused = await _phone_receive(key, url, landed["ctr"])
+    assert keys_refused["body"]["status"] == 429
+    await _phone_send(key, url, 4, "action",
+                      {"action": "dismiss", "session_id": "s1"})
+    answered = await _phone_receive(key, url, keys_refused["ctr"])
+    assert answered["body"]["status"] == 200

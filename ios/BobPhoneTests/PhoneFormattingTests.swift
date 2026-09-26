@@ -224,15 +224,15 @@ final class PhoneFormattingTests: XCTestCase {
         }
     }
 
-    func testPtysUnicodeNameAndPackagedPortrait() throws {
-        for nickname in ["Ptyś", "PTYŚ", "Ptyś-ab12"] {
+    func testPtysNameAndPackagedPortrait() throws {
+        for nickname in ["Ptys", "PTYS", "Ptys-ab12"] {
             XCTAssertEqual(
                 Cast.character(for: try agent(nickname: nickname, sessionId: "s")),
-                "ptyś")
+                "ptys")
         }
-        XCTAssertEqual(CrewBand.display("ptyś"), "Ptyś")
-        XCTAssertTrue(Areas.all.first { $0.slug == "pocket" }?.pool.contains("ptyś") == true)
-        XCTAssertNotNil(Cast.portrait("ptyś"))
+        XCTAssertEqual(CrewBand.display("ptys"), "Ptys")
+        XCTAssertTrue(Areas.all.first { $0.slug == "pocket" }?.pool.contains("ptys") == true)
+        XCTAssertNotNil(Cast.portrait("ptys"))
     }
 
 

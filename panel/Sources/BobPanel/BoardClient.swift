@@ -257,6 +257,24 @@ extension DaemonClient {
         await post(["action": "board_refine", "card_id": cardId])
     }
 
+    /// Refine several Prep cards with **one** planning session — the Prep
+    /// row's REFINE n TOGETHER. `post` is `[String: String]`, so the ids ride
+    /// as one comma-joined `card_ids`, in the order given (the board's own);
+    /// the daemon re-runs every Refine guard per card and opens one terminal.
+    func boardRefineBatch(_ ids: [String]) async -> ActionResult {
+        await post(["action": "board_refine_batch",
+                    "card_ids": ids.joined(separator: ",")])
+    }
+
+    /// Start several planned Backlog cards with **one** session, worked one
+    /// at a time — the Backlog row's START n TOGETHER. `boardRefineBatch`'s
+    /// shape: one comma-joined `card_ids`; the daemon orders the members by
+    /// the board, runs every Start guard per card and opens one terminal.
+    func boardStartBatch(_ ids: [String]) async -> ActionResult {
+        await post(["action": "board_start_batch",
+                    "card_ids": ids.joined(separator: ",")])
+    }
+
     /// Take a card out of its project's work queue.
     ///
     /// Clear-never-set: `queue_state` and `queued_at` are outside the API's
@@ -314,6 +332,17 @@ extension DaemonClient {
     /// somebody presses *after* doing the chore is ceremony.
     func boardManualClear(_ cardId: String) async -> ActionResult {
         await post(["action": "board_manual_clear", "card_id": cardId])
+    }
+
+    /// Record Passed or Failed on a manual check file, with the person's
+    /// note. Keyed on the file, never a card: the daemon writes the file's
+    /// three status lines and clears every card flagged with it, and a
+    /// second press is refused in words. `X-Bob-Token` rides `post`.
+    func boardManualOutcome(path: String, status: String,
+                            note: String) async -> ActionResult {
+        await post(["action": "board_manual_outcome", "path": path,
+                    "status": status,
+                    "note": String(note.prefix(ManualCheckRules.noteLimit))])
     }
 
     /// Acknowledge an assistant's close — the Reviewed press. Drops the
@@ -460,6 +489,51 @@ extension DaemonClient {
         noteAuthRefused(code)
         guard code == 200 else { return nil }
         return try? JSONDecoder().decode(KnowledgeReport.self, from: data)
+    }
+
+    /// Every scout report the daemon lists, newest first, no bodies — or
+    /// one enrolled project's; with a `query`, only the reports whose body
+    /// holds it, each with a snippet (`?q=`, `manualChecks`' encoding).
+    /// `knowledgeReport(root:)`'s shape: the token rides `request(_:)`, a
+    /// 403 is noted, anything else is `nil`.
+    func scoutReportsIndex(root: String = "", query: String = "") async -> ScoutReportIndex? {
+        var parts: [String] = []
+        for (key, value) in [("root", root), ("q", query)] where !value.isEmpty {
+            guard let encoded = value.addingPercentEncoding(
+                withAllowedCharacters: Self.knowledgeRootUnreserved)
+            else { return nil }
+            parts.append("\(key)=\(encoded)")
+        }
+        let path = "/api/scout-reports"
+            + (parts.isEmpty ? "" : "?" + parts.joined(separator: "&"))
+        var req = request(path)
+        req.timeoutInterval = 15
+        guard let (data, response) = try? await URLSession.shared.data(for: req) else {
+            return nil
+        }
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        noteAuthRefused(code)
+        guard code == 200 else { return nil }
+        return try? JSONDecoder().decode(ScoutReportIndex.self, from: data)
+    }
+
+    /// One report's text, split into its answer block and body. The daemon
+    /// re-checks the path against the set it lists; outside it the answer
+    /// is `available: false` with the reason in words.
+    func scoutReportBody(path: String) async -> ScoutReportBody? {
+        guard !path.isEmpty,
+              let encoded = path.addingPercentEncoding(
+                withAllowedCharacters: Self.knowledgeRootUnreserved)
+        else { return nil }
+        var req = request("/api/scout-report?path=\(encoded)")
+        req.timeoutInterval = 15
+        guard let (data, response) = try? await URLSession.shared.data(for: req) else {
+            return nil
+        }
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        noteAuthRefused(code)
+        guard code == 200 else { return nil }
+        return try? JSONDecoder().decode(ScoutReportBody.self, from: data)
     }
 
     func knowledgeConfirm(root: String, key: String) async -> ActionResult {

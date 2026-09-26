@@ -198,10 +198,12 @@ def test_the_phone_draws_the_tab_bar_and_forks_on_the_rule():
     assert view.count("DetailTab.terminalAttached(") == 2, "terminalCover and syncWatch"
     body = _code(_block(src, "var body: some View"))
     assert "PhoneAgentScreenBar(screen: $screen" in body
-    # The lead (still beside the name, the card and the origin) sits above
-    # the bar, shared by both panes; the conversation sits under it.
-    assert body.index("identity") < body.index("PhoneAgentScreenBar(")
+    # The bar leads the sheet. The lead (still beside the name and the
+    # card) is Main's page; the other tabs keep only the title line.
+    assert body.index("PhoneAgentScreenBar(") < body.index("AgentScreen.titleOnly(")
+    assert body.index("AgentScreen.titleOnly(") < body.index("titleLine")
     assert body.index("PhoneAgentScreenBar(") < body.index("ConversationScreen(")
+    assert "identity" in _code(_block(src, "private var mainScreen: some View"))
     assert "conversationLead" not in body
     assert "header:" not in body   # the conversation carries no lead of its own
     assert "ConversationScreen(" in body

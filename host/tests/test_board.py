@@ -755,7 +755,7 @@ def test_a_v18_file_gains_crew_trail_by_alter(tmp_path):
         assert card["agent_trail"] == "bc-planner"
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 25
+        assert int(row["value"]) == SCHEMA_VERSION == 29
     finally:
         store.close()
 
@@ -1069,15 +1069,77 @@ def test_an_unbound_card_cannot_be_flagged_by_anybody(store):
     assert store.get(card["id"])["manual_steps"] == ""
 
 
-def test_a_card_in_done_cannot_be_flagged(store):
-    """A check outstanding on work somebody has already accepted is a
-    contradiction; the honest route there is Reopen."""
+def test_a_card_in_done_can_be_flagged_by_its_own_session(store):
+    """v26: a card with an open check goes to Done, so the flag may follow
+    the close. The WHERE still pins the session: another session is refused
+    and the card stays in Done either way."""
     card = _card(store)
     store.bind_session(card["id"], "sess-1")
     store.declare_done(card["id"], "sess-1", "tests pass")
-    flagged, detail = store.flag_manual(card["id"], "sess-1", "1. look")
+    flagged, detail = store.flag_manual(card["id"], "sess-2", "1. look")
     assert flagged is None
-    assert "already done" in detail
+    assert "not this session's" in detail
+    flagged, detail = store.flag_manual(card["id"], "sess-1", "1. look")
+    assert flagged is not None, detail
+    assert flagged["column_name"] == "done"
+    assert flagged["manual_steps"] == "1. look"
+
+
+def test_flag_manual_writes_and_clears_the_check_path(store):
+    """The file rides the same UPDATE; a re-flag with no file clears a stale
+    link, and `by_manual_check_path` is an exact match that never answers
+    for `''`."""
+    card = _card(store)
+    store.bind_session(card["id"], "sess-1")
+    flagged, _ = store.flag_manual(card["id"], "sess-1", "1. look",
+                                   "/p/manual-check/a/check.md")
+    assert flagged["manual_check_path"] == "/p/manual-check/a/check.md"
+    assert [c["id"] for c in store.by_manual_check_path(
+        "/p/manual-check/a/check.md")] == [card["id"]]
+    assert store.by_manual_check_path("/p/manual-check/b/check.md") == []
+    assert store.by_manual_check_path("") == []
+    flagged, _ = store.flag_manual(card["id"], "sess-1", "1. look again")
+    assert flagged["manual_check_path"] == ""
+    assert store.by_manual_check_path("") == []
+
+
+def test_manual_check_path_has_one_writer_and_moves_the_revision():
+    assert board_mod.SINGLE_WRITER["manual_check_path"] == "flag_manual"
+    assert "manual_check_path" not in BoardStore._WRITABLE
+    assert "manual_check_path" in board_mod.REVISED_COLUMNS
+
+
+def test_a_schema_25_file_gains_manual_check_path_by_alter(tmp_path):
+    """The `_ADDED_COLUMNS` contract at v26: a v25 store opens with the
+    column present and `''` on every existing row, and a v25-shaped INSERT
+    that does not name it still lands."""
+    path = tmp_path / "v25.db"
+    store = BoardStore(path)
+    store.connect()
+    store._conn.execute("ALTER TABLE cards DROP COLUMN manual_check_path")
+    store._conn.execute(
+        "UPDATE schema_meta SET value = '25' WHERE key = 'version'")
+    store._conn.execute(
+        "INSERT INTO cards (id, project, title, column_name, created_at,"
+        " updated_at) VALUES ('c1', 'bob', 'old card', 'backlog', 1, 1)")
+    store._conn.commit()
+    store.close()
+    store = BoardStore(path)
+    store.connect()
+    try:
+        names = {r[1] for r in store._conn.execute("PRAGMA table_info(cards)")}
+        assert "manual_check_path" in names
+        assert store.get("c1")["manual_check_path"] == ""
+        store._conn.execute(
+            "INSERT INTO cards (id, project, title, column_name, created_at,"
+            " updated_at) VALUES ('c2', 'bob', 'v25 write', 'backlog', 2, 2)")
+        store._conn.commit()
+        assert store.get("c2")["manual_check_path"] == ""
+        row = store._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
+        assert int(row["value"]) == SCHEMA_VERSION == 29
+    finally:
+        store.close()
 
 
 def test_a_flag_with_no_steps_is_refused(store):
@@ -1205,7 +1267,7 @@ def test_a_schema_3_file_gains_the_close_columns_by_alter(tmp_path):
         assert card["closed_by"] == "" and card["close_note"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 25
+        assert int(row["value"]) == SCHEMA_VERSION == 29
         assert store.declare_done("c1", "sess-1", "checked")[0] is not None
     finally:
         store.close()
@@ -1259,7 +1321,7 @@ def test_a_schema_4_file_gains_blocked_by_by_alter(tmp_path):
         assert store.get("c2")["blocked_by"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 25
+        assert int(row["value"]) == SCHEMA_VERSION == 29
     finally:
         store.close()
 
@@ -1311,7 +1373,7 @@ def test_a_schema_24_file_gains_kind_and_report_path_by_alter(tmp_path):
         assert store.get("c2")["report_path"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 25
+        assert int(row["value"]) == SCHEMA_VERSION == 29
     finally:
         store.close()
 
@@ -1381,18 +1443,116 @@ def test_a_cycle_of_waiters_is_refused(store):
     assert store.get(b["id"])["blocked_by"] == ""
 
 
-def test_active_blockers_skip_done_and_deleted(store):
+def test_a_card_cannot_wait_on_a_card_in_another_project(store):
+    """The queue, the drain and the parallel limit are per project, so a
+    hold across projects would stall one queue with nothing on its screen
+    saying why. Refused in words, and the card is left exactly as it was."""
+    a = _card(store, title="here", root="/tmp/bob")
+    b = _card(store, title="elsewhere", root="/tmp/other")
+    before = store.get(a["id"])
+    got, detail = store.update(a["id"], {"blocked_by": b["id"]})
+    assert got is None
+    assert detail == "a card can only wait on a card in its own project"
+    after = store.get(a["id"])
+    assert after["blocked_by"] == "" and after["revision"] == before["revision"]
+    # The same folder spelt through a symlink-free trailing slash is the
+    # same project: the check canonicalises both sides.
+    c = _card(store, title="same place", root="/tmp/bob/")
+    got, detail = store.update(a["id"], {"blocked_by": c["id"]})
+    assert got is not None, detail
+    # An id naming no card is not refused — it can hold nothing.
+    got, detail = store.update(a["id"], {"blocked_by": "gone0000"})
+    assert got is not None, detail
+
+
+def test_cards_by_id_returns_only_the_ids_that_exist(store):
+    a = _card(store, title="a")
+    b = _card(store, title="b")
+    got = store.cards_by_id([a["id"], "missing", b["id"], a["id"], ""])
+    assert set(got) == {a["id"], b["id"]}
+    assert got[b["id"]]["title"] == "b"
+    assert store.cards_by_id([]) == {}
+    assert store.cards_by_id(None) == {}
+
+
+def test_fill_dependencies_if_empty_fills_only_an_empty_list(store):
     a = _card(store, title="waiter")
-    b = _card(store, title="the blocker")
+    b = _card(store, title="first")
+    c = _card(store, title="second")
+    card, detail = store.fill_dependencies_if_empty(a["id"], [b["id"]])
+    assert detail == "filled"
+    assert parse_ids(card["blocked_by"]) == [b["id"]]
+    assert card["revision"] > a["revision"]
+    # A list somebody already set is theirs: nothing moves.
+    card, detail = store.fill_dependencies_if_empty(a["id"], [c["id"]])
+    assert detail == "already set"
+    assert parse_ids(store.get(a["id"])["blocked_by"]) == [b["id"]]
+    # Nothing to fill is not a write.
+    card, detail = store.fill_dependencies_if_empty(c["id"], [])
+    assert detail == "nothing to fill" and card["blocked_by"] == ""
+    assert store.fill_dependencies_if_empty("no-such", [b["id"]]) == (
+        None, "no such card")
+
+
+def test_fill_dependencies_if_empty_surfaces_the_stores_refusals(store):
+    """A seed is not the one writer that skips the rules: a cycle, a
+    self-wait and another project refuse it in the store's own words."""
+    a = _card(store, title="a")
+    b = _card(store, title="b")
     store.update(a["id"], {"blocked_by": b["id"]})
-    named = store.active_blockers(store.get(a["id"]))
-    assert [x["id"] for x in named] == [b["id"]]
-    assert named[0]["title"] == "the blocker"
-    store.move(b["id"], "done")
-    assert store.active_blockers(store.get(a["id"])) == []
-    store.delete(b["id"])
-    assert store.active_blockers(store.get(a["id"])) == []
-    assert b["id"] in parse_ids(store.get(a["id"])["blocked_by"])
+    got, detail = store.fill_dependencies_if_empty(b["id"], [a["id"]])
+    assert got is None and detail == "those cards already wait on each other"
+    assert store.get(b["id"])["blocked_by"] == ""
+    got, detail = store.fill_dependencies_if_empty(b["id"], [b["id"]])
+    assert got is None and detail == "a card cannot wait on itself"
+    far = _card(store, title="far", root="/tmp/far")
+    got, detail = store.fill_dependencies_if_empty(b["id"], [far["id"]])
+    assert got is None
+    assert detail == "a card can only wait on a card in its own project"
+
+
+def test_a_schema_28_file_has_its_leftover_dependencies_cleared_once(tmp_path):
+    """v29: `blocked_by` gates Start again, so a value a build from before
+    20 Sep 2026 left behind is emptied on the first open — the column kept,
+    `_retire_initiatives`' rule — and a list a person writes after the
+    upgrade is never touched by a later open (forward-only marker)."""
+    path = tmp_path / "v28.db"
+    store = BoardStore(path)
+    store.connect()
+    store._conn.execute(
+        "UPDATE schema_meta SET value = '28' WHERE key = 'version'")
+    store._conn.execute(
+        "INSERT INTO cards (id, project, title, column_name, created_at,"
+        " updated_at, blocked_by) VALUES ('c1', 'bob', 'old card', 'backlog',"
+        " 1, 1, 'stale')")
+    store._conn.execute(
+        "INSERT INTO cards (id, project, title, column_name, created_at,"
+        " updated_at) VALUES ('c2', 'bob', 'other', 'backlog', 2, 2)")
+    store._conn.commit()
+    store.close()
+    store = BoardStore(path)
+    store.connect()
+    try:
+        assert store.get("c1")["blocked_by"] == ""
+        row = store._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
+        assert int(row["value"]) == SCHEMA_VERSION == 29
+        got, detail = store.update("c1", {"blocked_by": "c2"})
+        assert got is not None, detail
+    finally:
+        store.close()
+    store = BoardStore(path)
+    store.connect()
+    try:
+        assert parse_ids(store.get("c1")["blocked_by"]) == ["c2"]
+    finally:
+        store.close()
+
+
+def test_active_blockers_is_gone_and_the_daemon_resolves_dependencies():
+    """One resolver: `daemon_board._dependency_entries`. A second store-side
+    reading of "met" would be the two-surfaces-disagree bug."""
+    assert not hasattr(BoardStore, "active_blockers")
 
 
 def test_parse_ids_drops_blanks_dedupes_and_caps():
@@ -1457,7 +1617,7 @@ def test_a_schema_5_file_gains_the_refine_columns_and_moves_nothing(tmp_path):
         assert store.get("c2")["plan_path"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 25
+        assert int(row["value"]) == SCHEMA_VERSION == 29
     finally:
         store.close()
 
@@ -1830,7 +1990,7 @@ def test_a_schema_7_file_gains_the_queue_pair_by_alter(tmp_path):
         assert store.get("c2")["queue_state"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 25
+        assert int(row["value"]) == SCHEMA_VERSION == 29
     finally:
         store.close()
 
@@ -1892,7 +2052,7 @@ def test_a_schema_8_file_gains_manual_steps_by_alter(tmp_path):
         assert store.get("c2")["manual_steps"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 25
+        assert int(row["value"]) == SCHEMA_VERSION == 29
     finally:
         store.close()
 
@@ -2056,7 +2216,7 @@ def test_schema_10_and_a_v9_shaped_file_gains_reviewed_at_via_the_seam(tmp_path)
     """The `_ADDED_COLUMNS` promise for v10. Nullable is the shape the seam's
     rule explicitly admits (`queued_at` is the precedent), so a v9 build goes
     on INSERTing without naming the column."""
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 29
     path = tmp_path / "v9.db"
     conn = sqlite3.connect(path)
     conn.execute(
@@ -2127,7 +2287,7 @@ def test_schema_11_and_a_v10_shaped_file_gains_queue_rank(tmp_path):
     """The `_ADDED_COLUMNS` promise for v11. Nullable is the shape the seam's
     rule explicitly admits (`queued_at` is the precedent), so a v10 build
     goes on INSERTing without naming the column."""
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 29
     path = tmp_path / "v10.db"
     conn = sqlite3.connect(path)
     conn.execute(
@@ -2177,7 +2337,7 @@ def test_the_create_path_and_the_alter_path_agree_on_attachments():
 def test_schema_11_and_a_v10_shaped_file_gains_attachments(tmp_path):
     """The `_ADDED_COLUMNS` promise for the attachments column at v11. DEFAULT
     `''` means a v10 build goes on INSERTing without naming it."""
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 29
     path = tmp_path / "v10-attach.db"
     conn = sqlite3.connect(path)
     conn.execute(
@@ -2402,7 +2562,7 @@ def test_a_file_without_card_messages_gains_the_table(tmp_path):
         assert msg is not None, detail
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 25
+        assert int(row["value"]) == SCHEMA_VERSION == 29
     finally:
         store.close()
 
@@ -2698,7 +2858,7 @@ def test_the_create_and_alter_spellings_agree_on_create_token():
     assert ("create_token", "TEXT NOT NULL DEFAULT ''") \
         in BoardStore._ADDED_COLUMNS["cards"]
     assert "create_token TEXT NOT NULL DEFAULT ''" in board_mod._SCHEMA
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 29
 
 
 def test_a_pre_v14_file_gains_the_create_token_column(tmp_path):
@@ -2748,7 +2908,7 @@ def test_a_pre_v14_file_gains_the_create_token_column(tmp_path):
         assert "cards_by_create_token" in indexes
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 25
+        assert int(row["value"]) == SCHEMA_VERSION == 29
     finally:
         store.close()
 
@@ -2953,7 +3113,7 @@ def test_the_create_and_alter_spellings_agree_on_start_when_planned():
     assert ("start_when_planned", "TEXT NOT NULL DEFAULT ''") \
         in BoardStore._ADDED_COLUMNS["cards"]
     assert "start_when_planned TEXT NOT NULL DEFAULT ''" in board_mod._SCHEMA
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 29
 
 
 def test_start_when_planned_is_in_the_rings_a_person_writes():
@@ -3055,7 +3215,7 @@ def test_a_v16_shaped_file_gains_the_column_with_its_default(tmp_path):
 def test_schema_version_names_the_priority_column():
     """Bumped in the same change as the column, or `_migrate`'s forward-only
     marker says 18 while the table is v19."""
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 29
 
 
 def test_the_create_and_alter_spellings_of_priority_match_exactly():
@@ -3263,10 +3423,10 @@ def test_area_version22_file_opens_at23(tmp_path):
     conn.execute("UPDATE schema_meta SET value = '22' WHERE key = 'version'")
     conn.commit(); conn.close()
     s = BoardStore(path); s.connect()
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 29
     card, _ = s.create({"title": "old file"})
     assert card["area"] == ""
-    assert s._conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()[0] == "25"
+    assert s._conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()[0] == "29"
     s.close()
 
 
@@ -3321,3 +3481,260 @@ def test_a_vacuum_sized_wal_is_cut_back_to_the_cap(tmp_path):
         assert wal.stat().st_size <= WAL_SIZE_LIMIT_BYTES
     finally:
         s.close()
+
+
+# --- v27: the batch mark ------------------------------------------------------
+
+
+def test_v27_batch_columns_are_there_with_an_empty_default(tmp_path):
+    """Two ring-2 columns, spelled alike in the CREATE and the ALTER list, in
+    `_WRITABLE` and in neither `SINGLE_WRITER` nor `REVISED_COLUMNS`."""
+    assert SCHEMA_VERSION == 29
+    for name in ("batch_id", "batch_rank"):
+        assert (name, "TEXT NOT NULL DEFAULT ''") \
+            in BoardStore._ADDED_COLUMNS["cards"]
+        assert f"{name} TEXT NOT NULL DEFAULT ''" in board_mod._SCHEMA
+        assert name in BoardStore._WRITABLE
+        assert name not in board_mod.SINGLE_WRITER
+        assert name not in board_mod.REVISED_COLUMNS
+    assert board_mod.MAX_BATCH_CARDS == 8
+    store = BoardStore(tmp_path / "board.db")
+    store.connect()
+    try:
+        card, _ = store.create({"title": "t", "project": "p", "root": "/tmp"})
+        card = store.get(card["id"])
+        assert card["batch_id"] == "" and card["batch_rank"] == ""
+        before = card["revision"]
+        got, _ = store.update(card["id"], {"batch_id": "tok", "batch_rank": "2"})
+        assert got["batch_id"] == "tok" and got["batch_rank"] == "2"
+        # Bookkeeping: the card's change number does not move.
+        assert got["revision"] == before
+    finally:
+        store.close()
+
+
+def test_a_v26_file_gains_the_batch_columns(tmp_path):
+    path = tmp_path / "v26.db"
+    store = BoardStore(path)
+    store.connect()
+    card, _ = store.create({"title": "t", "project": "p", "root": "/tmp"})
+    store.close()
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE schema_meta SET value = '26' WHERE key = 'version'")
+    conn.execute("ALTER TABLE cards DROP COLUMN batch_id")
+    conn.execute("ALTER TABLE cards DROP COLUMN batch_rank")
+    conn.commit()
+    conn.close()
+    store = BoardStore(path)
+    store.connect()
+    try:
+        got = store.get(card["id"])
+        assert got["batch_id"] == "" and got["batch_rank"] == ""
+        row = store._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
+        assert int(row[0]) == SCHEMA_VERSION == 29
+    finally:
+        store.close()
+
+
+def test_v27_file_gains_the_verdict_columns(tmp_path):
+    path = tmp_path / "v27.db"
+    store = BoardStore(path)
+    store.connect()
+    card, _ = store.create({"title": "t", "project": "p", "root": "/tmp"})
+    store.close()
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE schema_meta SET value = '27' WHERE key = 'version'")
+    conn.execute("ALTER TABLE cards DROP COLUMN report_verdict")
+    conn.execute("ALTER TABLE cards DROP COLUMN report_recommendation")
+    conn.commit()
+    names = {r[1] for r in conn.execute("PRAGMA table_info(cards)")}
+    assert "report_verdict" not in names
+    conn.close()
+    store = BoardStore(path)
+    store.connect()
+    try:
+        names = {r[1] for r in store._conn.execute(
+            "PRAGMA table_info(cards)").fetchall()}
+        assert {"report_verdict", "report_recommendation"} <= names
+        got = store.get(card["id"])
+        assert got["report_verdict"] == ""
+        assert got["report_recommendation"] == ""
+        row = store._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
+        assert int(row[0]) == SCHEMA_VERSION == 29
+    finally:
+        store.close()
+
+def test_attach_plan_clears_the_batch_mark(tmp_path):
+    store = BoardStore(tmp_path / "board.db")
+    store.connect()
+    try:
+        card, _ = store.create({"title": "t", "project": "p", "root": "/tmp"})
+        store.update(card["id"], {"refine_session_id": "s", "refine_state": "live",
+                                  "batch_id": "tok", "batch_rank": "1"})
+        got, detail = store.attach_plan(card["id"], "/tmp/plan.md", "s")
+        assert got is not None, detail
+        assert got["batch_id"] == "" and got["batch_rank"] == ""
+        assert got["column_name"] == "backlog"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_reset_card_clears_the_batch_mark(tmp_path):
+    from dark_army_daemon.daemon import BobDaemon
+    d = BobDaemon(sessions_path=tmp_path / "sessions.json")
+    store = BoardStore(tmp_path / "board.db")
+    store.connect()
+    d._board = store
+    try:
+        card, _ = store.create({"title": "t", "project": "p", "root": "/tmp"})
+        store.update(card["id"], {"refine_session_id": "s", "refine_state": "live",
+                                  "batch_id": "tok", "batch_rank": "3"})
+        got, detail = await d.reset_card(card["id"])
+        assert got is not None, detail
+        assert got["batch_id"] == "" and got["batch_rank"] == ""
+        assert got["refine_state"] == ""
+    finally:
+        store.close()
+
+
+# --- the batch-implement store verbs -----------------------------------------
+
+
+def _batch_card(store, title, rank, bid="tok", **kw):
+    fields = {"title": title, "project": "bob", "column_name": "backlog"}
+    fields.update(kw)
+    card, detail = store.create(fields)
+    assert card is not None, detail
+    card, detail = store.update(card["id"], {"batch_id": bid,
+                                             "batch_rank": str(rank)},
+                                bump=False)
+    assert card is not None, detail
+    time.sleep(0.002)
+    return card
+
+
+def test_batch_members_is_every_marked_card_in_board_order(store):
+    first = _batch_card(store, "first", 1)
+    second = _batch_card(store, "second", 2)
+    _batch_card(store, "elsewhere", 1, bid="other")
+    store.create({"title": "unmarked", "project": "bob",
+                  "column_name": "backlog"})
+    assert [c["id"] for c in store.batch_members("tok")] == \
+        [first["id"], second["id"]]
+    # An empty id is every card no batch touched — never returned.
+    assert store.batch_members("") == []
+
+
+def test_release_batch_waiting_touches_only_waiting_members(store):
+    bound = _batch_card(store, "bound", 1)
+    store.bind_session(bound["id"], "s1")
+    done = _batch_card(store, "done", 2)
+    store.bind_session(done["id"], "s1")
+    store.update(done["id"], {"column_name": "done"})
+    waiting = _batch_card(store, "waiting", 3)
+    # A waiting member a person dragged out of Backlog: no session, so it
+    # loses its mark too, whatever its column.
+    dragged = _batch_card(store, "dragged", 4)
+    store.update(dragged["id"], {"column_name": "in_progress"})
+    starting = _batch_card(store, "starting", 5)
+    store.update(starting["id"], {"link_state": "dispatching"}, bump=False)
+    other = _batch_card(store, "other batch", 1, bid="other")
+    revisions = {c["id"]: store.get(c["id"])["revision"]
+                 for c in (bound, done, waiting, dragged, other)}
+
+    assert store.release_batch_waiting("tok", "the batch ended") == 2
+    for released in (waiting, dragged):
+        row = store.get(released["id"])
+        assert (row["batch_id"], row["batch_rank"]) == ("", "")
+        assert row["dispatch_error"] == "the batch ended"
+    assert store.get(waiting["id"])["column_name"] == "backlog"
+    assert store.get(dragged["id"])["column_name"] == "in_progress"
+    assert store.get(starting["id"])["batch_id"] == "tok", \
+        "a head still binding clears its own mark"
+    for kept in (bound, done):
+        assert store.get(kept["id"])["batch_id"] == "tok"
+    assert store.get(other["id"])["batch_id"] == "other"
+    # Dark Army observing, not a person editing: no revision step.
+    for cid, rev in revisions.items():
+        assert store.get(cid)["revision"] == rev
+    # Idempotent, and an empty id is a no-op.
+    assert store.release_batch_waiting("tok", "again") == 0
+    assert store.release_batch_waiting("", "x") == 0
+
+
+def test_release_batch_waiting_clamps_the_note(store):
+    waiting = _batch_card(store, "waiting", 2)
+    store.release_batch_waiting("tok", "x" * 2000)
+    assert len(store.get(waiting["id"])["dispatch_error"]) == \
+        board_mod.MAX_CLOSE_NOTE_CHARS
+
+
+# --- card dependencies: the dispatch-4 repairs ---------------------------------
+
+
+def test_a_dependency_id_longer_than_the_bound_is_refused(store):
+    a = _card(store, title="a")
+    got, detail = store.update(a["id"], {
+        "blocked_by": "x" * (board_mod.MAX_CARD_ID_CHARS + 1)})
+    assert got is None
+    assert detail == (f"a card id is at most {board_mod.MAX_CARD_ID_CHARS} "
+                      "characters")
+    got, detail = store.update(a["id"], {"blocked_by": "y" * 200_000})
+    assert got is None and store.get(a["id"])["blocked_by"] == ""
+    b = _card(store, title="b")
+    assert len(b["id"]) <= board_mod.MAX_CARD_ID_CHARS
+    got, detail = store.update(a["id"], {"blocked_by": b["id"]})
+    assert got is not None, detail
+
+
+def test_the_flag_records_its_session_and_the_clear_empties_it(store):
+    card = _card(store)
+    store.bind_session(card["id"], "sess-1")
+    flagged, _ = store.flag_manual(card["id"], "sess-1", "1. look")
+    assert flagged["manual_session_id"] == "sess-1"
+    assert board_mod.SINGLE_WRITER["manual_session_id"] == "flag_manual"
+    assert "manual_session_id" not in BoardStore._WRITABLE
+    cleared, detail = store.clear_manual(card["id"])
+    assert cleared is not None, detail
+    assert cleared["manual_session_id"] == "" and cleared["manual_steps"] == ""
+
+
+def test_the_v29_wipe_runs_before_the_marker_moves(tmp_path, monkeypatch):
+    """A wipe that fails must leave the file at 28, so the next open tries
+    again — never a 29 with the leftover lists still in it."""
+    path = tmp_path / "v28.db"
+    store = BoardStore(path)
+    store.connect()
+    store._conn.execute(
+        "UPDATE schema_meta SET value = '28' WHERE key = 'version'")
+    store._conn.execute(
+        "INSERT INTO cards (id, project, title, column_name, created_at,"
+        " updated_at, blocked_by) VALUES ('c1', 'bob', 'old', 'backlog',"
+        " 1, 1, 'stale')")
+    store._conn.commit()
+    store.close()
+
+    def boom(self):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(BoardStore, "_clear_retired_blocked_by", boom)
+    failed = BoardStore(path)
+    with pytest.raises(sqlite3.OperationalError):
+        failed.connect()
+    failed.close()
+    monkeypatch.undo()
+    raw = sqlite3.connect(path)
+    try:
+        assert raw.execute("SELECT value FROM schema_meta WHERE key = "
+                           "'version'").fetchone()[0] == "28"
+    finally:
+        raw.close()
+    store = BoardStore(path)
+    store.connect()
+    try:
+        assert store.get("c1")["blocked_by"] == ""
+    finally:
+        store.close()

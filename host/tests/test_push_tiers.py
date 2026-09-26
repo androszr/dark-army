@@ -36,7 +36,7 @@ def _tiered_daemon(monkeypatch, probe, *, real_reconcile=False, during=None):
     d._enrich_agent_stubs = lambda stubs: {"stubs": stubs}
     d._titles.apply = lambda *a, **k: None
 
-    def titles(snapshot, roots):
+    def titles(snapshot, roots, shared_targets=()):
         counts["titles"] += 1
     d._apply_terminal_titles = titles
 

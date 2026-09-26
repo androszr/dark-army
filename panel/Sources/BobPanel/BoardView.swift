@@ -93,6 +93,8 @@ enum CardToken {
 }
 
 struct BoardView: View {
+    /// Reduce Motion, handed to every `Motion` call on the board.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Held, **not observed**: the verbs and the press-time reads go through
     /// it, but the board redraws on `feed` — the client republishes on every
     /// agents frame, and observing it re-ran the board and every card each
@@ -333,7 +335,7 @@ struct BoardView: View {
             // Still this card: a second press before the fade must not have
             // its own glow cut short by the first one's timer.
             if state.revealedCard == id {
-                withAnimation(.easeOut(duration: 0.3)) {
+                Motion.animate(.easeOut(duration: 0.3), reduced: reduceMotion) {
                     state.revealedCard = nil
                 }
             }
@@ -422,7 +424,7 @@ struct BoardView: View {
     private var unavailable: some View {
         VStack(spacing: 6) {
             Text("The board is not open.")
-                .font(Theme.mono(13, weight: .medium))
+                .font(Theme.prose(15, weight: .semibold))
                 .foregroundStyle(Theme.phosphor)
             Text("Dark Army could not open board.db. The rest of Dark Army is unaffected; "
                  + "see the log for why.")
@@ -439,7 +441,7 @@ struct BoardView: View {
     private var empty: some View {
         VStack(spacing: 8) {
             Text("Nothing queued yet.")
-                .font(Theme.mono(13, weight: .medium))
+                .font(Theme.prose(15, weight: .semibold))
                 .foregroundStyle(Theme.phosphor)
             // The absence is explained rather than left mysterious: Codex and
             // Grok have no channel, so they cannot author cards and there is no
@@ -577,7 +579,7 @@ struct BoardView: View {
     private var noMatches: some View {
         VStack(spacing: 6) {
             Text("no cards match")
-                .font(Theme.mono(13, weight: .medium))
+                .font(Theme.prose(15, weight: .semibold))
                 .foregroundStyle(Theme.phosphor)
             Text(CardToken.parse(state.query) != nil
                  ? "that card is no longer on the board."
@@ -728,11 +730,9 @@ struct BoardView: View {
                     .rotationEffect(.degrees(folded ? -90 : 0))
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
-                Text("[ \(column.title.uppercased()) ] "
-                     + "\(displayedCount)")
-                    .font(Theme.mono(12))
-                    .tracking(0.96)
-                    .foregroundStyle(Theme.phosphor)
+                Text("\(column.title)  \(displayedCount)")
+                    .font(Theme.prose(11, weight: .semibold))
+                    .foregroundStyle(Theme.text)
                     .accessibilityHidden(true)
                 Spacer()
             }
@@ -741,10 +741,15 @@ struct BoardView: View {
             // difference between these two piles — and it is on the board
             // rather than in a tooltip because the person asking it is
             // looking at the board.
-            Text("// \(column.caption)")
-                .font(Theme.mono(10))
-                .foregroundStyle(Theme.faint)
+            Text(column.caption)
+                .font(Theme.prose(10))
+                .foregroundStyle(Theme.muted)
             if !folded { projectControl(column) }
+            // A selecting row keeps its batch control when folded: the
+            // ticks survive the fold, so the count and CANCEL must too.
+            if !folded || state.selectingRow == column {
+                rowBatchControl(column)
+            }
             if column == .done && !folded && doneCount > 0
                 && board.hasSafeDoneClearToken {
                 clearDoneControl(scope: doneScope)
@@ -793,6 +798,46 @@ struct BoardView: View {
             return true
         } isTargeted: { hovering in
             state.noteHover(.heading(column), hovering: hovering)
+        }
+    }
+
+    /// The row's select mode — SELECT, then REFINE n TOGETHER / CANCEL — for
+    /// the rows `RowSelection` gives a verb (Prep, here). Drawn while that
+    /// row is selecting, and otherwise only where Dark Army may start
+    /// sessions and the row shows at least two cards that could be ticked:
+    /// absent, never inert. Another row's select mode hides this one's
+    /// SELECT, so one selection is ever on screen.
+    @ViewBuilder
+    private func rowBatchControl(_ column: BoardColumn) -> some View {
+        let chrome = feed.chrome
+        let selecting = state.selectingRow == column
+        if RowSelection.verb(column, count: 0).isEmpty {
+            EmptyView()
+        } else if selecting || (state.selectingRow == nil
+                                && chrome.dispatchEnabled
+                                && RowSelection.offersSelect(
+                                    column, cards: visible.cards(column),
+                                    chrome: chrome)) {
+            RowBatchControl(
+                column: column,
+                count: state.rowSelection.count,
+                selecting: selecting,
+                refusal: state.rowBatchRefusal,
+                onSelect: { state.enterRowSelection(column) },
+                onCancel: { state.exitRowSelection() },
+                onFire: {
+                    // Backlog arms first and fires on the second press — a
+                    // batch Start opens a terminal, the single START's
+                    // argument; Prep's Refine fires at once, as its tile's
+                    // Refine does.
+                    if column == .backlog {
+                        state.pressStartSelected(board: board, client: client)
+                    } else {
+                        state.refineSelected(board: board, client: client)
+                    }
+                },
+                armed: column == .backlog && state.rowBatchArmed)
+            .padding(.top, 4)
         }
     }
 
@@ -953,7 +998,7 @@ struct BoardView: View {
                     } label: {
                         Text("Clear all done items")
                     }
-                    .buttonStyle(AlarmOutline())
+                    .buttonStyle(AlarmOutline(color: Theme.danger))
                     .clickable()
 
                 case .firstConfirmation:
@@ -967,7 +1012,7 @@ struct BoardView: View {
                         Button("Confirm clear all") {
                             state.advanceClearDone(currentScope: scope)
                         }
-                        .buttonStyle(AlarmOutline())
+                        .buttonStyle(AlarmOutline(color: Theme.danger))
                         .clickable()
                         Button("Keep done items") { state.cancelClearDone() }
                             .buttonStyle(.plain)
@@ -987,7 +1032,7 @@ struct BoardView: View {
                         Button("Clear all \(scope.count) now") {
                             clearAllDone(currentScope: scope)
                         }
-                        .buttonStyle(AlarmOutline())
+                        .buttonStyle(AlarmOutline(color: Theme.danger))
                         .clickable()
                         Button("Keep done items") { state.cancelClearDone() }
                             .buttonStyle(.plain)

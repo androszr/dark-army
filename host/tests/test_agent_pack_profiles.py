@@ -214,11 +214,22 @@ def test_install_and_resync_reach_your_profile(project):
                                   "areas": ["backbone"]})
     ok, detail, _ = pack_install.install_pack(folder, "python-cli", "pc", "tool")
     assert ok, detail
-    assert "pytest -q" in (root / "docs/context.md").read_text()
     context = root / "docs/context.md"
-    context.write_text(context.read_text().replace("pytest -q", "gone"))
-    pack_install.resync_all()
     assert "pytest -q" in context.read_text()
+    # An untouched context follows the profile: your edit to the profile
+    # reaches it on the next resync.
+    manifest = mine / "python-cli" / "profile.json"
+    manifest.write_text(json.dumps({"gates": [["test_gate", "pytest -q -x"]],
+                                    "areas": ["backbone"]}), encoding="utf-8")
+    stamp = manifest.stat().st_mtime_ns + 1_000_000_000
+    os.utime(manifest, ns=(stamp, stamp))
+    pack_install.resync_all()
+    assert "pytest -q -x" in context.read_text()
+    # A context the project filled in is the project's: a resync keeps it.
+    context.write_text(context.read_text().replace("pytest -q -x", "make test"))
+    pack_install.resync_all()
+    assert "make test" in context.read_text()
+    assert "pytest -q -x" not in context.read_text()
 
 
 # --- 3. area briefs: project-neutral, chosen by the profile ---------------

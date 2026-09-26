@@ -47,6 +47,10 @@ DOCS = (
     "docs/reference.md", "SECURITY.md",
     "docs/cli-permission-modes.md",
     "docs/2026-09-23-codex-permission-hold-verification.md",
+    # Card dependencies' long-form contract, 24 Sep 2026.
+    "docs/card-dependencies.md",
+    # The harness token policy, 25 Sep 2026: every loop it maps cites a path.
+    "docs/harness-token-policy.md",
 )
 
 # Scan the *raw* text rather than backtick pairs. A naive `` `([^`]+)` ``

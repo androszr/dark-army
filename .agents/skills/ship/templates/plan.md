@@ -13,8 +13,12 @@
   `bc-planner`.>
 - **Area:** <slug>
 <!-- Area: backbone | desk | pocket | ledger | play | conductor | gate | universal. Choose the area served by the work; a lead grants no permission. -->
+- **Card:** <id — only when the prompt gave one; omit the line otherwise>
+<!-- Card: the board card id a batch refinement handed this plan (`Card id:`); Dark Army reads it to attach the plan to that card. -->
 - **From report:** <path, or omit the line>
 <!-- From report: the research report this plan is built on, when the card or idea names one; the planner reads it first. -->
+- **Depends on:** <exact titles or ids of cards in this project that must finish first, or omit the line>
+<!-- Depends on: only when the idea names an order; exact titles read off /api/state/pretty, never guessed, separated by ` | `. Linked at attach; Start then waits for them. -->
 - **Who benefits:** <who this work is for, one short line>
 - **Intended benefit:** <what good it should do for them, one to three sentences on one line>
 - **Success criterion:** <one observable sentence a person could check to know it worked>

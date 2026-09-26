@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import re
 
-from . import cast
+from . import cast, inbox_ack
 
 #: The kind words a live card may wear, most urgent first. A subset of
 #: `alerts.KINDS` / `relay_client.PUSH_KINDS` minus the two that have no
@@ -215,6 +215,78 @@ def listed_sessions(snapshot: dict, prompts: dict, notified=None) -> set[str]:
     listed = {sid for sid in live
               if sid in waiting_ids or sid in prompted or sid in notified_ids}
     return listed | (prompted - present)
+
+
+def shown_sessions(snapshot: dict, prompts: dict, notified=None,
+                   cards=None, acks=None) -> set[str]:
+    """`listed_sessions` less the sessions the person dismissed — the ones
+    the phone's Needs you list still shows once its acks are applied.
+
+    The phone's `PhoneInbox.items(from:)` removes every entry whose
+    ``(target.key, wire.name, fingerprint)`` matches an ack **first**, then
+    runs `oneEntryPerSubject`, which only de-duplicates: it picks which
+    entry stands for a session and never hides one. So a listed session
+    stays shown while its own entry is not dismissed, or while a board card
+    naming it (``session_id``) has an entry that is not. Each entry is
+    judged by `inbox_ack.session_kind_and_fp` / `card_kind_and_fp`, the
+    functions the Dismiss verb and Bearings use, with ``waiting=True`` —
+    every listed row's fallback wire on the phone is ``waiting``, whatever
+    admitted it — and the question read off `inbox_ack.question_list`. A
+    listed session with no row is an orphan prompt, never dismissable. A
+    card only *keeps* a session `listed_sessions` admitted; it never adds
+    one.
+
+    The buzz gate reads this (`docs/transport-contract.md`, *A buzz names
+    only what the phone lists*). `waiters` / `subject` deliberately do not:
+    the Live Activity's accepted drift (`docs/phone-contract.md`).
+    """
+    snapshot = snapshot or {}
+    prompts = prompts or {}
+    listed = listed_sessions(snapshot, prompts, notified)
+    triples = inbox_ack.ack_set(acks)
+    if not triples or not listed:
+        return listed
+    rows: dict[str, dict] = {}
+    order = list(LIVE_BUCKETS) + [bucket for bucket in snapshot
+                                  if bucket not in LIVE_BUCKETS]
+    for bucket in order:
+        bucket_rows = snapshot.get(bucket)
+        for row in bucket_rows if isinstance(bucket_rows, list) else ():
+            if isinstance(row, dict):
+                sid = str(row.get("session_id") or "")
+                if sid and sid not in rows:
+                    rows[sid] = row
+    kept: set[str] = set()
+    seen_cards: set[str] = set()
+    for card in cards or ():
+        if not isinstance(card, dict):
+            continue
+        # `cardItems`: a card with no id is no entry; the first of an id wins.
+        cid = str(card.get("id") or "")
+        if not cid or cid in seen_cards:
+            continue
+        seen_cards.add(cid)
+        sid = str(card.get("session_id") or "")
+        kind_fp = inbox_ack.card_kind_and_fp(card)
+        if not sid or kind_fp is None:
+            continue
+        if ("c:" + cid, kind_fp[0], kind_fp[1]) not in triples:
+            kept.add(sid)
+    shown: set[str] = set()
+    for sid in listed:
+        row = rows.get(sid)
+        if row is None or sid in kept:
+            shown.add(sid)
+            continue
+        kind_fp = inbox_ack.session_kind_and_fp(
+            permission=bool(prompts.get(sid)),
+            questions=inbox_ack.question_list(row), waiting=True)
+        # A permission ask is never dismissable (`inbox_ack.NEVER_KINDS`;
+        # `ack_inbox` refuses it), so no row on disk may hide one.
+        if kind_fp is None or kind_fp[0] in inbox_ack.NEVER_KINDS \
+                or ("s:" + sid, kind_fp[0], kind_fp[1]) not in triples:
+            shown.add(sid)
+    return shown
 
 
 def waiters(snapshot: dict, prompts: dict, notified=None,
@@ -462,6 +534,6 @@ def figures_only_change(a: dict | None, b: dict | None) -> bool:
 
 __all__ = ["KINDS", "LIVE_BUCKETS", "FACE_KEYS", "COUNT_KEYS", "FIGURE_KEYS",
            "STATE_KEYS", "SHAPES", "SINCE_TOLERANCE_SECONDS",
-           "listed_sessions", "waiters", "subject", "carded_sessions", "content_state", "same",
+           "listed_sessions", "shown_sessions", "waiters", "subject", "carded_sessions", "content_state", "same",
            "title_key", "is_up", "empty_face", "fleet_state",
            "figures_only_change"]

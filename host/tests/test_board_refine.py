@@ -16,6 +16,8 @@ import time
 import pytest
 
 from dark_army_daemon import attachments, board_workflow, dispatch
+from dark_army_daemon import board as board_mod
+from dark_army_daemon import daemon_board
 from dark_army_daemon.board import BoardStore
 from dark_army_daemon.daemon import BobDaemon
 
@@ -403,6 +405,19 @@ def test_bind_window_expiry_clears_the_refine_state(daemon):
     assert got["refine_state"] == ""
     assert got["column_name"] == "prep"
     assert "refinement session never appeared" in got["dispatch_error"]
+
+
+def test_a_codex_refinement_give_up_names_the_trust_question(daemon):
+    d, store = daemon
+    card = _make(store, tool="codex")
+    started = time.time() - dispatch.DISPATCH_BIND_WINDOW - 5
+    store.update(card["id"], {"refine_state": "dispatching",
+                              "dispatched_at": started})
+    assert d._bind_refining_card(store.get(card["id"]), {"running": []},
+                                 time.time())
+    error = store.get(card["id"])["dispatch_error"]
+    assert "Codex may be asking to trust this folder" in error
+    assert error.endswith("press Refine again")
 
 
 def test_reconcile_marks_a_vanished_refinement_ended(daemon):
@@ -1223,3 +1238,477 @@ async def test_refine_with_an_empty_objective_is_argv_unchanged(daemon,
     ok, detail = await d.refine_card(card["id"])
     assert ok, detail
     assert spawns[0]["argv"] == ["/bin/claude", dispatch.refine_prompt(card)]
+
+
+# --- refine_cards: several Prep cards, one planning session --------------------
+#
+# `plans/2026-09-25-batch-refine-prep-cards.md`. One press hands one session an
+# ordered list of cards; each is written exactly as a single Refine writes its
+# one, plus a shared `batch_id` / `batch_rank`, and each attaches its own plan
+# by the plan file's `- **Card:**` header.
+
+
+def _batch(store, n=3, **kw):
+    return [_make(store, title=f"card {k}", summary=f"thing {k}", **kw)
+            for k in range(1, n + 1)]
+
+
+def _record_events(d, monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        d, "_log_card_event",
+        lambda card, kind, session_id="", **detail: events.append(
+            (card.get("id"), kind, detail)))
+    return events
+
+
+@pytest.mark.asyncio
+async def test_refine_cards_spawns_one_session_and_marks_every_card(
+        daemon, monkeypatch):
+    """(success criterion — "one session opens") Three Prep cards, one press:
+    one spawn whose prompt is the batch form with a block per card, and all
+    three cards `dispatching` under one shared batch mark."""
+    d, store = daemon
+    cards = _batch(store)
+    spawns = []
+    _arm_spawn(d, monkeypatch, spawns)
+    events = _record_events(d, monkeypatch)
+    ok, detail = await d.refine_cards([c["id"] for c in cards])
+    assert ok, detail
+    assert len(spawns) == 1
+    assert spawns[0]["name"] == "refine: 3 cards"
+    prompt = spawns[0]["argv"][-1]
+    assert prompt.startswith("/ship batch:")
+    for k, card in enumerate(cards, start=1):
+        assert f"## Card {k} of 3 — {card['title']}" in prompt
+        assert f"Card id: {card['id']}" in prompt
+    got = [store.get(c["id"]) for c in cards]
+    assert {g["refine_state"] for g in got} == {"dispatching"}
+    marks = {g["batch_id"] for g in got}
+    assert len(marks) == 1 and "" not in marks
+    assert [g["batch_rank"] for g in got] == ["1", "2", "3"]
+    assert all(g["column_name"] == "prep" and g["session_id"] == ""
+               for g in got)
+    dispatched = [e for e in events if e[1] == "card_dispatched"]
+    assert sorted(e[0] for e in dispatched) == sorted(c["id"] for c in cards)
+    assert all(e[2]["batch"] == 3 and e[2]["phase"] == "refinement"
+               for e in dispatched)
+
+
+@pytest.mark.asyncio
+async def test_refine_cards_refuses_fewer_than_two_and_more_than_the_cap(
+        daemon, monkeypatch):
+    d, store = daemon
+    spawns = []
+    _arm_spawn(d, monkeypatch, spawns)
+    one = _make(store)
+    ok, detail = await d.refine_cards([one["id"]])
+    assert not ok and detail == daemon_board.BATCH_TOO_FEW_REFUSAL
+    # The same card twice is still one card.
+    ok, detail = await d.refine_cards([one["id"], one["id"], " "])
+    assert not ok and detail == daemon_board.BATCH_TOO_FEW_REFUSAL
+    many = _batch(store, n=board_mod.MAX_BATCH_CARDS + 1)
+    ok, detail = await d.refine_cards([c["id"] for c in many])
+    assert not ok
+    assert detail == daemon_board.BATCH_TOO_MANY_REFUSAL.format(
+        limit=board_mod.MAX_BATCH_CARDS)
+    assert spawns == []
+    assert all(store.get(c["id"])["refine_state"] == "" for c in many)
+
+
+@pytest.mark.asyncio
+async def test_refine_cards_refuses_mixed_roots_and_mixed_tools_in_words(
+        daemon, monkeypatch, tmp_path):
+    d, store = daemon
+    spawns = []
+    _arm_spawn(d, monkeypatch, spawns)
+    first = _make(store, title="here")
+    elsewhere = _make(store, title="over there", root=str(tmp_path))
+    ok, detail = await d.refine_cards([first["id"], elsewhere["id"]])
+    assert not ok
+    assert detail == daemon_board.BATCH_MIXED_ROOT_REFUSAL.format(
+        title="over there")
+    grok = _make(store, title="the grok one", tool="grok")
+    ok, detail = await d.refine_cards([first["id"], grok["id"]])
+    assert not ok
+    assert detail == daemon_board.BATCH_MIXED_TOOL_REFUSAL.format(
+        title="the grok one")
+    assert spawns == []
+
+
+@pytest.mark.asyncio
+async def test_refine_cards_refuses_when_one_card_is_already_refining_or_planned(
+        daemon, monkeypatch, tmp_path):
+    """The first card that could not be refined alone refuses the whole
+    press, naming that card — and nothing is written to the others."""
+    d, store = daemon
+    spawns = []
+    _arm_spawn(d, monkeypatch, spawns)
+    cards = _batch(store)
+    store.update(cards[1]["id"], {"refine_session_id": "someone",
+                                  "refine_state": "live"})
+    ok, detail = await d.refine_cards([c["id"] for c in cards])
+    assert not ok
+    assert detail == "card 2: this card is already being refined"
+    for c in (cards[0], cards[2]):
+        got = store.get(c["id"])
+        assert got["refine_state"] == "" and got["dispatched_at"] is None
+        assert got["batch_id"] == ""
+
+    root, plan = _project(tmp_path)
+    fresh = _batch(store, n=2)
+    planned = _make(store, title="planned")
+    assert store.attach_plan(planned["id"], str(plan), "")[0] is not None
+    ok, detail = await d.refine_cards([fresh[0]["id"], planned["id"],
+                                       fresh[1]["id"]])
+    assert not ok
+    assert detail.startswith("planned: ")
+    assert all(store.get(c["id"])["refine_state"] == "" for c in fresh)
+    assert spawns == []
+
+
+@pytest.mark.asyncio
+async def test_refine_cards_refuses_a_member_naming_a_finished_plan(
+        daemon, monkeypatch):
+    d, store = daemon
+    spawns = []
+    _arm_spawn(d, monkeypatch, spawns)
+    plain = _make(store, title="plain")
+    named = _make(store, title="already planned",
+                  prompt="Plan: plans/2026-09-25-x.md\n\nimplement it")
+    ok, detail = await d.refine_cards([plain["id"], named["id"]])
+    assert not ok
+    assert detail == daemon_board.BATCH_NAMED_PLAN_REFUSAL.format(
+        title="already planned")
+    assert spawns == []
+
+
+@pytest.mark.asyncio
+async def test_batch_in_flight_counts_once(daemon, monkeypatch, tmp_path):
+    """Three cards marked `dispatching` by one press are one launch: the
+    machine-wide bound (2) is not spent by a single terminal, so a card of
+    another project may still refine, and a card of the same project is
+    refused only by the per-project rule."""
+    d, store = daemon
+    _arm_spawn(d, monkeypatch)
+    cards = _batch(store)
+    ok, detail = await d.refine_cards([c["id"] for c in cards])
+    assert ok, detail
+    in_flight = d._launch_inflight(store.cards())
+    assert len(in_flight) == 1
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    roots = {"/private/tmp", "/tmp", os.path.realpath(str(other_root))}
+    other = _make(store, title="elsewhere", project="other",
+                  root=str(other_root))
+    ok, detail = dispatch.refine_guard(
+        store.get(other["id"]), roots=roots, in_flight=in_flight,
+        now=time.time())
+    assert ok, detail
+    same = _make(store, title="same project")
+    ok, detail = dispatch.refine_guard(
+        store.get(same["id"]), roots=roots, in_flight=in_flight,
+        now=time.time())
+    assert not ok
+    assert detail == dispatch.PROJECT_BUSY_REFUSAL
+    # And a board with no batch is counted exactly as before.
+    for c in cards:
+        store.update(c["id"], {"batch_id": "", "batch_rank": ""})
+    assert len(d._launch_inflight(store.cards())) == 3
+
+
+@pytest.mark.asyncio
+async def test_every_batch_card_binds_to_the_one_session(daemon, monkeypatch):
+    d, store = daemon
+    d._run_figures_drifted = lambda: False
+    _arm_spawn(d, monkeypatch)
+    cards = _batch(store)
+    ok, detail = await d.refine_cards([c["id"] for c in cards])
+    assert ok, detail
+    now = time.time()
+    snapshot = {"running": [
+        {"session_id": "the-planner", "provider": "claude",
+         "kind": "interactive", "project": "bob", "cwd": "/tmp",
+         "started_at": now + 1},
+    ], "waiting": [], "sleeping": [], "finished": []}
+    assert d._reconcile_board(snapshot)
+    got = [store.get(c["id"]) for c in cards]
+    assert {g["refine_session_id"] for g in got} == {"the-planner"}
+    assert {g["refine_state"] for g in got} == {"live"}
+    assert all(g["column_name"] == "prep" for g in got)
+
+
+def _batch_project(tmp_path, cards, header=True):
+    root = tmp_path / "proj"
+    (root / "plans").mkdir(parents=True, exist_ok=True)
+    plans = []
+    for k, card in enumerate(cards, start=1):
+        plan = root / "plans" / f"plan-{k}.md"
+        lines = ["# a plan", ""]
+        if header:
+            lines.append(f"- **Card:** {card['id']}")
+        lines.append("- **Stages:** bc-implementer | bc-verifier")
+        plan.write_text("\n".join(lines) + "\n")
+        plans.append(plan)
+    return root, plans
+
+
+def _bound_batch(store, root, n=3, sid="planner-1", token="b0a7c4f1e2d3c4b5"):
+    cards = _batch(store, n=n, root=str(root))
+    for k, card in enumerate(cards, start=1):
+        store.update(card["id"], {"refine_session_id": sid,
+                                  "refine_state": "live",
+                                  "batch_id": token,
+                                  "batch_rank": str(k)})
+    return [store.get(c["id"]) for c in cards]
+
+
+@pytest.mark.asyncio
+async def test_attach_with_several_bound_cards_picks_by_the_plan_card_header(
+        daemon, tmp_path):
+    """(success criterion — "the three cards sit in Backlog, each with its own
+    attached plan") One session bound to three cards attaches three plans,
+    each landing on the card its header names, in whatever order."""
+    d, store = daemon
+    root = tmp_path / "proj"
+    root.mkdir()
+    cards = _bound_batch(store, root)
+    _, plans = _batch_project(tmp_path, cards)
+    for k in (1, 0, 2):
+        got, detail = await d.attach_plan_by_session("planner-1", str(plans[k]))
+        assert got is not None, detail
+        assert got["id"] == cards[k]["id"]
+    after = [store.get(c["id"]) for c in cards]
+    assert [a["column_name"] for a in after] == ["backlog"] * 3
+    assert [a["plan_path"] for a in after] == [
+        os.path.realpath(str(p)) for p in plans]
+    assert {a["batch_id"] for a in after} == {""}
+    assert {a["batch_rank"] for a in after} == {""}
+
+
+@pytest.mark.asyncio
+async def test_attach_with_several_bound_cards_and_no_header_fails_closed_listing_them(
+        daemon, tmp_path):
+    d, store = daemon
+    root = tmp_path / "proj"
+    root.mkdir()
+    cards = _bound_batch(store, root, n=2)
+    _, plans = _batch_project(tmp_path, cards, header=False)
+    got, detail = await d.attach_plan_by_session("planner-1", str(plans[0]))
+    assert got is None
+    assert "- **Card:** <id>" in detail
+    for card in cards:
+        assert f"{card['id']} — {card['title']}" in detail
+    assert all(store.get(c["id"])["column_name"] == "prep" for c in cards)
+
+
+@pytest.mark.asyncio
+async def test_attach_header_naming_a_card_outside_the_set_is_refused(
+        daemon, tmp_path):
+    """The header chooses *within* the session's bound set and nowhere else:
+    naming a real card this session was never handed changes nothing."""
+    d, store = daemon
+    root = tmp_path / "proj"
+    root.mkdir()
+    cards = _bound_batch(store, root, n=2)
+    stranger = _make(store, title="not in the batch", root=str(root))
+    _, plans = _batch_project(tmp_path, [stranger])
+    got, detail = await d.attach_plan_by_session("planner-1", str(plans[0]))
+    assert got is None
+    assert "- **Card:** <id>" in detail
+    assert stranger["id"] not in detail
+    assert store.get(stranger["id"])["plan_path"] == ""
+    assert all(store.get(c["id"])["plan_path"] == "" for c in cards)
+
+
+@pytest.mark.asyncio
+async def test_single_card_attach_never_reads_the_header(daemon, tmp_path,
+                                                         monkeypatch):
+    """One bound card is today's ladder exactly: the header is never read,
+    so a header naming another card changes nothing."""
+    d, store = daemon
+    root, plan = _project(tmp_path)
+    card = _make(store, root=str(root))
+    other = _make(store, title="other", root=str(root))
+    plan.write_text(f"# a plan\n\n- **Card:** {other['id']}\n")
+    store.update(card["id"], {"refine_session_id": "planner-1",
+                              "refine_state": "live"})
+
+    def never(_path):
+        raise AssertionError("a single refinement read the Card header")
+
+    monkeypatch.setattr(board_workflow, "read_plan_card", never)
+    got, detail = await d.attach_plan_by_session("planner-1", str(plan))
+    assert got is not None, detail
+    assert got["id"] == card["id"]
+    assert store.get(other["id"])["plan_path"] == ""
+
+
+@pytest.mark.asyncio
+async def test_batch_refinement_ending_planless_leaves_the_note_on_unplanned_cards(
+        daemon, tmp_path):
+    """Two of three attached, then the session leaves for longer than the
+    grace: the third stays in Prep, `ended`, with the note saying its plan
+    never arrived — and a single refinement's `ended` still writes no note."""
+    d, store = daemon
+    d._run_figures_drifted = lambda: False
+    root = tmp_path / "proj"
+    root.mkdir()
+    cards = _bound_batch(store, root)
+    _, plans = _batch_project(tmp_path, cards)
+    for k in (0, 1):
+        got, detail = await d.attach_plan_by_session("planner-1", str(plans[k]))
+        assert got is not None, detail
+    single = _make(store, title="alone")
+    store.update(single["id"], {"refine_session_id": "planner-2",
+                                "refine_state": "live"})
+    empty = {"running": [], "waiting": [], "sleeping": [], "finished": []}
+    d._reconcile_board(empty)                     # starts the absence timers
+    for cid in list(d._refine_missing_since):
+        d._refine_missing_since[cid] -= d.BOARD_SESSION_GRACE + 1
+    assert d._reconcile_board(empty)
+    third = store.get(cards[2]["id"])
+    assert third["column_name"] == "prep"
+    assert third["refine_state"] == "ended"
+    assert third["dispatch_error"] == daemon_board.BATCH_UNPLANNED_NOTE.format(
+        rank="3")
+    assert third["batch_id"] == "" and third["batch_rank"] == ""
+    assert [store.get(c["id"])["column_name"] for c in cards[:2]] == [
+        "backlog", "backlog"]
+    alone = store.get(single["id"])
+    assert alone["refine_state"] == "ended" and alone["dispatch_error"] == ""
+
+
+@pytest.mark.asyncio
+async def test_single_refine_argv_and_update_are_byte_identical(daemon,
+                                                                monkeypatch):
+    """A single Refine after the batch verb landed: the argv is today's
+    `/ship <summary>` prompt and the store update carries today's three
+    keys and no batch mark."""
+    d, store = daemon
+    card = _make(store)
+    spawns = []
+    _arm_spawn(d, monkeypatch, spawns)
+    updates = []
+    real_update = store.update
+
+    def recording_update(card_id, fields, *a, **kw):
+        updates.append((card_id, dict(fields)))
+        return real_update(card_id, fields, *a, **kw)
+
+    monkeypatch.setattr(store, "update", recording_update)
+    ok, detail = await d.refine_card(card["id"])
+    assert ok, detail
+    assert spawns == [{"root": "/tmp", "argv": [
+        "/bin/claude", "/ship make the thing work\n\nTitle: do the thing"
+        "\n\nInstructions:\ngo"], "name": "refine: do the thing"}]
+    mine = [f for cid, f in updates if cid == card["id"]]
+    assert len(mine) == 1
+    assert set(mine[0]) == {"refine_state", "dispatched_at", "dispatch_error"}
+    assert mine[0]["refine_state"] == "dispatching"
+    assert mine[0]["dispatch_error"] == ""
+    got = store.get(card["id"])
+    assert got["batch_id"] == "" and got["batch_rank"] == ""
+
+
+def _record_closes(d, monkeypatch):
+    closed = []
+
+    async def close(sid, *a, **kw):
+        closed.append(sid)
+        return True, "closed"
+
+    monkeypatch.setattr(d, "_close_session_terminal", close)
+    return closed
+
+
+@pytest.mark.asyncio
+async def test_deleting_one_batch_card_keeps_the_shared_planning_terminal(
+        daemon, tmp_path, monkeypatch):
+    """One session plans every card of a batch: deleting one card cancels
+    that card, not the others' interviews. The terminal closes only when the
+    last card still being refined goes — and a single refinement's delete
+    still closes it at once."""
+    d, store = daemon
+    closed = _record_closes(d, monkeypatch)
+    root = tmp_path / "proj"
+    root.mkdir()
+    cards = _bound_batch(store, root)
+    for card in (cards[2], cards[1]):
+        ok, detail = await d.delete_card(card["id"])
+        assert ok, detail
+        assert closed == []
+    ok, detail = await d.delete_card(cards[0]["id"])
+    assert ok, detail
+    assert closed == ["planner-1"]
+
+    single = _make(store, title="alone")
+    store.update(single["id"], {"refine_session_id": "planner-2",
+                                "refine_state": "live"})
+    ok, detail = await d.delete_card(single["id"])
+    assert ok, detail
+    assert closed == ["planner-1", "planner-2"]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_whose_siblings_are_planned_closes_on_the_last_delete(
+        daemon, tmp_path, monkeypatch):
+    """An attached sibling keeps `refine_session_id` as a record but no
+    longer needs the terminal, so it does not hold it open."""
+    d, store = daemon
+    closed = _record_closes(d, monkeypatch)
+    root = tmp_path / "proj"
+    root.mkdir()
+    cards = _bound_batch(store, root)
+    _, plans = _batch_project(tmp_path, cards)
+    for k in (0, 1):
+        got, detail = await d.attach_plan_by_session("planner-1", str(plans[k]))
+        assert got is not None, detail
+    ok, detail = await d.delete_card(cards[2]["id"])
+    assert ok, detail
+    assert closed == ["planner-1"]
+
+
+@pytest.mark.asyncio
+async def test_the_last_batch_card_left_still_reads_the_card_header(
+        daemon, tmp_path):
+    """With one batch card left, a plan whose header names another card —
+    one that was reset out of the batch — is refused, not landed on the
+    survivor for good; the survivor's own plan then attaches."""
+    d, store = daemon
+    root = tmp_path / "proj"
+    root.mkdir()
+    cards = _bound_batch(store, root)
+    _, plans = _batch_project(tmp_path, cards)
+    got, detail = await d.attach_plan_by_session("planner-1", str(plans[0]))
+    assert got is not None, detail
+    got, detail = await d.reset_card(cards[1]["id"])
+    assert got is not None, detail
+    got, detail = await d.attach_plan_by_session("planner-1", str(plans[1]))
+    assert got is None
+    assert "- **Card:** <id>" in detail
+    assert f"{cards[2]['id']} — {cards[2]['title']}" in detail
+    third = store.get(cards[2]["id"])
+    assert third["column_name"] == "prep" and third["plan_path"] == ""
+    assert store.get(cards[1]["id"])["plan_path"] == ""
+    got, detail = await d.attach_plan_by_session("planner-1", str(plans[2]))
+    assert got is not None, detail
+    assert got["id"] == cards[2]["id"]
+    assert got["plan_path"] == os.path.realpath(str(plans[2]))
+
+
+@pytest.mark.asyncio
+async def test_the_last_batch_card_left_takes_a_plan_with_no_header(
+        daemon, tmp_path):
+    d, store = daemon
+    root = tmp_path / "proj"
+    root.mkdir()
+    cards = _bound_batch(store, root, n=2)
+    _, plans = _batch_project(tmp_path, cards)
+    got, detail = await d.attach_plan_by_session("planner-1", str(plans[0]))
+    assert got is not None, detail
+    bare = root / "plans" / "bare.md"
+    bare.write_text("# a plan\n\n- **Stages:** bc-implementer\n")
+    got, detail = await d.attach_plan_by_session("planner-1", str(bare))
+    assert got is not None, detail
+    assert got["id"] == cards[1]["id"]

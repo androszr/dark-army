@@ -17,7 +17,7 @@ UNIVERSAL = "universal"
 AREAS: tuple[Area, ...] = (
     Area('backbone', 'Backbone', 'services, data & transport', ('relay', 'hex', 'forge')),
     Area('desk', 'Desk', 'the Mac window & menu bar', ('vex', 'zosia')),
-    Area('pocket', 'Pocket', 'phones & widgets', ('mira', 'ptyś')),
+    Area('pocket', 'Pocket', 'phones & widgets', ('mira', 'ptys')),
     Area('ledger', 'Ledger', 'numbers that must be right', ('audit', 'ledger')),
     Area('play', 'Play', 'worlds, art & feel', ('franio', 'quiet')),
     Area('conductor', 'Conductor', 'agents, prompts & LLM features', ('velvet', 'canon')),

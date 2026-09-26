@@ -400,7 +400,9 @@ or do (mirror the plan's `## What this does` register), then report:
 - outstanding MANUAL items as a **numbered checklist somebody can follow** —
   what to open, what to press, what they should see ("1. Open the menu bar with
   three sessions running. 2. Expect the strip to still fit inside its budget.")
-  — each ending in its one-line `Why not automated:`
+  — each ending in its one-line `Why not automated:`, and the absolute path of
+  the check file that holds them (`manual-check/<YYYY-MM-DD>-<slug>/check.md`,
+  Phase 7b)
 - any WARN or NOTE the integration or security reviewer left — one plain
   sentence each, and any baseline files left untouched
 - follow-ups filed as Prep cards, by title; those that could not be filed
@@ -427,8 +429,9 @@ pipeline (no hooks, no SessionStart hint) produces the standard report:
 **Unchecked:** <numbered steps a person can follow — open this, press that,
   expect this — then one line beginning "Why not automated:"; or exactly
   "Nothing - every check above ran.">
-**Card:** <"Moved to Done: <one-sentence note>" or "Left open: <why, naming
-  the unchecked items>" — reflecting Phase 7b's outcome below>
+**Card:** <"Moved to Done: <one-sentence note>", plus " — check: <absolute
+  path of the check file>" when one was left, or "Left open: <why>" when the
+  run stopped short — reflecting Phase 7b's outcome below>
 ```
 
 The four labelled lines always appear in that order; an empty section says so
@@ -437,14 +440,18 @@ whole report stays under ~25 lines; and the message carries no `bob-tldr` and
 no `bob-actions` marker — a completion report is the end of the work, not a
 wait.
 
-### Phase 7b: close the card, if and only if everything was checked
+### Phase 7b: close the card once every check ran or is written down as a check file
 
 A freshly initialized Codex board MCP can expose `dark_army_close_card`; it changes
-only the bound card, not the terminal. After all gates and reviews pass with no
-outstanding manual work, call it when available and report its actual success
-or refusal. Never claim Done from a report, silence or session exit. When
-`dark_army_needs_manual_check` is unavailable (including Codex), leave the card open,
-list the exact unchecked steps and `Why not automated:` in `## Work done`, and
+only the bound card, not the terminal. After all gates and reviews pass — with
+no outstanding manual work, or with every leftover check written down as a check
+file — call it when available and report its actual success or refusal; a
+check that is written down is checked as far as this run can take it, and no
+longer holds the card back (below). Never claim Done
+from a report, silence or session exit. When
+`dark_army_needs_manual_check` is unavailable (an older session, or Codex), still
+write the check file and close the card, list the exact unchecked steps and
+`Why not automated:` in `## Work done`, and
 do not claim a manual flag was written. When close is absent or refused, name
 the missing tool or returned reason on `**Card:**`. Tool lists last for the
 session lifetime; a newly installed tool needs a new session, not retries.
@@ -466,7 +473,8 @@ Reviewed, and nobody has to drag it across on trust.
 
 **Only when every one of these holds:**
 
-- Phase 6f returned `PASS` — **not `PASS-WITH-MANUAL`**
+- Phase 6f returned `PASS`, or `PASS-WITH-MANUAL` with every MANUAL item on
+  disk as a check file that passes the checker (below)
 - Phase 6.7 returned `SHIP`, or Phase 6.6 explicitly skipped it on the fast
   lane with no judgment floor requiring that review
 - no integration or security reviewer returned `BLOCK`
@@ -476,26 +484,51 @@ A finding marked `In scope: no` — filed or listed — never blocks the close; 
 `ESCALATE` row awaiting the person's answer does, because the run ended on that
 question.
 
-`PASS-WITH-MANUAL` explicitly does not qualify, and this is the whole point of
-the gate rather than a technicality: an outstanding MANUAL item is by definition
-something nobody has verified, and closing a card on checks that have not been
-run is exactly the failure this verb is shaped to avoid. In that case say
-plainly that the card is left in progress for the manual items, and leave it
-there.
+**A leftover check is a file, and then the card closes.** Every MANUAL item
+that survived "try once more to kill it" is written, before any board call, as
+`manual-check/<YYYY-MM-DD>-<slug>/check.md` at the project root — one folder per
+check, git-ignored, anything gathered beside the file — in exactly this shape:
+
+```
+# <what is being checked, as a title>
+
+- **Card:** <the card's title, as the prompt gave it>
+- **Project:** <the project's name>
+- **Check:** <what is being checked, one line>
+- **Created:** <ISO 8601 with time and offset, e.g. 2026-09-25T14:32:00+02:00>
+- **Status:** open
+- **Outcome:** none
+- **Checked at:** none
+
+## Steps
+
+1. <one action per line: what to open, what to press, what they should see>
+
+## Why not automated
+
+<one line at least>
+```
+
+Run `python3 .claude/skills/ship/manual_check.py <the file>` until it prints
+`ok`. The run's checks share one file unless they are genuinely separate. Then,
+in this order: `dark_army_needs_manual_check` with the same numbered steps and
+the `Why not automated:` line as `steps` and the file's absolute path as
+`path`; **then** `dark_army_close_card`. The card goes to Done wearing a
+manual-check badge; the check waits in the Checks section of both apps, open,
+until a person records **Passed** or **Failed**, which Dark Army writes into
+the file's `Status`, `Outcome` and `Checked at` lines — those three are Dark
+Army's to rewrite, never the agent's after the flag. The `**Card:**` line reads
+`Moved to Done: <note> — check: <absolute path of the file>`.
+
+A MANUAL item that is only a sentence in the terminal does not qualify: what
+nobody has verified must be somewhere a person will find it, which is the file,
+the badge and the Checks section — not the last message of a terminal.
 
 **The `## Work done` report prints either way.** The gate decides what the
 `**Card:**` line *says*, never whether the report appears: on a close it reads
-"Moved to Done:" with the note; when the card is left open it reads
-"Left open:" and names the outstanding MANUAL items verbatim, so what nobody
-checked is on screen in the terminal and not only in the transcript.
-
-**When the card is left open for a MANUAL item, flag it.** If the tool
-`dark_army_needs_manual_check` is available, call it with those same numbered steps
-and the `Why not automated:` line. The card stays where it is, wearing a
-**Manual check needed** badge with the steps inside it, so the fact that it is
-waiting on a person is visible on the board rather than only in the last message
-of a terminal. A person clears it with **Mark checked**. Call this **instead of**
-`dark_army_close_card`, never as well as it.
+"Moved to Done:" with the note and the check file's path; when the run stopped
+short it reads "Left open:" and says why, so what nobody checked is on screen
+in the terminal and not only in the transcript.
 
 Either tool may simply not exist — a session that was already open when Dark Army was
 upgraded keeps the tool list it was given at startup. Report the missing tool and leave the card alone.
@@ -523,3 +556,34 @@ There is **no CI runner for macOS**; everything is built locally.
 
 Prefer several small conventional commits with real reasoning in the message over
 one blob — the history is bisectable and the *why* is what a future reader needs.
+
+## Batch: several cards in one session
+
+Entered when the prompt's first line begins `/ship batch: implement` — Dark
+Army's START n TOGETHER on several planned Backlog cards. The prompt lists
+`## Card k of n — <title>` blocks, each with a `Card id:` and a `Plan:`
+line. Dark Army binds this session to one card at a time: card 1 at the
+start, each next card when you call `dark_army_next_card`. For each card, in
+order, one at a time:
+
+1. `SCRATCH=<run scratch>/card-<k>`, then Phase 6 → 7b on that card's plan
+   **exactly as a single run**: its own `gate.sh snapshot` baseline (so card
+   k's work is pre-existing to card k+1's review), its own six-dispatch
+   ledger, lane, panel and check file.
+2. Print that card's `## Work done` **first** — Dark Army records it as
+   that card's report when you move on — then close as Phase 7b says:
+   `dark_army_needs_manual_check` where a check is left, **then**
+   `dark_army_close_card`, then `dark_army_next_card`. Never flag after the
+   next call: it would land on the next card.
+3. A run that stops short (a spent budget answered `stop`, `hand back`, a
+   missing role, an `ESCALATE` answered `stop`) prints its report with
+   `**Card:** Left open: …`, leaves that card unclosed and still calls
+   `dark_army_next_card`; Dark Army leaves it as ended work for a person. A
+   card you left stays left: never close it later.
+4. Run `close-out.sh` bare with that card's scratch. Never start card
+   k+1's implementer before card k's close or next call.
+
+`dark_army_next_card` answers with the next card's title and plan, or says
+the batch is finished; refused right after the start, wait a few seconds and
+retry once. Never commit, push, install or release. End with one summary
+naming every card and the column it actually landed in.

@@ -237,6 +237,12 @@ class CodexRecord:
     # or scout run waiting on nobody. Reset by the next real user prompt.
     # Private to the category read; never published on a row or snapshot.
     left_open: bool = False
+    # The pending question came from `request_user_input_async`: Codex keeps
+    # it queued after the turn ends and takes the person's next ordinary
+    # message as the answer (a real user reply releases it below). Private;
+    # it widens only the reply route (`stopped_turn(awaiting_answer=True)`),
+    # never close authority, and is never published on a row or snapshot.
+    question_async: bool = False
     metrics: dict = field(default_factory=dict)
     limit_bars: list[dict] = field(default_factory=list)
     stats: SessionStats = field(default_factory=SessionStats)
@@ -661,6 +667,7 @@ def parse_rollout(path: Path) -> Optional[CodexRecord]:
         return None
     record.journal_complete = journal_complete
     record.left_open = left_open
+    record.question_async = bool(question_async and (stats.question or stats.questions))
     stats.tool_counts = dict(tools)
     record.cwd = stats.cwd or record.cwd
     record.model = stats.model or ""
@@ -1486,17 +1493,31 @@ def has_unsettled_path_children(record, children):
     return False
 
 
-def stopped_turn(record):
-    """Affirmative native completion, never silence or an old terminal event."""
+def question_blocks(record, awaiting_answer):
+    """A pending question blocks, except a queued async one when answering it."""
+    if not (record.stats.question or record.stats.questions):
+        return False
+    return not (awaiting_answer and record.question_async)
+
+
+def stopped_turn(record, *, awaiting_answer=False):
+    """Affirmative native completion, never silence or an old terminal event.
+
+    `awaiting_answer` is the reply route's reading alone: a completed turn
+    whose only pending question is a queued `request_user_input_async` still
+    counts as stopped, because the person's next message is that question's
+    native answer. Close authority never passes it.
+    """
     return bool(record.journal_complete and record.turn_observed and record.turn_id
                 and not record.turn_active and record.turn_started_at > 0
                 and math.isfinite(record.turn_started_at) and math.isfinite(record.turn_completed_at)
                 and record.turn_completed_id == record.turn_id
                 and record.turn_completed_at >= record.turn_started_at
-                and not record.stats.question and not record.stats.questions)
+                and not question_blocks(record, awaiting_answer))
 
 
-def refinement_close_observation(roots, root, journal, turn_id, children=(), *, require_stopped=False):
+def refinement_close_observation(roots, root, journal, turn_id, children=(), *, require_stopped=False,
+                                 awaiting_answer=False):
     """Fresh exact-holder facts; a receipt, not this proof, grants close authority.
 
     Parsing again also catches a newer turn/question before the next roster tick.
@@ -1537,8 +1558,8 @@ def refinement_close_observation(roots, root, journal, turn_id, children=(), *, 
         return None
     record = parse_rollout(root.path)
     if (record is None or project_title_roots((record,)) != (root,)
-            or (require_stopped and not stopped_turn(record))
-            or record.turn_id != turn_id or record.stats.question or record.stats.questions
+            or (require_stopped and not stopped_turn(record, awaiting_answer=awaiting_answer))
+            or record.turn_id != turn_id or question_blocks(record, awaiting_answer)
             or has_unsettled_path_children(record, parsed_children)
             or any(a.activity not in ("completed", "shutdown", "errored")
                    and aid not in finished_children

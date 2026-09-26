@@ -80,7 +80,7 @@ art-only Overwatch. `crew.ROLES` keeps the seven canonical stage names alone.
 |---|---|
 | Backbone | Relay, Hex, Forge |
 | Desk | Vex, Zosia |
-| Pocket | Mira, Ptyś |
+| Pocket | Mira, Ptys |
 | Ledger | Audit, Ledger |
 | Play | Franio, Quiet |
 | Conductor | Velvet, Canon |

@@ -555,7 +555,11 @@ class Notifier:
             # (`<sid>:<rule>:<n>`) and would have to be split on a character
             # session ids are not guaranteed to lack.
             content.setUserInfo_({"session_id": session})
-            content.setSound_(self._ns["UNNotificationSound"].defaultSound())
+            # A finished run is news, not a summons: its banner arrives
+            # silently (`alerts.REPORT_RULE`, and the older tldr-plus-report
+            # card of the same kind). Every other kind keeps the sound.
+            if alert.get("kind") != "finished":
+                content.setSound_(self._ns["UNNotificationSound"].defaultSound())
             self._attach_avatar(content, alert)
             request = self._ns["UNNotificationRequest"] \
                 .requestWithIdentifier_content_trigger_(

@@ -43,8 +43,8 @@ phone's board — and always on the conservative fallback
 investigation ending in a report, never code. Its Prep primary is START
 because it has no plan to refine; `_plan_gate_refusal` returns `""` on a
 scout as its first rung, so Start from Prep is not asked "this card has no
-plan yet". `dispatch.start_prompt` returns `scout_prompt` (`/ship scout
-<idea>`) before the `plan_path` branch. The running scout attaches its
+plan yet". `dispatch.start_prompt` returns `scout_prompt` (`/scout <idea>`,
+the scout skill; `/ship scout` is its alias) before the `plan_path` branch. The running scout attaches its
 report through `dark_army_attach_report` → `attach_report_by_session` →
 `BoardStore.attach_report` (WHERE-guarded, the card stays In progress) and
 closes with `dark_army_close_card`. `scout_prompt` leads with the summary, or
@@ -54,7 +54,24 @@ the title (minus `Scout:`) when the summary is under
 21 Sep 2026, `promote_supported`) creates a Prep build card whose `prompt`
 leads with `From report: <path>` and dispatches nothing; refused in words
 without a report, outside Done, or twice. Both clients draw the report as
-a `REPORT` section, the phone off the sealed read's `report`.
+a `REPORT` section, the phone off the sealed read's `report`. **The report
+has one home and one shape** (`.claude/skills/scout/references/scout.md`):
+`scout/<YYYY-MM-DD>-<slug>/report.md` in the git-ignored `scout/` folder,
+an answer block of `- **Key:** value` lines, then five headings, parsed and
+checked by `scout_report` (`host/dark_army_daemon/scout_report.py`, byte
+copies `.claude/skills/scout/scout_check.py` here and in the pack); the
+attach refuses a report under `scout/` that fails the check
+(`REPORT_MALFORMED_REFUSAL`) and stores the absolute realpath, and Promote
+reads the block on the executor — title from the first follow-up, summary
+the verdict — composing exactly as before when there is none
+(`docs/channel-tools.md`). The attach also records the answer block's
+`verdict` and `recommendation` on the card — `report_verdict` /
+`report_recommendation` (v28, `attach_report`'s ring), read once at the
+attach on the executor, replaced by a re-attach, empty for a report with no
+block — drawn through `ScoutVerdictLine` on the tile, the card window and the
+phone's card screen; the Reports list still reads the file. Every report also lists in the Mac's Reports tab
+and the phone's Scouting tile on the Menu; the index and the body read are
+`docs/transport-contract.md`'s.
 
 **A card may hold a standing instruction to take the second path by itself.**
 `start_when_planned` (v17, ring 1, `''` off / `'1'` on, normalised at both
@@ -76,6 +93,33 @@ refinement's own is still closing. `start_when_planned_supported` on
 `_pipeline_writable()` is the version marker (an older Mac draws the tick
 **absent** rather than 400ing inside `_board_named_fields`). Not spelled
 `auto_start`: `board_autostart` is the queue drain's own switch.
+
+**Several Prep cards may be refined by one press** (25 Sep 2026):
+`board_refine_batch` (on both phone tuples behind `refine_batch_supported`;
+the phone's Prep select mode is `docs/phone-contract.md`'s) → `refine_cards` runs every Refine
+guard per card, then one spawn with a `/ship batch:` prompt. Each card is
+marked `dispatching` with a shared `batch_id` / `batch_rank` (v27, ring 2,
+the pair the batch-implement sibling reuses beside `link_state`), which
+`_launch_inflight` counts as one launch; all bind to the one session. Each
+attaches by its plan's `- **Card:**` header, and a member left planless
+ends with `BATCH_UNPLANNED_NOTE`. The session's spend is recorded on every
+card of the batch, and its origin stamp names the first card. Long form:
+`docs/channel-tools.md`.
+
+**Several Backlog cards may be built by one press** (25 Sep 2026):
+`board_start_batch` (on both phone tuples behind `start_batch_supported`; the phone's Backlog select mode is `docs/phone-contract.md`'s) → `start_cards` runs every Start rung
+per card, skips and names a failure, refuses a full project, and spawns one
+`/ship batch: implement` session bound to the first card; the rest wait in
+Backlog with `batch_id` / `batch_rank` and refuse a single Start. The
+session binds **one card at a time** — one claim, not re-bought, so a
+person's Start may land between two members — and moves on with
+`dark_army_next_card`, leaving an unclosed card `ended`. A session that
+ends, a bind that expires, or a reset of the current card sends the
+unreached members back with `BATCH_LEFT_NOTE`. Only the batch's owning
+session (its lowest-ranked bound card, `_batch_owner`) can walk or release
+it, and a marked card outside Backlog is refused a single Start until Leave
+batch. Cost, trail and fix rounds are session-wide. Long form:
+`docs/channel-tools.md`.
 
 **How many agents may work at once in one project is a number you set, per
 project.** The machine-wide `board_parallel` (default **1**) is the default;
@@ -174,8 +218,7 @@ re-derives none of this — what a queued card waits on arrives as
 
 The gate lives inside `_dispatch_card_locked` — one function, both gestures —
 after the plan gate and *before* `dispatch.guard`. **A queued card does not
-move.** (`blocked_by` is retired: kept in the store, out of `_BOARD_FIELDS`,
-gates nothing.) The drain
+move.** (`blocked_by`: `docs/card-dependencies.md`.) The drain
 (`_decide_queue_dispatches` on the executor, `_flush_queue_dispatches` on the
 loop) takes one card per project per pass: transient refusals **hold**,
 every other refusal **dequeues** with its words in `dispatch_error` — except
@@ -216,6 +259,9 @@ own UPDATE rather than through `update()`). The third door is `close_session_ter
 (**the press is the person's review**: `reviewed_at` is stamped at once, so
 their own close never wears FINISHED · REVIEW; a flagged manual check stays);
 its guard is `by_person`, stated under **And a way to finish reading** below.
+**A card with an open manual check goes to Done** (25 Sep 2026): the check
+is a file under `manual-check/`, the flag names it (`manual_check_path`)
+and the close follows; `docs/channel-tools.md` has the order.
 It inherits `close_card_by_session`'s three exclusions: a refining session is
 invisible to `by_session`; the Done-arrival hook is unreachable, so this
 cannot chase `_wrap_up_for_done`; a card already in Done is a no-op. Codex is **not** excluded here — this writes a
@@ -240,7 +286,7 @@ never from the prior conversation.
 | Field | Complete when | Written by | Reaches Refine | Reaches Start |
 |---|---|---|---|---|
 | `title` | names the change in words, not a stub | a person, Prepare's `TITLE:`, `dark_army_add_card` | yes (`Title:` line, or the `/ship` line with no summary) | scout only (`Title:` line) |
-| `summary` | plain words, not the title repeated | a person, Prepare's `SUMMARY:`, `dark_army_add_card` | yes (the `/ship` line) | scout only (the `/ship scout` line or `Brief:`) |
+| `summary` | plain words, not the title repeated | a person, Prepare's `SUMMARY:`, `dark_army_add_card` | yes (the `/ship` line) | scout only (the `/scout` line or `Brief:`) |
 | `prompt` | the instructions; on an unplanned build card they stand alone, because its title and summary never reach Start | a person, Prepare's `INSTRUCTIONS:`, `dark_army_add_card` (`notes`) | yes (`Instructions:`) | the whole prompt when unplanned; `Instructions:` on a scout; the plan line instead when planned |
 | `tool` | one of `claude`, `codex`, `grok` | the composer's picker, a person, `dark_army_add_card` | chooses the assistant | chooses the assistant |
 | `project` | the label of the project `root` names | the composer's picker, Prepare's `FOLDER:`; the daemon from the calling session for an agent-filed card | no | no |
@@ -298,7 +344,7 @@ real columns and to what the prompt builders send.
   `check_same_thread=False` behind a `threading.Lock`, WAL capped at
   `WAL_SIZE_LIMIT_BYTES` (8 MiB, `journal_size_limit`, so the coalesce
   `VACUUM` leaves no 177 MB `-wal` behind), `busy_timeout=5000`, an idempotent `_SCHEMA`, `_ADDED_COLUMNS` and a
-  forward-only `SCHEMA_VERSION` (25; the retired `initiatives` columns
+  forward-only `SCHEMA_VERSION` (29; the retired `initiatives` columns
   are emptied, never dropped — **there is no folder concept on the board
   now**). Four columns:
   `prep` / `backlog` / `in_progress` / `done` (the SQL column is
@@ -319,6 +365,7 @@ real columns and to what the prompt builders send.
   | `agent_trail` | `BobDaemon._record_card_stages` alone | a surface that could write it could claim a stage happened that never did |
   | `closed_by`, `close_note` | `declare_done` alone | it could otherwise paint a hand-dragged card with a verifier's signature |
   | `manual_steps` | `flag_manual` alone (set) / `clear_manual` alone (empty) | a surface that could set it could hang a chore on a card nobody flagged |
+  | `manual_check_path` | `flag_manual` alone (v26) | a surface that could set it could point a card's check at a file nobody wrote |
   | `project` (following a folder rename) | `relabel_root` alone | a rename is Dark Army observing, not a person's edit: one statement over every card of the root, never an `update()` per card |
 
   The single-writer verbs share `declare_done`'s shape — the guard riding
@@ -560,7 +607,7 @@ real columns and to what the prompt builders send.
   once it has `MIN_BASELINE_RUNS` (5) of them (`TYPICAL_RATIO` 1.5 ×,
   `LARGE_RATIO` 3 × the medians of turns and tokens) and against
   `DEFAULT_TYPICAL` / `DEFAULT_LARGE` before that; `attention` is a
-  worrying class, a context at `CTX_WORRY_PCT` (90) or `FIX_ROUNDS_WORRY`
+  worrying class, a context at `CTX_WORRY_PCT` (85) or `FIX_ROUNDS_WORRY`
   (3) fix rounds, and the word is always drawn first — colour is never the
   only signal. **The figures are quantised before the dict is built**
   (`quantise_turns` exact to 20 then floored to 5, `quantise_tokens_k` two
@@ -728,6 +775,12 @@ real columns and to what the prompt builders send.
   which, and the terminal is left alone. Recovery from a dead link is
   `board_reset`: `session_id` and `link_state` are absent from
   `ApiServer._BOARD_FIELDS`.
+
+  **A Codex or Grok card that times out names the likely cause**
+  (`dispatch.first_run_hint`): the tool's own *Trust this folder?* screen,
+  which Codex 0.156 shows before any session exists in a folder it has not
+  seen, whatever the approval mode. Dark Army neither answers nor pre-empts
+  it; the person answers it in the terminal and presses Start or Refine again.
 
   Deliberately **not** passed: `--no-session-persistence`,
   `--setting-sources ""`, `--strict-mcp-config`, and

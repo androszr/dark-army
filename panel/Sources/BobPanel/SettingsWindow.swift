@@ -163,6 +163,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // hand as well as from `windowWillClose`, because `close()` posts that
         // only for a window that is actually on screen.
         actions.cancelShortcutRecording()
+        actions.state.designSystemOpen = false
         guard let window else { return }
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.close()
@@ -184,6 +185,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: System.Notification) {
         _ = notification
         actions.cancelShortcutRecording()
+        // The workshop sheet belongs to this opening: the next one starts
+        // on the settings themselves (review, 25 Sep 2026).
+        actions.state.designSystemOpen = false
         onOcclusionChange?()
     }
 

@@ -35,6 +35,8 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 - (optional) `objective` — the card's `Objective:` block: `Who benefits:`,
   `Intended benefit:`, `Success criterion:` in the person's own words. Read
   it, never rewrite it.
+- (optional) `card_id` — the board card this plan is for, given only in a
+  batch refinement (`/ship batch:`); copy it exactly, never guess one
 - (iterate only) `feedback` — what to change
 
 ## Method
@@ -65,6 +67,9 @@ tools: Read, Write, Edit, Glob, Grep, Bash
    otherwise from the idea and the answers in the person's own words. Dark Army
    copies them onto the card's empty objective boxes when the plan is
    attached, so never leave the template's placeholders or `NONE` there.
+   Write `- **Card:** <id>` when `card_id` was given, otherwise omit the
+   line: in a batch it is how Dark Army attaches the plan to the right card,
+   and a wrong id lands the plan on the wrong card for good.
 4. Return `PLAN: <absolute path>` and a 5-line abstract, **written in the same
    plain register as the plain-language zone** — it is the first thing the user
    reads, before they open the file. Nothing else.

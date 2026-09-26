@@ -353,6 +353,21 @@ def test_animate_icon_passes_the_rungs_brand_set():
     assert kwargs["show_todo"] is settled.todo is True
 
 
+def test_a_three_digit_todo_count_keeps_all_three_usage_clusters():
+    """The widest everyday reading fits at the top rung. Measured, not assumed:
+    at 300pt a hundred cards came to 300.2pt and the ladder dropped Codex for a
+    fifth of a point, because the third digit is 8pt wide."""
+    from dark_army_menubar.app import STRIP_BUDGET_PT
+
+    instance, _button = _strip_instance()
+    instance._todo_cache = {}
+    _three_limits(instance)
+    instance._todo_count = 100
+    width = instance._render_strip([("work", "2", ""), ("attn", "1", "")],
+                                   measure=True)
+    assert width <= STRIP_BUDGET_PT
+
+
 def test_a_suppressed_brand_draws_no_divider():
     """One leading gap, hairlines only *between* survivors, and never one
     dangling at either end. Counted rather than judged, because the brand loop

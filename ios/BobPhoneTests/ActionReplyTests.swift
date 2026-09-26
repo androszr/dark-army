@@ -36,6 +36,20 @@ final class ActionReplyTests: XCTestCase {
         XCTAssertEqual(answer.revision, 9)
     }
 
+    /// The Mac's report on a success is the only word START n TOGETHER and
+    /// START PROJECT draw; blanking it left the phone saying nothing.
+    func testATwoHundredKeepsTheMacsReport() {
+        let answer = result(#"{"ok": true, "detail": "Started 4 cards (1 skipped)."}"#, 200)
+        XCTAssertTrue(answer.ok)
+        XCTAssertEqual(answer.detail, "Started 4 cards (1 skipped).")
+    }
+
+    func testAnErrorKeyOnATwoHundredIsNotAReport() {
+        let answer = result(#"{"error": "stray"}"#, 200)
+        XCTAssertTrue(answer.ok)
+        XCTAssertEqual(answer.detail, "")
+    }
+
     func testANonJSONBodyYieldsAnEmptyDetailRatherThanThrowing() {
         let answer = result("<html>nope</html>", 500)
         XCTAssertFalse(answer.ok)

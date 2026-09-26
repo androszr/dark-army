@@ -290,6 +290,10 @@ def _offered_for(root: str) -> list[str]:
     return [str(item) for item in (row.get("gitignore_offered") or [])]
 
 
+def _digests_for(root: str) -> dict:
+    return pack_ledger.digests_of(pack_ledger.entry(root))
+
+
 def _offer_gitignore(folder: str, lines: list[str],
                      offered: list[str]) -> tuple[list[str], str]:
     """Append the starter ignore lines the project lacks and was never offered.
@@ -444,14 +448,62 @@ def _write_render(
     mapping: dict[str, bytes],
     *,
     owned: list[str],
+    digests: Optional[dict] = None,
 ) -> tuple[int, list[str], str]:
-    """Write ``mapping`` into ``root``. Returns (wrote, new_owned, note)."""
+    """Write ``mapping`` into ``root``. Returns (wrote, new_owned, note).
+
+    ``digests`` is the ledger row's ``pack_digests`` (key -> the managed
+    region the pack last wrote there), updated in place for every
+    `pack_render.PROJECT_FILLED_KEYS` file the pack still owns.
+    """
     executables = pack_render.executable_keys(mapping)
     wrote = 0
     note = ""
     new_owned = list(owned)
+    if digests is None:
+        digests = {}
     for key, data in mapping.items():
         payload = data
+        if key in pack_render.PROJECT_FILLED_KEYS:
+            dest = _destination(root, key)
+            existing = b""
+            if dest is not None and dest.is_file():
+                try:
+                    existing = dest.read_bytes()
+                except OSError:
+                    # Unreadable is not "absent": writing over a file we
+                    # could not look at is the clobber this rule prevents.
+                    continue
+            fresh = pack_render.managed_digest(pack_render.splice(b"", data))
+            current = pack_render.managed_digest(existing)
+            if current and current != fresh and current != digests.get(key):
+                # The project filled the template in. Its answers stand.
+                continue
+            # Absent, or hand-written with no markers yet (the region goes
+            # above the project's text, which `splice` keeps), or still the
+            # bytes the pack last wrote: the pack writes, and owns, it.
+            digests[key] = fresh
+            if _write_one(root, key, pack_render.splice(existing, data),
+                          _FILE_MODE):
+                wrote += 1
+            continue
+        if pack_render.project_adapted(key):
+            dest = _destination(root, key)
+            if dest is None:
+                continue
+            fresh = pack_render.file_digest(data)
+            if dest.exists():
+                try:
+                    current = pack_render.file_digest(dest.read_bytes())
+                except OSError:
+                    # Unreadable is not "absent" (the context rule above).
+                    continue
+                if current != fresh and current != digests.get(key):
+                    # The project adapted it, or it predates the ledger's
+                    # record and differs: the project's copy stands.
+                    logger.info("agent pack kept the project's own %s", key)
+                    continue
+            digests[key] = fresh
         if key in SEED_ONCE_KEYS:
             # First branch, above the splice and settings forks: seeding is a
             # decision about whether to write at all, and it must not be
@@ -571,10 +623,11 @@ def install_pack(
             return False, "that project is no longer syncing", []
         owned = _owned_for(folder)
         offered = _offered_for(folder)
+        digests = _digests_for(folder)
         ignore_note = ""
         try:
             wrote, new_owned, note = _write_render(
-                folder, mapping, owned=owned)
+                folder, mapping, owned=owned, digests=digests)
             if not note:
                 _unlink_strays(folder, mapping)
                 _unlink_stale_leads(folder, mapping, source)
@@ -591,7 +644,8 @@ def install_pack(
         last = note or _with_note("ok", ignore_note)
         pack_ledger.update(
             folder, settings_allow_owned=new_owned,
-            gitignore_offered=offered, last_result=last)
+            gitignore_offered=offered, pack_digests=digests,
+            last_result=last)
         return ok, detail, new_owned
     finally:
         _end_write(folder)
@@ -772,8 +826,10 @@ def _resync_one(root: str, raw: dict, source: Path, models=None) -> None:
             return
         owned = [str(item) for item in (live.get("settings_allow_owned") or [])]
         offered = [str(item) for item in (live.get("gitignore_offered") or [])]
+        digests = pack_ledger.digests_of(live)
         ignore_note = ""
-        _wrote, new_owned, note = _write_render(folder, mapping, owned=owned)
+        _wrote, new_owned, note = _write_render(
+            folder, mapping, owned=owned, digests=digests)
         if pack_ledger.entry(root) is None:
             return
         if not note:
@@ -788,6 +844,7 @@ def _resync_one(root: str, raw: dict, source: Path, models=None) -> None:
             root,
             settings_allow_owned=new_owned,
             gitignore_offered=offered,
+            pack_digests=digests,
             last_result=note or _with_note("ok", ignore_note),
         )
     finally:

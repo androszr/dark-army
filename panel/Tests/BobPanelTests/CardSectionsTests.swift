@@ -139,7 +139,28 @@ final class CardSectionsTests: XCTestCase {
         XCTAssertEqual(CardSections.leads(for: .manualCheck), [.manualCheck])
         XCTAssertEqual(CardSections.leads(for: .ended), [.report])
         XCTAssertEqual(CardSections.leads(for: .done), [.closeSignature, .report])
-        XCTAssertEqual(CardSections.pinned, [.status, .verbs, .queue])
+        XCTAssertEqual(CardSections.pinned, [.status, .verbs, .queue, .dependencies])
+    }
+
+    /// WAITS ON (24 Sep 2026) is in every order exactly once, right after
+    /// QUEUED and before MORE, pinned so it is never behind a chevron, and
+    /// its closed-row tail is the number of cards it waits on.
+    func testTheDependenciesSectionFollowsTheQueueEverywhere() {
+        XCTAssertEqual(CardSections.Section.dependencies.rawValue, "WAITS ON")
+        for stage in CardSections.Stage.allCases {
+            let order = CardSections.order(for: stage)
+            XCTAssertEqual(order.filter { $0 == .dependencies }.count, 1, "\(stage)")
+            let queue = order.firstIndex(of: .queue)!
+            XCTAssertEqual(order.firstIndex(of: .dependencies), queue + 1, "\(stage)")
+            XCTAssertLessThan(order.firstIndex(of: .dependencies)!,
+                              order.firstIndex(of: .more)!, "\(stage)")
+            XCTAssertFalse(CardSections.hidden(for: stage).contains(.dependencies))
+            XCTAssertTrue(CardSections.isOpen(.dependencies, stage: stage, opened: []))
+        }
+        var f = CardSections.Facts()
+        XCTAssertEqual(CardSections.rowText(.dependencies, facts: f), "WAITS ON")
+        f.dependencies = 2
+        XCTAssertEqual(CardSections.rowText(.dependencies, facts: f), "WAITS ON · 2")
     }
 
     /// REPORT is in every order — a scout may sit in any column — leads
@@ -165,12 +186,14 @@ final class CardSectionsTests: XCTestCase {
     }
 
     /// A card waiting on a check opens with the status line, then the check
-    /// itself, then the next action, then the queue line, then MORE, with
+    /// itself, then the next action, then the queue line and what it waits
+    /// on, then MORE, with
     /// the work record the first row behind it — and Delete last.
     func testTheManualCheckOrderLeadsWithTheCheck() {
         let order = CardSections.order(for: .manualCheck)
-        XCTAssertEqual(Array(order.prefix(6)),
-                       [.status, .manualCheck, .verbs, .queue, .more, .workRecord])
+        XCTAssertEqual(Array(order.prefix(7)),
+                       [.status, .manualCheck, .verbs, .queue, .dependencies, .more,
+                        .workRecord])
         XCTAssertEqual(order.last, .danger)
     }
 

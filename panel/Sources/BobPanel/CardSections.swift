@@ -8,7 +8,7 @@ import Foundation
 /// done" and "what to check" under the instructions, the plan and the session
 /// box. This is the one rule both card screens read instead: for each of the
 /// six stages a card can be in, the full order of its sections, the set that
-/// opens by default, the three that are never behind a chevron, the one
+/// opens by default, the four that are never behind a chevron, the one
 /// MORE row everything else sits behind, the one next action the card leads
 /// with, and the closed-row tail (`"WHAT CHANGED · 4 files"`) composed from
 /// facts the card already carries.
@@ -56,6 +56,11 @@ enum CardSections {
         /// lines). Drawn on every scout: the report once it is attached,
         /// and a line saying the scout is still out until then.
         case report = "REPORT"
+        /// The cards this one waits on, whether each is done, and the cards
+        /// it unblocks (added 24 Sep 2026, after REPORT so the earlier labels
+        /// keep their lines). Pinned beside QUEUED, because a card held by a
+        /// dependency says so in the queued line and the reason sits here.
+        case dependencies = "WAITS ON"
     }
 
     /// Where the card is in its life. Four columns, with In progress split
@@ -95,49 +100,52 @@ enum CardSections {
 
     /// Drawn open wherever they appear, with no chevron: a chevron is a
     /// promise that something is behind it, and these are never hidden.
-    static let pinned: Set<Section> = [.status, .verbs, .queue]
+    /// WAITS ON is pinned beside QUEUED and, like it, draws nothing on a
+    /// card with nothing to say.
+    static let pinned: Set<Section> = [.status, .verbs, .queue, .dependencies]
 
-    /// The full order per stage: the pinned three and the stage's lead
+    /// The full order per stage: the pinned four and the stage's lead
     /// first, then MORE, then everything MORE hides, Delete always last.
     /// QUEUED is in every order because a queued card does not move — a
     /// Prep card pressed Start waits in Prep — and it draws nothing unless
-    /// the card is queued. `.more` appears exactly once in every order and
+    /// the card is queued. WAITS ON follows QUEUED in every order for the
+    /// same reason. `.more` appears exactly once in every order and
     /// everything after it is behind that one row until it is pressed.
     static func order(for stage: Stage) -> [Section] {
         switch stage {
         case .prep:
-            return [.status, .verbs, .queue, .more, .report, .editor, .objective,
+            return [.status, .verbs, .queue, .dependencies, .more, .report, .editor, .objective,
                     .instructions, .crew, .otherVerbs, .collaboration, .timeline,
                     .attachments, .documents, .thread, .danger]
         case .backlog:
-            return [.status, .verbs, .queue, .more, .plan, .report, .editor,
+            return [.status, .verbs, .queue, .dependencies, .more, .plan, .report, .editor,
                     .objective, .instructions, .crew, .otherVerbs, .collaboration,
                     .timeline, .documents, .attachments, .thread, .danger]
         case .running:
-            return [.status, .verbs, .queue, .more, .report, .session, .thread,
+            return [.status, .verbs, .queue, .dependencies, .more, .report, .session, .thread,
                     .manualCheck, .workRecord, .plan, .instructions, .editor,
                     .crew, .run, .otherVerbs, .objective, .collaboration,
                     .timeline, .attachments, .documents, .danger]
         case .manualCheck:
-            return [.status, .manualCheck, .verbs, .queue, .more, .workRecord,
+            return [.status, .manualCheck, .verbs, .queue, .dependencies, .more, .workRecord,
                     .report, .run, .plan, .instructions, .editor, .crew, .session,
                     .thread, .otherVerbs, .objective, .collaboration, .timeline,
                     .attachments, .documents, .danger]
         case .ended:
-            return [.status, .report, .verbs, .queue, .more, .workRecord, .run,
+            return [.status, .report, .verbs, .queue, .dependencies, .more, .workRecord, .run,
                     .manualCheck, .closeSignature, .plan, .instructions, .editor,
                     .session, .thread, .crew, .otherVerbs, .objective,
                     .collaboration, .timeline, .attachments,
                     .documents, .danger]
         case .done:
-            return [.status, .closeSignature, .report, .verbs, .queue, .more,
+            return [.status, .closeSignature, .report, .verbs, .queue, .dependencies, .more,
                     .objective, .workRecord, .run, .plan, .instructions, .crew,
                     .session, .thread, .editor, .otherVerbs, .collaboration,
                     .timeline, .attachments, .documents, .danger]
         }
     }
 
-    /// Open by default at this stage; the pinned three are implied. Three
+    /// Open by default at this stage; the pinned four are implied. Three
     /// exceptions to "everything behind MORE", and only three: a card waiting
     /// on your check opens with the check's steps, because the steps are the
     /// next action; a finished card opens with its close note, because
@@ -272,6 +280,8 @@ enum CardSections {
         var documents = 0
         var manualNote = false
         var crewStages = 0
+        /// How many cards this one waits on, for `WAITS ON · 2`.
+        var dependencies = 0
         /// How long the card has existed, already formatted (`"3d 4h"`), so
         /// the closed TIMELINE row reads `TIMELINE · 3d 4h`. `""` unknown.
         var age = ""
@@ -298,6 +308,8 @@ enum CardSections {
         case .attachments: return facts.attachments > 0 ? "\(facts.attachments)" : ""
         case .documents: return facts.documents > 0 ? "\(facts.documents)" : ""
         case .crew: return facts.crewStages > 0 ? "\(facts.crewStages)" : ""
+        case .dependencies:
+            return facts.dependencies > 0 ? "\(facts.dependencies)" : ""
         case .manualCheck: return facts.manualNote ? "note" : ""
         case .timeline: return facts.age
         case .more: return facts.hidden > 0 ? "\(facts.hidden)" : ""

@@ -290,8 +290,10 @@ struct LedgerPane: View {
                             .padding(.bottom, 6)
                     }
                     stage(picture)
-                    dock(picture)
-                        .padding(.top, CGFloat(LedgerWeekLayout.dockGap))
+                    if !opensUnderRow(picture) {
+                        dock(picture)
+                            .padding(.top, CGFloat(LedgerWeekLayout.dockGap))
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 12)
@@ -370,7 +372,7 @@ struct LedgerPane: View {
                     .foregroundStyle(Theme.faint)
             }
             ForEach(cards, id: \.id) { card in
-                wideRow(card, showProject: picture.showProject)
+                wideRow(card, picture)
             }
             if let other = column?.otherLine {
                 Text(other)
@@ -473,7 +475,7 @@ struct LedgerPane: View {
                         .foregroundStyle(Theme.faint)
                 }
                 ForEach(focus.cards, id: \.id) { card in
-                    wideRow(card, showProject: picture.showProject)
+                    wideRow(card, picture)
                 }
             }
         }
@@ -549,7 +551,33 @@ struct LedgerPane: View {
         }
     }
 
-    private func wideRow(_ card: LedgerCardLine, showProject: Bool) -> some View {
+    /// The wide rows (today, and the focused day of a long range) open a
+    /// run's details directly under the row that was clicked; the week's
+    /// narrow tiles keep them in the dock beneath the columns.
+    private func opensUnderRow(_ picture: LedgerPicture) -> Bool {
+        guard case .run = picture.dock, !run.isEmpty else { return false }
+        let rows: [LedgerCardLine]
+        switch picture.mode {
+        case .today: rows = picture.days.first?.cards ?? []
+        case .thin: rows = picture.days.first { $0.day == picture.focusDay }?.cards ?? []
+        case .week: return false
+        }
+        return rows.contains { $0.id == run }
+    }
+
+    private func wideRow(_ card: LedgerCardLine, _ picture: LedgerPicture) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            wideRowButton(card, showProject: picture.showProject)
+            if run == card.id, opensUnderRow(picture) {
+                dock(picture)
+                    .padding(.leading, 54)
+                    .padding(.top, 2)
+                    .padding(.bottom, 6)
+            }
+        }
+    }
+
+    private func wideRowButton(_ card: LedgerCardLine, showProject: Bool) -> some View {
         Button { open(card) } label: {
             HStack(spacing: 8) {
                 Text(card.clock)

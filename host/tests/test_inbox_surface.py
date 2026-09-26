@@ -72,3 +72,20 @@ def test_the_inbox_names_no_wall_clock_of_its_own():
     a `Date()` inside it would be a second, unauditable clock."""
     assert "Date()" not in INBOX
     assert "timeIntervalSince1970" not in INBOX
+
+
+PHONE_INBOX = (ROOT / "ios/BobPhone/Inbox.swift").read_text()
+
+
+def test_the_inbox_reads_the_report_headline_and_parses_nothing():
+    """A stopped agent's detail and an ended card's detail read the daemon's
+    one-line `workReport?.headline`; neither inbox ever looks inside the
+    report text itself (`work_report.py` did that once, on the Mac)."""
+    for name, text in (("panel", INBOX), ("phone", PHONE_INBOX)):
+        for literal in ("## Work done", "lastReport"):
+            assert literal not in text, (name, literal)
+        # As words: `case .startAsked:` is a wire kind, not a report label.
+        for label in ("Asked:", "Unchecked:"):
+            assert not re.search(r"(?<![A-Za-z])" + label, text), (name, label)
+        assert "workReport?.headline" in text, name
+    assert INBOX.count("workReport") >= 2

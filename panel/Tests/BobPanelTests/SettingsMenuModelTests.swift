@@ -124,11 +124,14 @@ final class SettingsMenuModelTests: XCTestCase {
             "Pipeline",
             "Agent models",
             "Close the terminal when a card is done",
+            "Panel size",
             "Dictation",
             "—",
             "Projects",
             "Devices",
             "Security",
+            "—",
+            "Design system",
             "—",
             "Advanced",
             "—",
@@ -141,8 +144,8 @@ final class SettingsMenuModelTests: XCTestCase {
             return nil
         }
         XCTAssertEqual(submenus, [
-            "Notifications", "Pipeline", "Agent models", "Dictation",
-            "Projects", "Devices", "Security", "Advanced",
+            "Notifications", "Pipeline", "Agent models", "Panel size", "Dictation",
+            "Projects", "Devices", "Security", "Design system", "Advanced",
         ])
         let removed = [
             "Agent name on tab",
@@ -205,7 +208,7 @@ final class SettingsMenuModelTests: XCTestCase {
             if case .pick(let action, _, _) = row.kind { return action }
             return nil
         })
-        XCTAssertEqual(pickActions, ["set_board_parallel"])
+        XCTAssertEqual(pickActions, ["set_board_parallel", "set_panel_scale"])
     }
 
     func testTickStatesMirrorSettingsFields() {
@@ -228,7 +231,9 @@ final class SettingsMenuModelTests: XCTestCase {
     /// applies, so the *rows* going is all this pins.
     func testRetiredRowsAreAbsentAndTheirKeysStillDecode() {
         let flat = SettingsMenuModel.flattened(rows())
-        for title in ["Reply by typing (VS Code sessions)", "Panel size",
+        // Panel size came back on 25 Sep 2026 (the four steps were
+        // reachable only by hand-editing the key); it is not retired.
+        for title in ["Reply by typing (VS Code sessions)",
                       "Phone push notifications", "Troubleshooting"] {
             XCTAssertFalse(flat.contains { $0.title == title }, title)
         }

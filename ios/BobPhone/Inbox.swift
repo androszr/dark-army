@@ -37,6 +37,9 @@ enum PhoneInboxWireKind: Int, Hashable {
     case endedWork
     case manualCheck
     case waiting
+    /// Mission Control asked for this card to be started — the Mac's
+    /// `InboxWireKind.startAsked`, last for the same reason.
+    case startAsked
 
     var name: String {
         switch self {
@@ -45,12 +48,13 @@ enum PhoneInboxWireKind: Int, Hashable {
         case .endedWork: return "ended_work"
         case .manualCheck: return "manual_check"
         case .waiting: return "waiting"
+        case .startAsked: return "start_asked"
         }
     }
 
     var kind: PhoneInboxKind {
         switch self {
-        case .permission, .question: return .answer
+        case .permission, .question, .startAsked: return .answer
         case .endedWork, .manualCheck: return .look
         case .waiting: return .stopped
         }
@@ -130,6 +134,8 @@ enum InboxFingerprint {
                          material: questionMaterial(agent?.questionList ?? []))
         case .manualCheck:
             return value(kind: name, material: card?.manualSteps ?? "")
+        case .startAsked:
+            return value(kind: name, material: card?.startAskId ?? "")
         case .permission, .endedWork:
             return value(kind: name, material: "")
         }
@@ -137,6 +143,9 @@ enum InboxFingerprint {
 }
 
 enum PhoneInbox {
+    /// The Mac's `Inbox.startAskedDetail`, word for word.
+    static let startAskedDetail =
+        "Mission Control asks to start this. Open it and press START, or Dismiss."
     static let orphanUnavailable = "Session details are unavailable"
 
     /// Every live decision, one per session subject and one per card.
@@ -334,8 +343,11 @@ enum PhoneInbox {
             } else {
                 wire = .waiting
                 // What the agent last said in one line, where it left one;
-                // the tool it stopped on otherwise — the Mac's rule.
-                detail = agent.lastSummary.isEmpty ? agent.currentTool : agent.lastSummary
+                // its work report's headline (the Mac's line) next; the tool
+                // it stopped on otherwise — the Mac's rule.
+                let headline = agent.workReport?.headline ?? ""
+                detail = !agent.lastSummary.isEmpty ? agent.lastSummary
+                    : !headline.isEmpty ? headline : agent.currentTool
             }
             let name = agent.nickname.isEmpty
                 ? (agent.name.isEmpty ? agent.sessionId : agent.name)
@@ -372,6 +384,20 @@ enum PhoneInbox {
         return out
     }
 
+    /// The work-report headline on the row of `session`, in any bucket, or
+    /// `""` — the Mac's line, read off the row and never re-derived.
+    private static func reportedHeadline(session: String, in snapshot: Snapshot) -> String {
+        guard !session.isEmpty else { return "" }
+        let agents = snapshot.agents
+        for bucket in [agents.running, agents.waiting, agents.sleeping,
+                       agents.finished, agents.abandoned] {
+            if let row = bucket.first(where: { $0.sessionId == session }) {
+                return row.workReport?.headline ?? ""
+            }
+        }
+        return ""
+    }
+
     private static func cardItems(from snapshot: Snapshot) -> [PhoneInboxItem] {
         var seen = Set<String>()
         var out: [PhoneInboxItem] = []
@@ -382,10 +408,17 @@ enum PhoneInbox {
             let detail: String
             if card.needsYou {
                 wire = .endedWork
-                detail = card.summary
+                // What the ended session reported, where its row carries a
+                // report; the card's summary else — the Mac's rule.
+                let reported = reportedHeadline(session: card.sessionId, in: snapshot)
+                detail = reported.isEmpty ? card.summary : reported
             } else if card.manualCheckDue {
                 wire = .manualCheck
                 detail = card.manualSteps
+            } else if !card.startAskId.isEmpty {
+                // Opens the card, where START is the yes; Dismiss is the no.
+                wire = .startAsked
+                detail = PhoneInbox.startAskedDetail
             } else {
                 continue
             }

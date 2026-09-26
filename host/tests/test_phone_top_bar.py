@@ -128,14 +128,14 @@ def test_the_booleans_are_per_tab_not_shared():
 
 def test_every_tab_gets_the_same_chrome():
     content_view = _content_view_segment()
-    for path in ("~/needs", "~/fleet", "~/board", "~/comm", "~/usage"):
+    for path in ("~/needs", "~/fleet", "~/board", "~/menu"):
         assert f'PhoneTabRoot(path: "{path}"' in content_view, path
     app = _read(APP)
     match = re.search(r"enum PhoneTab.*?\n\}", app, re.S)
     assert match, "no enum PhoneTab"
     chunk = match.group(0)
     assert chunk.count("case ") == 1
-    assert "case needs, fleet, board, comm, usage" in chunk
+    assert "case needs, fleet, board, menu" in chunk
 
 
 def test_forget_stops_the_poller_before_clearing_the_record():

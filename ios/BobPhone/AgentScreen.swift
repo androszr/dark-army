@@ -2,24 +2,30 @@ import Foundation
 
 /// The phone's container around `DetailTab`.
 ///
-/// Conversation, Details and Terminal are the phone's own screens. `DetailTab`
-/// stays the Mac-shared rule for the stream and is never a third case here.
+/// Main, Conversation, Details and Terminal are the phone's own screens, in
+/// that order along the top of the agent sheet. Main is the sheet's lead —
+/// the still, who this is, the card and every verb — as one scrolling page;
+/// the others keep only the card's title above them. `DetailTab` stays the
+/// Mac-shared rule for the stream and is never a case here.
 enum AgentScreen: String, CaseIterable {
+    case main = "Main"
     case conversation = "Conversation"
     case details = "Details"
     case terminal = "Terminal"
 
-    /// What a fresh open lands on when the Mac supports the read.
-    static let defaultScreen: AgentScreen = .conversation
+    /// What a fresh open lands on: Main, the first tab.
+    static let defaultScreen: AgentScreen = .main
 
-    /// `.conversation` where the Mac states the marker, else `.details`.
-    static func defaultScreen(supported: Bool) -> AgentScreen {
-        supported ? .conversation : .details
-    }
+    /// Main whatever the Mac serves: it needs no read of its own. The
+    /// argument stays so a caller that once chose by the conversation
+    /// marker still compiles.
+    static func defaultScreen(supported: Bool) -> AgentScreen { .main }
 
-    /// The chips drawn: Conversation and Details always, Terminal when hosted.
+    /// The chips drawn: Main, Conversation and Details always, Terminal
+    /// when hosted.
     static func chips(hosted: Bool) -> [AgentScreen] {
-        hosted ? [.conversation, .details, .terminal] : [.conversation, .details]
+        hosted ? [.main, .conversation, .details, .terminal]
+               : [.main, .conversation, .details]
     }
 
     /// The screen actually drawn. A row without a hosted terminal cannot
@@ -29,7 +35,11 @@ enum AgentScreen: String, CaseIterable {
         return screen
     }
 
-    /// Which stream tab the screen implies. Conversation is not a stream.
+    /// Whether the fixed top keeps only the card's title: every tab but Main,
+    /// whose page is the whole lead.
+    static func titleOnly(_ screen: AgentScreen) -> Bool { screen != .main }
+
+    /// Which stream tab the screen implies. Only Terminal is a stream.
     static func detailTab(_ screen: AgentScreen) -> DetailTab {
         screen == .terminal ? .terminal : .details
     }

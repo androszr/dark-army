@@ -69,7 +69,7 @@ def report(store, card_id=None, root="/project", start=None, end=None, **kw):
 
 
 def test_schema_is_twenty_two():
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 29
     assert "lifecycle_partial" not in m.__dict__
 
 

@@ -93,7 +93,7 @@ a `.navigationTitle` is always a literal. Pinned by
 **Two art trees, one roster.** **Twenty** nickname characters in
 `identity.NAMES` — fourteen Dark Army callsigns (swapped in place on 22 Sep
 2026, so every index kept its position), then `Androll`, `Captcha`,
-`Sawa`, `Franio`, `Zosia`, `Ptyś` **appended** so the first fourteen keep
+`Sawa`, `Franio`, `Zosia`, `Ptys` **appended** so the first fourteen keep
 their hash indices — mirrored in order by `Cast.names`
 in `panel/Sources/BobPanel/Cast.swift` and `ios/BobPhone/Cast.swift`, plus
 `identity.ART_ONLY` / `Cast.artOnly` (`overwatch`, the planner's face, which no
@@ -167,6 +167,15 @@ python tools/vscode_icon_font.py
 
 Front-page pictures are generated too: `tools/demo_shots.py all` (contract in `docs/images/SHOTS.md`); never hand-edit a PNG under `docs/images/`; `docs/images/showcase/` is baked by `tools/showcase_ingest.py` from the git-ignored deck (`docs/images/SHOTS.md`, *The showcase slides*).
 
+## Signal tokens and workshop
+
+`design-system/tokens.json` is the tracked visual source. Run
+`python3 tools/design_system_tokens.py`, then `--check`, to generate and verify
+both clients' Swift tokens and their bundled offline web workshops. The
+source schema, component-edit workflow, import/export behavior and native
+rebuild path are in `docs/design-system.md`. The proposal under
+`assets/proposals/` is design input, never a runtime resource.
+
 ## Delegation
 
 Big reads and boilerplate writes go to a cheap helper through the shunt skill
@@ -180,6 +189,11 @@ This checkout's dial is its `.claude/settings.json` (1200 lines).
 What the helper did is counted, never estimated: `tools/ship_efficiency.py
 shunt --ledgers <dir>` reads the per-session ledgers, and `## Delegation` in
 `docs/ship-efficiency.md` says what was and was not measured.
+
+The three token defaults Dark Army's loops follow — keep tool results over
+about 1,500 tokens out of the conversation, compact at 85%, reuse a
+request's fixed front — and where the compact line is decided are
+`docs/harness-token-policy.md`.
 
 ## Reviewing a change
 

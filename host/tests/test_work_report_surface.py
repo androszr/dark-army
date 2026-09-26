@@ -107,3 +107,104 @@ def test_the_panel_decodes_the_field_and_draws_it_under_the_latest_words():
     assert "agent.lastReport" in pane
     assert "static func reportToShow(" in pane
     assert '"# work done"' in pane
+
+
+# --- the parsed shape beside it (`work_report`) --------------------------------
+
+REPO = Path(__file__).resolve().parents[2]
+PHONE = REPO / "ios" / "BobPhone"
+
+
+@pytest.mark.parametrize("root", [PANEL, PHONE])
+def test_both_models_decode_the_parts_tolerantly(root):
+    models = (root / "Models.swift").read_text(encoding="utf-8")
+    assert 'case workReport = "work_report"' in models
+    # Absent, empty or wrong-typed must decode, never blank the row.
+    assert "workReport = c.maybe(.workReport)" in models
+
+
+@pytest.mark.parametrize("root", [PANEL, PHONE])
+def test_neither_row_puts_the_headline_before_the_title(root):
+    # The headline in front pushed the title off the row's lines, so the row
+    # read "Changed: …" over a detail titled something else (25 Sep 2026).
+    table = (root / "ProcessTable.swift").read_text(encoding="utf-8")
+    assert "WorkReport.rowLead(" not in table
+    assert "cardLine" in table
+
+
+@pytest.fixture
+def daemon(tmp_path, monkeypatch):
+    from dark_army_daemon import codex_rollouts as cr
+    from dark_army_daemon.daemon import BobDaemon
+    d = BobDaemon(headless=True, sessions_path=tmp_path / "sessions.json")
+    monkeypatch.setattr(d, "_refresh_codex_records", lambda: None)
+    monkeypatch.setattr(d, "_refresh_grok_records", lambda: None)
+    monkeypatch.setattr(d, "_session_reachable", lambda sid: False)
+    monkeypatch.setattr(d, "_schedule_agents_push", lambda: None)
+    monkeypatch.setattr(d, "_known_project_roots", lambda: {str(tmp_path)})
+    monkeypatch.setattr(cr, "attach_process_ids", lambda records: None)
+    return d
+
+
+def _codex_record(tmp_path, text):
+    """A Codex rollout ending on `text` — the row seam of
+    `test_codex_session_parity.py`, whose rows reach `_enrich_agent_stubs`
+    without a transcript on disk."""
+    from dark_army_daemon import codex_rollouts as cr
+
+    def row(kind, **payload):
+        return {"timestamp": "2026-09-12T16:52:57Z", "type": kind, "payload": payload}
+
+    path = tmp_path / "2026/09/12" / "rollout-root.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [row("session_meta", id="root", cwd=str(tmp_path), originator="codex-tui",
+                source="cli", thread_source="user"),
+            row("event_msg", type="task_started", turn_id="turn1"),
+            row("response_item", type="message", role="assistant",
+                content=[{"type": "output_text", "text": text}]),
+            row("event_msg", type="task_complete", turn_id="turn1")]
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return cr.parse_rollout(path)
+
+
+def _publish(d, record):
+    d._codex_records = {record.session_id: record}
+    snapshot = d._enrich_agent_stubs(d._collect_agent_stubs())
+    return next(e for entries in snapshot.values() for e in entries
+                if e["session_id"] == record.session_id)
+
+
+def test_the_row_carries_the_parsed_report_beside_the_raw_one(tmp_path, daemon):
+    entry = _publish(daemon, _codex_record(tmp_path, REPORT))
+    assert entry["last_report"].startswith("## Work done")
+    parsed = entry["work_report"]
+    assert parsed["labelled"] is True
+    assert parsed["headline"] == (
+        "Changed: the spawner now follows the preference · 1 verified"
+        " · nothing unchecked")
+    assert parsed["nothing_unchecked"] is True
+
+
+def test_a_row_that_finished_nothing_carries_no_parsed_report(tmp_path, daemon):
+    entry = _publish(daemon, _codex_record(tmp_path, "still working on it"))
+    assert entry["last_report"] == ""
+    assert "work_report" not in entry
+
+
+def test_the_finished_row_keeps_the_parsed_report(tmp_path, daemon):
+    record = _codex_record(tmp_path, REPORT)
+    _publish(daemon, record)
+    daemon._record_finished(record.session_id,
+                            daemon._codex_finished_state(record), "no process")
+    daemon._codex_records = {}
+    snapshot = daemon._enrich_agent_stubs(daemon._collect_agent_stubs())
+    row = next(r for r in snapshot["finished"] if r["session_id"] == record.session_id)
+    assert row["work_report"]["headline"].startswith("Changed:")
+
+
+def test_the_daemons_alert_policy_knows_when_the_daemon_started(tmp_path, daemon):
+    """A restart forgets which reports were announced; the policy seeds a
+    report from before the start as delivered, so it needs the start."""
+    _publish(daemon, _codex_record(tmp_path, REPORT))
+    assert daemon._started_wall > 0
+    assert daemon._alert_policy.started_at == daemon._started_wall

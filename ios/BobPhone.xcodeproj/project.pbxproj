@@ -24,6 +24,15 @@
 		B0B0C0A000000000000001F5 /* OutcomeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B0C0A000000000000001F4 /* OutcomeModels.swift */; };
 		A1B2010B0000000000000002 /* KnowledgeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010B0000000000000001 /* KnowledgeModels.swift */; };
 		A1B2010B0000000000000004 /* KnowledgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010B0000000000000003 /* KnowledgeView.swift */; };
+		A1B20C4D0000000000000006 /* ManualChecksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B20C4D0000000000000005 /* ManualChecksView.swift */; };
+		A1B20C4D0000000000000004 /* ManualCheckModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B20C4D0000000000000003 /* ManualCheckModels.swift */; };
+		A1B20C4D0000000000000002 /* ManualCheckRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B20C4D0000000000000001 /* ManualCheckRules.swift */; };
+		5C0A7E500000000000000002 /* ScoutReports.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0A7E500000000000000001 /* ScoutReports.swift */; };
+		5C0A7E500000000000000004 /* ScoutReportsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0A7E500000000000000003 /* ScoutReportsView.swift */; };
+		5C0A7E500000000000000006 /* ScoutReportReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0A7E500000000000000005 /* ScoutReportReaderView.swift */; };
+		5C0A7E510000000000000002 /* Plans.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0A7E510000000000000001 /* Plans.swift */; };
+		5C0A7E510000000000000004 /* PlansView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0A7E510000000000000003 /* PlansView.swift */; };
+		5C0A7E510000000000000006 /* PlanReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0A7E510000000000000005 /* PlanReaderView.swift */; };
 		A1B2010C0000000000000002 /* AccessLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010C0000000000000001 /* AccessLogView.swift */; };
 		7B0B0E1A0000000000000040 /* BobPhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000030 /* BobPhoneApp.swift */; };
 		7B0B0E1A0000000000000041 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000031 /* Models.swift */; };
@@ -37,6 +46,7 @@
 		7B0B0E1A00000000000001A1 /* AgentChatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001A0 /* AgentChatter.swift */; };
 		7B0B0E1A0000000000000193 /* RecentlyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000192 /* RecentlyView.swift */; };
 		7B0B0E1A0000000000000195 /* PipelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000194 /* PipelineView.swift */; };
+		7B0B0E1A0000000000000901 /* MenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000900 /* MenuView.swift */; };
 		7B0B0E1A0000000000000197 /* CardCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000196 /* CardCache.swift */; };
 		7B0B0E1A0000000000000199 /* Receipts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000198 /* Receipts.swift */; };
 		7B0B0E1A000000000000019B /* WorkRecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000019A /* WorkRecordView.swift */; };
@@ -61,6 +71,9 @@
 		C0F1600E0000000000000002 /* RunFigures.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F1600E0000000000000001 /* RunFigures.swift */; };
 		C0FFEE0C0000000000000004 /* CommView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0C0000000000000003 /* CommView.swift */; };
 		C0FFEE0C0000000000000002 /* CommRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0C0000000000000001 /* CommRules.swift */; };
+		A11E09250000000000000002 /* Motion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E09250000000000000001 /* Motion.swift */; };
+		A11E09250000000000000004 /* Verbs.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E09250000000000000003 /* Verbs.swift */; };
+		57A4E9070000000000000002 /* WorkReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57A4E9070000000000000001 /* WorkReport.swift */; };
 		D0E5A17E0000000000000002 /* RunHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E5A17E0000000000000001 /* RunHealth.swift */; };
 		A1B2010A0000000000000004 /* PhoneInboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010A0000000000000003 /* PhoneInboxTests.swift */; };
 		D5E0510A0000000000000002 /* DemoShotsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E0510A0000000000000001; };
@@ -69,6 +82,10 @@
 		7B0B0E1A0000000000000044 /* FleetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000034 /* FleetView.swift */; };
 		7B0B0E1A0000000000000045 /* BoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000035 /* BoardView.swift */; };
 		7B0B0E1A0000000000000046 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000036 /* Theme.swift */; };
+		A51A1D000000000000000002 /* SignalTokens.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51A1D000000000000000001 /* SignalTokens.generated.swift */; };
+		A51A1D000000000000000005 /* SignalTokens.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51A1D000000000000000001 /* SignalTokens.generated.swift */; };
+		A51A1D000000000000000006 /* SignalTokens.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51A1D000000000000000001 /* SignalTokens.generated.swift */; };
+		A51A1D000000000000000004 /* workshop in Resources */ = {isa = PBXBuildFile; fileRef = A51A1D000000000000000003 /* workshop */; };
 		7B0B0E1A0000000000000047 /* Cast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000037 /* Cast.swift */; };
 		7B0B0E1A0000000000000048 /* ProcessTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000039 /* ProcessTable.swift */; };
 		7B0B0E1A0000000000000049 /* AgentDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000003A /* AgentDetailView.swift */; };
@@ -114,6 +131,8 @@ DEC1510B000000000000002B = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 DEC1510B000000000000002C = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000010B; };
 DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000102; };
 		B0B051EE0000000000000002 /* PhoneSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B051EE0000000000000001; };
+		A65EEAD00000000000000002 /* AgentSheetLead.swift in Sources */ = {isa = PBXBuildFile; fileRef = A65EEAD00000000000000001; };
+		A65EEAD00000000000000004 /* AgentSheetLeadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A65EEAD00000000000000003; };
 		B0B051EE0000000000000004 /* PhoneSheetHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B051EE0000000000000003; };
 		B0B051EE0000000000000006 /* SheetPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B051EE0000000000000005; };
 		E5A5C0DE0000000000000002 /* PreparerBrief.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000001 /* PreparerBrief.swift */; };
@@ -139,6 +158,10 @@ DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 		E5A5C0DE0000000000000504 /* BackgroundGraceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000503 /* BackgroundGraceTests.swift */; };
 		E5A5C0DE0000000000000506 /* BoardSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000505 /* BoardSearch.swift */; };
 		E5A5C0DE0000000000000508 /* BoardSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000507 /* BoardSearchTests.swift */; };
+		BA7C4E1F0000000000000002 /* RowSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7C4E1F0000000000000001 /* RowSelection.swift */; };
+		BA7C4E1F0000000000000004 /* RowSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7C4E1F0000000000000003 /* RowSelectionTests.swift */; };
+		5C0A7E500000000000000008 /* ScoutReportSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0A7E500000000000000007 /* ScoutReportSearchTests.swift */; };
+		5C0A7E510000000000000008 /* PlanSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0A7E510000000000000007 /* PlanSearchTests.swift */; };
 		E5A5C0DE000000000000080E /* SRPTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE000000000000080D /* SRPTests.swift */; };
 		E5A5C0DE0000000000000602 /* NotificationLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000601 /* NotificationLog.swift */; };
 		E5A5C0DE0000000000000604 /* HeldDestination.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000603 /* HeldDestination.swift */; };
@@ -175,6 +198,15 @@ DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 		B0B0C0A000000000000001F4 /* OutcomeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutcomeModels.swift; sourceTree = "<group>"; };
 		A1B2010B0000000000000001 /* KnowledgeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeModels.swift; sourceTree = "<group>"; };
 		A1B2010B0000000000000003 /* KnowledgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeView.swift; sourceTree = "<group>"; };
+		A1B20C4D0000000000000005 /* ManualChecksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualChecksView.swift; sourceTree = "<group>"; };
+		A1B20C4D0000000000000003 /* ManualCheckModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualCheckModels.swift; sourceTree = "<group>"; };
+		A1B20C4D0000000000000001 /* ManualCheckRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualCheckRules.swift; sourceTree = "<group>"; };
+		5C0A7E500000000000000001 /* ScoutReports.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoutReports.swift; sourceTree = "<group>"; };
+		5C0A7E500000000000000003 /* ScoutReportsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoutReportsView.swift; sourceTree = "<group>"; };
+		5C0A7E500000000000000005 /* ScoutReportReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoutReportReaderView.swift; sourceTree = "<group>"; };
+		5C0A7E510000000000000001 /* Plans.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Plans.swift; sourceTree = "<group>"; };
+		5C0A7E510000000000000003 /* PlansView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlansView.swift; sourceTree = "<group>"; };
+		5C0A7E510000000000000005 /* PlanReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanReaderView.swift; sourceTree = "<group>"; };
 		A1B2010C0000000000000001 /* AccessLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessLogView.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000003 /* BobPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BobPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7B0B0E1A0000000000000030 /* BobPhoneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneApp.swift; sourceTree = "<group>"; };
@@ -190,6 +222,7 @@ DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 		7B0B0E1A00000000000001A0 /* AgentChatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatter.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000192 /* RecentlyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentlyView.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000194 /* PipelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineView.swift; sourceTree = "<group>"; };
+		7B0B0E1A0000000000000900 /* MenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuView.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000196 /* CardCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardCache.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000198 /* Receipts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Receipts.swift; sourceTree = "<group>"; };
 		7B0B0E1A000000000000019A /* WorkRecordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkRecordView.swift; sourceTree = "<group>"; };
@@ -213,6 +246,9 @@ DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 		C0F1600E0000000000000001 /* RunFigures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunFigures.swift; sourceTree = "<group>"; };
 		C0FFEE0C0000000000000003 /* CommView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommView.swift; sourceTree = "<group>"; };
 		C0FFEE0C0000000000000001 /* CommRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommRules.swift; sourceTree = "<group>"; };
+		A11E09250000000000000001 /* Motion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Motion.swift; sourceTree = "<group>"; };
+		A11E09250000000000000003 /* Verbs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Verbs.swift; sourceTree = "<group>"; };
+		57A4E9070000000000000001 /* WorkReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkReport.swift; sourceTree = "<group>"; };
 		D0E5A17E0000000000000001 /* RunHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunHealth.swift; sourceTree = "<group>"; };
 		A1B2010A0000000000000003 /* PhoneInboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/PhoneInboxTests.swift; sourceTree = SOURCE_ROOT; };
 		D5E0510A0000000000000001 /* DemoShotsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/DemoShotsTests.swift; sourceTree = SOURCE_ROOT; };
@@ -220,6 +256,8 @@ DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 		7B0B0E1A0000000000000034 /* FleetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetView.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000035 /* BoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardView.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000036 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		A51A1D000000000000000001 /* SignalTokens.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalTokens.generated.swift; sourceTree = "<group>"; };
+		A51A1D000000000000000003 /* workshop */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/workshop; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000037 /* Cast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cast.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000039 /* ProcessTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessTable.swift; sourceTree = "<group>"; };
 		7B0B0E1A000000000000003A /* AgentDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDetailView.swift; sourceTree = "<group>"; };
@@ -268,6 +306,8 @@ DEC1510A000000000000003C = {isa = PBXFileReference; explicitFileType = wrapper.c
 DEC1510B000000000000001E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneWidgetTests/WidgetTileTests.swift; sourceTree = SOURCE_ROOT; };
 DEC1510B000000000000003C = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = BobPhoneWidgetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B0B051EE0000000000000001 /* PhoneSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/PhoneSheet.swift; sourceTree = SOURCE_ROOT; };
+		A65EEAD00000000000000001 /* AgentSheetLead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/AgentSheetLead.swift; sourceTree = SOURCE_ROOT; };
+		A65EEAD00000000000000003 /* AgentSheetLeadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/AgentSheetLeadTests.swift; sourceTree = SOURCE_ROOT; };
 		B0B051EE0000000000000003 /* PhoneSheetHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/PhoneSheetHost.swift; sourceTree = SOURCE_ROOT; };
 		B0B051EE0000000000000005 /* SheetPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/SheetPresentationTests.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE0000000000000001 /* PreparerBrief.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/PreparerBrief.swift; sourceTree = SOURCE_ROOT; };
@@ -293,6 +333,10 @@ DEC1510B000000000000003C = {isa = PBXFileReference; explicitFileType = wrapper.c
 		E5A5C0DE0000000000000503 /* BackgroundGraceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/BackgroundGraceTests.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE0000000000000505 /* BoardSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/BoardSearch.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE0000000000000507 /* BoardSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/BoardSearchTests.swift; sourceTree = SOURCE_ROOT; };
+		BA7C4E1F0000000000000001 /* RowSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/RowSelection.swift; sourceTree = SOURCE_ROOT; };
+		BA7C4E1F0000000000000003 /* RowSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/RowSelectionTests.swift; sourceTree = SOURCE_ROOT; };
+		5C0A7E500000000000000007 /* ScoutReportSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/ScoutReportSearchTests.swift; sourceTree = SOURCE_ROOT; };
+		5C0A7E510000000000000007 /* PlanSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/PlanSearchTests.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE000000000000080D /* SRPTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/SRPTests.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE0000000000000601 /* NotificationLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/NotificationLog.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE0000000000000603 /* HeldDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/HeldDestination.swift; sourceTree = SOURCE_ROOT; };
@@ -399,6 +443,9 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				C0F1600E0000000000000001 /* RunFigures.swift */,
 				C0FFEE0C0000000000000003 /* CommView.swift */,
 				C0FFEE0C0000000000000001 /* CommRules.swift */,
+				A11E09250000000000000001 /* Motion.swift */,
+				A11E09250000000000000003 /* Verbs.swift */,
+				57A4E9070000000000000001 /* WorkReport.swift */,
 				D0E5A17E0000000000000001 /* RunHealth.swift */,
 				E5A5C0DE0000000000000201 /* LockScreenActions.swift */,
 				1A5E4C710000000000000005 /* LiveActivity.swift */,
@@ -410,6 +457,7 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				E5A5C0DE0000000000000007 /* HeldPicture.swift */,
 				E5A5C0DE0000000000000801 /* AgentScreen.swift */,
 				E5A5C0DE0000000000000803 /* ConversationModels.swift */,
+				A65EEAD00000000000000001 /* AgentSheetLead.swift */,
 				E5A5C0DE0000000000000805 /* ConversationCache.swift */,
 				E5A5C0DE0000000000000807 /* ConversationView.swift */,
 				E5A5C0DE0000000000000301 /* LinkTiming.swift */,
@@ -417,10 +465,12 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				E5A5C0DE0000000000000501 /* BackgroundGrace.swift */,
 				E5A5C0DE0000000000000701 /* WidgetReloadBudget.swift */,
 				E5A5C0DE0000000000000505 /* BoardSearch.swift */,
+				BA7C4E1F0000000000000001 /* RowSelection.swift */,
 				E5A5C0DE0000000000000601 /* NotificationLog.swift */,
 				E5A5C0DE0000000000000603 /* HeldDestination.swift */,
 				E5A5C0DE0000000000000605 /* NotificationDestinationModel.swift */,
 				7B0B0E1A0000000000000036 /* Theme.swift */,
+				A51A1D000000000000000001 /* SignalTokens.generated.swift */,
 				7B0B0E1A0000000000000037 /* Cast.swift */,
 				7B0B0E1A000000000000003D /* Markdown.swift */,
 				7B0B0E1A0000000000000170 /* Specialists.swift */,
@@ -431,6 +481,7 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				7B0B0E1A00000000000001A0 /* AgentChatter.swift */,
 				7B0B0E1A0000000000000192 /* RecentlyView.swift */,
 				7B0B0E1A0000000000000194 /* PipelineView.swift */,
+				7B0B0E1A0000000000000900 /* MenuView.swift */,
 				7B0B0E1A0000000000000196 /* CardCache.swift */,
 				7B0B0E1A0000000000000198 /* Receipts.swift */,
 				7B0B0E1A000000000000019A /* WorkRecordView.swift */,
@@ -442,6 +493,15 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				B0B0C0A000000000000001F4 /* OutcomeModels.swift */,
 				A1B2010B0000000000000001 /* KnowledgeModels.swift */,
 				A1B2010B0000000000000003 /* KnowledgeView.swift */,
+				A1B20C4D0000000000000005 /* ManualChecksView.swift */,
+				A1B20C4D0000000000000003 /* ManualCheckModels.swift */,
+				A1B20C4D0000000000000001 /* ManualCheckRules.swift */,
+				5C0A7E500000000000000001 /* ScoutReports.swift */,
+				5C0A7E500000000000000003 /* ScoutReportsView.swift */,
+				5C0A7E500000000000000005 /* ScoutReportReaderView.swift */,
+				5C0A7E510000000000000001 /* Plans.swift */,
+				5C0A7E510000000000000003 /* PlansView.swift */,
+				5C0A7E510000000000000005 /* PlanReaderView.swift */,
 				A1B2010C0000000000000001 /* AccessLogView.swift */,
 				7B0B0E1A0000000000000039 /* ProcessTable.swift */,
 				7B0B0E1A000000000000003A /* AgentDetailView.swift */,
@@ -450,6 +510,7 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				7B0B0E1A0000000000000074 /* Assets.xcassets */,
 				7B0B0E1A0000000000000095 /* brand */,
 				7B0B0E1A00000000000001C1 /* portraits */,
+				A51A1D000000000000000003 /* workshop */,
 				7B0B0E1A0000000000000180 /* buzz-permission.wav */,
 				7B0B0E1A0000000000000181 /* buzz-question.wav */,
 				7B0B0E1A0000000000000182 /* buzz-finished.wav */,
@@ -526,7 +587,7 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 			);
 			sourceTree = "<group>";
 		};
-DEC1510A000000000000003D = {isa = PBXGroup; name = BobPhoneTests; children = (DEC1510A000000000000001E, DEC1510A000000000000001F, DEC1510A0000000000000020, DEC1510A0000000000000021, DEC1510A0000000000000022, DEC1510A0000000000000023, DEC1510A0000000000000024, DEC1510A0000000000000025, DEC1510A0000000000000026, DEC1510A0000000000000090, L1F3C7C10000000000000005, A1B2010A0000000000000003, D5E0510A0000000000000001, E5A5C0DE0000000000000009, E5A5C0DE000000000000000B, E5A5C0DE0000000000000303, E5A5C0DE0000000000000503, E5A5C0DE0000000000000507, E5A5C0DE0000000000000607, E5A5C0DE0000000000000609, 1A5E4C71000000000000000A, E5A5C0DE0000000000000403 /* ComposerUsageRuleTests.swift */, E5A5C0DE0000000000000809 /* ConversationCacheTests.swift */, E5A5C0DE000000000000080B /* AgentScreenTests.swift */, E5A5C0DE000000000000080D, E5A5C0DE0000000000000903,); sourceTree = "<group>"; };
+DEC1510A000000000000003D = {isa = PBXGroup; name = BobPhoneTests; children = (DEC1510A000000000000001E, DEC1510A000000000000001F, DEC1510A0000000000000020, DEC1510A0000000000000021, DEC1510A0000000000000022, DEC1510A0000000000000023, DEC1510A0000000000000024, DEC1510A0000000000000025, DEC1510A0000000000000026, DEC1510A0000000000000090, L1F3C7C10000000000000005, A1B2010A0000000000000003, D5E0510A0000000000000001, E5A5C0DE0000000000000009, E5A5C0DE000000000000000B, E5A5C0DE0000000000000303, E5A5C0DE0000000000000503, E5A5C0DE0000000000000507, BA7C4E1F0000000000000003, E5A5C0DE0000000000000607, E5A5C0DE0000000000000609, 1A5E4C71000000000000000A, E5A5C0DE0000000000000403 /* ComposerUsageRuleTests.swift */, E5A5C0DE0000000000000809 /* ConversationCacheTests.swift */, E5A5C0DE000000000000080B /* AgentScreenTests.swift */, A65EEAD00000000000000003 /* AgentSheetLeadTests.swift */, E5A5C0DE000000000000080D, E5A5C0DE0000000000000903, 5C0A7E500000000000000007 /* ScoutReportSearchTests.swift */, 5C0A7E510000000000000007 /* PlanSearchTests.swift */,); sourceTree = "<group>"; };
 DEC1510B000000000000003D = {isa = PBXGroup; name = BobPhoneWidgetTests; children = (DEC1510B000000000000001E, 1A5E4C71000000000000000C,); sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -644,6 +705,7 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				7B0B0E1A0000000000000075 /* Assets.xcassets in Resources */,
 				7B0B0E1A0000000000000094 /* brand in Resources */,
 				7B0B0E1A00000000000001C0 /* portraits in Resources */,
+				A51A1D000000000000000004 /* workshop in Resources */,
 				7B0B0E1A0000000000000183 /* buzz-permission.wav in Resources */,
 				7B0B0E1A0000000000000184 /* buzz-question.wav in Resources */,
 				7B0B0E1A0000000000000185 /* buzz-finished.wav in Resources */,
@@ -678,6 +740,7 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				AC0220000000000000000002 /* Collaboration.swift in Sources */,
 				B0B051EE0000000000000004,
 				B0B051EE0000000000000002,
+				A65EEAD00000000000000002,
 				DEC1510A000000000000000B /* CatchUpState.swift in Sources */,
 				DEC1510A000000000000000C /* CatchUpView.swift in Sources */,
 				7B0B0E1A0000000000000040 /* BobPhoneApp.swift in Sources */,
@@ -709,6 +772,9 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				C0F1600E0000000000000002 /* RunFigures.swift in Sources */,
 				C0FFEE0C0000000000000004 /* CommView.swift in Sources */,
 				C0FFEE0C0000000000000002 /* CommRules.swift in Sources */,
+				A11E09250000000000000002 /* Motion.swift in Sources */,
+				A11E09250000000000000004 /* Verbs.swift in Sources */,
+				57A4E9070000000000000002 /* WorkReport.swift in Sources */,
 				D0E5A17E0000000000000002 /* RunHealth.swift in Sources */,
 				E5A5C0DE0000000000000202 /* LockScreenActions.swift in Sources */,
 				1A5E4C710000000000000006 /* LiveActivity.swift in Sources */,
@@ -728,10 +794,12 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				E5A5C0DE0000000000000502 /* BackgroundGrace.swift in Sources */,
 				E5A5C0DE0000000000000702 /* WidgetReloadBudget.swift in Sources */,
 				E5A5C0DE0000000000000506 /* BoardSearch.swift in Sources */,
+				BA7C4E1F0000000000000002 /* RowSelection.swift in Sources */,
 				E5A5C0DE0000000000000602 /* NotificationLog.swift in Sources */,
 				E5A5C0DE0000000000000604 /* HeldDestination.swift in Sources */,
 				E5A5C0DE0000000000000606 /* NotificationDestinationModel.swift in Sources */,
 				7B0B0E1A0000000000000046 /* Theme.swift in Sources */,
+				A51A1D000000000000000002 /* SignalTokens.generated.swift in Sources */,
 				7B0B0E1A0000000000000047 /* Cast.swift in Sources */,
 				7B0B0E1A000000000000004C /* Markdown.swift in Sources */,
 				7B0B0E1A0000000000000171 /* Specialists.swift in Sources */,
@@ -742,6 +810,7 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				7B0B0E1A00000000000001A1 /* AgentChatter.swift in Sources */,
 				7B0B0E1A0000000000000193 /* RecentlyView.swift in Sources */,
 				7B0B0E1A0000000000000195 /* PipelineView.swift in Sources */,
+				7B0B0E1A0000000000000901 /* MenuView.swift in Sources */,
 				7B0B0E1A0000000000000197 /* CardCache.swift in Sources */,
 				7B0B0E1A0000000000000199 /* Receipts.swift in Sources */,
 				7B0B0E1A000000000000019B /* WorkRecordView.swift in Sources */,
@@ -753,6 +822,15 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				B0B0C0A000000000000001F5 /* OutcomeModels.swift in Sources */,
 				A1B2010B0000000000000002 /* KnowledgeModels.swift in Sources */,
 				A1B2010B0000000000000004 /* KnowledgeView.swift in Sources */,
+				A1B20C4D0000000000000006 /* ManualChecksView.swift in Sources */,
+				A1B20C4D0000000000000004 /* ManualCheckModels.swift in Sources */,
+				A1B20C4D0000000000000002 /* ManualCheckRules.swift in Sources */,
+				5C0A7E500000000000000002 /* ScoutReports.swift in Sources */,
+				5C0A7E500000000000000004 /* ScoutReportsView.swift in Sources */,
+				5C0A7E500000000000000006 /* ScoutReportReaderView.swift in Sources */,
+				5C0A7E510000000000000002 /* Plans.swift in Sources */,
+				5C0A7E510000000000000004 /* PlansView.swift in Sources */,
+				5C0A7E510000000000000006 /* PlanReaderView.swift in Sources */,
 				A1B2010C0000000000000002 /* AccessLogView.swift in Sources */,
 				7B0B0E1A0000000000000048 /* ProcessTable.swift in Sources */,
 				7B0B0E1A0000000000000049 /* AgentDetailView.swift in Sources */,
@@ -770,6 +848,7 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 			files = (
 				7B0B0E1A0000000000000114 /* BobPhoneWidget.swift in Sources */,
 				7B0B0E1A0000000000000115 /* WidgetViews.swift in Sources */,
+				A51A1D000000000000000005 /* SignalTokens.generated.swift in Sources */,
 				7B0B0E1A0000000000000119 /* TickRing.swift in Sources */,
 				7B0B0E1A000000000000011A /* CircularFleetView.swift in Sources */,
 				7B0B0E1A0000000000000113 /* FleetSummary.swift in Sources */,
@@ -787,8 +866,8 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-DEC1510A000000000000003E = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AC0220000000000000000006, B0B051EE0000000000000006, C0DEF0A1DEF0000000000002, DEC090900000000000000000E, DEC090900000000000000000C, DEC1510A0000000000000028, DEC1510A0000000000000029, DEC1510A000000000000002A, DEC1510A000000000000002B, DEC1510A000000000000002C, DEC1510A000000000000002D, DEC1510A000000000000002E, DEC1510A000000000000002F, DEC1510A0000000000000030, DEC1510A0000000000000091, L1F3C7C10000000000000006, A1B2010A0000000000000004, D5E0510A0000000000000002, E5A5C0DE000000000000000A, E5A5C0DE000000000000000C, E5A5C0DE0000000000000304, E5A5C0DE0000000000000504, E5A5C0DE0000000000000508, E5A5C0DE0000000000000608, E5A5C0DE000000000000060A, 1A5E4C71000000000000000B, E5A5C0DE0000000000000404 /* ComposerUsageRuleTests.swift in Sources */, E5A5C0DE000000000000080A /* ConversationCacheTests.swift in Sources */, E5A5C0DE000000000000080C /* AgentScreenTests.swift in Sources */, E5A5C0DE000000000000080E, E5A5C0DE0000000000000904,); runOnlyForDeploymentPostprocessing = 0; };
-DEC1510B000000000000003E = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (DEC1510B0000000000000028, DEC1510B0000000000000029, DEC1510B000000000000002A, DEC1510B000000000000002B, DEC1510B000000000000002C, DEC1510B000000000000002D, 1A5E4C710000000000000004, 1A5E4C710000000000000009, 1A5E4C71000000000000000D,); runOnlyForDeploymentPostprocessing = 0; };
+DEC1510A000000000000003E = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AC0220000000000000000006, B0B051EE0000000000000006, C0DEF0A1DEF0000000000002, DEC090900000000000000000E, DEC090900000000000000000C, DEC1510A0000000000000028, DEC1510A0000000000000029, DEC1510A000000000000002A, DEC1510A000000000000002B, DEC1510A000000000000002C, DEC1510A000000000000002D, DEC1510A000000000000002E, DEC1510A000000000000002F, DEC1510A0000000000000030, DEC1510A0000000000000091, L1F3C7C10000000000000006, A1B2010A0000000000000004, D5E0510A0000000000000002, E5A5C0DE000000000000000A, E5A5C0DE000000000000000C, E5A5C0DE0000000000000304, E5A5C0DE0000000000000504, E5A5C0DE0000000000000508, BA7C4E1F0000000000000004, E5A5C0DE0000000000000608, E5A5C0DE000000000000060A, 1A5E4C71000000000000000B, E5A5C0DE0000000000000404 /* ComposerUsageRuleTests.swift in Sources */, E5A5C0DE000000000000080A /* ConversationCacheTests.swift in Sources */, E5A5C0DE000000000000080C /* AgentScreenTests.swift in Sources */, A65EEAD00000000000000004, E5A5C0DE000000000000080E, E5A5C0DE0000000000000904, 5C0A7E500000000000000008 /* ScoutReportSearchTests.swift in Sources */, 5C0A7E510000000000000008 /* PlanSearchTests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+DEC1510B000000000000003E = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (DEC1510B0000000000000028, DEC1510B0000000000000029, DEC1510B000000000000002A, DEC1510B000000000000002B, DEC1510B000000000000002C, DEC1510B000000000000002D, 1A5E4C710000000000000004, 1A5E4C710000000000000009, 1A5E4C71000000000000000D, A51A1D000000000000000006 /* SignalTokens.generated.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */

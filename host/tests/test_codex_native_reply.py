@@ -77,6 +77,55 @@ async def test_ineligible_never_writes(native_reply, monkeypatch, fault):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(('bridge', 'explanation'), [
+    ('stale', 'running Dark Army IDE 0.1.20'),
+    ('missing', 'No Dark Army IDE connection owns this project'),
+    ('ambiguous', 'More than one VS Code window'),
+    ('unknown_version', 'running Dark Army IDE unknown'),
+])
+async def test_queued_phone_answer_explains_editor_connection_refusal(
+        native_reply, monkeypatch, bridge, explanation):
+    d, _, _, _, records, _, posts = native_reply
+    record = _ask_in_new_turn(d, records, 'request_user_input_async')
+    locks = [dict(lock) for lock in vscode_reveal._bob_ext_locks()]
+    if bridge == 'stale':
+        locks[0]['extensionVersion'] = '0.1.20'
+    elif bridge == 'missing':
+        locks = []
+    elif bridge == 'ambiguous':
+        locks *= 2
+    else:
+        locks[0]['extensionVersion'] = 'unparseable'
+    monkeypatch.setattr(vscode_reveal, '_bob_ext_locks', lambda: locks)
+    row = _row(d, record)
+    assert not row['channel'] and row['reply_via'] == ''
+    assert explanation in row['interaction_note']
+    if bridge == 'stale':
+        assert 'Reload Window' in row['interaction_note']
+    assert not (await d.reply_to_session(record.session_id, 'Continue'))[0]
+    assert not posts and not d._codex_reply_attempts
+
+
+@pytest.mark.asyncio
+async def test_queued_phone_answer_uses_only_the_matching_project_connection(native_reply, monkeypatch):
+    d, _, _, _, records, _, posts = native_reply
+    record = _ask_in_new_turn(d, records, 'request_user_input_async')
+    owner = dict(vscode_reveal._bob_ext_locks()[0])
+    foreign = dict(owner, port=9999, authToken='foreign-token',
+                   workspaceFolders=['/another/project'])
+    monkeypatch.setattr(vscode_reveal, '_bob_ext_locks', lambda: [foreign, owner])
+    async def post(port, token, body, **kwargs):
+        assert port == owner['port'] and token == owner['authToken']
+        assert await kwargs['before_write']()
+        posts.append(body)
+        return {'matched': True, 'sent': True}
+    monkeypatch.setattr(vscode_reveal, '_post_json', post)
+    assert _row(d, record)['channel']
+    assert (await d.reply_to_session(record.session_id, 'Continue')) == (True, '')
+    assert len(posts) == 1 and posts[0]['pid'] == 701
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('stage', [1, 2])
 @pytest.mark.parametrize('fault', ['preference', 'turn', 'generation', 'journal', 'pid', 'ctime', 'cwd', 'argv'])
 async def test_each_observation_rejects_identity_and_state_changes(native_reply, monkeypatch, stage, fault):
@@ -231,3 +280,67 @@ async def test_replaced_or_moved_journal_does_not_rearm_same_turn(native_reply, 
     assert d._navigation_proof_current(sid) is not None
     assert not (await d.reply_to_session(sid, 'Second'))[0]
     assert len(posts) == 1
+
+
+def _ask_in_new_turn(d, records, name):
+    """A second turn that asks through `name`, is acknowledged and completes."""
+    import json as _json
+    call = {"timestamp": "2026-09-12T19:00:03Z", "type": "response_item",
+            "payload": {"type": "function_call", "name": name, "call_id": "ask",
+                        "arguments": _json.dumps({"questions": [
+                            {"title": "What next?", "question": "What next?",
+                             "options": ["Continue", "Stop", "Hand back"]}]})}}
+    ack = {"timestamp": "2026-09-12T19:00:03Z", "type": "response_item",
+           "payload": {"type": "function_call_output", "call_id": "ask",
+                       "output": _json.dumps({"accepted": True})}}
+    _append(records[0], _event('task_started', 'turn-2', '2026-09-12T19:00:03Z'))
+    _append(records[0], call)
+    _append(records[0], ack)
+    _append(records[0], _event('task_complete', 'turn-2', '2026-09-12T19:00:04Z'))
+    record = _reload(d, records)
+    d._codex_navigation = MappingProxyType(codex_rollouts.resolve_navigation_proofs(
+        codex_rollouts.project_title_roots(records)))
+    return record
+
+
+@pytest.mark.asyncio
+async def test_queued_async_question_is_answered_by_the_reply(native_reply):
+    # The phone showed a queued Codex question read-only on 24 Sep 2026 with
+    # "Answer it in the original Codex session": Codex takes the person's next
+    # message as a queued question's answer, so the reply route stays open.
+    d, _, _, _, records, _, posts = native_reply
+    record = _ask_in_new_turn(d, records, 'request_user_input_async')
+    sid = record.session_id
+    assert record.stats.question and record.question_async
+    assert not codex_rollouts.stopped_turn(record)
+    assert codex_rollouts.stopped_turn(record, awaiting_answer=True)
+    row = _row(d, record)
+    assert row['channel'] and row['reply_via'] == 'typed' and row['interaction_note'] == ''
+    assert not row['can_type'] and not row['can_close']
+    assert (await d.reply_to_session(sid, 'Continue')) == (True, '')
+    assert [p['text'] for p in posts] == ['Continue']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fault', ['sync', 'permission', 'pending'])
+async def test_queued_question_reply_keeps_every_other_refusal(native_reply, monkeypatch, fault):
+    d, _, _, _, records, _, posts = native_reply
+    record = _ask_in_new_turn(d, records, 'request_user_input_async')
+    sid = record.session_id
+    if fault == 'sync':
+        # A live picker: the typed line's Enter would pick the highlighted option.
+        record.question_async = False
+    elif fault == 'permission':
+        monkeypatch.setattr(d, '_prompts_by_session', lambda: {sid: {}})
+    else:
+        d._pending_questions[sid] = {'text': 'Choose?'}
+    assert d._codex_reply_candidate(sid)[0] is None
+    assert not (await d.reply_to_session(sid, 'Continue'))[0]
+    assert not posts and not d._codex_reply_attempts
+
+
+def test_queued_question_never_grants_close(native_reply):
+    d, _, _, _, records, _, _ = native_reply
+    record = _ask_in_new_turn(d, records, 'request_user_input_async')
+    assert d._codex_human_close_candidate(record.session_id) is None
+    assert d._codex_human_close_candidate(record.session_id, awaiting_answer=True) is not None

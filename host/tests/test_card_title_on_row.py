@@ -105,8 +105,12 @@ def test_the_daemon_has_the_only_write_site():
 
 
 def _command_body(text: str) -> str:
-    match = re.search(r"private var command: String \{(.*?)\n    \}",
-                      text, re.S)
+    # The Mac's ladder is `static func baseTitle(for:cardLine:)`, shared by
+    # the column's one-line and two-line forms; the phone's is still the
+    # private property.
+    match = re.search(r"(?:private var command: String|"
+                      r"static func baseTitle\(for agent: Agent[^)]*\) -> String) \{"
+                      r"(.*?)\n    \}", text, re.S)
     assert match, "no `command` ladder found"
     return match.group(1)
 
@@ -119,6 +123,9 @@ def test_the_panel_reads_the_card_title_first():
         "an older daemon's frame must decode to an empty string, not throw")
     body = _command_body((PANEL / "ProcessTable.swift").read_text())
     assert "agent.cardTitle" in body
+    # The detail's own card line leads, so the row names what opens.
+    assert "cardLine" in body
+    assert body.index("cardLine") < body.index("agent.cardTitle")
     assert body.index("agent.cardTitle") < body.index("agent.name"), (
         "a cardTitle rung below `name` is dead code: the daemon publishes it "
         "only beside a non-empty name")
@@ -131,4 +138,7 @@ def test_the_phone_reads_the_card_title_first():
     assert 'cardTitle = c.value(.cardTitle, "")' in models
     body = _command_body((PHONE / "ProcessTable.swift").read_text())
     assert "agent.cardTitle" in body
+    # The detail's own card line leads, so the row names what opens.
+    assert "cardLine" in body
+    assert body.index("cardLine") < body.index("agent.cardTitle")
     assert body.index("agent.cardTitle") < body.index("agent.name")

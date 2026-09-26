@@ -1096,7 +1096,7 @@ def test_a_full_pool_repeats_rather_than_inventing_somebody(tmp_path):
     """One more card than the pool can hold repeats a real member."""
     from dark_army_daemon import crew
 
-    pool = {"hex", "franio", "forge", "ptyś"}
+    pool = {"hex", "franio", "forge", "ptys"}
     daemon, store = _board_daemon(tmp_path)
     try:
         rows = []
@@ -1333,10 +1333,11 @@ def test_snapshot_decorates_author_name_from_peek(tmp_path, monkeypatch):
         store.close()
 
 
-def test_snapshot_carries_no_blockers(tmp_path):
-    """Cards no longer wait on cards: a stored `blocked_by` (an old row) is
-    neither resolved into `blockers` nor drawn — no surface has the section
-    any more, and a key nobody reads is a promise nobody keeps."""
+def test_snapshot_carries_the_dependencies_both_ways(tmp_path):
+    """Cards wait on cards again (`docs/card-dependencies.md`): the waiter
+    publishes `dependencies` and its line, the card it waits on publishes
+    `dependents` and its line, and a card with no links carries none of the
+    four keys — `work_record`'s absent-where-empty rule."""
     daemon, store = _board_daemon(tmp_path)
     try:
         blocker, _ = store.create({
@@ -1345,9 +1346,63 @@ def test_snapshot_carries_no_blockers(tmp_path):
         waiter, _ = store.create({
             "title": "the waiter", "project": "bob", "root": "/tmp",
             "column_name": "backlog"})
+        loner, _ = store.create({
+            "title": "the loner", "project": "bob", "root": "/tmp",
+            "column_name": "backlog"})
         store.update(waiter["id"], {"blocked_by": blocker["id"]})
         by_id = {c["id"]: c for c in daemon._build_board_state()["cards"]}
-        assert "blockers" not in by_id[waiter["id"]]
+        got = by_id[waiter["id"]]
+        assert got["dependencies"] == [{
+            "id": blocker["id"], "title": "the blocker",
+            "column_name": "backlog", "met": False}]
+        assert got["dependency_line"] == 'Waits on: "the blocker" (not yet)'
+        assert "dependents" not in got and "dependents_line" not in got
+        assert by_id[blocker["id"]]["dependents"] == [
+            {"id": waiter["id"], "title": "the waiter"}]
+        assert by_id[blocker["id"]]["dependents_line"] == 'Unblocks: "the waiter"'
+        assert "dependencies" not in by_id[blocker["id"]]
+        for key in ("dependencies", "dependents", "dependency_line",
+                    "dependents_line"):
+            assert key not in by_id[loner["id"]], key
+        # Not queued: no dependency sentence rides `queue_reason`.
+        assert "queue_reason" not in got
+        # Done flips the word and the bit on the next frame.
+        store.update(blocker["id"], {"column_name": "done"})
+        by_id = {c["id"]: c for c in daemon._build_board_state()["cards"]}
+        assert by_id[waiter["id"]]["dependencies"][0]["met"] is True
+        assert by_id[waiter["id"]]["dependency_line"] == (
+            'Waits on: "the blocker" (done)')
+    finally:
+        store.close()
+
+
+def test_a_dependency_outside_the_frame_is_resolved_not_read_as_missing(tmp_path):
+    """A dependency finished long ago is outside the Done preview; one
+    `cards_by_id` read resolves it, so it reads as done by rule rather than
+    as missing by accident — and a deleted one is simply not drawn."""
+    daemon, store = _board_daemon(tmp_path)
+    try:
+        old, _ = store.create({"title": "long done", "project": "bob",
+                               "root": "/tmp", "column_name": "backlog"})
+        gone, _ = store.create({"title": "deleted", "project": "bob",
+                                "root": "/tmp", "column_name": "backlog"})
+        waiter, _ = store.create({"title": "waiter", "project": "bob",
+                                  "root": "/tmp", "column_name": "backlog"})
+        store.update(waiter["id"], {"blocked_by": [old["id"], gone["id"]]})
+        store.update(old["id"], {"column_name": "done"})
+        # Finished long ago and closed by a person: outside the 24 h preview
+        # and outside the awaiting-review read, so not in the frame at all.
+        store._conn.execute("UPDATE cards SET done_at = 1, updated_at = 1"
+                            " WHERE id = ?", (old["id"],))
+        store._conn.commit()
+        store.delete(gone["id"])
+        state = daemon._build_board_state()
+        assert old["id"] not in {c["id"] for c in state["cards"]}
+        got = {c["id"]: c for c in state["cards"]}[waiter["id"]]
+        assert got["dependencies"] == [{
+            "id": old["id"], "title": "long done", "column_name": "done",
+            "met": True}]
+        assert got["dependency_line"] == 'Waits on: "long done" (done)'
     finally:
         store.close()
 
@@ -2040,6 +2095,93 @@ def test_the_already_queued_sentence_cannot_collide_with_the_plan_gate():
     assert daemon_mod._already_queued_reason(0, True).startswith(
         "Already queued — first in line")
     assert "12th in line" in daemon_mod._already_queued_reason(12, True)
+
+
+# --- card dependencies: the three sentences both clients draw verbatim ------
+
+
+def test_the_dependency_sentence_names_the_cards_and_keeps_the_promise():
+    reason = daemon_mod._dependency_reason
+    assert reason(["Build it"], True) == (
+        'Queued — Dark Army will start it once "Build it" is done')
+    assert reason(["Build it", "Ship it"], True) == (
+        'Queued — Dark Army will start it once "Build it" and "Ship it" are done')
+    assert reason(["A", "B", "C"], True) == (
+        'Queued — Dark Army will start it once "A", "B" and "C" are done')
+    # With the drain off nobody is coming: the promise head says so.
+    assert reason(["Build it"], False) == (
+        'Queued — press Start once "Build it" is done')
+    assert reason([], True) == (
+        "Queued — Dark Army will start it once the cards it waits on are done")
+    assert reason([""], True).endswith('once "untitled" is done')
+
+
+def test_the_dependency_sentence_never_collides_with_a_prefix_both_clients_match():
+    """Both clients match refusals by prefix (`ActionResult`,
+    `PhoneActions.planGatePrefix` …), and `_queue_reason`'s exact strings are
+    pinned elsewhere: the dependency sentence is none of them."""
+    for autostart in (True, False):
+        for titles in (["x"], ["x", "y"], []):
+            line = daemon_mod._dependency_reason(titles, autostart)
+            for prefix in (daemon_mod.PLAN_GATE_REFUSAL[:28],
+                           daemon_mod.PLAN_CHANGED_REFUSAL[:28],
+                           daemon_mod.board.CARD_CHANGED_REFUSAL[:24],
+                           "this card has no plan yet",
+                           "this card's plan has changed",
+                           "this card changed on the Mac"):
+                assert not line.startswith(prefix), (line, prefix)
+            for count in (0, 1, 2, 3):
+                assert line != daemon_mod._queue_reason(count, autostart)
+
+
+def test_the_two_dependency_lines():
+    line = daemon_mod._dependency_line
+    assert line([]) == ""
+    assert line([{"title": "A", "column_name": "done", "met": True},
+                 {"title": "B", "column_name": "in_progress", "met": True},
+                 {"title": "C", "column_name": "backlog", "met": False}]) == (
+        'Waits on: "A" (done) \u00b7 "B" (check pending) \u00b7 "C" (not yet)')
+    assert daemon_mod._dependents_line([]) == ""
+    assert daemon_mod._dependents_line(["A", "B"]) == 'Unblocks: "A" \u00b7 "B"'
+
+
+def test_a_held_queued_card_says_what_it_waits_for_and_a_slot_held_one_does_not(
+        tmp_path):
+    """The decoration's `queue_reason`: the dependency sentence while the
+    card waits on an unfinished card, `_queue_reason`'s own once it waits
+    only for a place."""
+    daemon, store = _board_daemon(tmp_path)
+    try:
+        dep, _ = store.create({"title": "the foundation", "project": "bob",
+                               "root": "/tmp", "column_name": "backlog"})
+        held, _ = store.create({"title": "held", "project": "bob",
+                                "root": "/tmp", "column_name": "backlog"})
+        slot, _ = store.create({"title": "slot", "project": "bob",
+                                "root": "/tmp", "column_name": "backlog"})
+        store.update(held["id"], {"blocked_by": dep["id"],
+                                  "queue_state": "queued", "queued_at": 1.0})
+        store.update(slot["id"], {"queue_state": "queued", "queued_at": 2.0})
+        by_id = {c["id"]: c for c in daemon._build_board_state()["cards"]}
+        assert by_id[held["id"]]["queue_reason"] == (
+            'Queued — Dark Army will start it once "the foundation" is done')
+        assert by_id[slot["id"]]["queue_reason"] == daemon_mod._queue_reason(
+            0, True)
+        # Met: the same card now waits only for a place, and says so.
+        store.update(dep["id"], {"column_name": "done"})
+        by_id = {c["id"]: c for c in daemon._build_board_state()["cards"]}
+        assert by_id[held["id"]]["queue_reason"] == daemon_mod._queue_reason(
+            0, True)
+    finally:
+        store.close()
+
+
+def test_the_pipeline_markers_say_dependencies_are_supported(tmp_path):
+    daemon, store = _board_daemon(tmp_path)
+    try:
+        assert daemon._build_board_state()["dependencies_supported"] is True
+        assert daemon._pipeline_writable()["dependencies_supported"] is True
+    finally:
+        store.close()
 
 
 # ── the enrolment gate ────────────────────────────────────────────────────────

@@ -85,22 +85,25 @@ def _real_enrolment(monkeypatch, *roots):
 # --- the tool surface ---------------------------------------------------------
 
 
-def test_claude_lists_exactly_eight_tools_in_order():
+def test_claude_lists_exactly_ten_tools_in_order():
     """Exhaustive on purpose: every name here is something an agent can do to
-    Dark Army, and a ninth arriving unnoticed is what this assertion prevents."""
+    Dark Army, and an eleventh arriving unnoticed is what this assertion
+    prevents."""
     assert [t["name"] for t in cs.tools_for_host(cs.HOST_CLAUDE)] == [
         "dark_army_add_card", "dark_army_close_card", "dark_army_attach_plan",
         "dark_army_attach_report", "dark_army_needs_manual_check", "dark_army_answer_card",
-        "dark_army_knowledge_read", "dark_army_knowledge_write"]
+        "dark_army_knowledge_read", "dark_army_knowledge_write",
+        "dark_army_request_start", "dark_army_next_card"]
 
 
-def test_codex_still_lists_exactly_the_four_board_verbs():
+def test_codex_still_lists_exactly_the_six_board_verbs():
     """Codex gets the verbs that write a board row and type nothing. The
-    knowledge notes are not among them, and a fifth arriving unnoticed is
+    knowledge notes are not among them, and a seventh arriving unnoticed is
     what this assertion prevents."""
     assert [t["name"] for t in cs.tools_for_host(cs.HOST_CODEX)] == [
         "dark_army_add_card", "dark_army_close_card", "dark_army_attach_plan",
-        "dark_army_attach_report"]
+        "dark_army_attach_report", "dark_army_needs_manual_check",
+        "dark_army_next_card"]
 
 
 @pytest.mark.parametrize("tool", [cs.KNOWLEDGE_READ_TOOL,

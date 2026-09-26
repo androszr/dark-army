@@ -7,7 +7,7 @@ enum NotificationFace {
     static let slugs: [String] = [
         "cipher", "vex", "ledger", "mira", "hex", "relay", "forge",
         "watch", "audit", "proxy", "quiet", "nyx", "canon", "velvet",
-        "androll", "captcha", "sawa", "franio", "zosia", "ptyś",
+        "androll", "captcha", "sawa", "franio", "zosia", "ptys",
     ]
 
     /// A file inside `portraitsDirectory`, or nil. A slug that is not on
@@ -17,7 +17,7 @@ enum NotificationFace {
     /// The identity iOS files this sender's picture under: the slug plus a
     /// fingerprint of the portrait's bytes. iOS keeps the first image it saw
     /// for a sender handle and shows it again, so a slug that kept its name
-    /// through a recast (captcha, sawa, franio, zosia, androll, ptyś) went on
+    /// through a recast (captcha, sawa, franio, zosia, androll, ptys) went on
     /// showing the old face. New art means a new fingerprint, a new sender and
     /// the new face; the same art stays one conversation. FNV-1a 64, because
     /// Foundation has no hash of its own and this needs no secrecy.

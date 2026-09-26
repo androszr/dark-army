@@ -104,8 +104,12 @@ IMPLEMENT_ROLES = ("bc-implementer", "bc-verifier", "bc-bug-auditor")
 REVIEW_ROLES = ("bc-integration-reviewer", "bc-security-reviewer")
 PROVIDERS = {"claude": ".claude/skills/ship/SKILL.md",
              "codex": ".agents/skills/ship/SKILL.md"}
+#: Ship's scout mode is an alias for the scout skill, so the adapter names
+#: that skill's own adapter where the other modes name a reference.
+SCOUT_SKILL = ".claude/skills/scout/SKILL.md"
 REFERENCE_RE = re.compile(
-    r"`((?:\.claude/skills/ship/)?references/(?:common|plan|implement|scout)\.md)`")
+    r"`((?:\.claude/skills/ship/)?references/(?:common|plan|implement)\.md"
+    r"|\.claude/skills/scout/SKILL\.md)`")
 
 #: The three mandatory scenarios the budget is measured on. ``paths`` are the
 #: kind of delta each one produces; the map turns them into references.
@@ -341,10 +345,15 @@ def resolve_workflow(root: Path, adapter: str, mode: str | None = None) -> str:
 def workflow_reference_set(adapter: str, text: str, mode: str | None) -> list[str]:
     """Repo-relative reference paths the adapter loads for ``mode`` (both
     modes when ``None``), each once, in the adapter's own order."""
-    wanted = ("common", mode) if mode else ("common", "plan", "implement", "scout")
+    if mode is None:
+        wanted = ("common", "plan", "implement", "scout")
+    elif mode == "scout":
+        wanted = ("scout",)  # the alias loads the scout skill alone
+    else:
+        wanted = ("common", mode)
     out: list[str] = []
     for reference in referenced_workflow_files(text):
-        stem = Path(reference).stem
+        stem = "scout" if reference == SCOUT_SKILL else Path(reference).stem
         location = _reference_location(adapter, reference)
         if stem in wanted and location not in out:
             out.append(location)

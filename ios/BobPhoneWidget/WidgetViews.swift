@@ -2,17 +2,16 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
-/// The phone app's CRT palette, restated minimally — the widget target does
-/// not compile `Theme.swift` and needs four inks, not a theme.
+/// The widget's semantic roles use the same generated Signal tokens as the
+/// phone. WidgetKit keeps its own compact typography and native accessory ink.
 enum WidgetTheme {
-    static let bg = Color(red: 0.02, green: 0.05, blue: 0.03)
-    static let phosphor = Color(red: 0.44, green: 0.98, blue: 0.60)
-    static let dim = Color(red: 0.44, green: 0.98, blue: 0.60).opacity(0.55)
-    static let alarm = Color(red: 1.00, green: 0.36, blue: 0.32)
-    static let amber = Color(red: 1.00, green: 0.72, blue: 0.25)
-    /// The prompt's path segment — the phone's `phosphorBright`,
-    /// restated here the way this enum restates the rest.
-    static let bright = Color(red: 0.78, green: 1.00, blue: 0.78)
+    static let bg = SignalTokens.surface
+    static let text = SignalTokens.text
+    static let muted = SignalTokens.muted
+    static let accent = SignalTokens.accent
+    static let attention = SignalTokens.attention
+    static let danger = SignalTokens.danger
+    static let line = SignalTokens.line
 
     /// The usage steps, `menu_format.USAGE_WARN_PERCENT` /
     /// `USAGE_CRIT_PERCENT` — the panel formats its own rows in Swift and
@@ -37,9 +36,9 @@ enum WidgetTheme {
     static let minCountColumnWidth: CGFloat = 96
 
     static func meterColor(_ percent: Double) -> Color {
-        if percent >= critPercent { return alarm }
-        if percent >= warnPercent { return amber }
-        return phosphor
+        if percent >= critPercent { return danger }
+        if percent >= warnPercent { return attention }
+        return text
     }
 }
 
@@ -81,7 +80,7 @@ struct FleetWidgetView: View {
                     // The tile's only content, so it speaks — the medium
                     // header's prompt does not.
                     WidgetPromptLine(path: "~", command: "open Dark Army",
-                                     commandColor: WidgetTheme.dim, size: 11)
+                                     commandColor: WidgetTheme.muted, size: 11)
                 }
                 .widgetURL(URL(string: "bobphone://needs"))
             }
@@ -153,14 +152,14 @@ struct WidgetPromptLine: View {
     var body: some View {
         HStack(spacing: 0) {
             Text("root@darkarmy:")
-                .foregroundStyle(WidgetTheme.phosphor)
+                .foregroundStyle(WidgetTheme.accent)
             Text(path)
-                .foregroundStyle(WidgetTheme.bright)
+                .foregroundStyle(WidgetTheme.text)
             Text("$")
-                .foregroundStyle(WidgetTheme.phosphor)
+                .foregroundStyle(WidgetTheme.accent)
             if !command.isEmpty {
                 let words = Text(" \(command)")
-                    .foregroundStyle(commandColor ?? WidgetTheme.phosphor)
+                    .foregroundStyle(commandColor ?? WidgetTheme.text)
                 if sensitive {
                     words.privacySensitive()
                 } else {
@@ -191,21 +190,20 @@ struct SmallFleetView: View {
                 // The mark alone: 158pt would truncate a prompt mid-path.
                 WidgetBrandMark(size: 12)
                 Text("NEEDS YOU")
-                    .font(.system(size: 10, weight: .semibold,
-                                  design: .monospaced))
-                    .foregroundStyle(WidgetTheme.dim)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(WidgetTheme.muted)
             }
             Text("\(summary.needsYou)")
                 .font(.system(size: 40, weight: .bold, design: .monospaced))
                 .foregroundStyle(summary.needsYou > 0
-                                 ? WidgetTheme.alarm : WidgetTheme.phosphor)
+                                 ? WidgetTheme.attention : WidgetTheme.text)
                 .privacySensitive()
                 // VoiceOver reads the header and the bare digit as two
                 // unrelated utterances; one sentence says what the number is.
                 .accessibilityLabel("\(summary.needsYou) need you")
             Text("\(summary.working) working")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(WidgetTheme.phosphor)
+                .font(.system(size: 11))
+                .foregroundStyle(WidgetTheme.text)
                 .privacySensitive()
                 .accessibilityLabel("\(summary.working) working")
             Spacer(minLength: 0)
@@ -238,11 +236,11 @@ struct MediumFleetView: View {
     /// exceptional state first. Read off the same summary the counts below
     /// read; never a second derivation of attention.
     private var prompt: (command: String, color: Color, sensitive: Bool) {
-        if stale { return ("stale", WidgetTheme.dim, false) }
+        if stale { return ("stale", WidgetTheme.muted, false) }
         if summary.needsYou > 0 {
-            return ("\(summary.needsYou) need you", WidgetTheme.alarm, true)
+            return ("\(summary.needsYou) need you", WidgetTheme.attention, true)
         }
-        return ("Companion", WidgetTheme.phosphor, false)
+        return ("Companion", WidgetTheme.text, false)
     }
 
     var body: some View {
@@ -258,7 +256,7 @@ struct MediumFleetView: View {
             }
             .accessibilityHidden(true)
             Rectangle()
-                .fill(WidgetTheme.dim.opacity(0.35))
+                .fill(WidgetTheme.line)
                 .frame(height: 1)
             HStack(alignment: .top, spacing: WidgetTheme.columnSpacing) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -307,13 +305,12 @@ struct CountLine: View {
         HStack(spacing: 6) {
             Text("\(value)")
                 .font(.system(size: 18, weight: .bold, design: .monospaced))
-                .foregroundStyle(alarmed ? WidgetTheme.alarm
-                                         : WidgetTheme.phosphor)
+                .foregroundStyle(alarmed ? WidgetTheme.attention
+                                         : WidgetTheme.text)
                 .privacySensitive()
             Text(label)
-                .font(.system(size: 10, weight: .semibold,
-                              design: .monospaced))
-                .foregroundStyle(WidgetTheme.dim)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(WidgetTheme.muted)
         }
         // One utterance per line — "3 need you", never a bare "3" followed
         // by an unrelated "NEEDS YOU".
@@ -331,20 +328,19 @@ struct ProviderMeter: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Text(bar.provider.uppercased())
-                    .font(.system(size: 9, weight: .semibold,
-                                  design: .monospaced))
-                    .foregroundStyle(WidgetTheme.dim)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(WidgetTheme.muted)
                 Text(bar.stale ? "–" : "\(Int(bar.percent))%")
                     .font(.system(size: 11, weight: .semibold,
                                   design: .monospaced))
-                    .foregroundStyle(bar.stale ? WidgetTheme.dim
+                    .foregroundStyle(bar.stale ? WidgetTheme.muted
                                      : WidgetTheme.meterColor(bar.percent))
                     .privacySensitive()
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Rectangle()
-                        .fill(WidgetTheme.dim.opacity(0.25))
+                        .fill(WidgetTheme.line)
                     if !bar.stale {
                         Rectangle()
                             .fill(WidgetTheme.meterColor(bar.percent))
@@ -372,7 +368,7 @@ struct AgeLine: View {
         Text(Date(timeIntervalSince1970: summary.generatedAt),
              style: .relative)
             .font(.system(size: 9, design: .monospaced))
-            .foregroundStyle(stale ? WidgetTheme.amber : WidgetTheme.dim)
+            .foregroundStyle(stale ? WidgetTheme.attention : WidgetTheme.muted)
     }
 }
 
@@ -397,12 +393,12 @@ struct WidgetFaceColumn: View {
             // The words that name a waiting agent are the words the counts
             // hide on the lock screen, so they hide with them.
             Text("\(face.name) · \(face.doing)")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(WidgetTheme.phosphor)
+                .font(.system(size: 9))
+                .foregroundStyle(WidgetTheme.text)
                 .privacySensitive()
             Text(slogan)
-                .font(.system(size: 8, design: .monospaced))
-                .foregroundStyle(WidgetTheme.dim)
+                .font(.system(size: 8))
+                .foregroundStyle(WidgetTheme.muted)
             Spacer(minLength: 0)
         }
         .frame(width: WidgetTheme.faceColumnWidth, alignment: .leading)
@@ -438,11 +434,11 @@ struct WidgetFacePortrait: View {
                     .scaledToFill()
             } else {
                 ZStack {
-                    Rectangle().fill(WidgetTheme.dim.opacity(0.18))
+                    Rectangle().fill(WidgetTheme.line)
                     Text(String(slug.prefix(1)).uppercased())
                         .font(.system(size: size * 0.45, weight: .bold,
                                       design: .monospaced))
-                        .foregroundStyle(WidgetTheme.phosphor)
+                        .foregroundStyle(WidgetTheme.text)
                 }
             }
         }
@@ -485,9 +481,9 @@ struct WidgetStateRule: View {
 
     private var ink: Color {
         switch rule {
-        case "work": return WidgetTheme.phosphor
-        case "alert": return WidgetTheme.alarm
-        default: return WidgetTheme.dim
+        case "work": return WidgetTheme.accent
+        case "alert": return WidgetTheme.attention
+        default: return WidgetTheme.muted
         }
     }
 

@@ -9,6 +9,7 @@ from dark_army_daemon.alerts import (
     AlertPolicy, KINDS, PER_SESSION_COOLDOWN, clear_resolved, marker_current,
     offered_reply,
 )
+from dark_army_daemon import work_report as _wr
 
 
 def agent(sid="s1", category=None, signals=(), nickname="Vex", project="repo",
@@ -719,3 +720,203 @@ def test_the_flat_question_slot_wins_over_the_list_and_the_summary():
     row2 = agent(questions=[{"options": []}, {"text": "  Second one?  "}])
     out2 = AlertPolicy().evaluate(snap(waiting=[row2]), {"s1": dict(GENERIC)}, now=100)
     assert out2[0].need == "Second one?"
+
+
+# ── a finished work report: one quiet banner, Mac only ────────────────────────
+
+_REPORT = ("## Work done\n**Asked:** make it quiet.\n"
+           "**Changed:** the spawner now follows the preference.\n"
+           "**Verified:** the suite passed.\n"
+           "**Unchecked:** Nothing - every check above ran.\n")
+_HEADLINE = _wr.parse(_REPORT)["headline"]
+
+
+def reported(sid="s1", report=_REPORT, **kw):
+    return dict(agent(sid=sid, **kw), last_report=report,
+                work_report=_wr.parse(report))
+
+
+def test_the_report_headline_stands_in_for_a_missing_summary():
+    policy = AlertPolicy()
+    cards = {"s1": {"hook": "Stop", "message": "Waiting for input"}}
+    out = policy.evaluate(snap(waiting=[reported(signals=[WAITING])]), cards, now=100)
+    assert [a.rule for a in out] == ["card"]
+    assert out[0].body == _HEADLINE
+
+
+def test_a_summary_still_outranks_the_report_headline():
+    policy = AlertPolicy()
+    row = dict(reported(signals=[WAITING]), last_summary="Ready for review.")
+    cards = {"s1": {"hook": "Stop", "message": "Waiting for input"}}
+    out = policy.evaluate(snap(waiting=[row]), cards, now=100)
+    assert out[0].body == "Ready for review."
+
+
+def test_a_resting_report_raises_one_quiet_finished_banner():
+    policy = AlertPolicy()
+    out = policy.evaluate(snap(sleeping=[reported()]), {}, now=100)
+    assert len(out) == 1
+    (alert,) = out
+    assert alert.rule == "report" and alert.kind == "finished"
+    assert alert.title == "Vex finished"
+    assert alert.body == _HEADLINE
+    assert alert.need == "" and alert.severity == "info"
+    assert alert.actions == ("reveal", "mute")
+    # Once per report: still true on the next tick, still said once.
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=105) == []
+
+
+def test_a_running_row_with_a_report_raises_nothing():
+    """A report read before the Stop lands: the row is still `running`, and
+    the Stop's card is about to banner with the same headline — one banner,
+    not two."""
+    policy = AlertPolicy()
+    assert policy.evaluate(snap(running=[reported()]), {}, now=100) == []
+
+
+def test_a_stale_report_after_a_restart_raises_nothing():
+    """A fresh policy (the app restarted) meets rows whose transcripts gave
+    their reports back; an hour-old report is history, not news."""
+    from dark_army_daemon.session_stats import FINISHED_IDLE_GRACE_SECONDS
+    policy = AlertPolicy()
+    old = dict(reported(), idle_seconds=7200)
+    assert policy.evaluate(snap(sleeping=[old]), {}, now=100) == []
+    edge = dict(reported("s2"), idle_seconds=FINISHED_IDLE_GRACE_SECONDS)
+    assert [a.rule for a in policy.evaluate(snap(sleeping=[edge]), {}, now=100)] \
+        == ["report"]
+
+
+def test_a_report_seen_while_looking_is_not_bannered_later():
+    policy = AlertPolicy()
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=100,
+                           suppressed={"s1"}) == []
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=105) == []
+    policy = AlertPolicy()
+    policy.mute("s1")
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=100) == []
+    policy.unmute("s1")
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=105) == []
+
+
+def test_a_dismissed_card_does_not_release_a_second_report_banner():
+    """The Stop card carried the headline; once the person dismisses it and
+    the row drops to `sleeping`, the same report must stay quiet."""
+    policy = AlertPolicy()
+    cards = {"s1": {"hook": "Stop", "message": "Waiting for input"}}
+    out = policy.evaluate(snap(waiting=[reported()]), cards, now=100)
+    assert [a.rule for a in out] == ["card"]
+    after = snap(sleeping=[reported()])
+    clear_resolved(policy, after, {})
+    assert policy.evaluate(after, {}, now=110) == []
+
+
+def test_the_report_banner_neither_waits_on_nor_stamps_the_cooldown():
+    policy = AlertPolicy()
+    # A card ten seconds after a report is the next ask, and must show.
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=100)
+    assert "s1" not in policy._last_per_session
+    cards = {"s1": {"hook": "Notification", "message": "Permission needed"}}
+    out = policy.evaluate(snap(waiting=[agent(signals=[WAITING])]), cards, now=110)
+    assert [a.rule for a in out] == ["card"]
+    # And a report after a recent card is not swallowed by its window.
+    policy2 = AlertPolicy()
+    policy2.evaluate(snap(waiting=[agent(signals=[WAITING])]),
+                     {"s1": {"hook": "Stop", "message": "?"}}, now=100)
+    out = policy2.evaluate(snap(sleeping=[reported()]), {}, now=120)
+    assert [a.rule for a in out] == ["report"]
+
+
+def test_the_report_rule_re_arms_once_the_report_clears():
+    policy = AlertPolicy()
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=100)
+    # The person's next prompt clears the report; the row works again.
+    working = snap(running=[agent()])
+    clear_resolved(policy, working, {})
+    assert policy.evaluate(working, {}, now=200) == []
+    second = snap(sleeping=[reported(report=_REPORT.replace("spawner", "notifier"))])
+    clear_resolved(policy, second, {})
+    out = policy.evaluate(second, {}, now=300)
+    assert [a.rule for a in out] == ["report"]
+    assert "notifier" in out[0].body
+
+
+def test_the_report_key_holds_while_the_row_moves_to_finished():
+    policy = AlertPolicy()
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=100)
+    later = snap(finished=[dict(reported(), alive=True)])
+    clear_resolved(policy, later, {})
+    policy.evaluate(later, {}, now=250)
+    back = snap(sleeping=[reported()])
+    clear_resolved(policy, back, {})
+    assert policy.evaluate(back, {}, now=260) == []
+
+
+@pytest.mark.parametrize("how", ["muted", "suppressed", "panel_focused"])
+def test_no_report_banner_while_you_are_looking_or_have_muted(how):
+    policy = AlertPolicy()
+    kwargs = {}
+    if how == "muted":
+        policy.mute("s1")
+    else:
+        kwargs[how] = {"s1"}
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=100, **kwargs) == []
+
+
+def test_never_on_a_waiting_row_beside_a_card():
+    """A Codex `## Work done` alone still asks: the card speaks, with the
+    headline as its body, and the report rule stays out of it — one banner."""
+    policy = AlertPolicy()
+    cards = {"s1": {"hook": "Stop", "message": "Waiting for input"}}
+    out = policy.evaluate(snap(waiting=[reported()]), cards, now=100)
+    assert [a.rule for a in out] == ["card"]
+    assert out[0].body == _HEADLINE
+    assert policy.evaluate(snap(waiting=[reported()]), cards, now=105) == []
+
+
+def test_never_beside_a_card_or_a_prompt_on_a_resting_row():
+    policy = AlertPolicy()
+    cards = {"s1": {"hook": "Notification", "message": "idle"}}
+    assert policy.evaluate(snap(sleeping=[reported()]), cards, now=100) == []
+    prompts = {"s1": {"request_id": "r1", "tool_name": "Bash"}}
+    out = policy.evaluate(snap(sleeping=[reported()]), {}, now=100, prompts=prompts)
+    assert [a.rule for a in out] == ["permission"]
+    assert policy.evaluate(snap(sleeping=[reported()]), {}, now=101,
+                           prompts=prompts) == []
+
+
+def test_no_report_banner_without_a_parsed_report_or_from_other_buckets():
+    policy = AlertPolicy()
+    plain = dict(agent(), last_report=_REPORT)            # an older enrich
+    assert policy.evaluate(snap(sleeping=[plain]), {}, now=100) == []
+    assert policy.evaluate(snap(finished=[dict(reported(), alive=True)],
+                                abandoned=[reported("s2")]), {}, now=100) == []
+
+
+def test_an_unlabelled_report_still_says_something():
+    policy = AlertPolicy()
+    out = policy.evaluate(snap(sleeping=[reported(report="## Work done\nall fine")]),
+                          {}, now=100)
+    assert out[0].body == "Wrote a work report"
+
+
+def test_a_report_from_before_a_restart_is_not_announced_again():
+    """`_fired` lives in memory, and a restored row's quiet stamp is its old
+    `last_event`: a report that went quiet before this daemon started was
+    news for the previous run and is seeded as delivered."""
+    started = 1000.0
+    policy = AlertPolicy(started_at=started)
+    restored = dict(reported(), quiet_since=started - 30, idle_seconds=30)
+    assert policy.evaluate(snap(sleeping=[restored]), {}, now=started + 1) == []
+    assert ("s1", "report") in policy._fired
+    # A row that goes quiet after the start still banners, once.
+    fresh = dict(reported("s2"), quiet_since=started + 5, idle_seconds=2)
+    out = policy.evaluate(snap(sleeping=[restored, fresh]), {}, now=started + 7)
+    assert [(a.session_id, a.rule) for a in out] == [("s2", "report")]
+    assert policy.evaluate(snap(sleeping=[restored, fresh]), {}, now=started + 9) == []
+
+
+def test_an_unknown_start_seeds_nothing():
+    policy = AlertPolicy()
+    row = dict(reported(), quiet_since=5.0, idle_seconds=3)
+    assert [a.rule for a in policy.evaluate(snap(sleeping=[row]), {}, now=8.0)] \
+        == ["report"]

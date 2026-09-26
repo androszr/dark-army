@@ -317,6 +317,116 @@ final class BoardQueueTests: XCTestCase {
                        "Queued — Dark Army will start it")
     }
 
+    // MARK: - Card dependencies
+
+    /// A daemon older than dependencies sends none of the five keys, and a
+    /// card with no links sends none of the derived four: every one decodes
+    /// to empty, and the card still decodes.
+    func testAbsentDependencyFieldsDecodeToEmpty() throws {
+        let row = try card(#"{"id":"a","title":"t"}"#)
+        XCTAssertEqual(row.blockedBy, "")
+        XCTAssertEqual(row.dependencyIds, [])
+        XCTAssertEqual(row.dependencies, [])
+        XCTAssertEqual(row.dependents, [])
+        XCTAssertEqual(row.dependencyLine, "")
+        XCTAssertEqual(row.dependentsLine, "")
+    }
+
+    func testDependencyFieldsDecodeWhenPresent() throws {
+        let row = try card(#"""
+        {"id":"a","title":"t","blocked_by":"b\nc",
+         "dependencies":[{"id":"b","title":"Build it","column_name":"done","met":true},
+                         {"id":"c","title":"Ship it","column_name":"backlog","met":false}],
+         "dependents":[{"id":"d","title":"Later"}],
+         "dependency_line":"Waits on: \"Build it\" (done) · \"Ship it\" (not yet)",
+         "dependents_line":"Unblocks: \"Later\""}
+        """#)
+        XCTAssertEqual(row.dependencyIds, ["b", "c"])
+        XCTAssertEqual(row.dependencies.map(\.id), ["b", "c"])
+        XCTAssertEqual(row.dependencies.first?.column, "done")
+        XCTAssertEqual(row.dependencies.map(\.met), [true, false])
+        XCTAssertEqual(row.dependents, [CardLink(id: "d", title: "Later")])
+        XCTAssertEqual(row.dependencyLine,
+                       #"Waits on: "Build it" (done) · "Ship it" (not yet)"#)
+        XCTAssertEqual(row.dependentsLine, #"Unblocks: "Later""#)
+    }
+
+    /// A ragged entry (a newer or older daemon) still decodes, with the
+    /// missing members empty — never a thrown board.
+    func testARaggedDependencyEntryStillDecodes() throws {
+        let row = try card(#"{"id":"a","dependencies":[{"id":"b"}],"dependents":[{}]}"#)
+        XCTAssertEqual(row.dependencies, [CardDependency(id: "b")])
+        XCTAssertEqual(row.dependents, [CardLink()])
+    }
+
+    /// A card held by a dependency wears the daemon's dependency sentence as
+    /// its `queue_reason`, and `queuedLine` draws it verbatim, unchanged.
+    func testTheDependencySentenceIsTheQueuedLineVerbatim() throws {
+        let board = try boardWith(#"""
+        {"cards":[{"id":"q","project":"bob","queue_state":"queued",
+                   "queued_at":1.0,"blocked_by":"b",
+                   "queue_reason":"Queued — Dark Army will start it once \"Build it\" is done"}]}
+        """#)
+        let card = try XCTUnwrap(board.cards.first)
+        let sentence = "Queued — Dark Army will start it once \"Build it\" is done"
+        XCTAssertEqual(card.queuedLine(autostart: true), sentence)
+        XCTAssertEqual(card.queuedLine(autostart: false), sentence)
+    }
+
+    private func linkCard(_ id: String, root: String = "/p", column: String = "backlog",
+                          blockedBy: String = "") -> BoardCard {
+        var c = BoardCard()
+        c.id = id
+        c.title = id
+        c.root = root
+        c.column = column
+        c.blockedBy = blockedBy
+        // The daemon resolves every stored id that still names a card; the
+        // table uses ids that start with "gone" for deleted ones.
+        c.dependencies = BoardCard.stages(blockedBy)
+            .filter { !$0.hasPrefix("gone") }
+            .map { CardDependency(id: $0, title: $0) }
+        return c
+    }
+
+    /// The Add… filter, tabled: same folder, not the card itself, not already
+    /// listed, not in Done — and nothing at all once the list holds eight.
+    func testTheDependencyChoicesAreThisProjectsOtherOpenUnlistedCards() {
+        let me = linkCard("me", blockedBy: "listed")
+        let cards = [
+            me,
+            linkCard("open"),
+            linkCard("in-progress", column: "in_progress"),
+            linkCard("prep", column: "prep"),
+            linkCard("listed"),
+            linkCard("finished", column: "done"),
+            linkCard("elsewhere", root: "/other"),
+        ]
+        XCTAssertEqual(BoardCard.dependencyChoices(for: me, in: cards).map(\.id),
+                       ["open", "in-progress", "prep"])
+        // The board's own order is kept, and an empty board offers nothing.
+        XCTAssertEqual(BoardCard.dependencyChoices(for: me, in: []), [])
+        // A list already at the store's bound offers nothing: a ninth would
+        // be cut without a word.
+        let full = linkCard("full", blockedBy: (1...8).map { "d\($0)" }
+                                .joined(separator: "\n"))
+        XCTAssertEqual(BoardCard.maxDependencies, 8)
+        XCTAssertEqual(BoardCard.dependencyChoices(for: full, in: cards + [full]), [])
+        let seven = linkCard("seven", blockedBy: (1...7).map { "d\($0)" }
+                                 .joined(separator: "\n"))
+        XCTAssertEqual(BoardCard.dependencyChoices(for: seven, in: cards).map(\.id),
+                       ["me", "open", "in-progress", "prep", "listed"])
+        // Deleted cards' ids still in the stored string count for nothing:
+        // seven dead ids and one live one leave room, and the live list —
+        // what ✕ and Add… write back — drops the dead ones.
+        let haunted = linkCard("haunted", blockedBy: (["listed"]
+            + (1...7).map { "gone\($0)" }).joined(separator: "\n"))
+        XCTAssertEqual(haunted.dependencyIds.count, 8)
+        XCTAssertEqual(haunted.linkedIds, ["listed"])
+        XCTAssertEqual(BoardCard.dependencyChoices(for: haunted, in: cards).map(\.id),
+                       ["me", "open", "in-progress", "prep"])
+    }
+
     // MARK: - What a refusal with no words reads as
 
     func testAnEmptyRefusalGetsPlainWordsRatherThanAStatusNumber() {

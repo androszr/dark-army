@@ -75,18 +75,49 @@ lives in `preferences.DEFAULTS`.
 ## The keyboard is one reader, and the verbs are one object
 
 ↑/↓ select, Enter jumps, Space unfolds the selected agent's last message in
-the pane (`toggleFullText`), D dismisses, S stops, R retires, W wraps up, `/`
-filters, Escape climbs `RailLayout.escapeRung`: give up a text box (reply,
+the pane (`toggleFullText`), D dismisses, S stops, R deletes, W closes the
+terminal, `/` filters, `?` opens the key legend, ⌃Tab / ⌃⇧Tab walk the
+rail's tabs (Inbox → Agents → Comm → History → Reports, wrapping), and
+Escape climbs `RailLayout.escapeRung`: give up a text box (reply,
 terminal input or filter), then close an open History run, then a chosen
 History day, then leave History, then close the detail
 (`KeyRouter.detailOpen`), then pop the drill, then close the panel.
+
+**The letters are one table, read twice** (25 Sep 2026,
+`plans/2026-09-25-usability-accessibility-pass.md`). `TriageKeys.table`
+(`TriageKeys.swift`, Foundation only) maps each character to its
+`TriageIntent` and its word; the monitor performs `TriageKeys.intent(for:)`
+and hands anything the table does not name back to AppKit, and the **keys**
+chip in the brand bar (or `?`) opens `TriageLegend.line`, composed from the
+same table, under the bar — a view, never a tooltip. The words are
+`Verbs.swift`'s, the list the phone shares. **A plain Tab is AppKit's**:
+it walks the keyboard focus between the drawn buttons (Full Keyboard
+Access) and is never consumed; the rail's tabs moved to ⌃Tab, handled only
+while no text box holds the caret. Stop and Delete are also drawn —
+`StopBar` where `canStop`, `DeleteBar` on an abandoned row, in the
+`StdoutPane` over the same `RowActions` gate — so the arm the letters set
+is visible. **A focused control takes Return and Space**: the Tab-reachable
+controls claim their focus in `FocusedControls` (`KeyboardFocus.swift`), and
+below the terminal and caret guards the monitor performs
+`TriageKeys.handsToControl`, handing the two keys to the control; with
+nothing focused they are Jump and Unfold as before. **One cursor, never
+two**: an arrow (`TriageKeys.endsControlFocus`) clears every claim and takes
+the focus off before it moves the selection, and a selection change clears
+the claims too. `ClaimsKeyboardFocus` is the one writer — it withdraws on
+disappear, and under `keyboardClaimsSuppressed` (the board covered by an
+agent's detail) its control leaves the focus chain and claims nothing, so a
+verb nobody can see is never pressed. An inbox entry and a card tile open
+on Return (a tile on Space too) only while the view itself is focused — on
+this platform Return presses the default button, never a focused one, and a
+child's Return never bubbles into its parent. Pinned by
+`test_panel_keyboard_reach.py`.
 
 A local `NSEvent` monitor (`installKeyMonitor`, `KeyMonitor.swift` — an
 extension of `AppDelegate`, split out of `main.swift` on 20 Sep 2026 beside
 `StdinCommands.swift`), not `onKeyPress`; it asks the
 view (`KeyRouter.editing`, published up from `@FocusState`), never
 `panel.firstResponder`. Arm-then-confirm lives in `RowActions`, not the row,
-and moving the selection disarms it. A **confirmed** Stop or Retire enters
+and moving the selection disarms it. A **confirmed** Stop or Delete enters
 `RowActions.stopping`, which fades the row until the *snapshot* stops listing
 it as live (never on the HTTP 200). The filter appears only above eight rows
 and **overrides a collapsed section**.
@@ -242,11 +273,11 @@ SwiftUI into a canvas `1 / factor` as many points across, so every
 `PanelMetrics` constant, every `Theme.mono` size, every literal frame and
 every padding grows together. Neither `PanelMetrics` nor `Theme.mono` is
 edited; they stay in logical points. The four named steps (100/125/150/175)
-are `PanelScale.steps`; the settings window's **Panel size** heading left on
-20 Sep 2026 (never changed from 100%), so a hand-edited `panel_scale` in
-`preferences.json` is the one way to pick another — the key is never renamed
-and `set_panel_scale` still rides the stdin/stdout channel and no daemon
-action table.
+are `PanelScale.steps`; the settings window's **Panel size** row, gone on
+20 Sep 2026, came back on 25 Sep 2026 as one pick per step (ticked through
+`PanelScale.resolved`), because the dial was otherwise unreachable — the key
+is never renamed and `set_panel_scale` still rides the stdin/stdout channel
+and no daemon action table.
 The pairing window and the settings window are deliberately unscaled.
 The knowledge window is scaled like the card window (eighty notes need
 room): one reused `NSWindow`, titled `Knowledge — <label>`, closable /

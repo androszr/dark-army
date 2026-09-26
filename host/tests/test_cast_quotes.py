@@ -86,7 +86,7 @@ def test_a_doctored_copy_would_not_compare_equal():
 
 CASES = [
     ("Cipher-ab12", identity.QUOTES["cipher"]),     # overflow keeps its stem
-    ("PTYŚ", identity.QUOTES["ptyś"]),              # case-folds the Ś
+    ("PTYS", identity.QUOTES["ptys"]),              # case-folds the Ś
     ("overwatch", identity.QUOTES["overwatch"]),     # art-only speaks
     ("Grok", ""),                                    # off the roster: silent
     ("Elliot", ""),                                  # a retired name: silent

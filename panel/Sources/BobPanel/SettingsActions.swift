@@ -23,6 +23,7 @@ final class SettingsWindowState: ObservableObject {
     /// armed verb has one: a shared slot would let arming one row aim
     /// another's confirmation — and this is the row where that matters most.
     @Published var killArmed = false
+    @Published var designSystemOpen = false
     /// Foldable headings (`SettingsSearch.foldable`) a person has opened.
     /// Closed by default and not persisted: the window is reused for the
     /// life of the process and a fold is a reading position, not a setting.
@@ -89,6 +90,10 @@ final class SettingsActions {
     /// Presents the knowledge window for an enrolled root. Owned by the app
     /// delegate so hide/close force-close it with card/settings/pairing.
     var onKnowledge: ((String) -> Void)?
+
+    /// Presents the Checks window on one enrolled project's manual checks.
+    /// Owned by the app delegate for the same reason `onKnowledge` is.
+    var onManualChecks: ((String) -> Void)?
 
     /// Presents the access-log window. Owned by the app delegate for the
     /// same reason `onKnowledge` is.
@@ -255,11 +260,18 @@ final class SettingsActions {
             state.packArmed = nil
             state.stopSyncArmed = nil
             onKnowledge?(root)
+        case .manualChecks(let root):
+            state.killArmed = false
+            state.packArmed = nil
+            state.stopSyncArmed = nil
+            onManualChecks?(root)
         case .accessLog:
             state.killArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             onAccessLog?()
+        case .designSystem:
+            state.designSystemOpen = true
         }
     }
 

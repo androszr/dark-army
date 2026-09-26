@@ -55,12 +55,23 @@ struct AnswerBox: View {
     /// agent: the free-text reply steps aside so there is one place to type.
     let terminalWins: Bool
 
+    /// Which part of the box this instance draws. The conversation screen
+    /// splits it in two (26 Sep 2026): the answer buttons ride the
+    /// scrolling page under the turns, and the message field is pinned
+    /// beneath the page, drawn whether the agent is working or stopped, so
+    /// a person can always say something to it. Every other screen draws
+    /// the whole box, gated as it always was.
+    enum Part { case whole, choices, composer }
+    let part: Part
+
     init(agent: Agent, stopped: Bool, client: PhoneClient,
-         terminalWins: Bool = false, retainedReply: PhoneReplyDraft? = nil) {
+         terminalWins: Bool = false, retainedReply: PhoneReplyDraft? = nil,
+         part: Part = .whole) {
         self.agent = agent
         self.stopped = stopped
         self.client = client
         self.terminalWins = terminalWins
+        self.part = part
         self.drafts = client.answerDrafts
         _replyDraft = StateObject(wrappedValue: retainedReply ?? PhoneReplyDraft())
     }
@@ -112,7 +123,8 @@ struct AnswerBox: View {
     /// buttons (shape 4) are drawn on this alone.
     private var canAnswer: Bool { stopped && agent.channel }
     /// The free-text reply (shape 5) additionally yields to a terminal box.
-    private var canReply: Bool { stopped && agent.channel && !terminalWins }
+    /// Never on the `.choices` part: its field is the pinned composer's.
+    private var canReply: Bool { stopped && agent.channel && !terminalWins && part == .whole }
 
     /// A press for *this agent* is in play — queued, on its way, or landed
     /// and waiting for the snapshot to agree. Read for the **label swap
@@ -135,35 +147,10 @@ struct AnswerBox: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !options.isEmpty {
-                if agent.canType {
-                    if questions.count > 1 || agent.question.multiSelect {
-                        multiQuestionGroups
-                    } else {
-                        optionButtons
-                    }
-                } else {
-                    optionCaptions
-                    if canReply { freeText }
-                }
-            } else if canAnswer {
-                if !agent.replyOptions.isEmpty {
-                    replyButtons
-                } else if canReply {
-                    freeText
-                }
-            }
-            if !agent.interactionNote.isEmpty {
-                Text(agent.interactionNote)
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if !agent.askNote.isEmpty {
-                Text(agent.askNote)
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
+            if part == .composer {
+                composerParts
+            } else {
+                answerParts
             }
             if !note.isEmpty {
                 Text(note)
@@ -198,14 +185,69 @@ struct AnswerBox: View {
         }
     }
 
+    /// The pinned composer: the message field, always, and — only where the
+    /// Mac says it has no route to this agent — one dim line saying the
+    /// message may be turned down, so SEND is never a silent dead end. The
+    /// Mac's own refusal, when one comes back, is the note under it.
+    @ViewBuilder private var composerParts: some View {
+        freeText
+        if !agent.channel {
+            Text(agent.interactionNote.isEmpty
+                 ? "The Mac has no route to this agent right now, so a message may be turned down."
+                 : agent.interactionNote)
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder private var answerParts: some View {
+            if !options.isEmpty {
+                if agent.canType {
+                    if questions.count > 1 || agent.question.multiSelect {
+                        multiQuestionGroups
+                    } else {
+                        optionButtons
+                    }
+                } else {
+                    optionCaptions
+                    if canReply { freeText }
+                }
+            } else if canAnswer {
+                if !agent.replyOptions.isEmpty {
+                    replyButtons
+                } else if canReply {
+                    freeText
+                }
+            }
+            // On the Conversation tab the pinned composer draws this line
+            // when the Mac has no route (`composerParts`); drawn here too,
+            // it said the same sentence twice on one screen.
+            if !agent.interactionNote.isEmpty, part == .whole || agent.channel {
+                Text(agent.interactionNote)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !agent.askNote.isEmpty {
+                Text(agent.askNote)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+    }
+
     /// The session's note is one per scope and this box is one of two
     /// readers on the agent screen: it takes the refusal of an **answer or
     /// reply** — the verbs it sends (`QueueNote.isAnswer`) — and leaves
     /// every other verb's to the screen around it, so a refused Stop is
     /// never drawn under the answer buttons as well as under the actions.
     /// Reading is drawing: only the reader that draws it reads it.
+    /// On the conversation screen the pinned composer is the one reader: it
+    /// is always in view, where the scrolling `.choices` half could not be.
     private func takeNote() {
-        guard let queued = client.queueNote(for: agent.sessionId),
+        guard part != .choices,
+              let queued = client.queueNote(for: agent.sessionId),
               queued.isAnswer else { return }
         note = queued.text
         client.readQueueNote(for: agent.sessionId)
@@ -511,25 +553,35 @@ struct AnswerBox: View {
             : "message to this agent"
     }
 
+    private var replyField: some View {
+        TextField("", text: $replyDraft.text,
+                  prompt: Text(replyPlaceholder)
+                    .foregroundStyle(Theme.faint),
+                  axis: .vertical)
+            .font(Theme.mono(13))
+            .foregroundStyle(Theme.phosphor)
+            // Prose, so it types like prose. The pairing screen's
+            // identifiers are the one place that stays verbatim.
+            .textInputAutocapitalization(.sentences)
+            .focused($replyFocused)
+            .fieldWell(focused: replyFocused, multiline: true,
+                       onTap: { replyFocused = true })
+    }
+
     private var freeText: some View {
         VStack(alignment: .leading, spacing: 8) {
             // `.top` alignment is what pins the microphone to the well's top
             // corner: the well grows downward as the message does, and a
             // centred mic would drift away from the thumb that started it.
             HStack(alignment: .top, spacing: 8) {
-                TextField("", text: $replyDraft.text,
-                          prompt: Text(replyPlaceholder)
-                            .foregroundStyle(Theme.faint),
-                          axis: .vertical)
-                    .font(Theme.mono(13))
-                    .foregroundStyle(Theme.phosphor)
-                    // Prose, so it types like prose. The pairing screen's
-                    // identifiers are the one place that stays verbatim.
-                    .textInputAutocapitalization(.sentences)
-                    .focused($replyFocused)
-                    .lineLimit(5...)
-                    .fieldWell(focused: replyFocused, multiline: true,
-                               onTap: { replyFocused = true })
+                // The pinned composer starts at one line and grows with the
+                // message, so an empty one never takes the page it sits
+                // under; the whole box keeps its five-line well.
+                if part == .composer {
+                    replyField
+                } else {
+                    replyField.lineLimit(5...)
+                }
                 MicButton(id: micField, text: $replyDraft.text)
             }
             if dictation.noteField == micField, !dictation.note.isEmpty {

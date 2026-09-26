@@ -846,3 +846,77 @@ async def test_a_summary_only_stop_and_a_stall_on_a_busy_session_leave_no_phanto
     assert not [line for line in lines
                 if line["phone"]["outcome"].startswith("sent:")
                 and line["session_id"] not in snapshot_listed]
+
+
+@pytest.mark.parametrize("where", ["mac", "phone"])
+def test_a_parsed_work_report_is_refused_at_any_depth(tmp_path, where):
+    """The report's parts ride the row as `work_report`; the ledger's
+    evidence says `report` as a bool and never carries the words."""
+    assert "work_report" in bl.FORBIDDEN_KEYS
+    ledger = _ledger(tmp_path)
+    keys = bl.MAC_KEYS if where == "mac" else bl.PHONE_KEYS
+    line = _line()
+    # Under a key the shape allows, so only the fence can refuse it.
+    line[where] = dict(line[where], **{keys[0]: {"work_report": {"headline": "x"}}})
+    assert ledger.append(line) is None
+    assert not ledger.path.exists()
+    control = _line()
+    control[where] = dict(control[where], **{keys[0]: {"harmless": 1}})
+    assert bl._has_forbidden({where: control[where]}) is None
+    assert bl._has_forbidden({where: line[where]}) == "work_report"
+
+
+# ── a reminder about an agent whose entry was dismissed ──────────────────────
+
+def _waiting_reminder(sid="s1") -> dict:
+    """The half-hour `waiting` reminder on a waiting row, evidence as
+    decided — `category == "waiting"` is what tells the dismissed case from
+    a busy agent's `withheld:unlisted`."""
+    return dict(_alert(sid, rule="waiting"), kind="attention", nickname="Vex",
+                title="Vex has been waiting on you for half an hour",
+                body=SUMMARY, created_at=time.time(),
+                _buzz_evidence=bl.evidence(
+                    _entry(session_id=sid, questions=[], question=None,
+                           reply_options=[]),
+                    None, cooldown_gap=None, category="waiting"))
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_about_a_dismissed_agent_leaves_no_phantom(
+        monkeypatch, tmp_path):
+    """The success criterion, in process: with `s1`'s entry dismissed, its
+    `waiting` reminder and a card alert on `s2` in one drain make exactly one
+    push, about `s2`; the ledger holds `s1` → `withheld:unlisted` with
+    `evidence.category == "waiting"` and `s2` → `sent:1`, and no `sent:`
+    line names a session the phone does not show."""
+    from dark_army_daemon import inbox_ack, live_activity
+
+    d = _pushable_with_ledger(monkeypatch, tmp_path)
+    d._inbox_acks = inbox_ack.InboxAckStore()
+    d._inbox_acks.ack("s:s1", "waiting", "waiting")
+    d._board_state = {"cards": []}
+    d._undelivered = [_waiting_reminder("s1"),
+                      dict(_alert("s2", rule="card"), kind="attention",
+                           nickname="Ada", created_at=time.time())]
+    d._deliver_alerts()
+    await _settle(d)
+    await _landed(d._buzz_ledger, 2)
+    ((_did, body),) = d._relay_connector.pushed
+    assert body["session_id"] == "s2"
+    lines = d._buzz_ledger.recent()
+    assert len(lines) == 2
+    rows = {line["session_id"]: line for line in lines}
+    assert rows["s1"]["phone"] == {"outcome": "withheld:unlisted",
+                                   "devices": 0, "held_seconds": 0.0}
+    assert rows["s1"]["evidence"]["category"] == "waiting"
+    assert rows["s2"]["phone"]["outcome"] == "sent:1"
+    shown = live_activity.shown_sessions(
+        d._agents_snapshot_cache, d._prompts_by_session(),
+        notified=[n["session_id"] for n in d._notification_snapshot()],
+        cards=d._board_state["cards"], acks=d._inbox_acks.records())
+    assert shown == {"s2"}
+    assert not [line for line in lines
+                if line["phone"]["outcome"].startswith("sent:")
+                and line["session_id"] not in shown]
+    text = d._buzz_ledger.path.read_text()
+    assert SUMMARY not in text and "half an hour" not in text

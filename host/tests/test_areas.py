@@ -40,7 +40,7 @@ def test_unknown():
 
 def test_lead_lines():
     assert areas.lead_line('Relay','backbone') == 'Relay · Backbone lead'
-    assert areas.lead_line('Ptyś-abcd','pocket') == 'Ptyś-abcd · Pocket lead'
+    assert areas.lead_line('Ptys-abcd','pocket') == 'Ptys-abcd · Pocket lead'
     assert areas.lead_line('Vex','backbone') == 'Vex · Backbone stand-in'
 
 def test_order():

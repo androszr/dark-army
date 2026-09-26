@@ -5,7 +5,7 @@ import UIKit
 ///
 /// The phone's copy of `panel/Sources/BobPanel/Cast.swift`. Fourteen Dark
 /// Army callsigns plus six of the household — Androll, Captcha, Sawa,
-/// Franio, Zosia and Ptyś — in this order, matching `identity.NAMES` and the panel —
+/// Franio, Zosia and Ptys — in this order, matching `identity.NAMES` and the panel —
 /// pinned by `host/tests/test_phone_theme_drift.py`, which is the only thing
 /// standing between three copies of this list and three different answers
 /// to "who is this". A **partial** copy: it carries `names`, `artOnly`,
@@ -20,7 +20,7 @@ enum Cast {
                         "Hex", "Relay", "Forge",
                         "Watch", "Audit", "Proxy", "Quiet", "Nyx",
                         "Canon", "Velvet",
-                        "Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptyś"]
+                        "Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptys"]
 
     /// Slugs with art that no session is ever assigned. `overwatch` is the
     /// chief of staff's alter ego — `bc-planner`'s banner is Overwatch, and
@@ -153,7 +153,7 @@ enum CastQuotes {
         "sawa": "Green CI or stay offline.",
         "franio": "Fail fast. Patch once. No cosplay.",
         "zosia": "Backlog hygiene is brain opsec.",
-        "ptyś": "Tiny commits. Wide kill radius.",
+        "ptys": "Tiny commits. Wide kill radius.",
         "overwatch": "Map the blast radius. Then one key.",
     ]
 

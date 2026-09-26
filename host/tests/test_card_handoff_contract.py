@@ -32,7 +32,7 @@ OTHER_SUBJECT_DOCS = (
 READERS = (
     ".claude/skills/ship/references/plan.md",
     ".claude/skills/ship/references/implement.md",
-    ".claude/skills/ship/references/scout.md",
+    ".claude/skills/scout/references/scout.md",
     "docs/agents.md",
 )
 

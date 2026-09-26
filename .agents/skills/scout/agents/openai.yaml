@@ -1,0 +1,4 @@
+interface:
+  display_name: "Scout a Dark Army Question"
+  short_description: "Investigate a question and attach a checked report"
+  default_prompt: "Use $scout to investigate this question and write a report."

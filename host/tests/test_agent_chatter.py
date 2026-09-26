@@ -57,6 +57,7 @@ PHONE_CALL_SITES += 16  # concurrent action chatter + pull-to-refresh sites in t
 PHONE_CALL_SITES += 1  # the Comm tab's "thinking" line under Mission Control's reply (CommView)
                           # (Usage report screens gained .refreshable chatter)
 PHONE_CALL_SITES += 1  # ConversationScreen catching-up caret
+PHONE_CALL_SITES += 1  # Comm's helper tab: the caret beside a helper's activity (CommView)
 
 #: The panel's action waits; each must have a phone caller outside the shared
 #: file, or the phone's buttons fall silent again.
@@ -255,6 +256,9 @@ def test_every_call_site_speaks():
             text = _read(path)
             calls = text.count("AgentChatterView(")
             spoken = len(re.findall(r'spoken: "[^"]+"', text))
+            # A rail button's own `spoken:` is its accessibility label, not a
+            # chatter sentence (`ScoutReportsRail.swift`, 25 Sep 2026).
+            spoken -= len(re.findall(r'railButton\(label: "[^"]*", spoken: "', text))
             assert calls == spoken, f"{path.name}: {calls} chatter calls, {spoken} spoken sentences"
 
 

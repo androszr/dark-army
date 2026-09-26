@@ -28,8 +28,6 @@ struct RecentlySection: View {
     }
 
     var body: some View {
-        DecryptButton(action: { sheets.show(.catchUp()) }) { Text("Catch up across projects") }
-            .buttonStyle(.plain)
         if !client.log.isEmpty {
             DecryptButton {
                 collapsed.toggle()

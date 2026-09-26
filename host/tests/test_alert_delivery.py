@@ -597,7 +597,7 @@ def test_a_long_need_is_cut_to_a_banners_worth():
 @pytest.mark.parametrize("kind,character,extra,expected", [
     ("question", "vex", [], "vex"),
     ("permission", "cipher", [], "cipher"),
-    ("finished", "ptyś", [], "ptyś"),
+    ("finished", "ptys", [], "ptys"),
     ("attention", "vex", [], ""),
     ("security", "vex", [], ""),
     ("question", "", [], ""),
@@ -965,6 +965,35 @@ async def test_a_finished_turn_never_buzzes_the_phone(monkeypatch):
     assert calls == [(["s1:card:1"], "withheld:finished",
                       {"banner": True, "idle_seconds": None,
                        "held_seconds": 0.0})]
+
+
+@pytest.mark.asyncio
+async def test_a_finished_report_banner_never_buzzes_the_phone(monkeypatch):
+    """The `report` rule's quiet banner is a `finished` kind, so S3 takes it
+    exactly as it takes a finished turn: the banner leg receives it, the
+    phone does not, and the ledger line says why."""
+    d = _pushable(monkeypatch)
+    seen = _banner_seen(d)
+    calls = _outcomes(d, monkeypatch)
+    d._undelivered = [dict(_alert(rule="report"), nickname="Vex",
+                           title="Vex finished", kind="finished",
+                           severity="info")]
+    d._deliver_alerts()
+    await _settle(d)
+    assert d._relay_connector.pushed == []
+    assert [a["rule"] for a in seen] == ["report"]
+    assert calls == [(["s1:report:1"], "withheld:finished",
+                      {"banner": True, "idle_seconds": None,
+                       "held_seconds": 0.0})]
+
+
+def test_a_finished_banner_arrives_silently():
+    """No sound for a finished run; every other kind keeps it."""
+    quiet = _posted_content(dict(_alert(rule="report"), kind="finished"))
+    quiet.setSound_.assert_not_called()
+    loud = _posted_content(dict(_alert(), kind="attention"))
+    loud.setSound_.assert_called_once()
+    assert _posted_content(_alert()).setSound_.call_count == 1   # no kind
 
 
 @pytest.mark.asyncio
@@ -1359,3 +1388,251 @@ def test_a_persisting_fault_warns_once(monkeypatch, caplog):
     levels = [r.levelno for r in caplog.records
               if "Needs you list unreadable" in r.getMessage()]
     assert levels == [logging.WARNING, logging.DEBUG]
+
+
+# ── a buzz about an agent whose entry was dismissed stays on the Mac ─────────
+#
+# `live_activity.shown_sessions`: the phone removes a dismissed entry before
+# it counts Needs you, so a reminder about that agent would be swept the
+# moment it landed. The gate reads the ack store's own records and the
+# published board's cards; `_pushable` lists `s1` and `s2` (waiting).
+
+
+def _acked(monkeypatch, cards=()):
+    from dark_army_daemon import inbox_ack
+
+    d = _pushable(monkeypatch)
+    d._inbox_acks = inbox_ack.InboxAckStore()
+    d._board_state = {"cards": list(cards)}
+    return d
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_about_a_dismissed_agent_is_withheld_acked(monkeypatch):
+    d = _acked(monkeypatch)
+    d._inbox_acks.ack("s:s1", "waiting", "waiting")
+    seen = _banner_seen(d)
+    calls = _outcomes(d, monkeypatch)
+    d._undelivered = [_signal("s1", rule="waiting")]
+    d._deliver_alerts()
+    await _settle(d)
+    assert d._relay_connector.pushed == []
+    assert [a["session_id"] for a in seen] == ["s1"]   # the banner leg still
+    assert [(ids, got) for ids, got, _ in calls] == [
+        (["s1:waiting:1"], "withheld:unlisted")]
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_about_an_agent_not_dismissed_still_buzzes_acked(monkeypatch):
+    d = _acked(monkeypatch)
+    d._inbox_acks.ack("s:s1", "waiting", "waiting")
+    d._undelivered = [_signal("s2", rule="waiting")]
+    d._deliver_alerts()
+    await _settle(d)
+    ((_did, body),) = d._relay_connector.pushed
+    assert body["session_id"] == "s2"
+
+
+@pytest.mark.asyncio
+async def test_a_dismissed_old_question_does_not_hide_a_new_one(monkeypatch):
+    from dark_army_daemon import inbox_ack
+
+    d = _acked(monkeypatch)
+    d._agents_snapshot_cache["waiting"][0]["questions"] = [{"text": "New?"}]
+    d._inbox_acks.ack("s:s1", "question",
+                      inbox_ack.fingerprint("question", "Old?"))
+    d._undelivered = [_signal("s1", rule="waiting")]
+    d._deliver_alerts()
+    await _settle(d)
+    assert len(d._relay_connector.pushed) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_permission_ask_is_never_hidden_by_a_dismissed_entry(monkeypatch):
+    d = _acked(monkeypatch)
+    d._inbox_acks.ack("s:s1", "waiting", "waiting")
+    monkeypatch.setattr(d, "_prompts_by_session",
+                        lambda: {"s1": {"request_id": "r1"}})
+    d._undelivered = [_signal("s1", rule="permission", kind="permission")]
+    d._deliver_alerts()
+    await _settle(d)
+    assert len(d._relay_connector.pushed) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_dismissed_agent_whose_card_still_asks_keeps_buzzing(monkeypatch):
+    card = {"id": "c1", "needs_you": True, "session_id": "s1"}
+    d = _acked(monkeypatch, cards=[card])
+    d._inbox_acks.ack("s:s1", "waiting", "waiting")
+    d._undelivered = [_signal("s1", rule="waiting")]
+    d._deliver_alerts()
+    await _settle(d)
+    assert len(d._relay_connector.pushed) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_dismissed_agent_and_its_dismissed_card_are_withheld(monkeypatch):
+    from dark_army_daemon import inbox_ack
+
+    card = {"id": "c1", "needs_you": True, "session_id": "s1"}
+    d = _acked(monkeypatch, cards=[card])
+    d._inbox_acks.ack("s:s1", "waiting", "waiting")
+    d._inbox_acks.ack("c:c1", "ended_work", inbox_ack.fingerprint("ended_work", ""))
+    calls = _outcomes(d, monkeypatch)
+    d._undelivered = [_signal("s1", rule="waiting")]
+    d._deliver_alerts()
+    await _settle(d)
+    assert d._relay_connector.pushed == []
+    assert [got for _, got, _ in calls] == ["withheld:unlisted"]
+
+
+@pytest.mark.asyncio
+async def test_a_daemon_with_no_ack_store_gates_as_before_acked(monkeypatch):
+    """`BobDaemon.__new__` has no `_inbox_acks`: the gate reads no acks and
+    must not fall into the fault branch, which would gate nothing."""
+    d = _pushable(monkeypatch)
+    assert not hasattr(d, "_inbox_acks")
+    calls = _outcomes(d, monkeypatch)
+    d._undelivered = [_signal("s3"), _signal("s1")]
+    d._deliver_alerts()
+    await _settle(d)
+    ((_did, body),) = d._relay_connector.pushed
+    assert body["session_id"] == "s1"
+    assert [(ids, got) for ids, got, _ in calls] == [
+        (["s3:stall:1"], "withheld:unlisted"), (["s1:stall:1"], "sent:1")]
+
+
+def test_the_sync_leg_withholds_an_acked_agent_the_same_way(monkeypatch):
+    d = _acked(monkeypatch)
+    d._inbox_acks.ack("s:s1", "waiting", "waiting")
+    calls = _outcomes(d, monkeypatch)
+    d._undelivered = [_signal("s1", rule="waiting"), _signal("s2", rule="waiting")]
+    d._deliver_alerts()
+    assert d._relay_connector.pushed == []
+    assert [(ids, got) for ids, got, _ in calls] == [
+        (["s1:waiting:1"], "withheld:unlisted"), (["s2:waiting:1"], "no_loop")]
+
+
+def test_the_gate_reads_the_store_and_never_prunes_it_acked(monkeypatch):
+    """`records()` is the read; `inbox_snapshot()`'s prune is a write the
+    leg must not own, so an ack about a subject gone from the list stays."""
+    d = _acked(monkeypatch)
+    d._inbox_acks.ack("s:s1", "waiting", "waiting")
+    d._inbox_acks.ack("s:gone", "waiting", "waiting")
+    assert d._phone_listed_sessions() == {"s2"}
+    assert {r["key"] for r in d._inbox_acks.records()} == {"s:s1", "s:gone"}
+
+
+# ── a work report waits for a frontmost reading taken after it landed ────────
+
+def _reporter_daemon(monkeypatch, frontmost):
+    """A daemon with one sleeping reporter (`s1`, pid 4242) and the real
+    candidate / frontmost / hold path; `frontmost` is what VS Code answers."""
+    from dark_army_daemon import daemon as daemon_module
+    from dark_army_daemon import vscode_reveal
+
+    async def answer(pids):
+        return set(frontmost) & set(pids)
+
+    monkeypatch.setattr(vscode_reveal, "frontmost_session_pids", answer)
+    monkeypatch.setattr(daemon_module, "FRONTMOST_POLL_SECONDS", 0.0)
+    d = _daemon()
+    d._session_states = {"s1": {"pid": 4242, "state": "idle"}}
+    d._active_notifications = {}
+    d._permission_requests = {}
+    d._channels = {}
+    d._frontmost_pids = set()
+    d._frontmost_at = 0.0
+    d._frontmost_asked = set()
+    d._report_candidates = set()
+    d._reconciled_categories = lambda: {"s1": "sleeping"}
+    return d
+
+
+def _reporter_snapshot(quiet):
+    from dark_army_daemon import work_report
+    report = ("## Work done\n**Changed:** the notifier is quiet.\n"
+              "**Verified:** the suite.\n**Unchecked:** Nothing - every check above ran.\n")
+    entry = {"session_id": "s1", "nickname": "Vex", "project": "repo",
+             "signals": [], "last_report": report, "idle_seconds": 3,
+             "quiet_since": quiet, "work_report": work_report.parse(report)}
+    return {"running": [], "waiting": [], "sleeping": [entry], "finished": []}
+
+
+def _tick(d, policy, snap):
+    """One evaluation exactly as `_enrich_agent_stubs` runs it."""
+    raised = policy.evaluate(snap, {}, time.time(),
+                             suppressed=d._alert_suppressed(snap),
+                             prompts={}, panel_focused=(),
+                             report_hold=d._report_hold(policy, snap))
+    d._update_report_candidates(policy, snap)
+    return raised
+
+
+async def _one_poll(d):
+    """One pass of the real `_frontmost_checker`; the push it schedules for
+    a held report is where the loop stops."""
+    pushed = []
+
+    def push():
+        pushed.append(True)
+        d._running = False
+
+    d._schedule_agents_push = push
+    d._running = True
+    await d._frontmost_checker()
+    return pushed
+
+
+@pytest.mark.asyncio
+async def test_a_frontmost_reporter_is_stamped_delivered_and_never_banners(monkeypatch):
+    from dark_army_daemon.alerts import AlertPolicy
+    d = _reporter_daemon(monkeypatch, frontmost={4242})
+    policy = AlertPolicy()
+    d._frontmost_at = time.time() - 60          # a reading from before the Stop
+    snap = _reporter_snapshot(quiet=time.time() - 3)
+    # The first tick after the Stop waits: no reading has asked about s1.
+    assert _tick(d, policy, snap) == []
+    assert d._report_candidates == {"s1"}
+    assert d._suppression_candidates() == {"s1": 4242}
+    # The poll asks VS Code about it, and asks for the evaluation at once.
+    assert await _one_poll(d) == [True]
+    assert d._frontmost_asked == {"s1"} and d._frontmost_pids == {4242}
+    # You are looking at it: stamped delivered, no banner, now or later.
+    assert _tick(d, policy, snap) == []
+    assert ("s1", "report") in policy._fired
+    assert d._report_candidates == set()
+    d._frontmost_pids = set()
+    assert _tick(d, policy, snap) == []
+
+
+@pytest.mark.asyncio
+async def test_a_reporter_nobody_is_looking_at_banners_once_after_the_reading(monkeypatch):
+    from dark_army_daemon.alerts import AlertPolicy
+    d = _reporter_daemon(monkeypatch, frontmost=set())
+    policy = AlertPolicy()
+    snap = _reporter_snapshot(quiet=time.time() - 3)
+    assert _tick(d, policy, snap) == []          # held for a fresh reading
+    await _one_poll(d)
+    out = _tick(d, policy, snap)
+    assert [a.rule for a in out] == ["report"]
+    assert _tick(d, policy, snap) == []
+
+
+def test_the_hold_fails_open_when_no_reading_comes(monkeypatch):
+    from dark_army_daemon import daemon as daemon_module
+    from dark_army_daemon.alerts import AlertPolicy
+    d = _reporter_daemon(monkeypatch, frontmost=set())
+    policy = AlertPolicy()
+    old = time.time() - daemon_module.REPORT_FRONTMOST_WAIT_SECONDS - 1
+    snap = _reporter_snapshot(quiet=old)
+    assert d._report_hold(policy, snap) == set()
+    assert [a.rule for a in _tick(d, policy, snap)] == ["report"]
+
+
+def test_a_pidless_reporter_is_not_held(monkeypatch):
+    from dark_army_daemon.alerts import AlertPolicy
+    d = _reporter_daemon(monkeypatch, frontmost=set())
+    d._session_states = {"s1": {"state": "idle"}}
+    snap = _reporter_snapshot(quiet=time.time())
+    assert d._report_hold(AlertPolicy(), snap) == set()

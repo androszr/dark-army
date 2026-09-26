@@ -109,7 +109,14 @@ final class BoardState: ObservableObject {
     /// everything). Every filter goes through `showsProject(_:)` so that
     /// distinction cannot be re-lost one call site at a time.
     @Published var outcomeSaving = false
-    @Published var projectFilter: Set<String>
+    /// Changing it **keeps** a row's select mode and its ticks: a person
+    /// who ticks cards, looks at another project and comes back finds the
+    /// batch where they left it. The batch button's count names every
+    /// ticked card, seen or not. It disarms a Start that waits on its
+    /// confirmation, because the person confirmed a board they no longer see.
+    @Published var projectFilter: Set<String> {
+        didSet { if projectFilter != oldValue { rowBatchArmed = false } }
+    }
     /// The board rows a person has flipped away from their default fold —
     /// `BoardRowFold`'s `flipped`, never the folded set itself. Seeded from
     /// the habit file beside `projectFilter`, saved on every toggle.
@@ -185,11 +192,17 @@ final class BoardState: ObservableObject {
     /// `toggleProjectFilter` makes.
     func toggleRowFold(_ column: BoardColumn) {
         disarm()
+        rowBatchArmed = false
+        // Folding keeps select mode and its ticks: the folded heading still
+        // draws the batch control, so the count and CANCEL stay in reach.
         rowFlips = BoardRowFold.toggled(column.rawValue, flipped: rowFlips)
         PanelPlacement.saveBoardRowFlips(BoardRowFold.encode(rowFlips))
     }
-    /// Filter over title, summary and prompt. Empty is no filter.
-    @Published var query = ""
+    /// Filter over title, summary and prompt. Empty is no filter. Changing
+    /// it keeps a row's select mode and disarms, `projectFilter`'s rule.
+    @Published var query = "" {
+        didSet { if query != oldValue { rowBatchArmed = false } }
+    }
     /// Whether the board search field has the caret. PanelView folds this
     /// into `keys.editing` so letters typed here are not S/D/R on a row.
     @Published var searchFocused = false
@@ -235,6 +248,9 @@ final class BoardState: ObservableObject {
     /// leave the board narrowed to a card it never scrolled to.
     @Published var revealRequest: CardRevealRequest?
     private var revealSeq = 0
+    /// Open the Checks window on one check file — the card window's
+    /// **Open in Checks**. Set once by the app delegate, which owns the window.
+    var onOpenManualCheck: ((String) -> Void)?
 
     func requestReveal(_ cardId: String) {
         revealSeq += 1
@@ -304,6 +320,28 @@ final class BoardState: ObservableObject {
     /// optimistic about the spinner only, taken back on a refusal, otherwise
     /// reconciled against the snapshot's own `refineState`.
     @Published var refining: Set<String> = []
+    /// The row whose select mode is on, or nil. **One row at a time, one
+    /// selection** — never a set per verb: the row names the verb
+    /// (`RowSelection`), so a second select mode would be a second press
+    /// fighting the first for the same tick boxes.
+    @Published var selectingRow: BoardColumn? = nil
+    /// The cards ticked in that row, by id. Pruned against every snapshot, so
+    /// a card that stops being tickable — refined by somebody else, moved,
+    /// deleted — falls out of the batch by itself.
+    @Published var rowSelection: Set<String> = []
+    /// The daemon's own words for a refused batch press, drawn verbatim under
+    /// the row's batch button. `refusals`' rule: nothing else on screen moves
+    /// when a launch does not happen.
+    @Published var rowBatchRefusal = ""
+    /// Whether the Backlog row's START n TOGETHER has been pressed once and
+    /// waits for its confirmation. Its own slot rather than `armed`, which
+    /// names one card; cleared by leaving select mode, a project change
+    /// (which leaves it) and a fold.
+    @Published var rowBatchArmed = false
+    /// The ticked cards themselves, in tick order, kept beside `rowSelection`
+    /// so `RowSelection.admits` can compare a candidate's folder with the
+    /// first card ticked. Refreshed from each snapshot by `reconcile`.
+    private(set) var rowSelectionCards: [BoardCard] = []
     /// The one unplanned drop into In progress being confirmed, or nil.
     /// Plain published state — no timers, no tracking areas; the
     /// `.confirmationDialog` on `BoardView` is driven by it.
@@ -363,6 +401,7 @@ final class BoardState: ObservableObject {
         armedHere = nil
         deleteArmed = nil
         doneArmed = nil
+        rowBatchArmed = false
         resetClearDoneGate()
     }
 
@@ -371,6 +410,7 @@ final class BoardState: ObservableObject {
         armed = nil
         deleteArmed = nil
         doneArmed = nil
+        rowBatchArmed = false
         resetClearDoneGate()
     }
 
@@ -462,6 +502,110 @@ final class BoardState: ObservableObject {
             if !result.ok {
                 refining.remove(card.id)
                 refusals[card.id] = result.detail
+            }
+            await client.refresh()
+        }
+    }
+
+    // MARK: - A row's select mode
+
+    /// Turn `column`'s select mode on, empty. Entering another row's mode
+    /// drops whatever the first row had ticked.
+    func enterRowSelection(_ column: BoardColumn) {
+        selectingRow = column
+        rowSelection = []
+        rowSelectionCards = []
+        rowBatchRefusal = ""
+    }
+
+    /// Tick or untick one card. Untick always; tick only where
+    /// `RowSelection.admits` holds for the row being selected.
+    func toggleRowSelection(_ card: BoardCard, chrome: BoardChrome) {
+        guard let row = selectingRow else { return }
+        rowBatchRefusal = ""
+        // A changed selection is not the one "Really start N?" confirmed.
+        rowBatchArmed = false
+        if rowSelection.contains(card.id) {
+            rowSelection.remove(card.id)
+            rowSelectionCards.removeAll { $0.id == card.id }
+            return
+        }
+        guard RowSelection.admits(row, card: card, given: rowSelectionCards,
+                                  chrome: chrome) else { return }
+        rowSelection.insert(card.id)
+        rowSelectionCards.append(card)
+    }
+
+    /// Leave select mode: the row, the ticks and the refusal line all go.
+    func exitRowSelection() {
+        selectingRow = nil
+        rowSelection = []
+        rowSelectionCards = []
+        rowBatchRefusal = ""
+        rowBatchArmed = false
+    }
+
+    /// START n TOGETHER, confirmed: one `board_start_batch` naming every
+    /// ticked card, in board order. `refineSelected`'s optimism — every
+    /// ticked card shows as starting at once, taken back the moment the
+    /// daemon refuses. The daemon's report is drawn whether or not the press
+    /// landed, START PROJECT's rule: under the batch button while selecting
+    /// (a refusal keeps the ticks so the person can fix one and press
+    /// again), and in START PROJECT's slot for the project once a landed
+    /// press has left select mode.
+    func startSelected(board: Board, client: DaemonClient) {
+        let picked = board.cards.filter { rowSelection.contains($0.id) }
+        let ids = picked.map(\.id)
+        rowBatchArmed = false
+        guard ids.count >= RowSelection.minimum else { return }
+        rowBatchRefusal = ""
+        for id in ids { refusals[id] = "" }
+        starting.formUnion(ids)
+        let root = picked.first?.root ?? ""
+        Task { @MainActor in
+            let result = await client.boardStartBatch(ids)
+            if result.ok {
+                exitRowSelection()
+                if !root.isEmpty { refusals[root] = result.detail }
+            } else {
+                starting.subtract(ids)
+                rowBatchRefusal = result.detail
+            }
+            await client.refresh()
+        }
+    }
+
+    /// The Backlog row's batch button: the first press arms, the second
+    /// fires. `startButton`'s arm-then-confirm, for the same reason.
+    func pressStartSelected(board: Board, client: DaemonClient) {
+        if rowBatchArmed {
+            startSelected(board: board, client: client)
+        } else {
+            disarm()
+            rowBatchArmed = true
+        }
+    }
+
+    /// REFINE n TOGETHER: one `board_refine_batch` naming every ticked card,
+    /// in board order. `refineCard`'s optimism exactly — every ticked card
+    /// spins at once, taken back the moment the daemon refuses (with its
+    /// words under the button), and otherwise held until the snapshot
+    /// carries each card's own `refineState`. A landed press leaves select
+    /// mode; a refused one keeps the ticks so the person can fix one and
+    /// press again.
+    func refineSelected(board: Board, client: DaemonClient) {
+        let ids = board.cards.filter { rowSelection.contains($0.id) }.map(\.id)
+        guard ids.count >= RowSelection.minimum else { return }
+        rowBatchRefusal = ""
+        for id in ids { refusals[id] = "" }
+        refining.formUnion(ids)
+        Task { @MainActor in
+            let result = await client.boardRefineBatch(ids)
+            if !result.ok {
+                refining.subtract(ids)
+                rowBatchRefusal = result.detail
+            } else {
+                exitRowSelection()
             }
             await client.refresh()
         }
@@ -1087,6 +1231,20 @@ final class BoardState: ObservableObject {
         if !refining.isEmpty {
             let stillRefining = Set(board.cards.filter(\.isRefining).map(\.id))
             refining.formIntersection(stillRefining)
+        }
+        // A ticked card that can no longer be ticked leaves the batch, and
+        // the kept copies are refreshed so the folder rule reads today's.
+        if let row = selectingRow, !rowSelection.isEmpty {
+            let chrome = BoardChrome(board)
+            let still = board.cards.filter {
+                rowSelection.contains($0.id)
+                    && RowSelection.tickable(row, card: $0, chrome: chrome)
+            }
+            let kept = Set(still.map(\.id))
+            if kept != rowSelection { rowSelection = kept }
+            rowSelectionCards = rowSelectionCards.compactMap { old in
+                still.first { $0.id == old.id }
+            }
         }
     }
 }

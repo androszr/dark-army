@@ -144,9 +144,17 @@ def test_clickable_call_sites_stay_inside_the_budget():
     # 2026-09-06 the tree held 91; the dirty checkout this plan landed on
     # already sits at 97 (BoardCardSheet, LifecycleReportView and others
     # this plan does not touch). 2026-09-14 the access-log window and the
-    # Inbox's two alert buttons took it past 110. The ceiling is a budget,
-    # not a target.
-    assert 80 <= count <= 120, (
+    # Inbox's two alert buttons took it past 110. 2026-09-25 the Prep row's
+    # batch refine added four drawn buttons (the card's tick box, SELECT,
+    # the batch verb and CANCEL — each gated, each owed its hand by
+    # `test_every_drawn_tap_target_carries_the_pointing_hand`) to a tree
+    # already at 120. 2026-09-25 again, the usability pass drew Stop and
+    # Delete as buttons (`StopBar`, `DeleteBar`) and the brand bar's keys
+    # chip, taking a tree at 124 to 127; the plan measured 130 and set 150
+    # for the concurrent sessions building beside it
+    # (`plans/2026-09-25-usability-accessibility-pass.md`). The ceiling is a
+    # budget, not a target.
+    assert 80 <= count <= 150, (
         f"{count} .clickable( call sites outside Cursor.swift; "
         "the ceiling is a budget, not a target"
     )

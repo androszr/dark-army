@@ -185,7 +185,10 @@ def test_the_board_view_wiring_passes_searching():
     assert ("BoardSearch.matches(query: query, title: $0.title, "
             "summary: $0.summary, project: $0.project)") in text
     assert 'TextField("", text: $query' in text
-    assert text.count("client.post(") == 1
+    # Clear done's and the Backlog row's batch Start (25 Sep 2026) — the
+    # search adds none.
+    assert text.count("client.post(") == 2
+    assert text.count("client.post(action: PhoneActions.boardStartBatch") == 1
     assert "URLSession" not in text
     assert ".searchable" not in text
     assert ".lineLimit(" not in text
@@ -231,7 +234,10 @@ def test_xctest_names_the_seven_cases():
 
 def test_no_new_mac_request_was_added():
     text = _read(BOARD)
-    assert text.count("client.post(") == 1
+    # Clear done's and the Backlog row's batch Start (25 Sep 2026), each a
+    # synchronous press of its own; the search adds no request.
+    assert text.count("client.post(") == 2
+    assert text.count("client.post(action: PhoneActions.boardStartBatch") == 1
     assert re.search(r"URLSession|\.searchable", text) is None
 
 

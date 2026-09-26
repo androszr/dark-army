@@ -66,7 +66,7 @@ must be a real spacer character (`_render_strip`).
 
 ## The collapse ladder
 
-`STRIP_LADDER`, `STRIP_BUDGET_PT` = 300pt. `_animate_icon` renders a rung,
+`STRIP_LADDER`, `STRIP_BUDGET_PT` = 310pt. `_animate_icon` renders a rung,
 measures what `_render_strip` returns, and steps down until it fits — the
 subagent footnote, then the usage clusters **one provider at a time** (Codex
 first, Claude last), then the to-do count; the floor is the two live figures

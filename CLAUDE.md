@@ -138,7 +138,7 @@ current there.
 
 | Subject | Document | Long-form contracts it points at |
 |---|---|---|
-| The board: two write paths, `start_when_planned`, the parallel limit and the queue, claims, Done, `board.py`'s writer rings, `dispatch.py`'s six properties, `workspace.py` | `docs/context-board.md` | `docs/card-crew.md`, `docs/delivery-leads.md`, `docs/lifecycle-timing.md` |
+| The board: two write paths, `start_when_planned`, the parallel limit and the queue, claims, Done, `board.py`'s writer rings, `dispatch.py`'s six properties, `workspace.py` | `docs/context-board.md` | `docs/card-crew.md`, `docs/delivery-leads.md`, `docs/lifecycle-timing.md`, `docs/card-dependencies.md` |
 | The Mac panel: workspace pane and rail, the process table, detail tabs and the hosted terminal, the inbox, the window, the board's drawing, the card window, drafts, markdown, areas, chatter, the API layer's three rules | `docs/context-panel.md` | `docs/panel-window-contract.md`, `docs/phone-contract.md`, `docs/agent-chatter.md` |
 | The Python half: Codex observation, the hook handler, the daemon and its modules, the loopback API and the two sealed doors, enrolment, `paths.py`, titles, the menu-bar app, the session state model | `docs/context-host.md` | `docs/session-state-contract.md`, `docs/transport-contract.md`, `docs/codex-contract.md`, `docs/channel-tools.md`, `docs/knowledge-notes.md`, `docs/pty-broker-contract.md`, `docs/menubar-strip-contract.md`, `docs/kill-switch.md`, `docs/agent-pack.md`, `docs/first-run-checklist.md` |
 | Building, testing, the asset pipelines, `/review` | `docs/context-development.md` | `docs/agents.md`, `docs/ship-efficiency.md`, `docs/codex-ship.md` |
@@ -196,7 +196,7 @@ stated in full, with its reasons, in the subject document named.
   after a downgrade: a new key gets a default on read, a removed key is
   tolerated, a preference key is never renamed, private files are in
   `paths._PRIVATE_FILES` (`docs/context-host.md`, *paths.py*).
-- **The menu-bar strip measures itself** against `STRIP_BUDGET_PT` (300pt);
+- **The menu-bar strip measures itself** against `STRIP_BUDGET_PT` (310pt);
   kerning after an attachment is discarded by AppKit, so a gap after an icon
   is a real spacer character; only `work` animates
   (`docs/menubar-strip-contract.md`).
@@ -209,8 +209,8 @@ stated in full, with its reasons, in the subject document named.
   together**: `BoardRowFold` (folds persisted as `board_row_flips`),
   `DetailTab` / `TerminalWhereabouts`, `CardSections`, `CardTimeline`,
   `ProviderChoice`, `Markdown`, `Areas`, `Specialists`, `AgentChatter`,
-  `CastQuotes`, `Inbox.oneEntryPerSubject`; the tests under `host/tests/` that pin each pair
-  are named beside the rule in `docs/context-panel.md`.
+  `CastQuotes`, `WorkReport`, `Inbox.oneEntryPerSubject`; each pair's pinning test is
+  named beside it in `docs/context-panel.md`.
 - **A card outlines one verb, chosen by its column** (`CardActionWeight`,
   the board tile's rule; the phone's card screen does not read it yet):
   Refine in Prep, START in Backlog, Done in In progress, none in Done; every
@@ -259,7 +259,7 @@ each role loads and proves every relocated paragraph still has a home;
 
 ## Key Constraints
 
-- **Menu-bar width**: `STRIP_BUDGET_PT` (300pt), and **kerning after an
+- **Menu-bar width**: `STRIP_BUDGET_PT` (310pt), and **kerning after an
   attachment is discarded by AppKit** — a gap after an icon must be a real
   spacer character (`_render_strip`). Ladder in
   `docs/menubar-strip-contract.md`.

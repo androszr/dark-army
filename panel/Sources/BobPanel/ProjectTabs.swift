@@ -96,6 +96,7 @@ struct ProjectTabStrip: View {
     let flagged: Set<ProjectTab>
     var enabled: Bool = true
     let onSelect: (ProjectTab) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -109,7 +110,7 @@ struct ProjectTabStrip: View {
             }
             .onChange(of: selected) { _, tab in
                 if let tab {
-                    withAnimation(.snappy(duration: 0.12)) {
+                    Motion.animate(.snappy(duration: 0.12), reduced: reduceMotion) {
                         proxy.scrollTo(tab, anchor: .center)
                     }
                 }
@@ -126,14 +127,20 @@ struct ProjectTabStrip: View {
     private func tabChip(_ tab: ProjectTab) -> some View {
         let isOn = selected == tab
         let count = counts[tab] ?? 0
+        let flag = flagged.contains(tab)
         return Button {
             onSelect(tab)
         } label: {
             HStack(spacing: 5) {
-                if flagged.contains(tab) {
+                if flag {
+                    // Form before colour: the red dot alone is invisible to
+                    // a colour-blind reader, so a mark stands beside it.
                     Circle()
                         .fill(Color.red)
                         .frame(width: 5, height: 5)
+                    Text("!")
+                        .font(Theme.mono(9, weight: .semibold))
+                        .foregroundStyle(Color.red)
                 }
                 Text(tab.title)
                     .font(.system(size: 11.5, weight: isOn ? .semibold : .regular))
@@ -153,6 +160,10 @@ struct ProjectTabStrip: View {
         }
         .buttonStyle(.plain)
         .clickable(enabled)
+        // A greyed strip is not pressable, so not a Tab stop either.
+        .disabled(!enabled)
+        .reportsKeyboardFocus()
+        .accessibilityLabel(flag ? "\(tab.title), \(count), needs you" : "\(tab.title), \(count)")
     }
 }
 

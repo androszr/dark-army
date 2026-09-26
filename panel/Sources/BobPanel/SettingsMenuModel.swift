@@ -65,8 +65,12 @@ struct SettingsRow: Equatable, Identifiable {
         case stopPackSync(root: String)
         /// Inspect this enrolled project's knowledge notes.
         case knowledge(root: String)
+        /// Open the Checks window on this enrolled project's manual checks.
+        case manualChecks(root: String)
         /// Open the phone doors' access log window.
         case accessLog
+        /// Open the bundled, offline Signal component workshop.
+        case designSystem
         /// Stop everything of Dark Army's that is running, in one press.
         case killSwitch
     }
@@ -237,6 +241,19 @@ enum SettingsMenuModel {
                 + "(an editor window on an older extension, or an assistant "
                 + "it has no handle on), the tab is left alone."))
 
+        // The one size dial, back on 25 Sep 2026: the four steps exist and
+        // were reachable only by hand-editing `panel_scale`. The key is never
+        // renamed; the action rides the stdin/stdout channel, no daemon table.
+        out.append(submenu(
+            "Panel size", id: "submenu:panel-size",
+            tooltip: "Grows the window's text, rows, faces and spacing together. "
+                + "Does not change the colours.",
+            rows: PanelScale.steps.map { step in
+                pick(step.label, action: "set_panel_scale",
+                     value: .int(step.percent),
+                     selected: PanelScale.resolved(s.panelScale) == step.percent)
+            }))
+
         out.append(submenu("Dictation", id: "submenu:dictation",
                            rows: dictationRows(s, recordingShortcut: recordingShortcut)))
 
@@ -260,6 +277,13 @@ enum SettingsMenuModel {
                            rows: securityRows(security)))
 
         out.append(divider("after-projects"))
+
+        out.append(submenu("Design system", id: "submenu:design-system", rows: [
+            SettingsRow(id: "custom:design-system", title: "Open Signal workshop",
+                        kind: .custom(.designSystem),
+                        tooltip: "Explore and export Signal tokens and components"),
+        ]))
+        out.append(divider("after-design-system"))
 
         // Everything a person presses only when something is wrong, or only
         // on a development checkout, under one heading: the installers, the

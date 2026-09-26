@@ -110,6 +110,9 @@ def test_install_writes_the_server_and_registers_it_at_user_scope(installer):
     assert "dark_army_answer_card" in script.read_text()
     assert "dark_army_knowledge_read" in script.read_text()
     assert "dark_army_knowledge_write" in script.read_text()
+    # The batch session's move to its next card: a copy without it would
+    # leave a batch stuck on its first card.
+    assert "dark_army_next_card" in script.read_text()
     # And the legacy spelling, for a session born under `bob`.
     assert '"bob_"' in script.read_text()
     adds = [c for c in calls if c[:2] == ["mcp", "add"]]

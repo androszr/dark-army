@@ -59,6 +59,9 @@ enum FleetAge {
 struct PhoneProcessRow: View {
     let agent: Agent
     let category: Category
+    /// The bound board card's title, worded as the agent sheet words it
+    /// (`AgentDetailView.cardLine`). Empty for no card.
+    var cardLine: String = ""
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -300,8 +303,12 @@ struct PhoneProcessRow: View {
     }
 
     private var command: String {
-        // First, because the daemon publishes a card title only beside its
-        // own non-empty placeholder name — a rung below `name` never fires.
+        // The detail's own title line first, so the row names what tapping
+        // it opens; then the daemon's card title, which it publishes only
+        // beside its own non-empty placeholder name — a rung below `name`
+        // never fires. A finished run's report headline is not put in
+        // front: it hid the title (the Mac's `ProcessRow.baseTitle`).
+        if !cardLine.isEmpty { return cardLine }
         if !agent.cardTitle.isEmpty { return agent.cardTitle }
         if !agent.name.isEmpty { return agent.name }
         if !agent.currentTool.isEmpty { return agent.currentTool }
@@ -361,7 +368,7 @@ struct PhoneProcessRow: View {
 
     private var ctxColor: Color {
         guard let pct = agent.metrics.ctxUsedPct else { return Theme.faint }
-        if agent.metrics.exceeds200k || pct >= 90 { return .red }
+        if agent.metrics.exceeds200k || pct >= 85 { return .red }
         if pct >= 75 { return .orange }
         return Theme.dim
     }

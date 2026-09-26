@@ -1,37 +1,40 @@
 import SwiftUI
 import UIKit
 
-/// The phone's copy of the Mac panel's fsociety CRT palette.
-///
-/// A *copy*, deliberately: the phone is an Xcode app target and the panel is a
-/// SwiftPM module, there is no shared package, and coupling their builds was
-/// refused in the interview. What keeps the two honest is
-/// `host/tests/test_phone_theme_drift.py`, which reads both files and fails the
-/// moment one token moves without the other — so the literals below must stay
-/// **byte-identical** to `panel/Sources/BobPanel/Theme.swift`. Chrome sizing
-/// (padding, face sizes, touch targets) may differ; the tokens may not.
+/// Signal's semantic palette, generated from the same source as the Mac.
 enum Theme {
-    static let bg = Color(red: 5 / 255, green: 8 / 255, blue: 5 / 255)
-    static let bar = Color(red: 3 / 255, green: 6 / 255, blue: 3 / 255)
-    static let well = Color(red: 2 / 255, green: 4 / 255, blue: 2 / 255)
-    static let phosphor = Color(red: 124 / 255, green: 255 / 255, blue: 124 / 255)
-    static let phosphorBright = Color(red: 200 / 255, green: 255 / 255, blue: 200 / 255)
-    static let dim = Color(red: 92 / 255, green: 184 / 255, blue: 92 / 255)
-    static let faint = Color(red: 61 / 255, green: 122 / 255, blue: 61 / 255)
-    static let hair = Color(red: 31 / 255, green: 90 / 255, blue: 31 / 255)
-    static let rule = Color(red: 20 / 255, green: 51 / 255, blue: 20 / 255)
-    static let alarm = Color(red: 255 / 255, green: 77 / 255, blue: 77 / 255)
-    /// Your turn — a held state a person should know about. Not `alarm` (that
-    /// is an alarm) and not orange (that means something was refused).
-    static let amber = Color(red: 255 / 255, green: 191 / 255, blue: 71 / 255)
-    static let card = Color(red: 8 / 255, green: 24 / 255, blue: 8 / 255).opacity(0.85)
+    static let canvas = SignalTokens.canvas
+    static let surface = SignalTokens.surface
+    static let raised = SignalTokens.raised
+    static let field = SignalTokens.well
+    static let text = SignalTokens.text
+    static let muted = SignalTokens.muted
+    static let accent = SignalTokens.accent
+    static let accentInk = SignalTokens.accentInk
+    static let line = SignalTokens.line
+    static let control = SignalTokens.control
+    static let attention = SignalTokens.attention
+    static let danger = SignalTokens.danger
+    static let controlRadius = SignalTokens.Radii.control
+    static let cardRadius = SignalTokens.Radii.card
 
-    static let corner: CGFloat = 0
+    static let bg = canvas
+    static let bar = surface
+    static let well = field
+    static let phosphor = accent
+    static let phosphorBright = text
+    static let dim = muted
+    static let faint = muted
+    static let hair = line
+    static let rule = line
+    static let alarm = danger
+    static let amber = attention
+    static let card = raised
+    static let corner: CGFloat = 6
 
-    /// Matching `#050805` for UIKit-hosted chrome — the scanner's view
-    /// background, where a SwiftUI `Color` cannot reach.
     static var uiBg: UIColor {
-        UIColor(red: 5 / 255, green: 8 / 255, blue: 5 / 255, alpha: 1)
+        // Derived, never typed: the scanner ground follows `tokens.json`.
+        UIColor(SignalTokens.canvas)
     }
 
     /// The one font seam, and the one place the phone honours Dynamic Type.
@@ -51,6 +54,13 @@ enum Theme {
         let scaled = UIFontMetrics(forTextStyle: textStyle(for: size))
             .scaledValue(for: size)
         return .system(size: scaled, weight: weight, design: .monospaced)
+    }
+
+    /// Prose scales without a Dynamic Type ceiling, like machine text.
+    static func prose(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        let scaled = UIFontMetrics(forTextStyle: textStyle(for: size))
+            .scaledValue(for: size)
+        return .system(size: scaled, weight: weight, design: .default)
     }
 
     /// Nearest by the style's own default point size at `.large`:
@@ -238,20 +248,7 @@ struct PromptLine: View {
 /// Hit-testing is off: a scanline that eats a tap is a row that cannot open.
 struct ScanlineOverlay: View {
     var body: some View {
-        Canvas { context, size in
-            let ink = Color.black.opacity(0.18)
-            var y: CGFloat = 2
-            while y < size.height {
-                var path = Path()
-                path.move(to: CGPoint(x: 0, y: y))
-                path.addLine(to: CGPoint(x: size.width, y: y))
-                context.stroke(path, with: .color(ink), lineWidth: 1)
-                y += 3
-            }
-        }
-        // Wallpaper. A screen reader reads the news, not the tube.
-        .accessibilityHidden(true)
-        .allowsHitTesting(false)
+        EmptyView()
     }
 }
 
@@ -259,17 +256,18 @@ struct ScanlineOverlay: View {
 /// bigger padding: `hPad`/`vPad` are chrome sizing and may differ from the
 /// Mac's — only the colour tokens above are pinned by the drift test.
 struct AlarmOutline: ButtonStyle {
-    var color: Color = Theme.phosphor
-    var size: CGFloat = 13
+    var color: Color = Theme.accent
+    var size: CGFloat = 14
+    var filled: Bool = false
 
-    static let heldInk: Double = 0.4
-    static let heldEdge: Double = 0.3
+    static let heldInk: Double = 0.65
+    static let heldEdge: Double = 0.45
     static let hPad: CGFloat = 14
-    static let vPad: CGFloat = 8
+    static let vPad: CGFloat = 10
     static let stroke: CGFloat = 1
 
     func makeBody(configuration: Configuration) -> some View {
-        Chrome(configuration: configuration, color: color, size: size)
+        Chrome(configuration: configuration, color: color, size: size, filled: filled)
     }
 
     /// A `ButtonStyle` is not a `View`, so an `@Environment` read declared on
@@ -278,22 +276,31 @@ struct AlarmOutline: ButtonStyle {
         let configuration: Configuration
         let color: Color
         let size: CGFloat
+        let filled: Bool
         @Environment(\.isEnabled) private var isEnabled
         @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+        private var ink: Color { filled ? Theme.accentInk : color }
+
         var body: some View {
             configuration.label
-                .font(Theme.mono(size, weight: .medium))
+                .font(Theme.prose(size, weight: .semibold))
                 // Letter-spacing at an accessibility size is width spent on
                 // air: the label is already as wide as the screen allows.
-                .tracking(dynamicTypeSize.isAccessibilitySize ? 0 : size * 0.08)
+                .tracking(0)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-                .foregroundStyle(isEnabled ? color : color.opacity(AlarmOutline.heldInk))
+                // A held button reads as held: its words fade, and a filled
+                // one's fill fades with its edge (review, 25 Sep 2026).
+                .foregroundStyle(isEnabled ? ink : ink.opacity(AlarmOutline.heldInk))
                 .padding(.horizontal, AlarmOutline.hPad)
                 .padding(.vertical, AlarmOutline.vPad)
+                .background(filled
+                    ? (isEnabled ? color : color.opacity(AlarmOutline.heldEdge))
+                    : color.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
                 .overlay(
-                    Rectangle().strokeBorder(
+                    RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(
                         isEnabled ? color : color.opacity(AlarmOutline.heldEdge),
                         lineWidth: AlarmOutline.stroke)
                 )
@@ -313,7 +320,7 @@ struct AlarmOutline: ButtonStyle {
 /// drifting again.
 ///
 /// **No colour of its own.** The fill is `Theme.well`, the resting edge
-/// `Theme.hair`, the focused edge `Theme.phosphor` — all existing tokens, so
+/// `Theme.faint`, the focused edge `Theme.phosphor` — all existing tokens, so
 /// the palette stays exactly what `test_phone_theme_drift.py` compares. The
 /// affordance is the *stroke*; the fill is depth, and a lighter fill would be
 /// a palette change owed to both surfaces or neither.
@@ -337,12 +344,13 @@ struct FieldWell: ViewModifier {
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
+            .hidesKeyboard(when: focused)
             .padding(.horizontal, FieldWell.hPad)
             .padding(.vertical, multiline ? FieldWell.vPadTall : FieldWell.vPad)
             .background(Theme.well)
             .overlay(
-                Rectangle().strokeBorder(
-                    focused ? Theme.phosphor : Theme.hair,
+                RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(
+                    focused ? Theme.phosphor : Theme.faint,
                     lineWidth: FieldWell.stroke)
             )
             .contentShape(Rectangle())
@@ -354,5 +362,73 @@ extension View {
     func fieldWell(focused: Bool, multiline: Bool = false,
                    onTap: (() -> Void)? = nil) -> some View {
         modifier(FieldWell(focused: focused, multiline: multiline, onTap: onTap))
+    }
+}
+
+/// The way down for every keyboard on the phone. A field that has the
+/// keyboard shows this at its top trailing corner, inside its own frame, so
+/// the button under a field — the one thing a raised keyboard can hide — is
+/// never the only exit. The number pad has no return key and a prose field's
+/// return key types a new line, so neither can put itself away.
+///
+/// Not a `.toolbar(placement: .keyboard)` item: that bar is unreliable in
+/// detent sheets and repeats once per field that declares it. It resigns
+/// whatever holds the keyboard rather than clearing one focus binding, so
+/// the fields with no binding of their own work the same way.
+struct KeyboardHideButton: View {
+    static let glyph: CGFloat = 13
+    /// Drawn small beside the text, touched at the platform's 44 points.
+    static let reach: CGFloat = 12
+
+    var body: some View {
+        DecryptButton(action: KeyboardHideButton.hide) {
+            Image(systemName: "keyboard.chevron.compact.down")
+                .font(Theme.mono(KeyboardHideButton.glyph))
+                .foregroundStyle(Theme.phosphor)
+                .frame(width: 28, height: 20)
+                .contentShape(Rectangle().inset(by: -KeyboardHideButton.reach))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Hide keyboard")
+    }
+
+    static func hide() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+    }
+}
+
+/// A field with its own focus binding: the button shows while it is focused.
+struct HidesKeyboard: ViewModifier {
+    var focused: Bool
+
+    func body(content: Content) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            content
+            if focused { KeyboardHideButton() }
+        }
+    }
+}
+
+/// A field with no focus binding of its own (the card screen's boxes): the
+/// modifier keeps one, private to it, only to know when to show the button.
+struct HidesKeyboardOwnFocus: ViewModifier {
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            content.focused($focused)
+            if focused { KeyboardHideButton() }
+        }
+    }
+}
+
+extension View {
+    func hidesKeyboard(when focused: Bool) -> some View {
+        modifier(HidesKeyboard(focused: focused))
+    }
+
+    func hidesKeyboard() -> some View {
+        modifier(HidesKeyboardOwnFocus())
     }
 }

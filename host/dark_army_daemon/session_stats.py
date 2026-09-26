@@ -141,6 +141,14 @@ MAX_LAST_TEXT_CHARS = 4000
 # act on. The report is capped at about 25 lines by the hint itself, so 4000
 # fits a whole one and the frequency argument above is unchanged.
 MAX_LAST_REPORT_CHARS = 4000
+
+# How long a live session must be quiet before it reads as finished rather than
+# merely sleeping. Must stay well under the staleness timeout (300s) or a
+# session would be evicted before it ever crossed the grace, and the live
+# half of the section would never appear. Here rather than in `daemon.py`
+# (which re-exports it) so `alerts.py` can read the same number without
+# importing the daemon: a work report is fresh news only inside this grace.
+FINISHED_IDLE_GRACE_SECONDS = 120.0
 #: The heading, on its own line, exactly as the hint dictates it.
 _WORK_REPORT_RE = re.compile(r"^##[ \t]+Work done[ \t]*$", re.M)
 
@@ -561,6 +569,32 @@ _NOT_A_PROMPT_PREFIXES = (
     "<bash-stdout>",
     "<bash-stderr>",
 )
+#: The opening tag of the person's own words arriving through Dark Army's
+#: channel: `reply_to_session` pushes `kind="user"`, and Claude Code writes it
+#: as an `isMeta` `user` record with `origin.kind == "channel"`. The source
+#: name is matched as any non-empty name, never pinned: sessions born before
+#: the rename say the old name for their whole life, the alias-window plan
+#: greps the old `source=` literal under this package to zero, and
+#: `test_product_name` refuses the bare old name here. Both names are pinned
+#: in the tests instead.
+_CHANNEL_USER_RE = re.compile(r'<channel source="[^"\s]+" kind="user">')
+
+
+def _is_channel_user_message(obj: dict, lead: str) -> bool:
+    """Whether a `user` record is the person replying through Dark Army's
+    channel (panel or phone): the harness's `origin.kind == "channel"` stamp
+    **and** ``lead`` (the record's text, left-stripped) opening with the
+    `kind="user"` tag. Neither alone: skill expansions and another session's
+    hand-back quote the tag without that origin, and a `kind="fleet"` event
+    carries the origin without the tag."""
+    origin = obj.get("origin")
+    return (
+        isinstance(origin, dict)
+        and origin.get("kind") == "channel"
+        and _CHANNEL_USER_RE.match(lead) is not None
+    )
+
+
 #: A slash command's echo opens with one of these. It is decided by the
 #: command's *name*, never by the tag: a built-in in `_LOCAL_COMMANDS` sends
 #: the agent nothing, while a skill or custom command (`/ship implement …`,

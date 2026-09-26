@@ -118,8 +118,7 @@ def needs_your_call(snapshot, prompts, notified, cards, acks,
             text = f"{who} stopped and is waiting on you{_in(row.get('project'))}"
         fp_kind = inbox_ack.session_kind_and_fp(
             permission=bool(prompts.get(sid)),
-            questions=row.get("questions") if isinstance(row.get("questions"), list)
-            else [],
+            questions=inbox_ack.question_list(row),
             waiting=True,
         )
         if fp_kind and ("s:" + sid, fp_kind[0], fp_kind[1]) in ack_set:
@@ -392,16 +391,7 @@ def _row_map(snapshot: dict) -> dict:
 
 
 def _ack_set(acks) -> set:
-    out = set()
-    for row in acks or ():
-        if not isinstance(row, dict):
-            continue
-        key = str(row.get("key") or "")
-        kind = str(row.get("kind") or "")
-        fp = str(row.get("fp") or "")
-        if key and kind and fp:
-            out.add((key, kind, fp))
-    return out
+    return inbox_ack.ack_set(acks)
 
 
 def _skip_set(skip_sessions) -> set:

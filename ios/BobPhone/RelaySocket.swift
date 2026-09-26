@@ -77,6 +77,8 @@ final class RelaySocket {
     private var generation = 0
     private var backoff: TimeInterval = RelaySocket.firstBackoff
     private var openedAt: Date?
+    /// Whether this line has read the relay's `peer:` word yet.
+    private var heardPeer = false
     private var reconnect: Task<Void, Never>?
     private var pinger: Task<Void, Never>?
 
@@ -110,6 +112,43 @@ final class RelaySocket {
         case "peer:1": return true
         case "peer:0": return false
         default: return nil
+        }
+    }
+
+    /// How long a request made while the line is still coming up waits for
+    /// it (open **and** the Mac on it) before going the mailbox way. A wake
+    /// opens the socket and fires its first request in the same breath; the
+    /// socket answers in tens of milliseconds once up, the mailbox in
+    /// seconds, so a short wait here is the faster road.
+    static let readyGrace: TimeInterval = 1.5
+    /// A line that opened without the Mac's `peer:1` is given this long for
+    /// the word to arrive: the relay sends it to an arriving side straight
+    /// after the upgrade when the Mac is already on.
+    static let peerGrace: TimeInterval = 0.4
+
+    /// Whether the line is worth waiting for right now: a connect actually
+    /// in flight, or just opened with no `peer:` word read yet. The reconnect
+    /// ladder's sleep is `.connecting` too but holds no task — nothing is
+    /// coming, so nothing waits on it; and a `peer:0` read on arrival ends
+    /// the grace at once (bug audit, 25 Sep 2026).
+    var comingUp: Bool {
+        guard wanted else { return false }
+        if state == .connecting { return task != nil }
+        if state == .open, !peerPresent, !heardPeer, let openedAt,
+           Date().timeIntervalSince(openedAt) < RelaySocket.peerGrace { return true }
+        return false
+    }
+
+    /// Wait, up to `within`, for the line to be open with the Mac on it.
+    /// True the moment it is; false once it cannot be (closed, off, open
+    /// with nobody there) or the time is up.
+    func ready(within: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(within)
+        while true {
+            if isOpen && peerPresent { return true }
+            guard comingUp, Date() < deadline else { return false }
+            try? await Task.sleep(nanoseconds: 25_000_000)
+            if Task.isCancelled { return false }
         }
     }
 
@@ -171,6 +210,7 @@ final class RelaySocket {
                     self.markOpen(gen)
                     if case .string(let text) = message {
                         if let present = Self.peerWord(text) {
+                            self.heardPeer = true
                             self.peerPresent = present
                         } else if !text.hasPrefix("peer:") {
                             self.onText?(text)
@@ -245,6 +285,7 @@ final class RelaySocket {
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         openedAt = nil
+        heardPeer = false
         peerPresent = false
     }
 }

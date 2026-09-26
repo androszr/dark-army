@@ -1,6 +1,6 @@
 # The channel's inbound verbs
 
-The eight tools `channel_server.tools_for_host` advertises, in full. Lifted out
+The ten tools `channel_server.tools_for_host` advertises, in full. Lifted out
 of `CLAUDE.md` for the reason the other contract documents were (6 Sep 2026):
 that file is the current contract and is held under 30,000 UTF-8 bytes
 (`host/tests/test_claude_md_size.py` pins the ceiling), and this is the
@@ -9,9 +9,9 @@ paragraph was `CLAUDE.md`'s and is reproduced unchanged.
 
 `tools_for_host` is the single capability boundary and `call_tool` re-checks
 it, because omitting a tool from `tools/list` is not a guard. Claude gets all
-eight; `HOST_CODEX` gets `dark_army_add_card` + `dark_army_close_card` +
-`dark_army_attach_plan` + `dark_army_attach_report` — the four that write a board row and
-type nothing, all
+ten; `HOST_CODEX` gets `dark_army_add_card` + `dark_army_close_card` +
+`dark_army_attach_plan` + `dark_army_attach_report` + `dark_army_needs_manual_check`
++ `dark_army_next_card` — the six that write a board row and type nothing, all
 attributed by `_board_request_session_fresh`; `channel_install`
 registers Grok for none of them, so a Grok session reaches none.
 
@@ -33,13 +33,20 @@ they did not have:
   never meets the ambiguity refusal. Nothing more than add + attach already
   allowed; a fresh card has no `start_when_planned`, so nothing starts. A
   plan named only in `notes` leaves a Prep card whose Start is a planning
-  run nothing can finish (the fit-app stall of 23 Sep 2026).
+  run nothing can finish (the fit-app stall of 23 Sep 2026). `depends_on`:
+  `docs/card-dependencies.md`.
 - `dark_army_close_card` — moves a card to Done, bought back with **scope**: **no
   `card_id` property**, `_handle_board_close_request` resolving the card
   solely from `_channel_session(port)`, refusing on no attribution, no card,
   more than one open card, or a card already in Done. Reachable from an
   ordinary dispatched session: `_channel_session` does not consult
   `is_channel` — the gate `_channel_for_session` applies to *pushes*.
+  **In a batch the rule is positional** (25 Sep 2026): a batch-implement
+  session is bound to every card it has worked, so the batch's current card
+  is the one bound `live`; a member the session moved past wears `ended`
+  and is not counted (`_narrow_batch_open`); the next member is the lowest
+  `batch_rank` still waiting. The schema is still `{note}`, and a flag after
+  the close but before the next call picks the newest Done card of the batch.
 - `dark_army_attach_plan` — a refinement session attaching the plan it wrote,
   moving its card Prep → Backlog. Same no-`card_id` shape;
   `attach_plan_by_session` resolves in a two-rung ladder (the Prep card
@@ -48,11 +55,34 @@ they did not have:
   `ATTACH_AUTHOR_WINDOW_SECONDS`**), ambiguity and absence failing closed.
   The path is validated on the executor: realpath-contained inside the
   card's own `root`, `.md`, a real file, ≤ `board_workflow.MAX_PLAN_BYTES`.
+  **The batch rung** (25 Sep 2026): when rung 1 finds several cards sharing
+  one non-empty `batch_id` — one `refine_cards` press bound them all to this
+  session — the plan file's own `- **Card:** <id>` header
+  (`board_workflow.read_plan_card`, read inside the shared root after the
+  path check) picks the card through `_pick_batch_member`, an exact id
+  match within that set; no header, or one naming any other card, fails
+  closed listing the members (`BATCH_ATTACH_AMBIGUOUS_REFUSAL`). One
+  candidate never reads the header. **A session bound to several cards
+  names the member through a file, never the tool call** — the schema is
+  still `{path}` — and the batch-implement sibling names no card either: it
+  binds one card at a time, a positional rule (the close bullet below).
 - `dark_army_attach_report` — a scout session attaching the report it wrote.
   Same no-`card_id` shape; `attach_report_by_session` resolves the one
   open card `by_session`. The card stays In progress; closing it is
   `dark_army_close_card` with the report's path in the note. The path is
-  validated on the executor the same way as a plan.
+  validated on the executor the same way as a plan. A report whose
+  resolved path is under the card root's `scout/` folder must also pass
+  `scout_report.check` (`host/dark_army_daemon/scout_report.py`, the
+  answer block and the five headings of
+  `.claude/skills/scout/references/scout.md`), or it is refused with
+  `board.REPORT_MALFORMED_REFUSAL` followed by what is wrong and the
+  checker's command; a report anywhere else in the root (an older prose
+  report under `docs/research/`) attaches unchecked. The store keeps the
+  resolved absolute path: the folder is git-ignored, so only the main
+  checkout holds the file. The attach also reads the answer block once, on
+  the executor (`scout_report.read_header`), and stores its verdict and
+  recommendation beside the path (`report_verdict` /
+  `report_recommendation`); a report with no block stores empty values.
 - `dark_army_needs_manual_check` — the same session as `dark_army_close_card`, saying
   the opposite thing about the same card: same no-`card_id` shape, same
   resolution, same four refusals. There is no verb for *clearing* it; the
@@ -68,6 +98,50 @@ they did not have:
   category flip writes no board row, so `_reconcile_board` ends with a drift
   check over the flagged cards alone (`_manual_due_seen`). The **sheet**
   draws the steps and **Mark checked** unconditionally.
+
+  **The check is a file, and the flag names it** (25 Sep 2026, the *manual
+  check folder* plan). The tool takes an optional `path` beside `steps`: the
+  check the session wrote at `manual-check/<YYYY-MM-DD>-<slug>/check.md` —
+  an answer block (`Card`, `Project`, `Check`, `Created`, `Status`,
+  `Outcome`, `Checked at`), then `## Steps` and `## Why not automated` —
+  checked by `python3 .claude/skills/ship/manual_check.py`
+  (`host/dark_army_daemon/manual_check.py`, byte-copied). The daemon
+  resolves the path inside the card's root and requires
+  `<enrolled root>/manual-check/<folder>/check.md` — the enrolled project
+  the card's root belongs to, exactly three segments, `manual-check` and
+  `check.md` in that exact case, `_manual_check_home`, the one rule the
+  list and the press share (else `board.MANUAL_CHECK_PLACE_REFUSAL`) — and a
+  clean check (else
+  `board.MANUAL_CHECK_MALFORMED_REFUSAL` and the problems), and
+  `flag_manual` stores the realpath in `manual_check_path` in the same
+  UPDATE; no path flags exactly as before and clears a stale link. **The
+  order is flag, then close**: a card with an open check goes to Done, and
+  the description says so. The flag may also follow the close —
+  `flag_manual` accepts a Done card (the WHERE still pins session and
+  column), and `flag_manual_by_session` falls back to the session's one
+  Done card it closed itself (`closed_by`), refusing two in words. The
+  person records **Passed** / **Failed** from either app
+  (`board_manual_outcome`, `docs/transport-contract.md`), which writes the
+  file's three status lines and clears the steps; a press on a file that
+  already carries an outcome is refused in words and still clears the
+  cards flagged with it. **Mark checked** stays for a card flagged with
+  steps alone, and comes back on a card whose file the daemon will no
+  longer serve (moved, edited out of shape), so no badge is stranded.
+- `dark_army_next_card` — a batch-implement session saying it has closed (or
+  is leaving) the card it is on. **No properties at all**:
+  `_handle_board_next_request` resolves the session from the port
+  (`_board_request_session_fresh`, open to Codex like the close), marks the
+  open card it was on `ended` — finished-but-not-closed work for a person —
+  and binds the session to the next waiting member (`bind_session`, In
+  progress), re-running each member's own rungs (vanished plan, enrolment,
+  `dispatch.guard` without the launch bounds, dependencies); a member that
+  fails leaves the batch with its refusal on it. It starts nothing: the
+  person chose every member at the press. What a forger who reaches the
+  port achieves is this session skipping ahead in its own batch. The reply
+  names the next card's title and plan, or says the batch is finished.
+  Only the batch's owning session (`_batch_owner`, its lowest-ranked bound
+  card) may walk or release it; a marked card outside Backlog is refused a
+  single Start until Leave batch.
 - `dark_army_answer_card` — one message onto the thread of the card Dark Army just
   asked about. Same no-`card_id` shape; changes nothing else.
 - `dark_army_knowledge_read` / `dark_army_knowledge_write` — **the project's own
@@ -84,6 +158,22 @@ they did not have:
   when `stale=='1'` and `UNCONFIRMED` when `last_confirmed` is missing/0;
   the `[key]` token stays; cap semantics are unchanged (`break` not
   `continue`, omitted keys named, at least one entry). No new tool args.
+
+- `dark_army_request_start` — **Mission Control asks the person to start
+  a card, and it starts nothing.** Claude only; the one verb whose schema
+  takes a `card_id`, and safe for that reason: `BoardVerbsMixin.ask_start`
+  refuses every caller but the Mission Control session
+  (`_board_request_session_fresh` against `mission_snapshot()`), refuses
+  a card `dispatch.guard` would refuse on column, session or refinement,
+  and otherwise records an in-memory ask (at most `MAX_START_ASKS`, one
+  hour, dropped on a daemon restart). The card is then published with
+  `start_ask_id` / `start_asked_at` / `start_asked_by` while it could
+  still take a Start, and both apps list it on Needs you as ANSWER, wire
+  kind `start_asked`. The entry opens the card; the person's own press on
+  START (`dispatch_card`, every guard) is the start and ends the ask, and
+  Dismiss (`inbox_ack`, kind `start_asked`) drops it. A forger who reaches
+  the port gains an entry somebody dismisses. Pinned by
+  `host/tests/test_start_ask.py` and `test_phone_inbox.py`.
 
 ## Two names, one script
 
@@ -105,10 +195,11 @@ then `dark-army` first:
   script with no flag, and that registration *is* the `bob` one, so
   `name_from_argv` reads an absent or unknown `--name=` as `bob`.
 
-The same eight verbs, spelled for a session born before the rename:
+The same ten verbs, spelled for a session born before the rename:
 
 - legacy `bob_add_card`, `bob_close_card`, `bob_attach_plan`, `bob_attach_report`;
-- legacy `bob_needs_manual_check`, `bob_answer_card`, `bob_knowledge_read`, `bob_knowledge_write`.
+- legacy `bob_needs_manual_check`, `bob_answer_card`, `bob_knowledge_read`, `bob_knowledge_write`;
+- legacy `bob_request_start`, `bob_next_card`.
 
 User scope means the harness spawns **both** copies in every session, and
 exactly one may speak (`channel_server.is_active`): the copy whose name the

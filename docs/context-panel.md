@@ -78,7 +78,9 @@ consult, an ad-hoc terminal, naming none); the tombstone carries it too;
 boundary, not authentication**: a forged stamp grants nothing, a missing one
 draws nothing (`docs/session-state-contract.md`, `docs/codex-contract.md`).
 **Subagents are not drawn as rows**: both clients fold `_subagent_rows` into
-`Agent.subagentSummary` and the helpers line. A row carries the parent's
+`Agent.subagentSummary` and the helpers line. The Mac Fleet row's CMD column
+leads with the newest live helper's role before the parent's task, so the
+working stage is visible without opening the detail. A row carries the parent's
 origin card as a **second** field (`card_title`, read as
 `SubagentRow.qualified`), never folded into `label`, which keys
 `liveStageNames`: folding it in stops a card highlighting its stage. **A session on a terminal Dark Army hosts has two tabs under that band and
@@ -170,8 +172,14 @@ box `@State` cannot invalidate on. Nothing that needs a human is ever held
 *back*.
 
 **Everything waiting on a person is one list** (`Inbox.swift`, `InboxView.swift`).
-The rail has three tabs — **Inbox**, Agents and **History** — and Inbox is
-the first case of `Tab` and the panel's default. History is the desk-only
+The rail's tabs are **Inbox**, Agents, Comm, **History** and **Reports**,
+and Inbox is the first case of `Tab` and the panel's default. The Reports
+tab is the scout-report list in the board's place
+(`RailLayout.LeftPane.reports`, `ScoutReportsPane`), the rail its search and
+project rows (`ScoutReportsRail`), a text search merged in after a pause;
+Escape closes an open report, then leaves
+the tab (`closeReport`, `leaveReports`); `docs/transport-contract.md` holds
+the two reads. History is the desk-only
 wide ledger in the board's place (`RailLayout.LeftPane.history`); the rail
 is its scope; it is fetched on open and when the range or the project
 changes, not on the SSE loop; the lifecycle quantile report is not drawn
@@ -211,7 +219,7 @@ parking rungs and not as one of them, raises no card and writes `idle`
 report with a summary are untouched. Claude only; `test_quiet_finish.py`.
 
 A `tab_gone` row says "tab gone" and draws the same `# work done` block
-(*A Grok turn outlives its tab*, `docs/session-state-contract.md`).
+(`WorkReport`, `test_work_report_parse.py`; *A Grok turn outlives its tab*).
 
 **At most one item per row and one per card, and a card bound to a session
 is one subject with it** (`Inbox.oneEntryPerSubject`, the phone's twin: after
@@ -242,6 +250,15 @@ the same list as **compact rows** (`InboxRow`; a card entry is undated),
 **Catch up across projects** sits on the Fleet tab
 (`docs/phone-contract.md`), and its session entries come from the live
 buckets alone (`PhoneInbox.liveBuckets`), the Mac's `Category.live`.
+
+**The rail uses Signal** (`Theme.swift`, `docs/design-system.md`). Generated
+semantic tokens from `design-system/tokens.json` supply graphite surfaces,
+warm text, green actions, amber attention and red failure. Human prose uses
+`Theme.prose`; paths, commands, IDs, measures and terminal output use
+`Theme.mono`. The dark appearance is asserted on both native clients.
+
+The following paragraph records the previous appearance for migration audits;
+it is superseded by Signal and is not the current visual contract.
 
 **The rail is a CRT** (`Theme.swift`). Phosphor green on near-black, tokens
 from `assets/proposals/board-look/03-fsociety.png`, monospace at every size
@@ -356,12 +373,28 @@ routinely beats the snapshot — and `focusedRow` exempts that row from
 stacked, foldable rows, **Prep → Backlog → In progress → Done**, each with
 a one-line caption, whose cards wrap as tiles (`GridItem(.adaptive)`,
 `boardTileMin`..`boardColumn`) in **one vertical scroll**, drawn from
-`DaemonClient.boardFeed`, not the client; tiled scanlines, normal-blend
-vignette. Done starts
+`DaemonClient.boardFeed`, not the client; plain reading surfaces with no CRT
+overlay. Done starts
 folded; flips from that default persist in `panel-position.json` as
 `board_row_flips`. The rule is `BoardRowFold`, copied byte-equal into the
 phone's `BoardView.swift` (`test_board_rows.py`); a search overrides a
 fold, and a folded heading takes a drop. Prep has **Refine** (dispatches a planning session); the plan that session attaches moves the card to Backlog, and every newly written card lands there. **A card outlines one verb, chosen by its column** (`CardActionWeight`): Refine in Prep, START in Backlog, Done in In progress, none in Done; every other verb is dim words, HERE included, and an absent primary promotes nothing — with one kind-aware exception: a scout in Prep outlines START, because it has no plan to refine.
+
+**The phone's Prep row has a select mode too** (25 Sep 2026): SELECT, a
+tick on every card whose own screen offers Refine (`PhoneRowSelection`,
+one rule for both), one armed-then-confirmed press sending
+`board_refine_batch` through the press queue, drawn only where the board
+says `refine_batch_supported`. In full in `docs/phone-contract.md`.
+
+**The phone's Backlog row selects too** (25 Sep 2026): the same ticks,
+judged by the Start rule, and one armed-then-confirmed press sending
+`board_start_batch` synchronously, never queued, behind
+`start_batch_supported`. In full in `docs/phone-contract.md`.
+
+**The Mac board's ticks outlive looking away too** (25 Sep 2026): a
+search, a project change or a fold keeps select mode and its ticks, the
+batch button counts every ticked card drawn or not, and the selecting row
+draws its ticked cards first (`BoardVisible.compute`).
 
 **The drop is the dispatch.** `.draggable(card.id)` on the card,
 `.dropDestination` on the row, and `BoardView.drop(_:into:)` resolves
@@ -505,7 +538,10 @@ one `MORE · n` row hiding the rest; the open set is `@State` cleared on card
 swap and stage change; the lead's assistant row writes at once, like the
 tile's; `closeEditor()` disarms. Phone copy byte-equal
 (`test_card_sections.py`). **A scout's report is its own `REPORT` section**
-(`reportSection`; `docs/context-board.md`).
+(`reportSection`; `docs/context-board.md`). A card flagged with a check file
+draws the file in its manual-check section with **Passed** / **Failed** and
+**Open in Checks** (the Checks window, `ManualChecksWindow.swift`, from
+Settings → Projects), where Mark checked is hidden.
 
 The composer is the same view with `card == nil`, plus three things a card
 could never show. **The documents the card points at**: `BoardDocuments` pulls

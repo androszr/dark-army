@@ -355,6 +355,8 @@ def test_table_tests_name_every_rail_layout_function():
 def test_permitted_hide_is_visible_and_uses_selected_agent_action():
     stdout = _read(PANEL / 'ProcessTable.swift')
     assert 'if agent.canHide {' in stdout
-    assert 'Button("Hide") { actions.dismiss(agent, client: client) }' in stdout
+    # The label is the shared word list's since 25 Sep 2026 (`Verbs.swift`).
+    assert 'Button { actions.dismiss(agent, client: client) } label:' in stdout
+    assert 'Text(Verbs.hide.label)' in stdout
     assert 'if agent.canHide { return true }' in _read(DETAIL)
     assert 'agent.canHide ? "hide_session" : "dismiss"' in _read(TRIAGE)

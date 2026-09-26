@@ -190,6 +190,9 @@ def test_executable_keys_are_scripts_and_shell():
     assert any(k.endswith("preflight.sh") for k in keys)
     assert any(k.endswith("close-out.sh") for k in keys)
     assert ".claude/skills/ship/gate.sh" in keys and ".agents/skills/ship/gate.sh" in keys
+    # The scout checker runs as `python3 <path>`, so it is not 0755.
+    assert ".claude/skills/scout/scout_check.py" not in keys
+    assert ".agents/skills/scout/scout_check.py" not in keys
     assert any(k.startswith("scripts/") and k.endswith(".py") for k in keys)
     assert all(
         k.endswith(".sh") or (k.startswith("scripts/") and k.endswith(".py"))
@@ -579,3 +582,52 @@ def test_template_settings_allow_both_close_out_rows(profile):
     assert "Bash(bash .claude/skills/ship/close-out.sh --plan)" in allow
     assert not any(row.startswith("Bash(bash .claude/skills/ship/close-out.sh:")
                    for row in allow)
+
+
+# --- the scout checker ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("profile", pack_render.PROFILES)
+def test_the_manual_check_checker_renders_mirrors_and_is_allowed(profile):
+    """`manual_check.py` ships beside the implement reference on both trees,
+    byte-equal to the daemon's module, 0644 (it runs as `python3 <path>`),
+    with its own allow row in every profile's settings."""
+    mapping = _mapping(profile)
+    module = (_REPO / "host" / "dark_army_daemon" / "manual_check.py").read_bytes()
+    for key in (".claude/skills/ship/manual_check.py",
+                ".agents/skills/ship/manual_check.py"):
+        assert mapping[key] == module, key
+        assert key not in pack_render.executable_keys(mapping), key
+    rows = pack_render.settings_allow_rows(mapping[pack_render.SETTINGS_KEY])
+    assert "Bash(python3 .claude/skills/ship/manual_check.py:*)" in rows
+
+
+@pytest.mark.parametrize("profile", pack_render.PROFILES)
+def test_the_scout_checker_renders_mirrors_and_is_allowed(profile):
+    mapping = _mapping(profile)
+    module = (_REPO / "host" / "dark_army_daemon" / "scout_report.py").read_bytes()
+    for key in (".claude/skills/scout/scout_check.py",
+                ".agents/skills/scout/scout_check.py"):
+        assert mapping[key] == module, key
+        assert key not in pack_render.executable_keys(mapping), key
+    rows = pack_render.settings_allow_rows(mapping[pack_render.SETTINGS_KEY])
+    assert "Bash(python3 .claude/skills/scout/scout_check.py:*)" in rows
+
+
+@pytest.mark.parametrize("profile", pack_render.PROFILES)
+def test_the_scout_skill_renders_on_both_trees_and_ship_keeps_an_alias(profile):
+    mapping = _mapping(profile)
+    for tree in (".claude", ".agents"):
+        for name in ("SKILL.md", "references/scout.md", "scout_check.py"):
+            assert f"{tree}/skills/scout/{name}" in mapping, (tree, name)
+        # The old scout mode files moved out of ship.
+        assert f"{tree}/skills/ship/references/scout.md" not in mapping
+        assert f"{tree}/skills/ship/scout_check.py" not in mapping
+    assert f".agents/skills/scout/{pack_render.OPENAI_YAML}" in mapping
+    skill = mapping[".claude/skills/scout/SKILL.md"].decode()
+    assert skill.startswith("---\nname: scout\n")
+    assert "/scout" in skill and "investigate or scout a question" in skill
+    assert "`references/scout.md`" in skill
+    ship = mapping[".claude/skills/ship/SKILL.md"].decode()
+    assert "`/ship scout <brief>` is an alias" in ship
+    assert "`.claude/skills/scout/SKILL.md`" in ship

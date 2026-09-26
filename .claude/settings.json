@@ -15,7 +15,9 @@
       "Bash(cd panel && swift build:*)",
       "Bash(cd panel && swift test:*)",
       "Bash(cd vscode-extension && npm run build:*)",
-      "Bash(python3 tools/ship_efficiency.py inventory:*)"
+      "Bash(python3 tools/ship_efficiency.py inventory:*)",
+      "Bash(python3 .claude/skills/scout/scout_check.py:*)",
+      "Bash(python3 .claude/skills/ship/manual_check.py:*)"
     ]
   }
 }

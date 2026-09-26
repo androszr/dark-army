@@ -4,7 +4,7 @@ import SwiftUI
 /// The cast, their three states, and which agent wears which face.
 ///
 /// Fourteen Dark Army callsigns plus six of the household — Androll,
-/// Captcha, Sawa, Franio, Zosia and Ptyś, appended so the original fourteen keep their
+/// Captcha, Sawa, Franio, Zosia and Ptys, appended so the original fourteen keep their
 /// indices (the 22 Sep 2026 rebrand swapped those fourteen in place). Keep this in step with `identity.NAMES` and the phone's copy,
 /// **in this order**: `character(for:)` indexes the array by a hash, so a
 /// reordering hands every agent somebody else's face.
@@ -22,7 +22,7 @@ enum Cast {
                         "Hex", "Relay", "Forge",
                         "Watch", "Audit", "Proxy", "Quiet", "Nyx",
                         "Canon", "Velvet",
-                        "Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptyś"]
+                        "Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptys"]
 
     /// Slugs with art that no session is ever assigned. `overwatch` is the
     /// chief of staff's alter ego — `bc-planner`'s banner is Overwatch, and
@@ -234,7 +234,7 @@ enum CastQuotes {
         "sawa": "Green CI or stay offline.",
         "franio": "Fail fast. Patch once. No cosplay.",
         "zosia": "Backlog hygiene is brain opsec.",
-        "ptyś": "Tiny commits. Wide kill radius.",
+        "ptys": "Tiny commits. Wide kill radius.",
         "overwatch": "Map the blast radius. Then one key.",
     ]
 

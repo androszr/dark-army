@@ -235,6 +235,16 @@ struct AgentDetailHeader: View {
         Self.cardLine(card: boardCard, sessionId: agent.sessionId)
     }
 
+    /// The header's lead line: the bound card's, else the daemon's
+    /// `card_title` — the agents-list row's own order
+    /// (`ProcessRow.baseTitle`), so a card the board no longer carries
+    /// still reads the same in the row and here.
+    private var titleLine: String {
+        cardLine.isEmpty
+            ? agent.cardTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            : cardLine
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
@@ -273,26 +283,27 @@ struct AgentDetailHeader: View {
                            state: Cast.state(for: agent, category: category),
                            size: Self.avatar)
                 VStack(alignment: .leading, spacing: 6) {
-                    if !cardLine.isEmpty {
+                    if !titleLine.isEmpty {
                         Button(action: { onShowCard?() }) {
-                            Text(cardLine)
-                                .font(Theme.mono(20, weight: .semibold))
-                                .foregroundStyle(Theme.phosphorBright)
+                            Text(titleLine)
+                                .font(Theme.prose(22, weight: .semibold))
+                                .foregroundStyle(Theme.text)
                                 .multilineTextAlignment(.leading)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .buttonStyle(.plain)
                         .clickable()
                         .disabled(onShowCard == nil)
-                        .accessibilityLabel("Card: \(cardLine). Show it on the board")
+                        .accessibilityLabel(onShowCard == nil ? "Card: \(titleLine)"
+                                            : "Card: \(titleLine). Show it on the board")
                     }
                     Text(name)
-                        .font(Theme.mono(20, weight: cardLine.isEmpty ? .semibold : .regular))
-                        .foregroundStyle(cardLine.isEmpty ? Theme.phosphorBright : Theme.phosphor)
+                        .font(Theme.prose(20, weight: titleLine.isEmpty ? .semibold : .regular))
+                        .foregroundStyle(Theme.text)
                     if !quote.isEmpty {
                         Text(quote)
-                            .font(Theme.mono(11))
-                            .foregroundStyle(Theme.dim)
+                            .font(Theme.prose(12))
+                            .foregroundStyle(Theme.muted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     HStack(spacing: 6) {
@@ -511,9 +522,11 @@ enum AgentFacts {
         }
     }
 
-    /// Above this share of the window a context figure reads as an alarm —
-    /// the menu bar's usage cluster uses the same threshold.
-    static let ctxCrit: Double = 90
+    /// Above this share of the window a context figure reads as an alarm.
+    /// Mirrors the daemon's compact line, `signals.CTX_CRIT_PCT`, pinned by
+    /// `test_signals.py`; the menu bar's usage cluster keeps its own 90%,
+    /// a different quantity.
+    static let ctxCrit: Double = 85
 
     /// A *relative* figure the daemon composed at `asOf`, read at `now`.
     ///
@@ -622,8 +635,14 @@ enum AgentFacts {
             parts.append(agent.subagents == 1 ? "1 helper" : "\(agent.subagents) helpers")
         }
         let summary = agent.lastSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        // With no summary, the work report's one line — the daemon's
+        // headline, never a re-parse of the report here.
+        let headline = (agent.workReport?.headline ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if !summary.isEmpty {
             parts.append(summary)
+        } else if !headline.isEmpty {
+            parts.append(headline)
         }
         return parts.joined(separator: " · ")
     }

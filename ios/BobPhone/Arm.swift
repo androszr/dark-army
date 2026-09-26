@@ -30,9 +30,22 @@ final class Arm: ObservableObject {
         /// Mark checked / Mark reviewed on the card screen. Their own slots
         /// so Start cannot re-aim an acknowledgement, and vice versa.
         case manualClear
+        /// Passed / Failed on a check file — its own slot, so a Mark
+        /// checked arm can never confirm an outcome.
+        case manualOutcome
         case review
         /// End on the Comm tab: closes Mission Control's terminal.
         case missionEnd
+        /// The Prep row's batch Refine on the Board tab. Its own slot, so a
+        /// Refine armed on a card screen can never confirm a batch, nor the
+        /// reverse; armed on the joined id list, so a tick changed between
+        /// the two presses re-arms rather than fires.
+        case refineBatch
+        /// The Backlog row's batch Start on the Board tab. Its own slot, so a
+        /// Start armed on a card screen can never confirm a batch, nor the
+        /// reverse; armed on the joined id list, so a tick changed between
+        /// the two presses re-arms rather than fires.
+        case startBatch
     }
 
     @Published private(set) var start: String?
@@ -47,8 +60,11 @@ final class Arm: ObservableObject {
     @Published private(set) var lowPriority: String?
     @Published private(set) var clearDone: String?
     @Published private(set) var manualClear: String?
+    @Published private(set) var manualOutcome: String?
     @Published private(set) var review: String?
     @Published private(set) var missionEnd: String?
+    @Published private(set) var refineBatch: String?
+    @Published private(set) var startBatch: String?
 
     /// Card detail hangs plan-gate pending flags here so a timeout cannot
     /// leave `skip_plan_gate` armed for the next Menu tap.
@@ -70,8 +86,11 @@ final class Arm: ObservableObject {
         lowPriority = nil
         clearDone = nil
         manualClear = nil
+        manualOutcome = nil
         review = nil
         missionEnd = nil
+        refineBatch = nil
+        startBatch = nil
         switch slot {
         case .start: start = id
         case .startHere: startHere = id
@@ -85,8 +104,11 @@ final class Arm: ObservableObject {
         case .lowPriority: lowPriority = id
         case .clearDone: clearDone = id
         case .manualClear: manualClear = id
+        case .manualOutcome: manualOutcome = id
         case .review: review = id
         case .missionEnd: missionEnd = id
+        case .refineBatch: refineBatch = id
+        case .startBatch: startBatch = id
         }
         timeoutTask = Task { [weak self] in
             let nanos = UInt64(Self.timeoutSeconds * 1_000_000_000)
@@ -121,8 +143,11 @@ final class Arm: ObservableObject {
         case .lowPriority: armed = lowPriority
         case .clearDone: armed = clearDone
         case .manualClear: armed = manualClear
+        case .manualOutcome: armed = manualOutcome
         case .review: armed = review
         case .missionEnd: armed = missionEnd
+        case .refineBatch: armed = refineBatch
+        case .startBatch: armed = startBatch
         }
         guard let armedId = armed, id.isEmpty || armedId == id else {
             return false
@@ -146,8 +171,11 @@ final class Arm: ObservableObject {
         lowPriority = nil
         clearDone = nil
         manualClear = nil
+        manualOutcome = nil
         review = nil
         missionEnd = nil
+        refineBatch = nil
+        startBatch = nil
         onDisarm?()
     }
 }

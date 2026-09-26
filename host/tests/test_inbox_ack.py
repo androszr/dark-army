@@ -59,7 +59,7 @@ def test_never_kinds_and_ack_kinds_partition():
     client's ack for them is refused as unknown."""
     assert NEVER_KINDS == frozenset({"permission"})
     assert ACK_KINDS == frozenset(
-        {"question", "waiting", "ended_work", "manual_check"})
+        {"question", "waiting", "ended_work", "manual_check", "start_asked"})
     assert ACK_KINDS.isdisjoint(NEVER_KINDS)
     assert "plan_ready" not in ACK_KINDS | NEVER_KINDS
     assert "awaiting_review" not in ACK_KINDS | NEVER_KINDS
@@ -271,3 +271,66 @@ def test_agents_cache_is_assigned_before_observers():
     assign = text.index("self._agents_snapshot_cache = snapshot")
     notify = text.index('self._notify_observers("on_agents_change", snapshot)')
     assert assign < notify
+
+
+def test_ack_set_builds_triples_and_skips_malformed_rows():
+    assert mod.ack_set(None) == set()
+    assert mod.ack_set([]) == set()
+    row = {"key": "s:s1", "kind": "waiting", "fp": "waiting"}
+    assert mod.ack_set([row]) == {("s:s1", "waiting", "waiting")}
+    assert mod.ack_set([
+        "s:s1", None, 3,
+        {"kind": "waiting", "fp": "waiting"},
+        {"key": "s:s1", "fp": "waiting"},
+        {"key": "s:s1", "kind": "waiting"},
+        {"key": "", "kind": "waiting", "fp": "waiting"},
+        {"key": None, "kind": "waiting", "fp": "waiting"},
+    ]) == set()
+    # Duplicates collapse; the store's own records feed it unchanged.
+    assert mod.ack_set([row, dict(row)]) == {("s:s1", "waiting", "waiting")}
+    store = InboxAckStore()
+    store.ack("c:c1", "ended_work", fingerprint("ended_work", ""))
+    assert mod.ack_set(store.records()) == {
+        ("c:c1", "ended_work", fingerprint("ended_work", ""))}
+
+
+def test_question_list_is_the_phones_question_list():
+    listed = [{"id": "t1", "text": "Which?"}]
+    flat = {"text": "Flat?"}
+    assert mod.question_list({"questions": listed, "question": flat}) == listed
+    assert mod.question_list({"questions": [], "question": flat}) == [flat]
+    assert mod.question_list({"question": flat}) == [flat]
+    assert mod.question_list({"questions": [], "question": {"text": ""}}) == []
+    assert mod.question_list({"question": "not a dict"}) == []
+    assert mod.question_list({}) == []
+    assert mod.question_list(None) == []
+    assert mod.question_list("row") == []
+
+
+def test_forget_waiting_drops_only_a_waiting_hide(tmp_path):
+    """Waiting's fingerprint is a fixed token, so a hide kept past the next
+    prompt would silence every later wait of that session (25 Sep 2026)."""
+    store = InboxAckStore(path=tmp_path / "acks.json")
+    store.ack("s:one", "waiting", "waiting")
+    store.ack("s:two", "question", "question:abc")
+    store.forget_waiting("one")
+    store.forget_waiting("two")
+    store.forget_waiting("")
+    keys = {row["key"] for row in store.records()}
+    assert keys == {"s:two"}
+    again = InboxAckStore(path=tmp_path / "acks.json")
+    again.load()
+    assert {row["key"] for row in again.records()} == {"s:two"}, "the drop is saved"
+
+
+def test_a_new_prompt_forgets_the_sessions_waiting_hide(tmp_path):
+    from types import SimpleNamespace
+
+    from dark_army_daemon.daemon import BobDaemon
+
+    store = InboxAckStore(path=tmp_path / "acks.json")
+    store.ack("s:sid", "waiting", "waiting")
+    fake = SimpleNamespace(_session_states={}, _inbox_acks=store)
+    BobDaemon._step_prompt(fake, "sid", 100.0)
+    assert store.records() == []
+    assert fake._session_states["sid"]["state"] == "thinking"

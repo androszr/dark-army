@@ -77,6 +77,13 @@ ACTIVE_WINDOW_SECONDS = 600.0
 #: from the buzz to the tap: the phone's first frame re-arms the full window
 #: on its own, and a buzz nobody answers lapses in a minute and a half.
 PUSH_ARM_SECONDS = 90.0
+#: The socket relay's `peer:1` — the phone opened its line, which it does
+#: the moment it wakes — arms the held polls for as long as a buzz does:
+#: long enough to carry the wake's first requests if the socket cannot, and
+#: the phone's first mailbox frame re-arms the full window by itself. A wake
+#: that the socket serves costs at most this much held polling (≈ 234
+#: Upstash commands), never the full window.
+PEER_ARM_SECONDS = 90.0
 #: Idle pacing. A non-wait GET costs the mailbox one RPOP (plus its two rate
 #: commands) against the ~52 an empty 20-second held poll spends, and the gap
 #: doubles from the first to the second until a frame or a buzz arms the
@@ -97,8 +104,9 @@ PUSH_MAX_PER_MINUTE = 10
 # is not sent: the mailbox then plays its default sound, exactly as before.
 PUSH_KINDS = ("security", "permission", "question", "attention", "finished")
 #: Cast slugs a buzz may name as its portrait. `identity.NAMES` lowercased,
-#: so ``ptyś`` is in. Not `ACTIVITY_SLUG_SHAPE`, which rejects that name.
-#: A value outside the tuple is dropped in `push_alert`, never a failed buzz.
+#: every one ASCII (`test_identity.py` pins that). The live card's slug is
+#: checked against the same tuple (`push_activity`).
+#: A value outside the tuple is dropped, never a failed buzz.
 PUSH_FACE_SLUGS = tuple(name.lower() for name in identity.NAMES)
 #: The most a buzz's second line may be. A banner's subtitle shows about this
 #: much before iOS truncates it, and both possible sources are far longer: a
@@ -134,8 +142,7 @@ PUSH_ID_SHAPE = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
 ACTIVITY_KINDS = ("permission", "question", "attention")
 ACTIVITY_EVENTS = ("update", "end")
 #: What `push_activity_outcome` can answer; the daemon's retry rule reads it.
-ACTIVITY_OUTCOMES = ("landed", "refused", "unreachable", "skipped")
-ACTIVITY_SLUG_SHAPE = re.compile(r"^[a-z]{0,24}$")
+ACTIVITY_OUTCOMES = ("landed", "refused", "dead", "unreachable", "skipped")
 #: The fleet card's seven extra fields, in wire order. Pinned equal to
 #: `live_activity.COUNT_KEYS + FIGURE_KEYS` by `test_phone_buzz_kinds.py`.
 ACTIVITY_FLEET_KEYS = ("working", "needs_you", "standing_by", "cost_usd", "tokens_k",
@@ -188,7 +195,8 @@ def _url_ok(url: str) -> bool:
 
 
 def _next_gap(now: float, last_frame_at: float, last_push_at: float,
-              idle_gap: float) -> tuple[bool, float, float]:
+              idle_gap: float,
+              last_peer_at: float = 0.0) -> tuple[bool, float, float]:
     """(held, sleep_if_empty, next_idle_gap) — the connector's whole
     pacing decision, in one place. ``held`` says whether the next poll
     asks the mailbox to hold (the held-poll flag); ``sleep_if_empty`` is
@@ -200,11 +208,15 @@ def _next_gap(now: float, last_frame_at: float, last_push_at: float,
     The two stamps arm different lengths: a verified frame holds the full
     ``ACTIVE_WINDOW_SECONDS``, an accepted buzz only ``PUSH_ARM_SECONDS``.
     The phone's first frame re-arms the full window by itself, so the push
-    leg only needs to bridge until a tap lands."""
+    leg only needs to bridge until a tap lands. ``last_peer_at`` — the
+    phone opening its socket (`relay.note_phone_arrived`) — arms
+    ``PEER_ARM_SECONDS`` on the same terms."""
     since_frame = now - float(last_frame_at or 0.0)
     since_push = now - float(last_push_at or 0.0)
+    since_peer = now - float(last_peer_at or 0.0)
     held = (since_frame <= ACTIVE_WINDOW_SECONDS
-            or since_push <= PUSH_ARM_SECONDS)
+            or since_push <= PUSH_ARM_SECONDS
+            or since_peer <= PEER_ARM_SECONDS)
     if held:
         return True, 0.0, IDLE_GAP_START
     return False, idle_gap, min(IDLE_GAP_MAX, idle_gap * 2.0)
@@ -281,6 +293,7 @@ class RelayConnector:
         self._executor: ThreadPoolExecutor | None = None
         self._frame_buckets: dict[str, _Bucket] = {}
         self._write_buckets: dict[str, _Bucket] = {}
+        self._key_buckets: dict[str, _Bucket] = {}
         self._push_buckets: dict[str, _Bucket] = {}
         #: Per-device ordering locks for `_answer`: ctr allocation and the
         #: mailbox POST must be one step. Two concurrent `_execute` answers
@@ -412,9 +425,14 @@ class RelayConnector:
                     await asyncio.sleep(RETRY_SECONDS)
                     continue
                 chan = relay.channel_id(key)
+                # Cleared before the stamps are read, so a `peer:1` landing
+                # while this poll is out still cuts the idle sleep after it.
+                arrival = relay.phone_arrival_waiter(device_id)
+                arrival.clear()
                 held, gap, next_gap = _next_gap(
                     time.time(), relay.last_frame_at(device_id),
-                    self._last_push_ok_at(device_id), idle_gap)
+                    self._last_push_ok_at(device_id), idle_gap,
+                    relay.last_phone_arrived_at(device_id))
                 poll = f"{url}/api/box?ch={chan}&dir=to-mac"
                 if held:
                     poll += "&wait=1"
@@ -435,7 +453,11 @@ class RelayConnector:
                     if status not in (200, 204):
                         await asyncio.sleep(RETRY_SECONDS)
                     elif not held:
-                        await asyncio.sleep(gap)
+                        # The idle gap, cut short by the phone waking.
+                        try:
+                            await asyncio.wait_for(arrival.wait(), gap)
+                        except asyncio.TimeoutError:
+                            pass
                         idle_gap = next_gap
                     elif time.monotonic() - started < EMPTY_POLL_FLOOR_SECONDS:
                         # An instant empty answer means the mailbox ignored
@@ -515,7 +537,8 @@ class RelayConnector:
                             durable=(kind == "action"))
         payload = frame.get("body")
         payload = payload if isinstance(payload, dict) else {}
-        if kind == "action" and not self._write_bucket(device_id).take():
+        if kind == "action" and not self._write_bucket(
+                device_id, relay.write_bucket_kind(payload)).take():
             await self._answer(device_id, key, {
                 "re": str(frame.get("id") or ""), "status": 429,
                 "error": _WRITE_LIMIT_REFUSAL,
@@ -773,7 +796,7 @@ class RelayConnector:
         **only** in shape: ``event`` from `ACTIVITY_EVENTS`, ``kind`` from
         `ACTIVITY_KINDS` (an update with any other word sends nothing; an
         end carries the last state and may have none), ``slug`` by
-        `ACTIVITY_SLUG_SHAPE`, ``work`` clamped to `PUSH_WORK_CHARS`,
+        `PUSH_FACE_SLUGS` (else empty), ``work`` clamped to `PUSH_WORK_CHARS`,
         ``since`` a finite number ≥ 0, ``session_id`` by `PUSH_ID_SHAPE` (a
         bad id is dropped, never a reason to keep a stale card up). Never
         ``title``, so a pre-change `push.js` answers 400 — routed to the
@@ -790,7 +813,11 @@ class RelayConnector:
         rule turns on *why* it did not land: ``"landed"`` (the mailbox took
         it — remember the state); ``"refused"`` (a 4xx, Apple's refusal, an
         undeployed route: the same body will be refused again, so it is not
-        resent until the picture changes); ``"unreachable"`` (no answer, a
+        resent until the picture changes); ``"dead"`` (the mailbox's 502:
+        Apple refused the activity's token, most often because iOS ended
+        the activity at its eight-hour limit — no body will land on that
+        token again, so nothing is sent until the phone registers a new
+        one); ``"unreachable"`` (no answer, a
         5xx: retry, but no sooner than `daemon.LIVE_ACTIVITY_RETRY_SECONDS`);
         ``"skipped"`` (no token any more, a shape this method would not
         send, the bucket empty — nothing left the Mac and nothing is
@@ -814,7 +841,7 @@ class RelayConnector:
                 return "skipped"
             kind = ""
         slug = str(body.get("slug") or "")
-        if not ACTIVITY_SLUG_SHAPE.match(slug):
+        if slug not in PUSH_FACE_SLUGS:
             slug = ""
         try:
             since = float(body.get("since") or 0)
@@ -902,7 +929,9 @@ class RelayConnector:
         # below): a live-card failure in words, never an outage of the away
         # link, and not one that the same body sent again would clear.
         self._note_activity_failure(did, status)
-        if 400 <= status < 500 or status == 502:
+        if status == 502:
+            return "dead"
+        if 400 <= status < 500:
             return "refused"
         return "unreachable"
 
@@ -1121,11 +1150,17 @@ class RelayConnector:
             self._send_locks[device_id] = lock
         return lock
 
-    def _write_bucket(self, device_id: str) -> _Bucket:
-        bucket = self._write_buckets.get(device_id)
+    def _write_bucket(self, device_id: str, kind: str = "writes") -> _Bucket:
+        """The device's write bucket for this kind of action: raw terminal
+        keys draw on their own (`relay.write_bucket_kind`), so typing from
+        away never spends the allowance an answer needs."""
+        keys = kind == "keys"
+        buckets = self._key_buckets if keys else self._write_buckets
+        bucket = buckets.get(device_id)
         if bucket is None:
-            bucket = _Bucket(relay.RELAY_MAX_WRITES_PER_MINUTE)
-            self._write_buckets[device_id] = bucket
+            bucket = _Bucket(relay.RELAY_MAX_KEY_WRITES_PER_MINUTE if keys
+                             else relay.RELAY_MAX_WRITES_PER_MINUTE)
+            buckets[device_id] = bucket
         return bucket
 
     def _push_bucket(self, device_id: str) -> _Bucket:

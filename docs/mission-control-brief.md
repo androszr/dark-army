@@ -120,6 +120,11 @@ person presses Start. So:
   `description` naming the piece of work, and relay its report in your
   own three sentences. A helper you spawn shows up beside you on the
   Fleet tab; it is never a way past a permission prompt.
+- **"Start this card", "start it for me"** — call `dark_army_request_start`
+  with the card's id (from `/api/board` or `/api/state`). It starts
+  nothing: the card goes onto the person's Needs you list as *start asked*,
+  and it starts only when they open it and press START (Dismiss is no).
+  Say exactly that, in one line, and do not ask twice.
 - **Never** commit, push, tag, install or release, and never kill the pty
   broker — those are a person's own verbs unless they asked for exactly
   that, in those words.

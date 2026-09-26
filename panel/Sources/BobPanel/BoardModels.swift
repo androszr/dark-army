@@ -425,6 +425,12 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// The scout's attached report. Written by `attach_report` alone; an
     /// absent key — a daemon older than the column — decodes `""`.
     var reportPath = ""
+    /// The attached report's one-line verdict and recommendation token, as
+    /// the daemon read the answer block at the attach (`attach_report`
+    /// alone writes both). An absent key — a daemon older than the column
+    /// — decodes `""`, and an empty verdict draws nothing.
+    var reportVerdict = ""
+    var reportRecommendation = ""
     var isScout: Bool { kind == "scout" }
     /// The number `cardOrder` sorts on. `""` and `"0"` fold together here
     /// exactly as `CAST(priority AS INTEGER)` folds them in
@@ -499,6 +505,12 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// excludes it, so a surface can say the check has been done
     /// (`boardManualClear`) and can never claim one is outstanding.
     var manualSteps = ""
+    /// The check file the flag named — the realpath of a
+    /// `manual-check/<date>-<slug>/check.md` under the card's root — or `""`
+    /// for a card flagged with steps alone. With a file, the card window draws
+    /// the file and Passed / Failed instead of Mark checked. Read-only here:
+    /// written by the daemon's `flag_manual` alone.
+    var manualCheckPath = ""
     /// When a person pressed Reviewed on an assistant's close. `nil` means
     /// nobody has acknowledged it yet, which is what pins the card to the top
     /// of Done wearing its "FINISHED · REVIEW" banner. Read-only here: the
@@ -532,6 +544,12 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     var manualCheckDue = false
     /// The daemon decides which cards have lost their session.
     var needsYou = false
+    /// Mission Control asked for this card to be started (the daemon's
+    /// `start_ask_id`, fresh and still startable). The ask starts nothing:
+    /// it puts the card on Needs you, and the person's press on START is the
+    /// start. `""` for no ask; the id is the Dismiss fingerprint's material.
+    var startAskId = ""
+    var startAskedAt: Double = 0
     /// How many agents may work at once in **this card's project** — the
     /// daemon's own resolution of the machine-wide dial against the project's
     /// own override, published per card beside `workActive` / `runActive` for
@@ -558,6 +576,75 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// `RunHealthLine`. **nil is no run**, `workRecord`'s rule: a card
     /// nobody has started sends no key and draws no line.
     var runHealth: RunHealth?
+    /// Where this card stands in a batch-implement session — the card the
+    /// session is on, or one waiting its turn. **nil is no batch**,
+    /// `workRecord`'s rule: the daemon sends the key only for those two, and
+    /// an absent or malformed one decodes to nil rather than blanking the
+    /// board.
+    var batch: BatchMark?
+    /// The one line the tile draws for `batch`: `BATCH 2/3 · working`, or
+    /// `""` where there is no batch. Composed from the daemon's three
+    /// fields; nothing is counted here.
+    var batchLine: String {
+        guard let batch else { return "" }
+        // `left` is a card dragged out of the batch's line that still
+        // carries its mark: said in words, because its Start is refused.
+        let state = batch.state == "left" ? "left the line" : batch.state
+        return "BATCH \(batch.rank)/\(batch.size) \u{00B7} \(state)"
+    }
+    /// Waiting its turn in a batch: its own Start is refused by the daemon
+    /// until it leaves the batch.
+    var isBatchWaiting: Bool { batch?.state == "waiting" }
+    /// Carries a batch mark and no session of its own — waiting in Backlog,
+    /// or dragged out of the line (`left`). The daemon refuses its single
+    /// Start until Leave batch (`board_reset`) clears the mark, in any column.
+    var holdsBatchMark: Bool {
+        batch?.state == "waiting" || batch?.state == "left"
+    }
+    /// The cards this one waits on, as the store holds them: card ids joined
+    /// by newlines. A thing a person states — written back whole through
+    /// `board_update` with `expected_revision` — and gated at Start by the
+    /// daemon, which queues the card until each one is done or finished and
+    /// waiting only on a manual check. `""` from an older daemon.
+    var blockedBy = ""
+    /// Those cards as the daemon resolved them this frame — title, column
+    /// and whether each counts as finished — in the stored order. A card
+    /// that no longer exists is left out. `[]` where there are none.
+    var dependencies: [CardDependency] = []
+    /// The cards waiting on this one, off the same frame. `[]` for none.
+    var dependents: [CardLink] = []
+    /// `Waits on: "X" (done) · "Y" (not yet)` and `Unblocks: "A"` — the
+    /// daemon's sentences, drawn verbatim and only where non-empty.
+    var dependencyLine = ""
+    var dependentsLine = ""
+
+    /// `blockedBy` as a list of ids, the store's own split.
+    var dependencyIds: [String] { BoardCard.stages(blockedBy) }
+
+    /// The ids of the dependencies that still name a card, in the stored
+    /// order — what every write sends back. A deleted card's id stays in
+    /// `blockedBy` (the store's rule) but is neither counted against the
+    /// limit nor kept by the next edit, so ✕ never faces an id it cannot show.
+    var linkedIds: [String] { dependencies.map(\.id) }
+
+    /// What a card's **Add…** may offer as a card to wait on: the cards of
+    /// `card`'s own folder, not `card` itself, not already listed, none in
+    /// Done — and nothing once the list holds the store's eight
+    /// (`board.MAX_BLOCKERS`, which would otherwise cut a ninth without a
+    /// word). Pure; the store still refuses a loop, a self-wait and another
+    /// project whatever a picker offers.
+    static func dependencyChoices(for card: BoardCard,
+                                  in cards: [BoardCard]) -> [BoardCard] {
+        let listed = Set(card.linkedIds)
+        guard listed.count < maxDependencies else { return [] }
+        return cards.filter {
+            $0.root == card.root && $0.id != card.id
+                && !listed.contains($0.id) && $0.column != "done"
+        }
+    }
+
+    /// The store's own bound on one card's list (`board.MAX_BLOCKERS`).
+    static let maxDependencies = 8
 
     /// Somebody still has to check this by hand.
     var needsManualCheck: Bool { !manualSteps.isEmpty }
@@ -686,6 +773,8 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case startWhenPlanned = "start_when_planned"
         case priority, area, kind
         case reportPath = "report_path"
+        case reportVerdict = "report_verdict"
+        case reportRecommendation = "report_recommendation"
         case revision
         case refineState = "refine_state"
         case refineSessionId = "refine_session_id"
@@ -696,8 +785,11 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case workActive = "work_active"
         case runActive = "run_active"
         case manualSteps = "manual_steps"
+        case manualCheckPath = "manual_check_path"
         case manualCheckDue = "manual_check_due"
         case needsYou = "needs_you"
+        case startAskId = "start_ask_id"
+        case startAskedAt = "start_asked_at"
         case parallelLimit = "parallel_limit"
         case reviewedAt = "reviewed_at"
         case donePreview = "done_preview"
@@ -708,6 +800,11 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case workRecordFull = "work_record_full"
         case runFigures = "run_figures"
         case runHealth = "run_health"
+        case batch
+        case blockedBy = "blocked_by"
+        case dependencies, dependents
+        case dependencyLine = "dependency_line"
+        case dependentsLine = "dependents_line"
     }
 
     init(from decoder: Decoder) throws {
@@ -760,6 +857,9 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         area = c.value(.area, "")
         kind = c.value(.kind, "")
         reportPath = c.value(.reportPath, "")
+        // An absent key — a daemon older than the column — decodes "".
+        reportVerdict = c.value(.reportVerdict, "")
+        reportRecommendation = c.value(.reportRecommendation, "")
         revision = c.value(.revision, 0)
         refineState = c.value(.refineState, "")
         refineSessionId = c.value(.refineSessionId, "")
@@ -784,7 +884,10 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         // synthesized `Decodable` would throw on the absence even though the
         // property has a default — one missing field must never blank the board.
         manualSteps = c.value(.manualSteps, "")
+        manualCheckPath = c.value(.manualCheckPath, "")
         needsYou = c.value(.needsYou, false)
+        startAskId = c.value(.startAskId, "")
+        startAskedAt = c.value(.startAskedAt, 0)
         // `maybe` with a sibling-shaped fallback, `runActive`'s documented
         // pattern: an absent key means a daemon from before the badge learned
         // to wait its turn, and `true` there reproduces today's always-show
@@ -820,9 +923,100 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         workRecordFull = c.maybe(.workRecordFull)
         runFigures = c.maybe(.runFigures)
         runHealth = c.maybe(.runHealth)
+        // `maybe`, never `decode`: absent is no batch, and a malformed value
+        // (`"batch": 3`) is nil rather than a thrown frame.
+        batch = c.maybe(.batch)
+        // The dependency five, each through the tolerant helper with an
+        // empty default: an older daemon sends none of them, and a card with
+        // no links sends none of the four derived ones either.
+        blockedBy = c.value(.blockedBy, "")
+        dependencies = c.value(.dependencies, [])
+        dependents = c.value(.dependents, [])
+        dependencyLine = c.value(.dependencyLine, "")
+        dependentsLine = c.value(.dependentsLine, "")
     }
 
     init() {}
+}
+
+/// A card's place in a batch-implement session, as the daemon published it:
+/// `rank` of `size`, `state` `working` or `waiting`. Tolerant on every key,
+/// and a mark with no usable rank is no mark at all.
+struct BatchMark: Decodable, Equatable {
+    var rank = 0
+    var size = 0
+    var state = ""
+
+    enum CodingKeys: String, CodingKey { case rank, size, state }
+
+    init(rank: Int, size: Int, state: String) {
+        self.rank = rank
+        self.size = size
+        self.state = state
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        rank = c.value(.rank, 0)
+        size = c.value(.size, 0)
+        state = c.value(.state, "")
+        guard rank > 0, !state.isEmpty else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "a batch mark needs a rank and a state"))
+        }
+        size = max(size, rank)
+    }
+}
+
+/// One card another waits on, as the daemon resolved it for this frame.
+/// `met` is the daemon's word — Done, or finished and waiting only on a
+/// manual check — and is never re-derived from `column` here.
+struct CardDependency: Decodable, Identifiable, Equatable {
+    var id = ""
+    var title = ""
+    var column = ""
+    var met = false
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, met
+        case column = "column_name"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        title = c.value(.title, "")
+        column = c.value(.column, "")
+        met = c.value(.met, false)
+    }
+
+    init(id: String = "", title: String = "", column: String = "",
+         met: Bool = false) {
+        self.id = id
+        self.title = title
+        self.column = column
+        self.met = met
+    }
+}
+
+/// A card named by another — the "Unblocks" list. Id and title only.
+struct CardLink: Decodable, Identifiable, Equatable {
+    var id = ""
+    var title = ""
+
+    enum CodingKeys: String, CodingKey { case id, title }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        title = c.value(.title, "")
+    }
+
+    init(id: String = "", title: String = "") {
+        self.id = id
+        self.title = title
+    }
 }
 
 

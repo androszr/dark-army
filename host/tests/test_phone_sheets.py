@@ -26,10 +26,15 @@ def rules_binary(tmp_path_factory):
 import Foundation
 let kind = PhoneSheetKind(rawValue: CommandLine.arguments[1])!
 let accessibility = CommandLine.arguments[2] == "true"
-let expected: SheetDetent = accessibility || kind != .agent ? .large : .medium
-precondition(PhoneSheetKind.initialDetent(kind, accessibility: accessibility) == expected)
-precondition(PhoneSheetKind.detents(kind, accessibility: accessibility) ==
+let column: String? = CommandLine.arguments[3] == "-" ? nil : CommandLine.arguments[3]
+let expected: SheetDetent = accessibility || !PhoneSheetKind.answers(kind, column: column) ? .large : .medium
+precondition(PhoneSheetKind.initialDetent(kind, column: column, accessibility: accessibility) == expected)
+precondition(PhoneSheetKind.detents(kind, column: column, accessibility: accessibility) ==
              (expected == .medium ? [.medium, .large] : [.large]))
+precondition(PhoneSheetKind.answers(.card, column: "in_progress"))
+precondition(!PhoneSheetKind.answers(.card, column: "backlog"))
+precondition(!PhoneSheetKind.answers(.catchUp, column: "in_progress"))
+precondition(PhoneSheetKind.answers(.agent, column: nil))
 precondition(PhoneSheetKind.onKeyboard(.medium) == .large)
 precondition(PhoneSheetKind.onKeyboard(.large) == .large)
 precondition(PhoneSheetKind.presentsTerminalFullScreen(kind) == (kind == .agent))
@@ -43,8 +48,9 @@ precondition(PhoneSheetKind.allCases.count == 6)
 
 @pytest.mark.parametrize("kind", ["agent", "card", "catchUp", "decision", "workFile", "notification"])
 @pytest.mark.parametrize("accessibility", ["false", "true"])
-def test_executed_detent_and_terminal_policy(rules_binary, kind, accessibility):
-    subprocess.run([str(rules_binary), kind, accessibility], check=True)
+@pytest.mark.parametrize("column", ["-", "prep", "backlog", "in_progress", "done"])
+def test_executed_detent_and_terminal_policy(rules_binary, kind, accessibility, column):
+    subprocess.run([str(rules_binary), kind, accessibility, column], check=True)
 
 
 def test_one_sheet_and_one_full_screen_terminal():
@@ -78,7 +84,7 @@ def test_pure_rules_and_project_registration():
     pure = _code((PHONE / "PhoneSheet.swift").read_text())
     assert "import Foundation" in pure
     assert "SwiftUI" not in pure
-    assert pure.count("static func ") == 4
+    assert pure.count("static func ") == 5
     project = (ROOT / "ios/BobPhone.xcodeproj/project.pbxproj").read_text()
     for name in ["PhoneSheet", "PhoneSheetHost", "SheetPresentationTests"]:
         assert project.count(f"{name}.swift in Sources") == 1
@@ -93,6 +99,7 @@ def test_frame_reaims_and_grows_without_collapsing_on_keyboard_hide():
                    ".overlay(ScanlineOverlay())", ".environment(\\.decryptActive, true)",
                    ".onChange(of: router.topState?.id)", ".onChange(of: dynamicTypeSize)",
                    ".id(router.topState?.id)", "PhoneSheet.initialDetent(", "PhoneSheet.detents(",
+                   "PhoneSheet.initialDetent(kind, column,", "PhoneSheet.detents(kind, column,",
                    "detent = PhoneSheet.onKeyboard(detent)", "Back to ", "Text(\"Close\")"]:
         assert needle in frame, needle
     assert "guard !router.terminalPresented else { return }" in frame
@@ -124,10 +131,14 @@ def test_presenter_identity_is_independent_of_the_subject():
 def test_question_and_actions_precede_full_detail():
     src = (PHONE / "AgentDetailView.swift").read_text()
     body = _code(_block(src, "var body: some View"))
-    assert body.index("cardLead") < body.index("originLead")
-    assert body.index("identity") < body.index("cardLead")
-    assert body.index("originLead") < body.index("PhoneAgentScreenBar(")
-    assert body.index("PhoneAgentScreenBar(") < body.index("ConversationScreen(")
+    main = _code(_block(src, "private var mainScreen: some View"))
+    # The tabs lead the sheet; Main (the first) is the lead and the verbs.
+    assert main.index("identity") < main.index("cardLead") < main.index("verbs")
+    assert body.index("PhoneAgentScreenBar(") < body.index("mainScreen")
+    assert body.index("mainScreen") < body.index("ConversationScreen(")
+    # The origin lines and the quote moved to Details: at half height the
+    # lead is a glance (name, status, card), and they are not.
+    assert "originLead" not in body
     details = _code(_block(src, "private var detailsScreen: some View"))
     assert "identity" not in details
     assert details.index("questionLead") < details.index("actions") < details.index("rest")
@@ -137,8 +148,10 @@ def test_question_and_actions_precede_full_detail():
     question = _code(_block(src, "private var questionLead: some View"))
     assert "agent.questionList" in question
     rest = _code(_block(src, "private var rest: some View"))
-    for needle in ["header", "facts", 'Text("cmd', "elsewhereTerminal", "body(for: agent)"]:
+    for needle in ["header", "originLead", "Text(quote)", "facts", 'Text("cmd',
+                   "elsewhereTerminal", "body(for: agent)"]:
         assert needle in rest
+    assert rest.index("header") < rest.index("originLead") < rest.index("facts")
 
 
 def test_notification_retains_generation_guards_and_dismissal_policy():
@@ -228,3 +241,43 @@ def test_the_agent_screens_card_row_says_it_is_a_link():
                          ("in_progress", "IN PROGRESS"), ("done", "DONE")):
         assert f'"{column}": "{word}"' in chip
     assert 'return "OPEN CARD"' in chip and '"OPEN CARD · " + name' in chip
+
+
+# `"in_progress"` in CardDetailView.swift before this plan: the lead order
+# reads the sheet table's rule, so the literal must never grow here.
+CARD_VIEW_IN_PROGRESS_LITERALS = 6
+
+
+def test_an_in_progress_card_leads_with_the_band():
+    """`plans/2026-09-25-phone-in-progress-card-half-height.md`: an In
+    progress card opens at half height, so its identity lead moves under the
+    pinned sections; the order reads the column through the table's own rule."""
+    src = _code((PHONE / "CardDetailView.swift").read_text())
+    body = _block(src, "var body: some View {")
+    assert body.index("if !statusFirst {") < body.index("ForEach(CardSections.order")
+    loop = _block(body, "ForEach(CardSections.order(for: stage), id: \\.self) { s in")
+    assert loop.index("if s == .status, showsDoneClose {") < loop.index(
+        "if s == .dependencies, statusFirst {")
+    assert body.count("identityLead") == 2
+    lead = _block(src, "private var identityLead: some View {")
+    for needle in ("sheetFace", "card.title", "fullSummary", "metaLine",
+                   "assistantPicker", "assistantRecord"):
+        assert needle in lead, needle
+        assert needle not in body, needle
+    assert "PhoneSheet.answers(.card, card.column)" in _block(
+        src, "private var statusFirst: Bool {")
+    raw = (PHONE / "CardDetailView.swift").read_text()
+    assert raw.count('"in_progress"') == CARD_VIEW_IN_PROGRESS_LITERALS
+    # The anchor is the last pinned section; if an order ever dropped it the
+    # lead would vanish on that stage.
+    order = _block(src, "static func order(for stage: Stage) -> [Section] {")
+    returns = [line for line in order.splitlines() if "return [" in line]
+    assert len(returns) == 6
+    for line in returns:
+        assert ".queue, .dependencies," in line, line
+    assert "static let pinned: Set<Section> = [.status, .verbs, .queue, .dependencies]" in src
+    host = _code((PHONE / "PhoneSheetHost.swift").read_text())
+    assert host.count("cardColumn") >= 2
+    rules = (PHONE / "PhoneSheet.swift").read_text()
+    assert rules.count("answeringColumn") >= 2
+    assert rules.count('"in_progress"') == 1

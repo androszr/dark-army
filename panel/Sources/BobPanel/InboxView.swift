@@ -54,7 +54,7 @@ struct InboxView: View {
         if groups.isEmpty {
             VStack {
                 Text("Nothing is waiting on you.")
-                    .font(Theme.mono(11))
+                    .font(Theme.prose(14))
                     .foregroundStyle(Theme.faint)
                     .padding(12)
                 Spacer()
@@ -158,82 +158,105 @@ struct InboxView: View {
     /// how long it has waited, a line of detail, and Dark Army's own words only
     /// where it has some. The whole entry is the press that opens it;
     /// Dismiss keeps its own smaller target and takes a press ahead of it.
+    ///
+    /// One clock drives the drawn age and the spoken one: a dated entry is
+    /// drawn inside the shared second hand while the panel can be seen
+    /// (`ProcessRow.ticking`'s shape), so VoiceOver reads the same "waiting"
+    /// the row shows; hidden or undated, it is drawn once from the moment.
+    @ViewBuilder
     private func row(_ item: InboxItem) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Rectangle()
-                .fill(Color.red)
-                .frame(width: 3)
-            // Who this is about, at the size a face is actually recognised
-            // at. An entry whose session the fleet has forgotten keeps the
-            // slot empty, so every title in the list still shares one edge.
-            if let face = faceFor(item) {
-                PixelMark(character: face.character, state: face.state,
-                          size: InboxLayout.face)
-            } else {
-                Color.clear
-                    .frame(width: InboxLayout.face, height: InboxLayout.face)
-                    .accessibilityHidden(true)
+        if item.since > 0, client.visible {
+            TimelineView(Clocks.SecondHand()) { context in
+                entry(item, now: context.date.timeIntervalSince1970)
             }
-            VStack(alignment: .leading, spacing: InboxLayout.textSpacing) {
-                HStack(spacing: 6) {
-                    Text(item.kind.word)
-                        .font(Theme.mono(9, weight: .semibold))
-                        .tracking(0.8)
-                        .foregroundStyle(Theme.faint)
-                    Text(item.title)
-                        .font(Theme.mono(11))
-                        .multilineTextAlignment(.leading)
-                    Spacer(minLength: 0)
-                    waitedFor(item)
-                    dismissButton(item)
+        } else {
+            entry(item, now: Date().timeIntervalSince1970)
+        }
+    }
+
+    private func entry(_ item: InboxItem, now: TimeInterval) -> some View {
+        // A real button, so VoiceOver reads it as one and can press it; it
+        // was a tap gesture over a content shape, which a screen reader read
+        // as loose fragments and could not press. `Dismiss` stays a nested button
+        // with its own target, and a screen reader also finds it among the
+        // row's actions.
+        Button(action: { onOpen(item) }) {
+            HStack(alignment: .top, spacing: 8) {
+                Rectangle()
+                    .fill(Color.red)
+                    .frame(width: 3)
+                // Who this is about, at the size a face is actually recognised
+                // at. An entry whose session the fleet has forgotten keeps the
+                // slot empty, so every title in the list still shares one edge.
+                if let face = faceFor(item) {
+                    PixelMark(character: face.character, state: face.state,
+                              size: InboxLayout.face)
+                } else {
+                    Color.clear
+                        .frame(width: InboxLayout.face, height: InboxLayout.face)
+                        .accessibilityHidden(true)
                 }
-                // The block the face is aligned with is never shorter than
-                // the face, so a one-line entry draws no overhang.
-                .frame(minHeight: InboxLayout.face)
-                if !item.detail.isEmpty {
-                    Text(item.detail)
-                        .font(Theme.mono(10))
-                        .foregroundStyle(Theme.faint)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(3)
+                VStack(alignment: .leading, spacing: InboxLayout.textSpacing) {
+                    HStack(spacing: 6) {
+                        Text(item.kind.word)
+                            .font(Theme.mono(9, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(Theme.faint)
+                        Text(item.title)
+                            .font(Theme.prose(14, weight: .semibold))
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                        if item.since > 0 { waitedText(item, now: now) }
+                        dismissButton(item)
+                    }
+                    // The block the face is aligned with is never shorter than
+                    // the face, so a one-line entry draws no overhang.
+                    .frame(minHeight: InboxLayout.face)
+                    if !item.detail.isEmpty {
+                        Text(item.detail)
+                            .font(Theme.prose(12))
+                            .foregroundStyle(Theme.faint)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(3)
+                    }
+                    let line = Inbox.sentence(for: item, refusal: refusal(item),
+                                              queueReason: queueReason(item))
+                    if !line.isEmpty {
+                        Text(line)
+                            .font(Theme.mono(11))
+                            .foregroundStyle(refusal(item).isEmpty ? Theme.phosphor : .orange)
+                            .multilineTextAlignment(.leading)
+                    }
                 }
-                let line = Inbox.sentence(for: item, refusal: refusal(item),
-                                          queueReason: queueReason(item))
-                if !line.isEmpty {
-                    Text(line)
-                        .font(Theme.mono(11))
-                        .foregroundStyle(refusal(item).isEmpty ? Theme.phosphor : .orange)
-                        .multilineTextAlignment(.leading)
-                }
+            }
+            .padding(.vertical, InboxLayout.entryVPad)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .clickable()
+        // Tabbed onto, the entry opens on Return as well as Space: on this
+        // platform Return presses the default button, never a focused one.
+        // Only while the entry itself is focused — a Return on its focused
+        // Dismiss stays Dismiss's (`ClaimsKeyboardFocus`).
+        .reportsKeyboardFocus(onPress: { onOpen(item) })
+        .accessibilityLabel(Inbox.spokenLabel(
+            for: item,
+            waited: FleetAge.spoken(startedAt: item.since, now: now),
+            sentence: Inbox.sentence(for: item, refusal: refusal(item),
+                                     queueReason: queueReason(item))))
+        .accessibilityActions {
+            if item.wire.dismissable, client.snapshot.inbox.available {
+                Button(Verbs.dismiss.label) { dismiss(item) }
             }
         }
-        .padding(.vertical, InboxLayout.entryVPad)
-        .contentShape(Rectangle())
-        .onTapGesture { onOpen(item) }
-        .clickable()
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// How long this has been waiting, on the fleet's own scan-form clock
-    /// (`12s` / `5m` / `1h`). Undated draws nothing at all — a dash here
-    /// would read as "no time", and the honest statement is silence.
-    /// It ticks on the shared second hand only while the panel can be seen
-    /// (`ProcessRow.ticking`'s shape); hidden, it is a still figure, and the
-    /// first frame back is drawn from the current moment.
-    @ViewBuilder
-    private func waitedFor(_ item: InboxItem) -> some View {
-        if item.since > 0 {
-            if client.visible {
-                TimelineView(Clocks.SecondHand()) { context in
-                    waitedText(item, now: context.date.timeIntervalSince1970)
-                }
-            } else {
-                waitedText(item, now: Date().timeIntervalSince1970)
-            }
-        }
-    }
-
+    /// (`12s` / `5m` / `1h`), at the moment `row` hands it. Undated draws
+    /// nothing at all — a dash would read as "no time", and the honest
+    /// statement is silence.
     private func waitedText(_ item: InboxItem, now: TimeInterval) -> some View {
         Text(FleetAge.text(startedAt: item.since, now: now))
             .font(Theme.mono(10).monospacedDigit())
@@ -252,6 +275,7 @@ struct InboxView: View {
                 .buttonStyle(AlarmOutline(color: InboxLayout.actionInk(armed: false),
                                           size: InboxLayout.actionSize))
                 .clickable()
+                .reportsKeyboardFocus()
                 .help("Hide this until it changes. Nothing is answered, moved or closed.")
         }
     }

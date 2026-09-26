@@ -509,20 +509,26 @@ def test_notify_script_matches_protocol_converter(hook, tmp_path):
 def test_the_card_close_is_mandated_by_name():
     """The supply side of the review banner: an agent working a bound card is
     told that finishing the work *means* calling `dark_army_close_card` (or
-    `bob_close_card`, in a session born before the rename) — only when
-    every check passed — with a note distilled from the report rather than the
-    report pasted (the store clamps the note at 400 characters). Pinned by
-    name so the hint cannot drift back to report-formatting advice."""
+    `bob_close_card`, in a session born before the rename) — whether or not
+    a check is left for a person — with a note distilled from the report
+    rather than the report pasted (the store clamps the note at 400
+    characters). Pinned by name so the hint cannot drift back to
+    report-formatting advice."""
     hint = _script_namespace()["WORK_REPORT_HINT"]
     assert "dark_army_close_card" in hint
     # The dual-name window: a session born under the legacy name has only
     # the `bob_*` spelling, and the hint has to name that one too.
     assert "bob_close_card" in hint
     lowered = hint.lower()
-    assert "only when every check passed" in lowered
+    assert "whether or not" in lowered
     assert "never paste the report" in lowered
-    # The gate's other half: an outstanding check still means no close.
-    assert "do not call it" in lowered
+    # A card with an open check goes to Done: flag, *then* close.
+    assert "then call" in lowered
+    assert "do not call it" not in lowered
+    assert "only when every check passed" not in lowered
+    # The check's home and its checker.
+    assert "manual-check/" in hint
+    assert "manual_check.py" in hint
 
 
 # ── the project's enrolment key ────────────────────────────────────────────────

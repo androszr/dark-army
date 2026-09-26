@@ -242,6 +242,9 @@ class PtyHost:
         #: been said once already — a reconnect loop must not repeat it.
         self.broker_hook_sock = ""
         self._old_broker_warned = False
+        #: Whether the connected broker gives its children a login shell's
+        #: PATH itself; set from the hello, False until one is read.
+        self._broker_login_path = False
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -898,7 +901,8 @@ class PtyHost:
             if isinstance(k, str) and isinstance(v, str)
             and origin.ENV_KEY_RE.match(k)
         }
-        reply = await self._rpc("start", root=root, argv=list(argv),
+        reply = await self._rpc("start", root=root,
+                                argv=self._login_path_argv(argv),
                                 name=name, env=env_payload or None,
                                 cols=cols, rows=rows)
         if not reply.get("ok"):
@@ -912,6 +916,25 @@ class PtyHost:
                 "cols": cols or self.default_cols,
                 "rows": rows or self.default_rows})
         return True, str(reply.get("detail") or name), pid
+
+    def _login_path_argv(self, argv) -> list:
+        """``argv`` as sent to the broker: unchanged for a broker that
+        adopts a login shell's PATH itself, and led by
+        ``/usr/bin/env PATH=…`` for one that predates that.
+
+        Such a broker hands every child launchd's bare PATH, and it never
+        retires while a terminal lives, so a standing chat kept one alive
+        for days and every agent it opened reported `node` missing on a Mac
+        that has it (25 Sep 2026). Its `env` allow-list takes no PATH and it
+        may not be killed (`docs/pty-broker-contract.md`), but it runs the
+        argv it is given: `env` sets PATH and execs the program, so the pid
+        the broker reports is still the agent's own."""
+        argv = [str(a) for a in argv]
+        if self._broker_login_path or not argv:
+            return argv
+        path = subprocess_env.with_login_path(
+            os.environ.get("PATH", ""), subprocess_env.login_path_entries())
+        return ["/usr/bin/env", f"PATH={path}", *argv]
 
     def _adopt(self, desc: dict) -> None:
         handle = str(desc.get("handle") or "")
@@ -994,6 +1017,11 @@ class PtyHost:
         #: purpose (`docs/pty-broker-contract.md`), so it is said, not fixed.
         self.broker_hook_sock = str(hello.get("hook_sock") or "") \
             if isinstance(hello, dict) else ""
+        #: Every broker that sends the `hook_sock` key (even empty) also
+        #: adopted a login shell's PATH at its start; one without it may
+        #: hand its children launchd's bare PATH (`_login_path_argv`).
+        self._broker_login_path = isinstance(hello, dict) \
+            and "hook_sock" in hello
         if (self.hook_sock and not self.broker_hook_sock
                 and not self._old_broker_warned):
             self._old_broker_warned = True

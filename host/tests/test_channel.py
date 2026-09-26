@@ -774,18 +774,20 @@ def test_the_handshake_now_advertises_tools():
     assert "claude/channel" in caps["experimental"]
 
 
-def test_tools_list_names_exactly_the_eight_verbs():
-    """Eight — six board verbs and the two knowledge ones — and the list is
-    exhaustive on purpose: every name here is something an agent can do to
-    Dark Army, and a ninth arriving unnoticed is the thing this assertion exists
-    to prevent."""
+def test_tools_list_names_exactly_the_ten_verbs():
+    """Ten — six board verbs, the two knowledge ones, Mission Control's ask
+    to start a card and a batch session's move to its next card — and the
+    list is exhaustive on purpose: every name here is something an agent can
+    do to Dark Army, and an eleventh arriving unnoticed is the thing this
+    assertion exists to prevent."""
     reply = _run(_server(), [{"jsonrpc": "2.0", "id": 2,
                               "method": "tools/list"}])[0]
     tools = reply["result"]["tools"]
     assert [t["name"] for t in tools] == [
         "dark_army_add_card", "dark_army_close_card", "dark_army_attach_plan",
         "dark_army_attach_report", "dark_army_needs_manual_check", "dark_army_answer_card",
-        "dark_army_knowledge_read", "dark_army_knowledge_write"]
+        "dark_army_knowledge_read", "dark_army_knowledge_write",
+        "dark_army_request_start", "dark_army_next_card"]
 
 
 def test_host_argument_defaults_to_claude_and_accepts_codex():
@@ -794,33 +796,38 @@ def test_host_argument_defaults_to_claude_and_accepts_codex():
     assert cs.host_from_argv(["--host=unknown"]) == cs.HOST_CLAUDE
 
 
-def test_codex_lists_only_the_four_board_verbs():
-    """Add, close, attach-plan and attach-report — the verbs that write a
-    board row and type nothing. Reply, manual-check, answer and the knowledge
-    notes stay off the list, and `call_tool` enforces the same one."""
+def test_codex_lists_only_the_board_verbs():
+    """Add, close, attach-plan, attach-report, manual-check and next-card —
+    the verbs that write a board row and type nothing. Reply, answer and the
+    knowledge notes stay off the list, and `call_tool` enforces the same
+    one."""
     server = cs.ChannelServer(stdin=io.StringIO(), stdout=io.StringIO(),
                               host=cs.HOST_CODEX)
     reply = _run(server, [{"jsonrpc": "2.0", "id": 2,
                            "method": "tools/list"}])[0]
     assert [tool["name"] for tool in reply["result"]["tools"]] == [
         "dark_army_add_card", "dark_army_close_card", "dark_army_attach_plan",
-        "dark_army_attach_report"]
+        "dark_army_attach_report", "dark_army_needs_manual_check",
+        "dark_army_next_card"]
     assert [tool["name"] for tool in cs.tools_for_host(cs.HOST_CODEX)] == [
         "dark_army_add_card", "dark_army_close_card", "dark_army_attach_plan",
-        "dark_army_attach_report"]
+        "dark_army_attach_report", "dark_army_needs_manual_check",
+        "dark_army_next_card"]
 
 
-def test_codex_cannot_call_the_hidden_manual_check_tool(monkeypatch):
-    """Codex's list stays board-only, and omitting a tool from `tools/list` is
-    not a guard — a client may call a known name directly, so `call_tool`
-    enforces the same list."""
+def test_codex_may_flag_a_manual_check_on_its_card(monkeypatch):
+    """A board row, typed at nobody — the close verb's argument. Without it a
+    Codex run whose only open item was a hand-check could neither close its
+    card nor release its place, and the project's queue waited on it."""
     server = cs.ChannelServer(host=cs.HOST_CODEX)
-    monkeypatch.setattr(server, "call_daemon", lambda msg: pytest.fail(
-        "a forbidden tool must never reach the daemon"))
+    sent = []
+    monkeypatch.setattr(server, "call_daemon", lambda msg: sent.append(msg) or {
+        "ok": True, "detail": "manual check flagged", "card_id": "c1",
+        "column": "in_progress", "title": "t"})
     result = server.call_tool({"name": "dark_army_needs_manual_check",
                                "arguments": {"steps": "1. look"}})
-    assert result["isError"] is True
-    assert "unavailable for codex" in result["content"][0]["text"]
+    assert result.get("isError") is not True, result
+    assert len(sent) == 1 and "card_id" not in sent[0]
 
 
 def test_codex_cannot_call_the_hidden_answer_tool(monkeypatch):
@@ -1014,7 +1021,8 @@ def test_tools_for_host_spells_every_verb_with_its_own_prefix(name, prefix):
     assert claude == [prefix + verb for verb in cs.VERBS]
     codex = [t["name"] for t in cs.tools_for_host(cs.HOST_CODEX, name)]
     assert codex == [prefix + verb for verb in
-                     ("add_card", "close_card", "attach_plan", "attach_report")]
+                     ("add_card", "close_card", "attach_plan", "attach_report",
+                      "needs_manual_check", "next_card")]
     # The descriptions name siblings in the same spelling, never the other.
     other = "bob_" if prefix == "dark_army_" else "dark_army_"
     for tool in cs.tools_for_host(cs.HOST_CLAUDE, name):
@@ -1415,11 +1423,40 @@ def test_the_manual_check_tool_takes_steps_and_nothing_else():
     card that session is already executing, and a person clears it with one
     press."""
     schema = cs.MANUAL_TOOL["inputSchema"]
-    assert set(schema["properties"]) == {"steps"}
+    assert set(schema["properties"]) == {"steps", "path"}
     assert schema["required"] == ["steps"]
     assert "session_id" not in schema["properties"]
+    assert "card_id" not in schema["properties"]
     # And no way to *clear* it: unflagging your own work is a person's press.
     assert "clear" not in cs.MANUAL_TOOL["name"]
+
+
+def test_the_manual_check_tool_says_flag_then_close():
+    """A card with an open check goes to Done: the description asks for the
+    file, the checker, the flag and *then* the close — never "instead of"."""
+    text = cs.MANUAL_TOOL["description"]
+    assert "instead of" not in text
+    assert "manual-check/<YYYY-MM-DD>-<slug>/check.md" in text
+    assert "manual_check.py" in text
+    assert "then call dark_army_close_card" in text
+
+
+def test_the_check_path_is_forwarded_and_an_empty_one_sends_none(monkeypatch):
+    server = _server()
+    server.port = 51000
+    sent = []
+    monkeypatch.setattr(server, "call_daemon", lambda msg: sent.append(msg) or {
+        "ok": True, "title": "t"})
+    result = server.call_tool({"name": "dark_army_needs_manual_check",
+                               "arguments": {"steps": "1. look",
+                                             "path": "  /p/manual-check/a/check.md "}})
+    assert result["isError"] is False
+    assert sent[-1]["path"] == "/p/manual-check/a/check.md"
+    assert "dark_army_close_card" in result["content"][0]["text"]
+    server.call_tool({"name": "dark_army_needs_manual_check",
+                      "arguments": {"steps": "1. look", "path": "  "}})
+    assert "path" not in sent[-1]
+    assert "card_id" not in sent[-1]
 
 
 def test_the_manual_check_tool_asks_for_steps_not_a_hint():
@@ -2727,3 +2764,184 @@ def test_the_address_rule_is_exclusive():
     assert cs.daemon_address("", 4242) == ("tcp", 4242)
     assert cs.daemon_address("", 0) == ("unix", cs.default_hook_socket())
     assert cs.default_hook_socket().endswith("/.dark-army/hook.sock")
+
+
+def test_the_attach_tool_says_how_a_batch_plan_names_its_card():
+    """Several cards in one session: the plan's own `- **Card:**` header says
+    which card, and the schema still takes a path and nothing else."""
+    assert set(cs.ATTACH_TOOL["inputSchema"]["properties"]) == {"path"}
+    text = cs.ATTACH_TOOL["description"]
+    assert "several cards at once" in text
+    assert "`- **Card:** <id>`" in text
+
+
+# --- `depends_on`: the cards a card filed without a plan waits on -----------
+
+
+def test_the_card_tool_can_name_what_it_depends_on_and_nothing_more():
+    schema = cs.CARD_TOOL["inputSchema"]["properties"]
+    assert schema["depends_on"]["type"] == "array"
+    assert schema["depends_on"]["maxItems"] == 8
+    assert schema["depends_on"]["items"]["maxLength"] == 200
+    assert "same project" in schema["depends_on"]["description"]
+    assert "depends_on" not in cs.CARD_TOOL["inputSchema"]["required"]
+
+
+def test_depends_on_reaches_the_daemon_clamped(monkeypatch):
+    server = _server()
+    server.port = 51000
+    sent = []
+    monkeypatch.setattr(server, "call_daemon",
+                        lambda msg: sent.append(msg) or {"ok": True, "project": "p"})
+    refs = [f"card {i}" for i in range(12)] + ["", "x" * 500]
+    server.call_tool({"name": "dark_army_add_card",
+                      "arguments": {"title": "t", "depends_on": refs}})
+    assert sent[0]["depends_on"] == [f"card {i}" for i in range(8)]
+    sent.clear()
+    server.call_tool({"name": "dark_army_add_card",
+                      "arguments": {"title": "t", "depends_on": "x" * 500}})
+    assert sent[0]["depends_on"] == ["x" * 200]
+    sent.clear()
+    server.call_tool({"name": "dark_army_add_card", "arguments": {"title": "t"}})
+    assert sent[0]["depends_on"] == []
+
+
+def test_a_list_the_daemon_could_not_save_is_said_after_the_card_landed(
+        monkeypatch):
+    server = _server()
+    monkeypatch.setattr(server, "call_daemon", lambda msg: {
+        "ok": True, "project": "p",
+        "dependencies_detail": 'no card in this project is called "ghost"'})
+    result = server.call_tool({"name": "dark_army_add_card",
+                               "arguments": {"title": "t",
+                                             "depends_on": ["ghost"]}})
+    assert result["isError"] is False
+    text = result["content"][0]["text"]
+    assert "Prep column" in text
+    assert 'not saved: no card in this project is called "ghost"' in text
+
+
+@pytest.mark.asyncio
+async def test_add_card_links_the_cards_it_names_by_id_and_by_title(tmp_path):
+    daemon, store, root = _plan_filing_daemon(tmp_path)
+    real = os.path.realpath(root)
+    try:
+        first, _ = store.create({"title": "The Foundation", "project": "project",
+                                 "root": real, "column_name": "backlog"})
+        second, _ = store.create({"title": "finished work", "project": "project",
+                                  "root": real, "column_name": "done"})
+        reply = await daemon._handle_board_card_request({
+            "type": "board_card_request", "port": 51000,
+            "title": "A follow-up", "tool": "codex",
+            "depends_on": ["  the foundation ", second["id"]],
+        })
+        assert reply["ok"] is True, reply
+        assert reply["dependencies_detail"] == ""
+        card = store.get(reply["card_id"])
+        from dark_army_daemon.board import parse_ids
+        assert parse_ids(card["blocked_by"]) == [first["id"], second["id"]]
+        assert card["column_name"] == "prep"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_add_card_files_the_card_and_says_why_a_link_was_refused(tmp_path):
+    """A title naming nothing, two cards, or a card in another project
+    refuses the whole list — never a partial one — and the card is filed
+    regardless, with the trouble in `dependencies_detail`."""
+    daemon, store, root = _plan_filing_daemon(tmp_path)
+    real = os.path.realpath(root)
+    try:
+        store.create({"title": "twin", "project": "project", "root": real})
+        store.create({"title": "twin", "project": "project", "root": real})
+        store.create({"title": "mine", "project": "project", "root": real})
+        foreign, _ = store.create({"title": "foreign", "project": "other",
+                                   "root": str(tmp_path / "other")})
+        cases = [
+            (["mine", "ghost"], 'no card in this project is called "ghost"'),
+            (["twin"], '"twin" names more than one card in this project'),
+            ([foreign["id"]], f'no card in this project is called "{foreign["id"]}"'),
+            (["foreign"], 'no card in this project is called "foreign"'),
+        ]
+        for refs, words in cases:
+            before = len(store.cards())
+            reply = await daemon._handle_board_card_request({
+                "type": "board_card_request", "port": 51000,
+                "title": f"filed with {refs}", "tool": "codex",
+                "depends_on": refs,
+            })
+            assert reply["ok"] is True, reply
+            assert reply["dependencies_detail"].startswith(words), reply
+            assert len(store.cards()) == before + 1
+            assert store.get(reply["card_id"])["blocked_by"] == ""
+    finally:
+        store.close()
+
+
+# --- dark_army_next_card: a batch session moving on ---------------------------
+
+
+def test_the_next_tool_takes_no_properties_at_all():
+    """`CLOSE_TOOL`'s security property in this verb's terms: the port is the
+    addressing and the scope is the defence. A `card_id` here would turn the
+    socket into a way to bind any session to any card."""
+    assert cs.NEXT_TOOL["inputSchema"]["properties"] == {}
+    assert "required" not in cs.NEXT_TOOL["inputSchema"]
+    assert cs.NEXT_TOOL_NAME == "dark_army_next_card"
+    # And the close schema is still the note alone.
+    assert set(cs.CLOSE_TOOL["inputSchema"]["properties"]) == {"note"}
+    assert "dark_army_next_card" in cs.CLOSE_TOOL["description"]
+
+
+def test_the_next_call_carries_the_port_and_never_a_card(monkeypatch):
+    server = _server()
+    server.port = 51000
+    sent = []
+    monkeypatch.setattr(server, "call_daemon", lambda msg: sent.append(msg) or {
+        "ok": True, "detail": "now on card 2 of 3", "card_id": "c2",
+        "title": "Second", "plan_path": "/p/plans/2.md", "rank": 2,
+        "size": 3})
+    result = server.call_tool({"name": "dark_army_next_card",
+                               "arguments": {"card_id": "someone-else"}})
+    assert result.get("isError") is not True, result
+    assert len(sent) == 1
+    assert sent[0]["type"] == "board_next_request"
+    assert sent[0]["port"] == 51000
+    assert "card_id" not in sent[0]
+    text = result["content"][0]["text"]
+    assert text == "Now on card 2 of 3: Second — Plan: /p/plans/2.md"
+
+
+def test_the_next_call_says_when_the_batch_is_finished(monkeypatch):
+    server = _server()
+    monkeypatch.setattr(server, "call_daemon", lambda msg: {
+        "ok": True, "detail": "the batch is finished — no card left",
+        "remaining": 0})
+    result = server.call_tool({"name": "dark_army_next_card", "arguments": {}})
+    assert result.get("isError") is not True
+    assert result["content"][0]["text"] == \
+        "No card left; the batch is finished."
+
+
+def test_a_next_refusal_comes_back_in_the_daemons_words(monkeypatch):
+    server = _server()
+    monkeypatch.setattr(server, "call_daemon", lambda msg: {
+        "ok": False, "detail": "this session is not working a batch card"})
+    result = server.call_tool({"name": "dark_army_next_card", "arguments": {}})
+    assert result["isError"] is True
+    assert result["content"][0]["text"] == \
+        "this session is not working a batch card"
+
+
+def test_codex_may_move_on_to_its_next_batch_card(monkeypatch):
+    """A board row, typed at nobody — the close verb's argument."""
+    server = cs.ChannelServer(host=cs.HOST_CODEX)
+    sent = []
+    monkeypatch.setattr(server, "call_daemon", lambda msg: sent.append(msg) or {
+        "ok": True, "detail": "done", "remaining": 0})
+    result = server.call_tool({"name": "dark_army_next_card", "arguments": {}})
+    assert result.get("isError") is not True, result
+    assert len(sent) == 1 and "card_id" not in sent[0]
+    names = [t["name"] for t in cs.tools_for_host(cs.HOST_CODEX)]
+    assert "dark_army_next_card" in names

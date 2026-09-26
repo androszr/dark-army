@@ -11,8 +11,8 @@ import SwiftUI
 /// permission verdict, Mark done and the rest live on the screen a row
 /// opens. The swipe carries **Dismiss** (and Dismiss all above the list),
 /// which hides an entry until it changes, and — on an agent's row — that
-/// agent's own verbs from its screen (`InboxAgentVerb`: Acknowledge & close,
-/// Hide, Low priority, Stop), each gated on the same `can_*` flag, so a
+/// agent's own verbs from its screen (`InboxAgentVerb`: Close terminal,
+/// Hide, Low priority, Stop — the words are `Verbs`), each gated on the same `can_*` flag, so a
 /// finished agent is acknowledged and closed without opening it.
 struct NeedsYouView: View {
     @EnvironmentObject private var sheets: PhoneSheetRouter
@@ -23,7 +23,7 @@ struct NeedsYouView: View {
     /// and a changed list disarms it — the Mac's own rule.
     @State private var dismissAllArmed: Set<String> = []
     @State private var dismissingAll = false
-    /// A swiped Acknowledge & close, waiting on its confirmation.
+    /// A swiped Close terminal, waiting on its confirmation.
     @State private var closing: PhoneInboxItem?
     /// The row whose More was pressed: its other agent verbs, in a dialog.
     @State private var moreFor: PhoneInboxItem?
@@ -69,7 +69,7 @@ struct NeedsYouView: View {
         .tint(Theme.phosphor)
         .refreshable { await client.refreshNow() }
         .confirmationDialog(
-            "Close this terminal tab and end the session? There is no undo.",
+            Verbs.closeTerminal.noUndo ?? "",
             isPresented: Binding(get: { closing != nil },
                                  set: { if !$0 { closing = nil } }),
             titleVisibility: .visible,
@@ -306,16 +306,16 @@ struct InboxRow: View {
                         .tracking(0.8)
                         .foregroundStyle(Theme.faint)
                     Text(item.title)
-                        .font(Theme.mono(13, weight: .medium))
-                        .foregroundStyle(Theme.phosphorBright)
+                        .font(Theme.prose(17, weight: .semibold))
+                        .foregroundStyle(Theme.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                     age
                 }
                 if !item.detail.isEmpty {
                     Text(item.detail)
-                        .font(Theme.mono(12))
-                        .foregroundStyle(Theme.dim)
+                        .font(Theme.prose(15))
+                        .foregroundStyle(Theme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -347,8 +347,8 @@ struct InboxRow: View {
 
 /// Trailing swipe on Needs you: **Dismiss**, on every row the Mac would
 /// honour it for — never a permission ask, and nothing against a Mac that
-/// keeps no hide list — then the agent's own verbs: **Close** (Acknowledge
-/// & close, confirmed in a dialog) and **More** for the rest.
+/// keeps no hide list — then the agent's own verbs: **Close terminal**
+/// (confirmed in a dialog) and **More** for the rest.
 private struct InboxSwipeModifier: ViewModifier {
     let item: PhoneInboxItem
     let available: Bool
@@ -370,13 +370,13 @@ private struct InboxSwipeModifier: ViewModifier {
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     if PhoneInboxAck.showsDismiss(wire: item.wire, available: available) {
                         DecryptButton(action: onDismiss) {
-                            Label("Dismiss", systemImage: "checkmark")
+                            Label(Verbs.dismiss.label, systemImage: "checkmark")
                         }
                         .tint(SwipeInk.dismiss)
                     }
                     if closes {
                         DecryptButton(action: onClose) {
-                            Label("Close", systemImage: "xmark.square")
+                            Label(Verbs.closeTerminal.label, systemImage: "xmark.square")
                         }
                         .tint(SwipeInk.close)
                     }
@@ -388,7 +388,7 @@ private struct InboxSwipeModifier: ViewModifier {
                     }
                 }
                 .accessibilityActions {
-                    if dismissable { DecryptButton("Dismiss", action: onDismiss) }
+                    if dismissable { DecryptButton(Verbs.dismiss.label, action: onDismiss) }
                     if closes { DecryptButton(InboxAgentVerb.close.label, action: onClose) }
                     if more { DecryptButton("More actions", action: onMore) }
                 }
@@ -437,10 +437,10 @@ enum InboxAgentVerb: String, Identifiable, CaseIterable {
 
     var label: String {
         switch self {
-        case .close: return "Acknowledge & close terminal"
-        case .hide: return "Hide until this thread changes"
-        case .lowPriority: return "Carry on in low priority"
-        case .stop: return "Stop"
+        case .close: return Verbs.closeTerminal.label
+        case .hide: return Verbs.hide.label
+        case .lowPriority: return Verbs.lowPriority.label
+        case .stop: return Verbs.stop.label
         }
     }
 

@@ -117,6 +117,20 @@ final class BoardVisibleTests: XCTestCase {
         XCTAssertEqual(folded.cards(.done).map(\.id), ["d2", "d1"])
     }
 
+    /// The selecting row draws its ticked cards first, in the column's own
+    /// order among themselves; another row's order is untouched.
+    func testTickedCardsLeadTheSelectingRow() {
+        let state = openState()
+        state.enterRowSelection(.backlog)
+        state.rowSelection = ["b3", "b2"]
+        let visible = BoardVisible.compute(board: board, state: state)
+        XCTAssertEqual(visible.cards(.backlog).map(\.id), ["b2", "b3", "b1"])
+        XCTAssertEqual(visible.cards(.done).map(\.id), ["d2", "d1"])
+        state.exitRowSelection()
+        let plain = BoardVisible.compute(board: board, state: state)
+        XCTAssertEqual(plain.cards(.backlog).map(\.id), ["b1", "b2", "b3"])
+    }
+
     /// The heading that read 47 on a project holding 3: Done's heading was
     /// the store-wide count whatever the project filter said.
     func testTheDoneHeadingFollowsTheProjectFilterOnceTheArchiveIsIn() {

@@ -246,15 +246,29 @@ def test_the_autostart_label_is_the_panels_string_byte_for_byte():
     assert _code(panel).count(f'"{AUTOSTART_LABEL}"') == 1
 
 
-def test_the_card_screen_no_longer_waits_on_cards():
-    """The waiting-on feature is retired (2026-09-20): no phone surface
-    reads, draws or writes `blocked_by`, on the same day the Mac lost the
-    section and the daemon closed the field at the door."""
+def test_the_card_screen_waits_on_cards_only_where_the_mac_says_so():
+    """Cards wait on cards again (`docs/card-dependencies.md`, reversing the
+    20 Sep 2026 retirement). The phone decodes the fields tolerantly, draws
+    the Mac's two lines verbatim, and writes `blocked_by` only where the
+    board says `dependencies_supported` — never against an older Mac that
+    would drop the list at its door. The old blocker controls stay gone."""
+    models = _read(PHONE / "Models.swift")
+    assert 'case dependenciesSupported = "dependencies_supported"' in models
+    assert "dependenciesSupported = c.value(.dependenciesSupported, false)" in models
+    assert 'blockedBy = c.value(.blockedBy, "")' in models
+    card = _read(PHONE / "CardDetailView.swift")
+    assert card.count('"blocked_by":') == 1, "one writer on the card screen"
+    writer = card[card.index("private func setDependencies("):]
+    writer = writer[:writer.index("\n    }\n")]
+    assert '"expected_revision": String(live.revision)' in writer
+    assert "PhoneActions.boardUpdate" in writer
+    assert card.count("board.dependenciesSupported") >= 2
+    board = _read(PHONE / "BoardView.swift")
+    assert "card.dependencyLine" in board and "card.dependentsLine" in board
     for name in ("CardDetailView.swift", "Models.swift", "BoardView.swift",
                  "ComposerView.swift"):
-        text = _read(PHONE / name)
-        assert "blockedBy" not in text and "blocked_by" not in text, name
-        assert "Blocker" not in text, name
+        assert "Blocker" not in _read(PHONE / name), name
+    assert "blocked_by" not in _read(PHONE / "ComposerView.swift")
 
 
 def test_the_client_declares_the_hold_and_clears_it_from_a_snapshot():

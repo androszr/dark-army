@@ -10,6 +10,9 @@ enum TriageIntent: Equatable {
     case nextTab, prevTab
     case back
     case open, jump, dismiss, stop, retire, wrapUp, focusFilter, clearFilter
+    /// Show or hide the one-line shortcut legend under the brand bar —
+    /// the `?` key and the **keys** chip (`TriageKeys`, `TriageLegend`).
+    case toggleKeys
     /// Give up a focused reply field. Distinct from `clearFilter`, which is
     /// about the filter and only ever cleared that: with a reply field focused
     /// Escape used to be a dead key — nothing reset `stripEditing`, so
@@ -26,6 +29,10 @@ enum TriageIntent: Equatable {
     case closeHistoryDay
     /// Leave History and bring the board back.
     case leaveHistory
+    /// Close the report the Reports tab has open; the list comes back.
+    case closeReport
+    /// Leave the Reports tab and bring the board back.
+    case leaveReports
 }
 
 /// One press. The sequence number is what makes two identical presses in a row
@@ -71,6 +78,9 @@ final class KeyRouter: ObservableObject {
     @Published var historyRun = false
     @Published var historyDay = false
     @Published var historyOpen = false
+    /// The Reports tab's two rungs: a report open inside the tab.
+    @Published var reportOpen = false
+    @Published var reportsOpen = false
     /// The hosted native terminal holds the caret. Escape must reach the
     /// pty (vim, grok, a cancel) rather than close the detail.
     @Published var terminalFocused = false

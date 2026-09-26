@@ -59,3 +59,18 @@ def test_the_placeholder_names_the_typed_route():
     assert 'agent.replyVia == "typed"' in src
     assert "typed into its terminal" in src
     assert "message to this agent" in src
+
+
+def test_the_conversation_composer_is_always_drawn_and_never_gated():
+    """26 Sep 2026: on the Conversation tab the message field is pinned under
+    the page and drawn whether the agent is working or stopped. The composer
+    part draws the field on no condition; the Mac's own refusal, if any, is
+    the note. The whole box elsewhere keeps its stopped-and-channel gate."""
+    src = _read(ANSWER)
+    composer = src.split("@ViewBuilder private var composerParts: some View {", 1)[1]
+    composer = composer.split("@ViewBuilder private var answerParts", 1)[0]
+    first = composer.strip().splitlines()[0].strip()
+    assert first == "freeText", "the composer's field must be unconditional"
+    assert "stopped" not in composer and "canReply" not in composer
+    assert "if part == .composer {\n                composerParts" in src
+    assert "&& part == .whole }" in src, "the whole box alone draws the gated field"

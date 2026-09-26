@@ -159,13 +159,13 @@ def test_save_is_a_no_op_when_nothing_changed(tmp_path):
 
 def test_a_non_ascii_nickname_survives_an_ascii_locale(tmp_path, monkeypatch):
     """The LaunchAgent inherits no LANG, so `write_text` defaults to ASCII.
-    The night `Ptyś` was first handed out, `save()` raised
+    The night a non-ASCII name was first handed out, `save()` raised
     UnicodeEncodeError out of the agents-snapshot push on every tick: no
     rows, no board reconcile, cards stuck in `dispatching` and `refining`.
     The file names utf-8 at both ends and a save can never raise."""
     path = tmp_path / "identities.json"
     store = IdentityStore(path=path)
-    store._sessions = {"s1": "Ptyś"}
+    store._sessions = {"s1": "Zażółć"}
     store._dirty = True
     # Stand in for the ASCII locale: Path.write_text/read_text without an
     # explicit encoding go through io.text_encoding → locale. Force ASCII
@@ -173,8 +173,7 @@ def test_a_non_ascii_nickname_survives_an_ascii_locale(tmp_path, monkeypatch):
     monkeypatch.setattr("io.text_encoding", lambda enc, stacklevel=2: enc or "ascii")
     store.save()
     assert not store._dirty
-    assert json.loads(path.read_bytes().decode("utf-8"))["sessions"]["s1"] == "Ptyś"
-    assert IdentityStore(path=path).name_for("s1") == "Ptyś"
+    assert json.loads(path.read_bytes().decode("utf-8"))["sessions"]["s1"] == "Zażółć"
 
 
 def test_save_never_raises_out_of_the_snapshot_path(tmp_path, monkeypatch):
@@ -297,7 +296,7 @@ def test_the_roster_is_nineteen_and_art_only_is_disjoint():
     assert NAMES == ("Cipher", "Vex", "Ledger", "Mira", "Hex", "Relay",
                      "Forge", "Watch", "Audit", "Proxy", "Quiet", "Nyx",
                      "Canon", "Velvet",
-                     "Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptyś")
+                     "Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptys")
     # Appended, never inserted: the original fourteen keep their indices, so a
     # saved session keeps its name. Fresh hashes change modulo the new count.
     assert NAMES[:14] == ("Cipher", "Vex", "Ledger", "Mira", "Hex",
@@ -322,7 +321,7 @@ def test_the_three_letter_tab_badges_stay_unique():
     assert badges == ["Cip", "Vex", "Led", "Mir", "Hex", "Rel", "For", "Wat",
                       "Aud", "Pro", "Qui", "Nyx", "Can", "Vel", "And", "Cap",
                       "Saw", "Fra", "Zos", "Pty"]
-    assert {short(n) for n in ("Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptyś")} == {
+    assert {short(n) for n in ("Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptys")} == {
         "And", "Cap", "Saw", "Fra", "Zos", "Pty"}
 
 
@@ -336,7 +335,7 @@ FRESH_IDS = {
     "Sawa": "probe-39",
     "Franio": "probe-2",
     "Zosia": "probe-0",
-    "Ptyś": "probe-1"
+    "Ptys": "probe-1"
 }
 
 
@@ -393,10 +392,10 @@ def test_a_stored_newcomer_is_recognised_by_load(tmp_path):
     path = tmp_path / "identities.json"
     path.write_text(json.dumps({"version": 2, "sessions": {
         "s1": "Androll", "s2": "Captcha", "s3": "Sawa", "s4": "Franio",
-        "s5": "Sawa-1a2b", "s6": "Bertram", "s7": "Zosia", "s8": "Ptyś", "s9": "Ptyś-ab12"}}))
+        "s5": "Sawa-1a2b", "s6": "Bertram", "s7": "Zosia", "s8": "Ptys", "s9": "Ptys-ab12"}}))
     assert IdentityStore(path=path).assigned() == {
         "s1": "Androll", "s2": "Captcha", "s3": "Sawa", "s4": "Franio",
-        "s5": "Sawa-1a2b", "s7": "Zosia", "s8": "Ptyś", "s9": "Ptyś-ab12"}
+        "s5": "Sawa-1a2b", "s7": "Zosia", "s8": "Ptys", "s9": "Ptys-ab12"}
 
 
 def test_names_match_ingested_cast_and_baked_icons():
@@ -569,21 +568,21 @@ def test_a_reassigned_name_survives_reopening_the_store(tmp_path):
     assert IdentityStore(path=path).assigned()[sid] == wanted
 
 
-@pytest.mark.parametrize("preferred", ["Ptyś", "PTYŚ", "ptyś"])
+@pytest.mark.parametrize("preferred", ["Ptys", "PTYS", "ptys"])
 def test_ptys_preference_and_existing_names_survive_restart(tmp_path, preferred):
     path = tmp_path / "identities.json"
     # Upgrade starts with the complete previous roster already assigned.
     previous = {f"old-{i}": name for i, name in enumerate(NAMES[:-1])}
     path.write_text(json.dumps({"version": 2, "sessions": previous}))
     store = IdentityStore(path=path)
-    assert store.name_for("new-ptys", preferred=preferred) == "Ptyś"
-    overflow = store.name_for(FRESH_IDS["Ptyś"], taken=set(NAMES))
-    assert overflow.startswith("Ptyś-")
+    assert store.name_for("new-ptys", preferred=preferred) == "Ptys"
+    overflow = store.name_for(FRESH_IDS["Ptys"], taken=set(NAMES))
+    assert overflow.startswith("Ptys-")
     store.save()
     reopened = IdentityStore(path=path)
     assert reopened.assigned() == {
-        **previous, "new-ptys": "Ptyś", FRESH_IDS["Ptyś"]: overflow}
-    assert reopened.name_for("new-ptys", preferred="Cipher") == "Ptyś"
+        **previous, "new-ptys": "Ptys", FRESH_IDS["Ptys"]: overflow}
+    assert reopened.name_for("new-ptys", preferred="Cipher") == "Ptys"
 
 
 # ── the 22 Sep 2026 rebrand: old slugs read as their successors ─────────────
@@ -619,3 +618,29 @@ def test_current_crew_maps_old_faces_and_keeps_the_rest_in_order():
     assert list(out) == list(faces)
     assert faces == before                          # pure: input untouched
     assert identity.current_crew({}) == {}
+
+
+def test_every_cast_name_is_plain_ascii():
+    """A non-ASCII letter in a name cost Ptys her Lock Screen portrait on
+    25 Sep 2026 — a slug check read her as a stranger. Names, portraits and
+    quotes stay ASCII so no wire, file name or shape check can trip again."""
+    from dark_army_daemon import identity
+    for name in (*identity.NAMES, *identity.ART_ONLY, *identity.QUOTES):
+        assert name.isascii(), name
+
+
+def test_a_name_stored_with_its_old_accent_keeps_its_owner(tmp_path):
+    path = tmp_path / "identities.json"
+    path.write_text(json.dumps({"version": 2, "sessions": {
+        "s1": "Ptyś", "s2": "Ptyś-ab12", "s3": "Nobódy"}}),
+        encoding="utf-8")
+    store = IdentityStore(path=path)
+    assert store.name_for("s1") == "Ptys"
+    assert store.name_for("s2") == "Ptys-ab12"
+    assert "s3" not in store._sessions
+
+
+def test_a_crew_recorded_with_the_old_accent_reads_back_plain():
+    from dark_army_daemon import identity
+    assert identity.current_crew({"build": "ptyś", "plan": "vex"}) == {
+        "build": "ptys", "plan": "vex"}

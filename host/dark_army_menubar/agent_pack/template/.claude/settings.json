@@ -18,6 +18,8 @@
       "Bash(python3 .claude/skills/shunt/bulk_read.py:*)",
       "Bash(python3 .claude/skills/shunt/code_write.py:*)",
       "Bash(python3 .claude/skills/shunt/exempt.py:*)",
+      "Bash(python3 .claude/skills/scout/scout_check.py:*)",
+      "Bash(python3 .claude/skills/ship/manual_check.py:*)",
       "Bash(.venv/bin/pytest:*)",
       "Bash(swift build:*)",
       "Bash(swift test:*)",

@@ -36,6 +36,10 @@ extension SettingsMenuModel {
                     id: "custom:knowledge:\(project.root)",
                     title: "Knowledge",
                     kind: .custom(.knowledge(root: project.root))))
+                nested.append(SettingsRow(
+                    id: "custom:manualChecks:\(project.root)",
+                    title: "Checks",
+                    kind: .custom(.manualChecks(root: project.root))))
                 if agentModels.available {
                     nested.append(submenu(
                         "Agent models",

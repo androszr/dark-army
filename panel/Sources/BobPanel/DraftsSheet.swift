@@ -64,7 +64,7 @@ struct DraftsSheet: View {
                              ? "Delete \(deletableCount) drafts?"
                              : "CLEAR ALL")
                     }
-                    .buttonStyle(AlarmOutline())
+                    .buttonStyle(AlarmOutline(color: Theme.danger))
                     .clickable()
                     .help("Throw away every draft here, and the files they "
                           + "carry. Asks once more first.")
@@ -121,7 +121,7 @@ struct DraftsSheet: View {
                 } label: {
                     Text(deleteArmedId == draft.id ? "Sure?" : "DELETE")
                 }
-                .buttonStyle(AlarmOutline())
+                .buttonStyle(AlarmOutline(color: Theme.danger))
                 .clickable()
                 .help("Throw this draft away, and the files attached to it.")
             }

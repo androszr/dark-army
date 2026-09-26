@@ -32,8 +32,9 @@ CLIENT = PHONE / "Client.swift"
 COMPOSER = PHONE / "ComposerView.swift"
 BRAND = PHONE / "BrandBar.swift"
 
-AWAY_LINE = ("Writing from away through the relay — this can take up to "
-             "two minutes.")
+# "through the relay" left the sentence on 25 Sep 2026: plain words
+# (`plans/2026-09-25-usability-accessibility-pass.md`, V4).
+AWAY_LINE = "Writing from away — this can take up to two minutes."
 
 
 def _read(path: Path) -> str:

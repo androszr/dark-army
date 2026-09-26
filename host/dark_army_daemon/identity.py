@@ -57,6 +57,7 @@ import hashlib
 import json
 import logging
 import os
+import unicodedata
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -67,7 +68,7 @@ logger = logging.getLogger("dark-army")
 IDENTITY_PATH = STATE_DIR / "identities.json"
 
 # The cast: fourteen Dark Army callsigns plus six of the household —
-# Androll, Captcha, Sawa, Franio, Zosia and Ptyś — one word each. **Order is a hash
+# Androll, Captcha, Sawa, Franio, Zosia and Ptys — one word each. **Order is a hash
 # index** — `proposed_index` and `cast.character_for`'s djb2 both index this
 # tuple, and `panel/Sources/BobPanel/Cast.swift` / `ios/BobPhone/Cast.swift`
 # carry the same twenty in the same order. Reordering hands every agent
@@ -92,7 +93,7 @@ IDENTITY_PATH = STATE_DIR / "identities.json"
 NAMES: tuple[str, ...] = (
     "Cipher", "Vex", "Ledger", "Mira", "Hex", "Relay", "Forge",
     "Watch", "Audit", "Proxy", "Quiet", "Nyx", "Canon", "Velvet",
-    "Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptyś",
+    "Androll", "Captcha", "Sawa", "Franio", "Zosia", "Ptys",
 )
 
 # Slugs that have art but are never assigned to a session. `overwatch` is the
@@ -126,7 +127,7 @@ QUOTES: dict[str, str] = {
     "sawa": "Green CI or stay offline.",
     "franio": "Fail fast. Patch once. No cosplay.",
     "zosia": "Backlog hygiene is brain opsec.",
-    "ptyś": "Tiny commits. Wide kill radius.",
+    "ptys": "Tiny commits. Wide kill radius.",
     "overwatch": "Map the blast radius. Then one key.",
 }
 
@@ -182,6 +183,17 @@ def _in_cast(name: str) -> bool:
     return name in NAMES or name.split("-")[0] in NAMES
 
 
+def ascii_name(text: str) -> str:
+    """`text` with every letter folded to plain ASCII and anything else
+    dropped. Every cast name is ASCII (the tests pin it): a name carried
+    one non-ASCII letter until 25 Sep 2026 and it cost a blank portrait on
+    the phone's Lock Screen, where a slug check read it as a stranger. So a
+    name stored before then is read back through this — `load` and
+    `current_crew` — and keeps its owner rather than being dropped."""
+    folded = unicodedata.normalize("NFKD", str(text or ""))
+    return folded.encode("ascii", "ignore").decode("ascii")
+
+
 def legacy_key(slug: str) -> str:
     """The `LEGACY_SLUGS` key for a slug: sixteen hex of SHA-256 over it."""
     return hashlib.sha256((slug or "").encode("utf-8")).hexdigest()[:16]
@@ -197,7 +209,7 @@ def current_crew(faces: dict) -> dict:
     """A recorded crew with each retired character slug replaced by its
     successor (`LEGACY_SLUGS`). Unknown values pass through; key order is
     kept. Pure: the stored record is never touched."""
-    return {stage: (LEGACY_SLUGS.get(legacy_key(face), face)
+    return {stage: (LEGACY_SLUGS.get(legacy_key(face), ascii_name(face))
                     if isinstance(face, str) else face)
             for stage, face in faces.items()}
 
@@ -238,8 +250,9 @@ class IdentityStore:
             return
         sessions = raw.get("sessions")
         if isinstance(sessions, dict):
-            self._sessions = {str(k): str(v) for k, v in sessions.items()
-                              if isinstance(v, str) and v and _in_cast(v)}
+            self._sessions = {str(k): ascii_name(v) for k, v in sessions.items()
+                              if isinstance(v, str) and v
+                              and _in_cast(ascii_name(v))}
 
     def save(self) -> None:
         """Atomic, and only when something changed — this is called from the
@@ -254,7 +267,8 @@ class IdentityStore:
         tmp = self._path.with_suffix(".json.tmp")
         # The encoding is named at both ends. `write_text` defaults to the
         # locale, and an .app launched at login inherits no `LANG` — ASCII —
-        # so the first `Ptyś` handed out raised UnicodeEncodeError out of
+        # so the first non-ASCII name handed out (the cast carried one until
+        # 25 Sep 2026) raised UnicodeEncodeError out of
         # the agents-snapshot push, which then failed on every tick until a
         # restart: no rows, no reconcile, no bind, no bind-window expiry. A
         # nickname file must never take the fleet down, so the except is
@@ -390,5 +404,5 @@ class IdentityStore:
 
 
 __all__ = ["IdentityStore", "IDENTITY_PATH", "NAMES", "ART_ONLY", "PRIMARY_CAST",
-           "QUOTES", "LEGACY_SLUGS", "legacy_key", "quote_for", "current_crew",
+           "QUOTES", "LEGACY_SLUGS", "ascii_name", "legacy_key", "quote_for", "current_crew",
            "proposed_index", "MAX_SESSION_ENTRIES"]

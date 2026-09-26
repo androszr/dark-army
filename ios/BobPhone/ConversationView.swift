@@ -5,40 +5,48 @@ struct ConversationScreen<Header: View>: View {
     let stopped: Bool
     @ObservedObject var client: PhoneClient
     var retainedReply: PhoneReplyDraft? = nil
-    /// Sheet still above the turns. Empty at every other call site.
-    /// Not inside the turn list's scroll: the opening frame keeps the
-    /// still, and the jump to the latest line stays in `messageList`.
+    /// The keyboard is up over this screen: the page scrolls to the answer
+    /// box, so the field and SEND sit above the keyboard.
+    var typing: Bool = false
+    /// The waiting agent's question, in words, drawn right above the answer
+    /// controls: an `AskUserQuestion`
+    /// call's tool line carries no words of its own. Empty for no question.
+    var ask: String = ""
+    /// Drawn above the turns, inside the one page. Empty at every call
+    /// site today.
     private let header: Header
     @State private var expanded: Set<Int>
+    /// The folded tool runs that are open, keyed by the run's first `seq`,
+    /// so a run that grows keeps its state.
+    @State private var openRuns: Set<Int>
     @State private var atBottom: Bool
     @State private var onScreen: Bool
     /// How many of the newest turns are drawn. The cache holds the whole
     /// conversation; the list draws a window of it, widened by
     /// `windowStep` at a time from the top.
     @State private var window: Int
-    /// Zero until the column has given the list a real height. The
-    /// opening scroll in a zero-height list does not land.
-    @State private var listHeight: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Computed, not stored: a generic type cannot hold a static stored
     // property, and the archive build refuses it.
     static var windowStep: Int { 300 }
-    /// The list's vertical padding plus one line of a turn. Reserved
-    /// before the still is offered its ideal height.
-    static var oneTurn: CGFloat { 34 }
 
     init(agent: Agent, stopped: Bool, client: PhoneClient,
          retainedReply: PhoneReplyDraft? = nil,
+         ask: String = "",
+         typing: Bool = false,
          @ViewBuilder header: () -> Header) {
         self.agent = agent
         self.stopped = stopped
         self.client = client
         self.retainedReply = retainedReply
+        self.ask = ask
+        self.typing = typing
         self.header = header()
         self._expanded = State(initialValue: [])
+        self._openRuns = State(initialValue: [])
         self._atBottom = State(initialValue: true)
         self._onScreen = State(initialValue: false)
         self._window = State(initialValue: Self.windowStep)
-        self._listHeight = State(initialValue: 0)
     }
 
     private var turns: [ConversationTurn] {
@@ -47,6 +55,13 @@ struct ConversationScreen<Header: View>: View {
 
     private var drawn: ArraySlice<ConversationTurn> {
         turns.suffix(window)
+    }
+
+    /// The drawn window as rows: no result rows, runs of tool calls folded
+    /// (`ConversationFold`). Every scroll anchor reads these ids, never
+    /// `turns.last`, which may be a result that has no row.
+    private var rows: [ConversationFold.Row] {
+        ConversationFold.rows(Array(drawn))
     }
 
     private var nickname: String {
@@ -59,37 +74,28 @@ struct ConversationScreen<Header: View>: View {
             < (client.conversationCache.conversations[agent.sessionId]?.total ?? 0)
     }
 
+    /// The answer box's scroll id: typing and a new turn scroll here, so
+    /// the field, SEND and the latest line are what is in view.
+    static var answerAnchor: String { "conversation.answer" }
+
+    /// One scrolling page — the status lines, the header, the turns, then
+    /// the ask and its answer buttons — over a message composer pinned
+    /// beneath it (26 Sep 2026). The composer is a sibling in the stack, not
+    /// an overlay, so it shortens the page rather than painting over it, and
+    /// it is drawn whether the agent is working or stopped: a person can
+    /// always say something to the agent they are reading. A long ask or an
+    /// interview's options still simply scroll. Opens at the foot.
     var body: some View {
-        ConversationColumn(turnFloor: Self.oneTurn) {
-            // A container, not the lines themselves: an empty status is
-            // still one child, so the column's five slots stay put.
-            VStack(alignment: .leading, spacing: 0) { statusLines }
-            // One turn is reserved before this row takes sheet size.
-            // `minHeight: 0` lets the photograph yield. The name under
-            // it is not clipped off while the picture stays full size.
-            // A container for the same reason: an `EmptyView` header,
-            // frame and all, is no child, and four slots is the fallback.
-            VStack(spacing: 0) { header }
-                .frame(maxWidth: .infinity, minHeight: 0, alignment: .top)
-            messageList
-                .frame(maxWidth: .infinity, minHeight: Self.oneTurn,
-                       maxHeight: .infinity)
+        VStack(spacing: 0) {
+            page
             Rectangle().fill(Theme.hair).frame(height: 1)
-            // Scrolls inside its share of the column: an interview's
-            // option cards can be taller than the whole sheet once the
-            // verbs sit above the tabs, and a box that cannot scroll could
-            // only overflow onto the lead, the verbs and the tabs.
-            BoundedAnswer {
-                AnswerBox(agent: agent, stopped: stopped, client: client,
-                          terminalWins: false, retainedReply: retainedReply)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-            }
-            .layoutPriority(2)
+            AnswerBox(agent: agent, stopped: stopped, client: client,
+                      retainedReply: retainedReply, part: .composer)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Theme.bg)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Nothing the column holds may paint above its own top edge.
-        .clipped()
         .onAppear {
             onScreen = true
             client.watchConversation(agent.sessionId)
@@ -114,65 +120,90 @@ struct ConversationScreen<Header: View>: View {
         }
     }
 
-    /// The turns, in the height left under the still. Opening scrolls
-    /// this list to the latest line, which is then inside the visible strip.
-    private var messageList: some View {
+    private var page: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if turns.count > window {
-                        earlierControl
-                    }
-                    ForEach(drawn) { turn in
-                        ConversationTurnRow(
-                            turn: turn,
-                            nickname: nickname,
-                            expanded: expanded.contains(turn.seq),
-                            result: result(for: turn),
-                            onToggle: { toggle(turn.seq) }
-                        )
-                        .id(turn.seq)
-                        .onAppear {
-                            if turn.seq == turns.last?.seq { atBottom = true }
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 0) { statusLines }
+                    header
+                        .frame(maxWidth: .infinity, alignment: .top)
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        if turns.count > window {
+                            earlierControl
                         }
-                        .onDisappear {
-                            if turn.seq == turns.last?.seq { atBottom = false }
+                        ForEach(rows) { row in
+                            rowView(row)
+                                .id(row.id)
                         }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Rectangle().fill(Theme.hair).frame(height: 1)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !ask.isEmpty {
+                            Text(ask)
+                                .font(Theme.mono(13))
+                                .foregroundStyle(Theme.phosphorBright)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        AnswerBox(agent: agent, stopped: stopped, client: client,
+                                  part: .choices)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .id(Self.answerAnchor)
+                    .onAppear { atBottom = true }
+                    .onDisappear { atBottom = false }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // Behind the scroll, so this reader is not the list's height.
-            .background {
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { noteListHeight(geo.size.height, proxy: proxy) }
-                        .onChange(of: geo.size.height) { _, height in
-                            noteListHeight(height, proxy: proxy)
-                        }
-                }
-            }
-            .onAppear {
-                if let last = turns.last?.seq {
-                    proxy.scrollTo(last, anchor: .bottom)
-                }
-            }
+            // A drag down the page puts the keyboard away.
+            .scrollDismissesKeyboard(.interactively)
+            .defaultScrollAnchor(.bottom)
+            .onAppear { proxy.scrollTo(Self.answerAnchor, anchor: .bottom) }
             .onChange(of: turns.count) { _, _ in
-                guard atBottom, let last = turns.last?.seq else { return }
-                proxy.scrollTo(last, anchor: .bottom)
+                guard atBottom else { return }
+                proxy.scrollTo(Self.answerAnchor, anchor: .bottom)
+            }
+            .onChange(of: typing) { _, up in
+                // The keyboard came up over the page: bring the field and
+                // SEND above it.
+                guard up else { return }
+                Motion.animate(.easeOut(duration: 0.2), reduced: reduceMotion) {
+                    proxy.scrollTo(Self.answerAnchor, anchor: .bottom)
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// A zero-height scroll cannot land on the latest line. Once the
-    /// column gives the list a height, jump there again.
-    private func noteListHeight(_ height: CGFloat, proxy: ScrollViewProxy) {
-        let opened = listHeight == 0 && height > 0
-        if height != listHeight { listHeight = height }
-        guard opened, let last = turns.last?.seq else { return }
-        proxy.scrollTo(last, anchor: .bottom)
+    /// One row: a turn as it always was, or a folded run of tool calls.
+    @ViewBuilder private func rowView(_ row: ConversationFold.Row) -> some View {
+        switch row {
+        case .turn(let turn):
+            ConversationTurnRow(
+                turn: turn,
+                nickname: nickname,
+                expanded: expanded.contains(turn.seq),
+                result: result(for: turn),
+                onToggle: { toggle(turn.seq) }
+            )
+        case .run(let tools):
+            ConversationRunRow(
+                tools: tools,
+                open: ConversationFold.runIsOpen(tools, id: row.id,
+                                                 openRuns: openRuns,
+                                                 expanded: expanded),
+                nickname: nickname,
+                expanded: expanded,
+                result: { result(for: $0) },
+                onToggleRun: { toggleRun(row.id, tools: tools) },
+                onToggleTool: { toggle($0) }
+            )
+        }
     }
 
     /// The turns above the drawn window, one press for another
@@ -252,91 +283,71 @@ struct ConversationScreen<Header: View>: View {
         if expanded.contains(seq) { expanded.remove(seq) }
         else { expanded.insert(seq) }
     }
+
+    /// Closing a run also folds its expanded calls, which would otherwise
+    /// hold it open (`ConversationFold.runIsOpen`).
+    private func toggleRun(_ id: Int, tools: [ConversationTurn]) {
+        if ConversationFold.runIsOpen(tools, id: id, openRuns: openRuns,
+                                      expanded: expanded) {
+            openRuns.remove(id)
+            for tool in tools { expanded.remove(tool.seq) }
+        } else {
+            openRuns.insert(id)
+        }
+    }
 }
 
 extension ConversationScreen where Header == EmptyView {
     init(agent: Agent, stopped: Bool, client: PhoneClient,
-         retainedReply: PhoneReplyDraft? = nil) {
+         retainedReply: PhoneReplyDraft? = nil, ask: String = "",
+         typing: Bool = false) {
         self.init(agent: agent, stopped: stopped, client: client,
-                  retainedReply: retainedReply, header: { EmptyView() })
+                  retainedReply: retainedReply, ask: ask, typing: typing,
+                  header: { EmptyView() })
     }
 }
 
-/// Answer at its ideal, then one turn, then the still in what remains.
-/// The still yields first. A non-finite probe is answered with a finite
-/// size — returning the infinity SwiftUI offers would trap the arithmetic.
-private struct ConversationColumn: Layout {
-    var turnFloor: CGFloat
-    /// The most of the column the answer box may take before it scrolls.
-    static let answerShare: CGFloat = 0.5
+/// A run of consecutive tool calls folded into one dim line —
+/// `⚙ 5 tool calls · Bash ×3, Read, Grep`. A tap opens the calls, each
+/// still its own `ConversationTurnRow` whose tap shows its brief and result.
+struct ConversationRunRow: View {
+    let tools: [ConversationTurn]
+    let open: Bool
+    let nickname: String
+    let expanded: Set<Int>
+    let result: (ConversationTurn) -> ConversationTurn?
+    let onToggleRun: () -> Void
+    let onToggleTool: (Int) -> Void
 
-    private func finite(_ value: CGFloat) -> CGFloat {
-        value.isFinite ? max(0, value) : 0
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews,
-                      cache: inout ()) -> CGSize {
-        let width = finite(proposal.width ?? 0)
-        if let height = proposal.height, height.isFinite, height > 0 {
-            return CGSize(width: width, height: height)
-        }
-        let ideal = subviews.reduce(CGFloat(0)) { partial, sub in
-            partial + finite(sub.sizeThatFits(
-                ProposedViewSize(width: width, height: nil)).height)
-        }
-        return CGSize(width: width, height: ideal)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
-                       subviews: Subviews, cache: inout ()) {
-        let width = finite(bounds.width > 0 ? bounds.width : (proposal.width ?? 0))
-        guard subviews.count == 5 else {
-            var y = bounds.minY
-            for subview in subviews {
-                let h = finite(subview.sizeThatFits(
-                    ProposedViewSize(width: width, height: nil)).height)
-                subview.place(at: CGPoint(x: bounds.minX, y: y),
-                              anchor: .topLeading,
-                              proposal: ProposedViewSize(width: width, height: h))
-                y += h
-            }
-            return
-        }
-        let open = ProposedViewSize(width: width, height: nil)
-        let statusH = finite(subviews[0].sizeThatFits(open).height)
-        let headerIdeal = finite(subviews[1].sizeThatFits(open).height)
-        let hairH = finite(subviews[3].sizeThatFits(open).height)
-        let height = finite(bounds.height)
-        // The answer takes its ideal up to half of what the status and the
-        // hairline leave, and scrolls past that (`BoundedAnswer`). Taking
-        // its ideal whole, with the column shifted up by the overflow, is
-        // what drew an interview's options over the tabs (22 Sep 2026).
-        let answerRoom = max(0, height - statusH - hairH)
-        let answerH = min(finite(subviews[4].sizeThatFits(open).height),
-                          answerRoom * Self.answerShare)
-        let room = max(0, height - statusH - hairH - answerH)
-        let reserved = min(finite(turnFloor), room)
-        let still = min(headerIdeal, max(0, room - reserved))
-        let list = max(0, room - still)
-        var y = bounds.minY
-        let heights = [statusH, still, list, hairH, answerH]
-        for (subview, item) in zip(subviews, heights) {
-            subview.place(at: CGPoint(x: bounds.minX, y: y),
-                          anchor: .topLeading,
-                          proposal: ProposedViewSize(width: width, height: item))
-            y += item
-        }
-    }
-}
-
-/// The answer box, scrolling once `ConversationColumn` gives it less than
-/// its ideal height. Asked with no height, a vertical scroll view reports
-/// its content's ideal height, so the column still measures the box whole.
-private struct BoundedAnswer<Content: View>: View {
-    @ViewBuilder var content: Content
     var body: some View {
-        ScrollView(.vertical) { content }
-            .scrollBounceBehavior(.basedOnSize)
+        VStack(alignment: .leading, spacing: 6) {
+            DecryptButton(action: onToggleRun) {
+                Text("\(open ? "▾" : "▸") \(ConversationFold.summary(tools))")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(ConversationFold.spoken(tools))
+            .accessibilityHint(open ? "Hides the calls" : "Shows the calls")
+            if open {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(tools) { tool in
+                        ConversationTurnRow(
+                            turn: tool,
+                            nickname: nickname,
+                            expanded: expanded.contains(tool.seq),
+                            result: result(tool),
+                            onToggle: { onToggleTool(tool.seq) }
+                        )
+                    }
+                }
+                .padding(.leading, 12)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

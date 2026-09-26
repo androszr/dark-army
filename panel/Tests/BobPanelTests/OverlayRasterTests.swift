@@ -3,20 +3,8 @@ import SwiftUI
 import XCTest
 @testable import BobPanel
 
-/// The CRT overlays stopped costing a frame without changing a pixel.
-///
-/// `LegacyScanlines` and `LegacyVignette` are the two bodies exactly as they
-/// stood before (a `Canvas` stroking one line per 3pt; a gradient under the
-/// multiply blend mode). Each is rendered beside its replacement, at a
-/// non-Retina and a Retina scale, and every channel of every pixel must agree
-/// within one step in 255. Two grounds: `Theme.well`, what the board really
-/// draws on — and so dark (2, 4, 2) that neither overlay moves a channel
-/// there by more than one step, which alone would make a ±1 comparison
-/// vacuous — and `Theme.phosphor`, bright enough that both overlays move it
-/// by tens of steps. A third case proves that margin, so the comparison
-/// cannot pass by both sides drawing (next to) nothing. The vignette is also
-/// rendered at a board-sized frame: at 300×90 its corners sit inside the
-/// gradient's first sixth and barely darken.
+/// Signal reading surfaces are plain at 1x and Retina scale. The legacy CRT
+/// overlays still render in the comparison to prove the pixel check has teeth.
 @MainActor
 final class OverlayRasterTests: XCTestCase {
     private nonisolated static let strip = CGSize(width: 300, height: 90)
@@ -86,27 +74,26 @@ final class OverlayRasterTests: XCTestCase {
             + "y=\(pixel / max(1, legacy.width))", file: file, line: line)
     }
 
-    func testTheScanlineTileMatchesTheCanvasAtEveryScale() throws {
+    func testScanlineOverlayLeavesReadingSurfaceUntouched() throws {
         for scale in Self.scales {
             for (name, ground) in Self.grounds {
-                let legacy = try render(LegacyScanlines(), scale: scale, ground: ground)
-                let tiled = try render(ScanlineOverlay(), scale: scale, ground: ground)
-                XCTAssertEqual(legacy.width, Int(Self.strip.width * scale))
-                assertSame(legacy, tiled, "scanlines on \(name) @\(Int(scale))x")
+                let plain = try render(Optional<EmptyView>.none, scale: scale, ground: ground)
+                let surface = try render(ScanlineOverlay(), scale: scale, ground: ground)
+                assertSame(plain, surface, "Signal surface on \(name) @\(Int(scale))x")
             }
         }
     }
 
-    func testTheNormalBlendVignetteMatchesTheMultiplyAtEveryScale() throws {
+    func testVignetteOverlayLeavesReadingSurfaceUntouched() throws {
         for scale in Self.scales {
             for (name, ground) in Self.grounds {
                 for size in [Self.strip, Self.pane] {
-                    let legacy = try render(LegacyVignette(), scale: scale,
-                                            ground: ground, size: size)
-                    let normal = try render(VignetteOverlay(), scale: scale,
-                                            ground: ground, size: size)
-                    assertSame(legacy, normal,
-                               "vignette on \(name) \(Int(size.width))pt @\(Int(scale))x")
+                    let plain = try render(Optional<EmptyView>.none, scale: scale,
+                                           ground: ground, size: size)
+                    let surface = try render(VignetteOverlay(), scale: scale,
+                                             ground: ground, size: size)
+                    assertSame(plain, surface,
+                               "Signal surface on \(name) \(Int(size.width))pt @\(Int(scale))x")
                 }
             }
         }
@@ -129,13 +116,6 @@ final class OverlayRasterTests: XCTestCase {
         }
     }
 
-    func testTheTileIsOnePeriodAtThePixelScale() {
-        let one = ScanlineTile.image(scale: 1)
-        XCTAssertEqual([one.width, one.height], [1, 3])
-        let two = ScanlineTile.image(scale: 2)
-        XCTAssertEqual([two.width, two.height], [2, 6])
-        XCTAssertTrue(ScanlineTile.image(scale: 2) === two, "one tile per scale, cached")
-    }
 }
 
 // MARK: - The bodies as they stood before

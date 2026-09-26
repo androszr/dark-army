@@ -167,6 +167,22 @@ DISPATCH_COOLDOWN = 10.0
 #: point where somebody has forgotten they pressed the button.
 DISPATCH_BIND_WINDOW = 120.0
 
+#: Codex and Grok can stop on a question of their own before any session
+#: exists — Codex 0.156 asks "Trust this folder?" the first time it runs in a
+#: folder, whatever the approval mode. The give-up line names it, so the person
+#: knows what is waiting in the terminal instead of a bare "no session".
+_FIRST_RUN_NAMES = {"codex": "Codex", "grok": "Grok"}
+
+
+def first_run_hint(tool, verb: str = "Start") -> str:
+    """The give-up words for a tool that may be waiting on its own first-run
+    question, or "" for any other tool."""
+    name = _FIRST_RUN_NAMES.get(str(tool or ""))
+    if not name:
+        return ""
+    return (f"no session appeared — {name} may be asking to trust this folder: "
+            f"answer it in the terminal that opened, then press {verb} again")
+
 #: The allowlist. A tool not named here cannot be launched, whatever a card says.
 #: The value is the executable name looked up on the daemon's PATH — never a
 #: path out of a card, and never a string a surface supplied.
@@ -549,7 +565,7 @@ def adhoc_argv(tool: str, executable: str) -> list:
 
 
 def mission_argv(executable: str, agents_json: str, allowed_tools,
-                 agent_name: str, prompt: str) -> list:
+                 agent_name: str, prompt: str, display_name: str = "") -> list:
     """The argv of Mission Control, the one standing chief-of-staff session:
     `[executable, "--agents", <json>, "--allowed-tools", <rule>, <rule>, …,
     "--agent", <name>, <prompt>]` — the prompt last, as the fifth bound
@@ -584,11 +600,20 @@ def mission_argv(executable: str, agents_json: str, allowed_tools,
     and `agent_name` are the caller's (`card_prepare.agents_json` and the
     `mission` constants); this module imports neither `card_prepare` nor
     `mission`.
+
+    `display_name` (`mission.NAME`) rides first as `--name <name>`: the
+    CLI's own display name for the session (the prompt box, `/resume`, the
+    terminal title and the Remote Control session on the phone's Claude
+    app), so Mission Control is never titled after whatever it was last
+    asked. `--name` takes exactly one value, so it cannot swallow the
+    prompt. Empty leaves the flag off.
     """
     rules = ([allowed_tools] if isinstance(allowed_tools, str)
              else list(allowed_tools or ()))
+    named = ["--name", str(display_name)] if display_name else []
     return [
         str(executable),
+        *named,
         "--agents", str(agents_json),
         "--allowed-tools", *[str(r) for r in rules],
         "--agent", str(agent_name),
@@ -668,7 +693,7 @@ def start_prompt(card: dict) -> str:
     the prompt field, unchanged.
 
     A scout is the exception: it has no plan to implement, so Start opens
-    `/ship scout <idea>` even when a leftover `plan_path` is sitting on the
+    `/scout <idea>` even when a leftover `plan_path` is sitting on the
     row. The stored prompt is left alone: those are the person's words, and
     the snapshot already truncates them.
     """
@@ -689,15 +714,16 @@ def start_prompt(card: dict) -> str:
 def scout_prompt(card: dict) -> str:
     """The prompt a scout Start session opens with.
 
-    `refine_prompt`'s shape with `/ship scout` as the first line. Codex gets
-    the same explicit skill sentence, worded for scout mode: investigate,
+    `refine_prompt`'s shape with `/scout` as the first line (the scout
+    skill; `/ship scout` is its alias). Codex gets an explicit skill
+    sentence naming `.agents/skills/scout/SKILL.md`: investigate,
     write a report, attach it, close the card with the path in the note, and
     stop. Title and stored instructions follow once, exactly as Refine does.
 
     **The brief is the fullest line the card has.** A scout's first line is
     the whole question the investigation answers, and the phone's composer
     sends the summary as typed — a card titled "Before open report" with the
-    summary `O` used to open `/ship scout O`, a brief with nothing to
+    summary `O` used to open `/scout O`, a brief with nothing to
     investigate, and the run wrote a report about its own empty brief. So a
     summary under `SCOUT_BRIEF_MIN_WORDS` words yields the first line to the
     title (a title is never that short on a card a person filed), and the
@@ -715,11 +741,11 @@ def scout_prompt(card: dict) -> str:
     if title and len(summary.split()) < SCOUT_BRIEF_MIN_WORDS \
             and len(title_brief.split()) > len(summary.split()):
         idea = title_brief
-    parts = ["/ship scout " + idea]
+    parts = ["/scout " + idea]
     if card.get("tool") == "codex":
         parts.append(
-            "Read .agents/skills/ship/SKILL.md in this project and follow its "
-            "scout mode for this idea. Investigate, write a report, attach "
+            "Read .agents/skills/scout/SKILL.md in this project and follow it "
+            "for this idea. Investigate, write a report, attach "
             "the report to this card, close the card with the report's path "
             "in the note, and stop. If the skill or required custom agent is "
             "missing, report that specific limitation."
@@ -787,6 +813,106 @@ def refine_prompt(card: dict) -> str:
         parts.append("")
         parts.append("Instructions:\n" + notes)
     return "\n".join(parts)
+
+
+#: The first words of a batch refinement's prompt. The ship skill enters its
+#: batch form on a first line beginning `/ship batch:` (`references/plan.md`,
+#: *Batch: several cards in one session*), so the phrase is a contract with
+#: that file, not decoration.
+BATCH_PROMPT_HEAD = "/ship batch: "
+
+#: Codex's planning-only instruction in its batch form: `refine_prompt`'s
+#: sentence, reworded for several cards, because a positional slash token
+#: alone does not load a Codex skill.
+_CODEX_BATCH_SENTENCE = (
+    "Read .agents/skills/ship/SKILL.md in this project and follow its "
+    "planning-only mode, batch form, for the cards below. Ask every card's "
+    "interview questions together first, then write the plans in parallel; "
+    "attach each plan to its card as soon as it is written, and stop after "
+    "the last. If the skill or required "
+    "custom agent is missing, report that specific limitation."
+)
+
+
+def batch_blocks(cards: list) -> str:
+    """One `## Card k of n — <title>` block per card, in the order given.
+
+    Pure, and shared by every batch verb (a refinement here; the
+    batch-implement sibling puts its own head above the same blocks). Each
+    block carries `Card id:` — the id the planner writes into the plan's
+    `- **Card:**` header, which is how the attach finds the card — then the
+    summary when it says more than the title, the stored instructions, and
+    the card's objective as `Objective:` lines. `k` is the card's 1-based
+    place, the same number the daemon writes as `batch_rank`.
+    """
+    cards = [c or {} for c in (cards or [])]
+    n = len(cards)
+    blocks = []
+    for k, card in enumerate(cards, start=1):
+        title = " ".join(str(card.get("title") or "").split()) or "card"
+        summary = str(card.get("summary") or "").strip()
+        notes = str(card.get("prompt") or "").strip()
+        lines = [f"## Card {k} of {n} — {title}",
+                 f"Card id: {card.get('id') or ''}"]
+        # A planned card names its plan — the batch-implement form's whole
+        # brief per card. Only where there is one, so a refinement's Prep
+        # cards (which have none) produce exactly the blocks they always did.
+        plan = str(card.get("plan_path") or "").strip()
+        if plan:
+            lines.append(f"Plan: {plan}")
+        if summary and summary != title:
+            lines.append("Summary: " + summary)
+        if notes and notes != summary:
+            lines.append("Instructions:\n" + notes)
+        objective = objective_block(card).strip()
+        if objective:
+            lines.append(objective)
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def refine_batch_prompt(cards: list) -> str:
+    """The prompt one planning session opens with when it refines several
+    Prep cards at once. Pure.
+
+    `BATCH_PROMPT_HEAD` and a sentence naming how many cards, Codex's
+    planning-only instruction once when the batch is Codex's, then
+    `batch_blocks`. The attachments are the daemon's to append, per card
+    (`_refine_cards_locked`); `refine_prompt` is untouched, so a single
+    Refine's argv is byte-identical to what it was.
+    """
+    cards = [c or {} for c in (cards or [])]
+    n = len(cards)
+    parts = [BATCH_PROMPT_HEAD
+             + f"refine {n} Prep cards in this one session, one plan each"]
+    if cards and cards[0].get("tool") == "codex":
+        parts.append(_CODEX_BATCH_SENTENCE)
+    parts.append("")
+    parts.append(batch_blocks(cards))
+    return "\n".join(parts)
+
+
+def implement_batch_prompt(cards: list) -> str:
+    """The prompt one implementation session opens with when it builds
+    several planned Backlog cards, one after another. Pure.
+
+    `BATCH_PROMPT_HEAD` and a sentence naming how many cards and the verb
+    that moves the session on (`dark_army_next_card`), then `batch_blocks`,
+    whose blocks each carry `Card id:` and `Plan:`. The first non-empty
+    line is the head, **never** `Plan:` — a `Plan:` first line enters the
+    skill's single-card implement mode, and the ship skill enters the batch
+    form on `/ship batch: implement` (`references/implement.md`, *Batch:
+    several cards in one session*). `start_prompt` is untouched, so a
+    single Start's argv is byte-identical to what it was.
+    """
+    cards = [c or {} for c in (cards or [])]
+    n = len(cards)
+    head = (BATCH_PROMPT_HEAD
+            + f"implement {n} Backlog cards in this one session, one plan "
+            "each, in this order; call "
+            + channel_server.tool_name("next_card")
+            + " after each card")
+    return "\n".join([head, "", batch_blocks(cards)])
 
 
 #: The head of the block `objective_block` appends. Two newlines in front

@@ -12,7 +12,7 @@ enum Areas {
     static let all: [Area] = [
         Area(slug: "backbone", name: "Backbone", concept: "services, data & transport", pool: ["relay", "hex", "forge"]),
         Area(slug: "desk", name: "Desk", concept: "the Mac window & menu bar", pool: ["vex", "zosia"]),
-        Area(slug: "pocket", name: "Pocket", concept: "phones & widgets", pool: ["mira", "ptyś"]),
+        Area(slug: "pocket", name: "Pocket", concept: "phones & widgets", pool: ["mira", "ptys"]),
         Area(slug: "ledger", name: "Ledger", concept: "numbers that must be right", pool: ["audit", "ledger"]),
         Area(slug: "play", name: "Play", concept: "worlds, art & feel", pool: ["franio", "quiet"]),
         Area(slug: "conductor", name: "Conductor", concept: "agents, prompts & LLM features", pool: ["velvet", "canon"]),

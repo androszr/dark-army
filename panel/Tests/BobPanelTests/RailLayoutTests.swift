@@ -90,6 +90,35 @@ final class RailLayoutTests: XCTestCase {
             historyRun: true, historyDay: true, historyOpen: true), .endEditing)
     }
 
+    // MARK: the Reports tab
+
+    func testReportsCoversTheBoardWithOrWithoutASelection() {
+        XCTAssertEqual(RailLayout.leftPane(tab: .reports, selected: "s1"), .reports)
+        XCTAssertEqual(RailLayout.leftPane(tab: .reports, selected: nil), .reports)
+    }
+
+    func testEscapeOnReportsClosesTheReportThenLeaves() {
+        XCTAssertEqual(RailLayout.escapeRung(
+            editing: false, filterActive: false, detailOpen: false, drilledIn: false,
+            reportOpen: true, reportsOpen: true), .closeReport)
+        XCTAssertEqual(RailLayout.escapeRung(
+            editing: false, filterActive: false, detailOpen: false, drilledIn: false,
+            reportsOpen: true), .leaveReports)
+        // A caret in the search line is given up before anything closes.
+        XCTAssertEqual(RailLayout.escapeRung(
+            editing: true, filterActive: false, detailOpen: false, drilledIn: false,
+            reportOpen: true, reportsOpen: true), .endEditing)
+    }
+
+    func testAHistoryFlagAloneLeavesHistoryNotReports() {
+        XCTAssertEqual(RailLayout.escapeRung(
+            editing: false, filterActive: false, detailOpen: false, drilledIn: false,
+            historyOpen: true, reportOpen: false, reportsOpen: false), .leaveHistory)
+        XCTAssertEqual(RailLayout.escapeRung(
+            editing: false, filterActive: false, detailOpen: false, drilledIn: false,
+            historyOpen: false, reportsOpen: false), .hide)
+    }
+
     // MARK: selectionAfterTap
 
     func testTapOnSelectedRowUnselects() {

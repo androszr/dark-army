@@ -1,40 +1,45 @@
 import AppKit
 import SwiftUI
 
-/// The fsociety CRT palette the workspace draws from.
-///
-/// One type, no preference, no environment override: this *is* the look.
-/// Tokens are copied from `assets/proposals/board-look/03-fsociety.png`,
-/// not guessed. Green is body ink; red is the exception (Start, New card,
-/// Delete-armed, need-you). Square corners apply to cards, chips and the
-/// outlined buttons — not to the panel's 12pt hosting-layer radius or the
-/// board's titled window.
+/// Signal's semantic palette. Generated values come from
+/// `design-system/tokens.json`; aliases keep older drawing sites compatible.
 enum Theme {
-    static let bg = Color(red: 5 / 255, green: 8 / 255, blue: 5 / 255)
-    static let bar = Color(red: 3 / 255, green: 6 / 255, blue: 3 / 255)
-    static let well = Color(red: 2 / 255, green: 4 / 255, blue: 2 / 255)
-    static let phosphor = Color(red: 124 / 255, green: 255 / 255, blue: 124 / 255)
-    static let phosphorBright = Color(red: 200 / 255, green: 255 / 255, blue: 200 / 255)
-    static let dim = Color(red: 92 / 255, green: 184 / 255, blue: 92 / 255)
-    static let faint = Color(red: 61 / 255, green: 122 / 255, blue: 61 / 255)
-    static let hair = Color(red: 31 / 255, green: 90 / 255, blue: 31 / 255)
-    static let rule = Color(red: 20 / 255, green: 51 / 255, blue: 20 / 255)
-    static let alarm = Color(red: 255 / 255, green: 77 / 255, blue: 77 / 255)
-    /// Your turn — a chore waiting on a person. Deliberately **not** `alarm`
-    /// and deliberately not the orange the board draws `dispatch_error` in:
-    /// orange there means *Dark Army refused something*, which is a thing that went
-    /// wrong, and this means *the work is done and somebody has to look at
-    /// it*, which is not. Amber reads as a held state rather than a failure,
-    /// and it is legible against `card` at 10pt where a dimmer ink is not.
-    static let amber = Color(red: 255 / 255, green: 191 / 255, blue: 71 / 255)
-    static let card = Color(red: 8 / 255, green: 24 / 255, blue: 8 / 255).opacity(0.85)
+    static let canvas = SignalTokens.canvas
+    static let surface = SignalTokens.surface
+    static let raised = SignalTokens.raised
+    static let field = SignalTokens.well
+    static let text = SignalTokens.text
+    static let muted = SignalTokens.muted
+    static let accent = SignalTokens.accent
+    static let accentInk = SignalTokens.accentInk
+    static let line = SignalTokens.line
+    static let control = SignalTokens.control
+    static let attention = SignalTokens.attention
+    static let danger = SignalTokens.danger
+    static let controlRadius = SignalTokens.Radii.control
+    static let cardRadius = SignalTokens.Radii.card
 
-    static let corner: CGFloat = 0
+    static let bg = canvas
+    static let bar = surface
+    static let well = field
+    static let phosphor = accent
+    static let phosphorBright = text
+    static let dim = muted
+    static let faint = muted
+    static let hair = line
+    static let rule = line
+    static let alarm = danger
+    static let amber = attention
+    static let card = raised
+    static let corner: CGFloat = 6
 
-    /// Matching `#050805` for the panel window, so a light desktop does
-    /// not bleed the edges.
     static var nsBg: NSColor {
-        NSColor(srgbRed: 5 / 255, green: 8 / 255, blue: 5 / 255, alpha: 1)
+        // Derived, never typed: the window edge follows `tokens.json`.
+        NSColor(SignalTokens.canvas)
+    }
+
+    static func prose(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .default)
     }
 
     static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
@@ -169,13 +174,8 @@ struct PromptLine: View {
 /// antialiased rows the `Canvas` gave it rather than a 2× tile scaled down.
 /// Anchored at the pane's top, as the `Canvas`'s first line was.
 struct ScanlineOverlay: View {
-    @Environment(\.displayScale) private var displayScale
-
     var body: some View {
-        Image(decorative: ScanlineTile.image(scale: displayScale),
-              scale: displayScale)
-            .resizable(resizingMode: .tile)
-            .allowsHitTesting(false)
+        EmptyView()
     }
 }
 
@@ -227,31 +227,27 @@ enum ScanlineTile {
 /// matters again, so put it back if you do.
 struct VignetteOverlay: View {
     var body: some View {
-        RadialGradient(
-            colors: [Color.clear, Color.black.opacity(0.45)],
-            center: .center,
-            startRadius: 40,
-            endRadius: 720)
-        .allowsHitTesting(false)
+        EmptyView()
     }
 }
 
 /// Square outlined chrome for START / NEW CARD (alarm) and Save / Create
 /// (phosphor). Not `.borderedProminent`.
 struct AlarmOutline: ButtonStyle {
-    var color: Color = Theme.alarm
-    var size: CGFloat = 11
+    var color: Color = Theme.accent
+    var size: CGFloat = 12
+    var filled: Bool = false
 
     /// Ink of a held button's words.
-    static let heldInk: Double = 0.4
+    static let heldInk: Double = 0.65
     /// Ink of a held button's edge — faded harder than the words, because a
     /// 1px rule at the ink's own opacity still reads as a live frame around
     /// dead words.
-    static let heldEdge: Double = 0.3
+    static let heldEdge: Double = 0.45
     /// Horizontal padding that, with `vPad` and `stroke`, draws the box the
     /// hit shape is built from.
     static let hPad: CGFloat = 10
-    static let vPad: CGFloat = 4
+    static let vPad: CGFloat = 8
     static let stroke: CGFloat = 1
 
     /// Whether the outlined box is itself the button's target.
@@ -262,7 +258,7 @@ struct AlarmOutline: ButtonStyle {
     static func boxTakesClick(isEnabled: Bool) -> Bool { isEnabled }
 
     func makeBody(configuration: Configuration) -> some View {
-        Chrome(configuration: configuration, color: color, size: size)
+        Chrome(configuration: configuration, color: color, size: size, filled: filled)
     }
 
     /// A `ButtonStyle` is not a `View`, so SwiftUI never updates a property
@@ -273,16 +269,24 @@ struct AlarmOutline: ButtonStyle {
         let configuration: Configuration
         let color: Color
         let size: CGFloat
+        let filled: Bool
         @Environment(\.isEnabled) private var isEnabled
+
+        private var ink: Color { filled ? Theme.accentInk : color }
 
         var body: some View {
             let chrome = configuration.label
-                .font(Theme.mono(size, weight: .medium))
-                .tracking(size * 0.08)
-                .foregroundStyle(isEnabled ? color : color.opacity(AlarmOutline.heldInk))
+                .font(Theme.prose(size, weight: .semibold))
+                // A held button reads as held: its words fade, and a filled
+                // one's fill fades with its edge (review, 25 Sep 2026).
+                .foregroundStyle(isEnabled ? ink : ink.opacity(AlarmOutline.heldInk))
                 .padding(.horizontal, AlarmOutline.hPad)
                 .padding(.vertical, AlarmOutline.vPad)
-                .overlay(Rectangle().strokeBorder(isEnabled ? color : color.opacity(AlarmOutline.heldEdge), lineWidth: AlarmOutline.stroke))
+                .background(filled
+                    ? (isEnabled ? color : color.opacity(AlarmOutline.heldEdge))
+                    : color.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(isEnabled ? color : color.opacity(AlarmOutline.heldEdge), lineWidth: AlarmOutline.stroke))
                 .opacity(configuration.isPressed ? 0.65 : 1)
             if AlarmOutline.boxTakesClick(isEnabled: isEnabled) {
                 chrome.contentShape(Rectangle())

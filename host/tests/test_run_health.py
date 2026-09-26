@@ -118,8 +118,9 @@ def test_fix_rounds_are_implementer_spawns_after_the_first():
 def test_attention_on_worrying_full_context_or_three_fix_rounds():
     assert rh.attention("worrying", None, None)
     assert rh.attention("typical", 90, None)
+    assert rh.attention("typical", 85, None)
     assert rh.attention("typical", None, 3)
-    assert not rh.attention("typical", 85, 2)
+    assert not rh.attention("typical", 80, 2)
     assert not rh.attention("large", None, None)
     assert not rh.attention("", None, None)
 

@@ -115,3 +115,19 @@ def test_set_panel_scale_is_absent_from_every_daemon_action_table():
         text = path.read_text(encoding="utf-8")
         assert "panel_scale" not in text, path
         assert "set_panel_scale" not in text, path
+
+
+def test_the_settings_window_offers_the_dial():
+    """The **Panel size** row is back (25 Sep 2026,
+    `plans/2026-09-25-usability-accessibility-pass.md`): the four steps were
+    reachable only by hand-editing `panel_scale`. One pick per
+    `PanelScale.steps` rung, ticked through `resolved`, sent as the same
+    panel action this file pins off every daemon table."""
+    source = (Path(__file__).resolve().parents[2] / "panel" / "Sources"
+              / "BobPanel" / "SettingsMenuModel.swift").read_text(encoding="utf-8")
+    assert source.count("Panel size") == 1
+    row = source[source.index('"Panel size"'):]
+    row = row[:row.index("}))") + 3]
+    assert "PanelScale.steps.map" in row
+    assert 'action: "set_panel_scale"' in row
+    assert "PanelScale.resolved(s.panelScale) == step.percent" in row

@@ -22,7 +22,9 @@ import hashlib
 import logging
 import os
 import secrets
+import stat as stat_mod
 import subprocess
+import threading
 import sys
 import time
 from pathlib import Path
@@ -44,15 +46,28 @@ from . import enrollment
 from . import grok_roster
 from . import identity
 from . import inbox_ack
+from . import manual_check
 from . import mission
 from . import origin
 from . import paths
+from . import plan_index
 from . import run_figures as run_figures_mod
 from . import run_health
+from . import scout_index
+from . import scout_report
 from . import session_io
 from . import subprocess_env
 from . import work_record
 from . import workspace
+
+#: How long one `depends_on` reference (a card id or an exact title) may be
+#: before it is clamped: `board.MAX_TITLE_CHARS`, so any stored title can be
+#: named exactly, and `channel_server.ADD_TOOL`'s `maxLength`, which clamps
+#: first on the way in.
+MAX_DEPENDENCY_REF_CHARS = 200
+#: `_decorate_card_for_snapshot`'s "no `dep_running_ids` handed in" marker —
+#: distinct from None, which is `_dependency_running_ids`' "unknown".
+_RUNNING_FROM_FRAME = object()
 
 #: `open_mission` while the pty broker link is down. The terminal map says
 #: nothing mid-reconnect (`PtyHost.connected`), so spawning would risk a
@@ -166,6 +181,151 @@ def _plan_state(path: str) -> tuple:
         return False, ""
     return True, _plan_digest(path)
 
+
+#: How long Mission Control's ask to start a card stays on Needs you. An
+#: hour: long enough to be seen from the phone, short enough that a stale
+#: ask does not sit there for a day. Held in memory only — a daemon restart
+#: drops every ask, and Mission Control asks again.
+START_ASK_TTL_SECONDS = 3600.0
+#: At most this many asks at once; a ninth is refused, not queued.
+MAX_START_ASKS = 8
+START_ASK_BY = "Mission Control"
+
+# --- Batch refinement: several Prep cards, one planning session ------------
+# The words a batch press is refused in, and the note an unplanned member is
+# left with. Module constants for `START_ASK_BY`'s reason: the tests and the
+# API layer quote them rather than retyping prose.
+BATCH_TOO_FEW_REFUSAL = "tick at least two Prep cards to refine them together"
+BATCH_TOO_MANY_REFUSAL = ("one planning session takes at most {limit} cards "
+                          "— refine the rest in a second batch")
+BATCH_MIXED_ROOT_REFUSAL = ("{title} is in a different project — a batch "
+                            "refines the cards of one project")
+BATCH_MIXED_TOOL_REFUSAL = ("{title} names a different assistant — a batch "
+                            "runs in one session, so every card must name the same one")
+BATCH_NAMED_PLAN_REFUSAL = ("{title} already names a finished plan — press "
+                            "Refine on it alone")
+BATCH_ATTACH_AMBIGUOUS_REFUSAL = (
+    "this session is refining several cards and the plan does not say which "
+    "one it is for — add `- **Card:** <id>` to the plan's header and attach "
+    "again. The cards:\n{members}")
+BATCH_UNPLANNED_NOTE = ("card {rank} of a batch planning session, and its "
+                        "plan never arrived — press Refine again")
+
+# --- Batch implementation: several Backlog cards, one session, one at a time -
+# `plans/2026-09-25-batch-implement-backlog-cards.md`. The session holds
+# `session_id` on exactly one open card at a time; the members still to come
+# wait in Backlog carrying only `batch_id` / `batch_rank`.
+BATCH_START_TOO_FEW_REFUSAL = ("tick at least two planned Backlog cards to "
+                               "start them together")
+BATCH_START_TOO_MANY_REFUSAL = ("one session takes at most {limit} cards — "
+                                "start the rest in a second batch")
+BATCH_START_MIXED_ROOT_REFUSAL = ("{title} is in a different project — a "
+                                  "batch starts the cards of one project")
+BATCH_START_MIXED_TOOL_REFUSAL = ("{title} names a different assistant — a "
+                                  "batch runs in one session, so every card "
+                                  "must name the same one")
+BATCH_TOOL_REFUSAL = ("grok has no board tools, so it cannot close cards one "
+                      "by one — start them singly")
+BATCH_NOT_BACKLOG_REFUSAL = "not in Backlog"
+BATCH_QUEUED_REFUSAL = "already queued"
+BATCH_SCOUT_REFUSAL = ("a scout ends in a report, not a build — start it "
+                       "on its own")
+BATCH_MEMBER_REFUSAL = ("this card left its batch's line but still carries "
+                        "the batch — press Leave batch, then Start it")
+BATCH_WAITING_REFUSAL = ("this card is waiting its turn in a batch — Leave "
+                         "batch first")
+BATCH_DEPENDENCY_REFUSAL = ("it waits on a card that is not finished — start "
+                            "it once that one is done")
+BATCH_NO_PLACE_REFUSAL = ("no free place in {project} — wait for a run to "
+                          "finish or raise RUN")
+BATCH_NOT_BOUND_REFUSAL = "Dark Army could not tell which session asked"
+BATCH_NO_BATCH_REFUSAL = "this session is not working a batch card"
+BATCH_BUSY_REFUSAL = ("this session is on more than one card — close it on "
+                      "the board")
+BATCH_LEFT_NOTE = ("the batch ended before this card was started — press "
+                   "Start to run it alone")
+
+
+def _batch_waiting(card: Optional[dict]) -> bool:
+    """Whether this card is a batch member still waiting its turn. Pure.
+
+    The one definition every rung reads — the single Start's refusal, the
+    advance's candidates, the snapshot's `waiting` state and the store's
+    `release_batch_waiting` WHERE clause say the same thing: the mark, no
+    session, no link and Backlog. A refinement batch's Prep cards never
+    match (their column is `prep` and their link is `refine_state`), and a
+    Done card dragged back keeps its `session_id`, so it is not waiting.
+    """
+    card = card or {}
+    return (bool(str(card.get("batch_id") or ""))
+            and not str(card.get("session_id") or "")
+            and not str(card.get("link_state") or "")
+            and str(card.get("column_name") or "") == "backlog"
+            and str(card.get("refine_state") or "") not in ("dispatching",
+                                                            "live"))
+
+
+def _skip_lines(head: str, skips: list) -> str:
+    """A batch press's refusal with the cards it skipped named under it,
+    one `<title> — <refusal>` line each, `_start_project_report`'s cap.
+    Pure."""
+    lines = [str(head or "").strip()]
+    limit = 8
+    for title, detail in list(skips or [])[:limit]:
+        lines.append(f"{str(title or '').strip() or 'untitled'} \u2014 "
+                     f"{str(detail or '').strip()}")
+    if len(skips or []) > limit:
+        lines.append(f"\u2026and {len(skips) - limit} more")
+    return "\n".join(lines)
+
+
+def _batch_marked_unbound(card: Optional[dict]) -> bool:
+    """A card carrying a batch-implement mark with no session of its own, in
+    **any** column. Pure. A single Start on one is refused: moving a waiting
+    member out of Backlog keeps its mark, and starting it alone would put a
+    second session on a card the batch's own session will bind. The head
+    while it is still binding (`dispatching`) and a refinement batch's
+    Prep cards (`refine_state`) are the other verbs' to refuse."""
+    card = card or {}
+    return (bool(str(card.get("batch_id") or ""))
+            and not str(card.get("session_id") or "")
+            and str(card.get("link_state") or "") != "dispatching"
+            and str(card.get("refine_state") or "") not in ("dispatching",
+                                                            "live"))
+
+
+def _batch_owner(members: list) -> Optional[dict]:
+    """The member that speaks for a batch-implement batch, or None. Pure.
+
+    The lowest-ranked member that has a session, or is still binding
+    (`dispatching`). The press binds its session to rank 1, and the advance
+    only ever binds the next *waiting* member — always a higher rank than
+    any card that session already holds — so this is that session's card
+    for the life of the batch. It does not need rank 1 to still exist: a
+    person may delete or reopen the finished first card mid-batch and the
+    session keeps its batch. A session forced onto a member dragged out of
+    Backlog holds a higher rank than the batch's own, and never owns it.
+    """
+    for member in sorted(members or [], key=_batch_rank):
+        if str(member.get("session_id") or "") \
+                or str(member.get("link_state") or "") == "dispatching":
+            return member
+    return None
+
+
+def _batch_rank(card: Optional[dict]) -> int:
+    """A member's 1-based place in its batch, `0` when unreadable. Pure."""
+    try:
+        return int(str((card or {}).get("batch_rank") or "0").strip() or "0")
+    except ValueError:
+        return 0
+
+
+
+#: Held across the outcome press's place check, header re-read and write, so
+#: two presses on one check cannot both see `Status: open` and both write.
+#: One lock for every check: a press is a person's, and they are rare.
+_MANUAL_OUTCOME_LOCK = threading.Lock()
 
 class BoardVerbsMixin:
     """The board verbs of `BobDaemon`. Never instantiated on its own."""
@@ -369,11 +529,26 @@ class BoardVerbsMixin:
             run_counts = self._board.run_health_counts(
                 [c.get("id") for c in cards])
             run_ledger = run_health.Ledger.load()
+            # Every card's dependencies resolved once for the frame — one
+            # `cards_by_id` read for the ones outside it — and the reverse
+            # map for "Unblocks", on `run_heads`' one-read-per-frame rule.
+            dep_by_id, dependents = self._dependency_frame(cards)
+            dep_running = self._dependency_running_ids(
+                self._agents_snapshot_cache)
+            # How many cards each batch-implement press marked, once per
+            # frame, so every member's "n of m" reads one count.
+            batch_sizes: dict = {}
+            for row in cards:
+                bid = str(row.get("batch_id") or "")
+                if bid:
+                    batch_sizes[bid] = batch_sizes.get(bid, 0) + 1
             cards = [self._decorate_card_for_snapshot(
                 self._trim_card_for_snapshot(c), by_id, active,
                 running_by_project, running_ids, run_heads, mid_turn,
                 run_figures=figure_parts, ctx_by_session=ctx_by_session,
-                run_counts=run_counts, run_ledger=run_ledger)
+                run_counts=run_counts, run_ledger=run_ledger,
+                dep_by_id=dep_by_id, dependents=dependents,
+                batch_sizes=batch_sizes, dep_running_ids=dep_running)
                 for c in cards]
             for card in cards:
                 card["thread_count"] = int(
@@ -565,6 +740,15 @@ class BoardVerbsMixin:
             # *absent* rather than present and 404ing.
             "manual_clear_writable": True,
             "review_writable": True,
+            # Two more on the same argument: this daemon serves the Checks
+            # section (GET /api/manual-checks and the sealed `manual_checks`
+            # kind) and carries `board_manual_outcome` on both phone tuples.
+            # Two markers, so a phone can draw the list against a Mac that
+            # refuses the press; an older Mac sends neither key, which
+            # decodes false, so the Menu tile is dim and Passed / Failed are
+            # drawn *absent* rather than present and 404ing.
+            "manual_checks_supported": True,
+            "manual_outcome_writable": True,
             # Where the next Start opens its terminal — Dark Army's own pty or the
             # project's VS Code window. A live fact for the panel's caption;
             # the tick itself lives in the ⋯ menu.
@@ -591,6 +775,25 @@ class BoardVerbsMixin:
             # which decodes false, so Settings → Knowledge and the phone
             # screen are drawn *absent* rather than present and empty.
             "knowledge_supported": True,
+            # And on `queue_writable`'s argument once more: this daemon
+            # serves the scout-report list and one report's body
+            # (`GET /api/scout-reports`, `GET /api/scout-report`, the
+            # sealed `scout_reports` / `scout_report` kinds). An older one
+            # sends no key — which decodes false — so the phone's Scouting
+            # tile stays dim rather than present and empty.
+            "scout_reports_supported": True,
+            # And on `queue_writable`'s argument once more: this daemon
+            # searches the reports' bodies when the list read carries `q`
+            # (`scout_index.search`). An older one sends no key — which
+            # decodes false — so the phone asks for no body search and
+            # keeps its instant search alone.
+            "scout_reports_body_search_supported": True,
+            # The same argument for the plan list and one plan's text
+            # (`GET /api/plans`, `GET /api/plan`, the sealed `plans` /
+            # `plan` kinds). An older one sends no key — which decodes
+            # false — so the phone's Plans tile stays dim rather than
+            # present and empty.
+            "plans_supported": True,
             # This daemon logs refused knocks on the phone doors and serves
             # the log (`GET /api/access-log`, the sealed `access_log` kind).
             # An older one sends no key — which decodes false — so the
@@ -640,11 +843,32 @@ class BoardVerbsMixin:
             # was the Mac's alone in v1); an older one 404s the verb, so
             # the phone draws Promote absent rather than present and refused.
             "promote_supported": True,
+            # This daemon carries `board_refine_batch` on both phone tuples;
+            # an older one 404s the verb (and sends no key, which decodes
+            # false), so the phone draws the Prep row's Select control
+            # **absent** rather than present and refused.
+            "refine_batch_supported": True,
+            # This daemon carries `board_start_batch` on both phone tuples;
+            # an older one 404s the verb (and sends no key, which decodes
+            # false), so the phone draws the Backlog row's Select control
+            # **absent** rather than present and refused.
+            "start_batch_supported": True,
             # This daemon serves the sealed `conversation` read — a session's
             # turns, paged by a cursor. An older Mac sends no key, which
             # decodes false, so the phone opens Details and draws one
             # sentence rather than a blank conversation.
             "conversation_supported": True,
+            # This daemon takes `agent` on the `conversation` read — one
+            # helper's own journal. An older one ignores the key and would
+            # page the parent into the helper's cache, so the phone draws
+            # no helper tabs without it.
+            "subagent_conversation_supported": True,
+            # This daemon gates Start on `blocked_by`, admits it through
+            # `board_update`, and publishes `dependencies` / `dependents` and
+            # their two lines per card. An older Mac sends no key, which
+            # decodes false, so the phone draws its WAITS ON editor **absent**
+            # rather than writing a list that Mac would drop at the door.
+            "dependencies_supported": True,
             "preferences_writable": bool(
                 self._observers_implementing("on_preference_request")),
         }
@@ -695,7 +919,11 @@ class BoardVerbsMixin:
                                     *, run_figures: Optional[dict] = None,
                                     ctx_by_session: Optional[dict] = None,
                                     run_counts: Optional[dict] = None,
-                                    run_ledger=None
+                                    run_ledger=None,
+                                    dep_by_id: Optional[dict] = None,
+                                    dependents: Optional[dict] = None,
+                                    batch_sizes: Optional[dict] = None,
+                                    dep_running_ids=_RUNNING_FROM_FRAME
                                     ) -> dict:
         """Derived fields the board draws: nickname, closer, queue words.
 
@@ -762,10 +990,49 @@ class BoardVerbsMixin:
         # canonicaliser and the floor, and three copies of a rule is three
         # chances to draw a denominator the gate does not obey.
         out["parallel_limit"] = self._parallel_limit_for(out.get("root"))
+        # Mission Control asked for this card to be started. Published only
+        # while the ask is fresh and the card could still take a Start —
+        # a card already started, starting or finished shows no ask, so the
+        # Needs you entry goes the moment somebody presses START.
+        ask = self._live_start_ask(out)
+        if ask is not None:
+            out["start_ask_id"] = ask["id"]
+            out["start_asked_at"] = ask["asked_at"]
+            out["start_asked_by"] = START_ASK_BY
         out["manual_check_due"] = (
             bool(str(out.get("manual_steps") or "").strip())
             and not self._card_session_working(
                 out, running_ids or set(), sessions))
+        # The cards this one waits on and the cards waiting on it, composed
+        # here and drawn verbatim by both clients (`docs/card-dependencies.md`).
+        # Resolved through `_dependency_entries` with the same `running_ids`
+        # and `sessions` the badge above just used, so a dependency reads as
+        # met on this tile at the instant its own MANUAL CHECK badge lights
+        # — and the gate and the drain ask the same resolver. **All four keys
+        # absent where empty**, `work_record`'s rule. `dep_by_id` is the
+        # frame's resolution; without it (no caller today) the frame's
+        # `by_id` is read with the store fallback.
+        if out.get("blocked_by"):
+            entries = self._dependency_entries(
+                out, dep_by_id if dep_by_id is not None else by_id,
+                (running_ids or set()) if dep_running_ids is _RUNNING_FROM_FRAME
+                else dep_running_ids, sessions,
+                fetch=dep_by_id is None)
+            if entries:
+                out["dependencies"] = entries
+                out["dependency_line"] = _D._dependency_line(entries)
+                unmet = [e["title"] for e in entries if not e["met"]]
+                # A held queued card says what it is waiting for, not how
+                # full its project is: the dependency, not the slot, is what
+                # stands between it and a terminal.
+                if unmet and str(out.get("queue_state") or "") == "queued":
+                    out["queue_reason"] = _D._dependency_reason(
+                        unmet, bool(self.board_autostart_enabled))
+        kids = (dependents or {}).get(str(out.get("id") or ""))
+        if kids:
+            out["dependents"] = [dict(k) for k in kids]
+            out["dependents_line"] = _D._dependents_line(
+                [k.get("title") for k in kids])
         # Published rather than joined in Swift for run_active's reason:
         # only the daemon has the hook-stream freshness reading — and, with
         # it, the reading that says which quiet session was mid-turn when the
@@ -833,7 +1100,44 @@ class BoardVerbsMixin:
         reading = self._run_health_for(out, run_counts, run_ledger)
         if reading is not None:
             out["run_health"] = reading
+        # Where this card stands in a batch-implement session, drawn by the
+        # panel as "BATCH 2/3 · waiting". **Absent where none**, on
+        # `work_record`'s rule: only the member being worked and the ones
+        # still waiting carry it — a refinement batch's Prep cards, a
+        # member the session moved past and a finished one carry nothing.
+        # `size` is the frame's one count (`batch_sizes`); `batch_id` itself
+        # rides as opaque bookkeeping and no client decodes it.
+        batch = self._batch_mark(out, batch_sizes)
+        if batch is not None:
+            out["batch"] = batch
         return out
+
+    @staticmethod
+    def _batch_mark(card: dict, batch_sizes: Optional[dict]) -> Optional[dict]:
+        """`{rank, size, state}` for a batch member being worked, waiting,
+        or dragged out of the line, else None. Pure. `working`: In
+        progress, and either still binding (`dispatching`) or bound `live`;
+        `waiting`: `_batch_waiting`; `left`: the mark with no session outside
+        Backlog (`_batch_marked_unbound`) — a card whose single Start the
+        daemon refuses until Leave batch, so the tile must say so."""
+        bid = str(card.get("batch_id") or "")
+        if not bid:
+            return None
+        link = str(card.get("link_state") or "")
+        state = ""
+        if str(card.get("column_name") or "") == "in_progress" and (
+                link == "dispatching"
+                or (link == "live" and str(card.get("session_id") or ""))):
+            state = "working"
+        elif _batch_waiting(card):
+            state = "waiting"
+        elif _batch_marked_unbound(card):
+            state = "left"
+        if not state:
+            return None
+        rank = _batch_rank(card)
+        size = int((batch_sizes or {}).get(bid) or 0)
+        return {"rank": rank, "size": max(size, rank), "state": state}
 
     def _run_health_for(self, card: dict, run_counts: Optional[dict],
                         run_ledger, snapshot: Optional[dict] = None
@@ -971,13 +1275,17 @@ class BoardVerbsMixin:
             [c.get("id") for c in rows])
         run_ledger = run_health.Ledger.load()
         by_id = {c["id"]: c for c in rows if c.get("id")}
+        dep_by_id, dependents = self._dependency_frame(rows)
+        dep_running = self._dependency_running_ids(self._agents_snapshot_cache)
         cards = []
         for row in rows:
             card = self._decorate_card_for_snapshot(
                 self._trim_card_for_snapshot(row), by_id, active,
                 None, None, run_heads, mid_turn,
                 run_figures=figure_parts, ctx_by_session={},
-                run_counts=run_counts, run_ledger=run_ledger)
+                run_counts=run_counts, run_ledger=run_ledger,
+                dep_by_id=dep_by_id, dependents=dependents,
+                dep_running_ids=dep_running)
             card["thread_count"] = int(
                 thread_counts.get(card.get("id") or "", 0))
             cards.append(card)
@@ -1394,18 +1702,52 @@ class BoardVerbsMixin:
         if not report_path:
             return None, "this scout has no report attached — nothing to promote"
         lead = f"From report: {report_path}"
+        # The report's answer block, read off disk at the press on the
+        # executor and never cached — **before** `_board_write_lock`, so a
+        # slow or hostile file can hold up this press alone and never every
+        # board write. `{}` (today's headerless card) for a report with no
+        # block, or one that no longer passes the attach's containment check.
+        loop = asyncio.get_running_loop()
+        header = await loop.run_in_executor(
+            None, self._promote_header, str(card.get("root") or ""),
+            report_path)
         async with self._board_write_lock:
             existing = await self._board_call("cards") or []
             for other in existing:
                 if str(other.get("prompt") or "").startswith(lead):
                     title = str(other.get("title") or "")
                     return None, f"already promoted — see «{title}»"
-            return await self.create_card(self._promoted_fields(card, lead))
+            return await self.create_card(
+                self._promoted_fields(card, lead, header))
 
     @staticmethod
-    def _promoted_fields(card: dict, lead: str) -> dict:
+    def _promote_header(root: str, report_path: str) -> dict:
+        """The answer block of the report a Done scout attached, or `{}`.
+
+        **Blocking** — executor only. The stored path is re-checked with
+        the attach's own `_plan_path_refusal` (inside the card's root after
+        realpath, `.md`, a regular file, bounded), because the file may have
+        been replaced since the attach — by a symlink out of the project or
+        a FIFO. Any refusal reads nothing. `scout_report.read_header` then
+        opens non-blocking and reads only a regular file, which closes the
+        gap between that check and the open."""
+        resolved, refusal = BoardVerbsMixin._plan_path_refusal(root, report_path)
+        if refusal or not resolved:
+            return {}
+        return scout_report.read_header(resolved)
+
+    @staticmethod
+    def _promoted_fields(card: dict, lead: str, header: dict = None) -> dict:
         """The Prep build card a Done scout becomes — `promote_card`'s
-        composition, pure."""
+        composition, pure.
+
+        With no `header` (or one with no verdict) the card is composed
+        exactly as before the scout report had an answer block. With one,
+        the title is the first follow-up's (else the scout's own, `Scout:`
+        stripped), the summary is the verdict, and the notes carry the
+        recommendation, the question and every follow-up after the lead
+        line. Either way the prompt is clamped from the tail, so the lead
+        line — which the twin check reads — is never cut."""
         title = str(card.get("title") or "")
         stripped = title
         if title.lower().startswith("scout:"):
@@ -1414,7 +1756,37 @@ class BoardVerbsMixin:
                 stripped = rest
         close_note = str(card.get("close_note") or "").strip()
         original = str(card.get("prompt") or "").strip()
+        summary = str(card.get("summary") or "")
         parts = [lead]
+        verdict = str((header or {}).get("verdict") or "").strip()
+        if verdict:
+            follow_ups = [f for f in header.get("follow_ups") or []
+                          if isinstance(f, dict)]
+            first = str(follow_ups[0].get("title") or "").strip() \
+                if follow_ups else ""
+            if first:
+                stripped = first
+            stripped = stripped[:board.MAX_TITLE_CHARS]
+            summary = verdict[:board.MAX_SUMMARY_CHARS]
+            recommendation = str(header.get("recommendation") or "").strip()
+            confidence = str(header.get("confidence") or "").strip()
+            if recommendation:
+                line = f"Recommendation: {recommendation}"
+                if confidence:
+                    line += f" ({confidence} confidence)"
+                parts.append(line)
+            elif confidence:
+                parts.append(f"Confidence: {confidence}")
+            question = str(header.get("question") or "").strip()
+            if question:
+                parts.append(f"Question: {question}")
+            if follow_ups:
+                rows = []
+                for item in follow_ups:
+                    name = str(item.get("title") or "").strip()
+                    words = str(item.get("summary") or "").strip()
+                    rows.append(f"- {name} — {words}" if words else f"- {name}")
+                parts.append("Follow-ups:\n" + "\n".join(rows))
         if close_note:
             parts.append(close_note)
         if original:
@@ -1424,7 +1796,7 @@ class BoardVerbsMixin:
             prompt = prompt[:board.MAX_PROMPT_CHARS]
         fields = {
             "title": stripped,
-            "summary": str(card.get("summary") or ""),
+            "summary": summary,
             "area": str(card.get("area") or ""),
             "root": str(card.get("root") or ""),
             "project": str(card.get("project") or ""),
@@ -1680,6 +2052,25 @@ class BoardVerbsMixin:
             return
         logger.info("card %s: terminal close refused (%s)", cid[:8], detail)
 
+    async def _batch_session_still_needed(self, card: dict, rsid: str) -> bool:
+        """Whether another card is still being refined by this card's batch
+        planning session. `False` for a single refinement (no `batch_id`),
+        so its delete closes the terminal exactly as before.
+
+        One session plans every card of a batch; deleting one of them
+        cancels that card, not the others' interviews. "Still being
+        refined" is `refine_state` `live` or `dispatching` — a sibling whose
+        plan already landed keeps `refine_session_id` as a record
+        (`attach_plan`) but no longer needs the terminal.
+        """
+        if not str(card.get("batch_id") or ""):
+            return False
+        cid = str(card.get("id") or "")
+        others = await self._board_call("by_refine_session", rsid) or []
+        return any(str(c.get("id") or "") != cid
+                   and str(c.get("refine_state") or "") in ("live", "dispatching")
+                   for c in others)
+
     async def _close_for_deleted_card(
             self, card: dict, shell_pid: Optional[int] = None) -> None:
         """Close the terminal of a session whose card was just deleted.
@@ -1703,11 +2094,11 @@ class BoardVerbsMixin:
             sid = str(card.get("session_id") or "")
             if sid:
                 candidates.append(sid)
+        cid = str(card.get("id") or "")
         if str(card.get("refine_state") or "") == "live":
             rsid = str(card.get("refine_session_id") or "")
-            if rsid:
+            if rsid and not await self._batch_session_still_needed(card, rsid):
                 candidates.append(rsid)
-        cid = str(card.get("id") or "")
         linked = str(card.get("session_id") or "")
         for sid in candidates:
             # Codex is skipped here, not because `_close_session_terminal`
@@ -1837,7 +2228,10 @@ class BoardVerbsMixin:
         if not session_id:
             return None, "Dark Army could not tell which session asked"
         cards = await self._board_call("by_session", session_id) or []
-        open_cards = [c for c in cards if c.get("column_name") != "done"]
+        # A batch session is bound to every card it has worked; the one it
+        # is on now is the one it has not moved past (`_narrow_batch_open`).
+        open_cards = self._narrow_batch_open(
+            [c for c in cards if c.get("column_name") != "done"])
         if not open_cards:
             if cards:
                 return None, "that card is already done — nothing to do"
@@ -1858,7 +2252,27 @@ class BoardVerbsMixin:
                 note=str(note or "")[:200])
         return card, detail
 
-    async def flag_manual_by_session(self, session_id: str, steps: str) -> tuple:
+    @staticmethod
+    def _narrow_batch_open(open_cards: list) -> list:
+        """A batch session's open cards, minus the members it moved past.
+        Pure.
+
+        A batch-implement session stays bound to every card it has worked:
+        one left unclosed by `dark_army_next_card` is still In progress,
+        still names the session, and is `ended`. The card the session is on
+        now is the one that is not — the positional rule
+        `docs/channel-tools.md` states. A card with no batch mark is never
+        dropped, so a single-card session reaches this with one card and
+        leaves with it, and two unmarked cards still fail closed.
+        """
+        if len(open_cards) < 2:
+            return open_cards
+        return [c for c in open_cards
+                if not (str(c.get("batch_id") or "")
+                        and str(c.get("link_state") or "") == "ended")]
+
+    async def flag_manual_by_session(self, session_id: str, steps: str,
+                                     path: str = "") -> tuple:
         """Flag the one card this session is working on. `(card_or_None, detail)`.
 
         `close_card_by_session`'s resolution verbatim, and deliberately so: the
@@ -1871,23 +2285,61 @@ class BoardVerbsMixin:
 
         This moves no card and closes nothing. It is a note for a person,
         recorded on the card the session is already the running author of.
+
+        **The flag may follow the close** (v26): a card with an open check
+        goes to Done, so with no open card the session's one Done card *it
+        closed itself* (`closed_by == session_id`) is flagged instead. Two
+        such cards are ambiguous and refused in words; any other Done card
+        keeps the old refusal.
+
+        ``path`` names the check file the session wrote. It is validated on
+        the executor (`_manual_check_path_refusal`: inside the card's root,
+        under its `manual-check/` folder, passing `manual_check.check`) and
+        stored as its realpath; no path flags exactly as before.
         """
         if self._board is None:
             return None, "the board is not open"
         if not session_id:
             return None, "Dark Army could not tell which session asked"
         cards = await self._board_call("by_session", session_id) or []
-        open_cards = [c for c in cards if c.get("column_name") != "done"]
+        open_cards = self._narrow_batch_open(
+            [c for c in cards if c.get("column_name") != "done"])
         if not open_cards:
-            if cards:
+            if not cards:
+                return None, "no card on Dark Army's board names this session"
+            closed = [c for c in cards
+                      if c.get("column_name") == "done"
+                      and str(c.get("closed_by") or "") == session_id]
+            marks = {str(c.get("batch_id") or "") for c in closed}
+            if len(closed) > 1 and len(marks) == 1 and "" not in marks:
+                # One batch session closed several cards, in order: the
+                # newest close is the card it has just finished, which is
+                # the one a flag-after-close means.
+                closed = [max(closed,
+                              key=lambda c: float(c.get("done_at") or 0.0))]
+            if len(closed) > 1:
+                return None, ("this session closed more than one card — "
+                              "say which on the board")
+            if not closed:
                 return None, ("that card is already done — reopen it if a "
                               "check is still outstanding")
-            return None, "no card on Dark Army's board names this session"
-        if len(open_cards) > 1:
+            target = closed[0]
+        elif len(open_cards) > 1:
             return None, ("this session is on more than one card — "
                           "say which on the board")
+        else:
+            target = open_cards[0]
+        extra = ()
+        if str(path or "").strip():
+            loop = asyncio.get_running_loop()
+            resolved, refusal = await loop.run_in_executor(
+                None, self._manual_check_path_refusal,
+                target.get("root") or "", path)
+            if refusal:
+                return None, refusal
+            extra = (resolved,)
         card, detail = await self._board_call(
-            "flag_manual", open_cards[0]["id"], session_id, steps)
+            "flag_manual", target["id"], session_id, steps, *extra)
         if card is not None:
             await self._publish_board()
             self._log_card_event(card, "card_manual", session_id=session_id,
@@ -1923,7 +2375,9 @@ class BoardVerbsMixin:
             return False, detail
         await self._publish_board()
         self._log_card_event(card, "card_manual_clear")
-        self._settle_checked_card(str(card.get("id") or ""))
+        await self._settle_handled_card(
+            str(card.get("id") or ""),
+            str(card.get("closed_by") or card.get("session_id") or ""))
         return True, "marked as checked"
 
     def _settle_checked_card(self, card_id: str) -> None:
@@ -1987,7 +2441,50 @@ class BoardVerbsMixin:
         card, detail = await self._board_call("mark_reviewed", card_id, **kwargs)
         if card is not None:
             await self._publish_board()
+            await self._settle_handled_card(
+                str(card.get("id") or ""),
+                str(card.get("closed_by") or card.get("session_id") or ""))
         return card, detail
+
+    async def _settle_handled_card(self, card_id: str,
+                                   session_id: str = "") -> None:
+        """A person's hand on a card — Mark reviewed, or Acknowledge & close
+        on its agent — clears what that card and its agent still have on
+        Needs you, **exactly as Dismiss would**. Mark checked has done this
+        for the card alone since 20 Sep 2026 (`_settle_checked_card`); the
+        report of 25 Sep 2026 was the same trap one press over: a Done card
+        with a hand-check attached, reviewed on the phone, its `manual_check`
+        row still on Needs you until the person dismissed it separately.
+
+        The same ack Dismiss writes, so the same "hide until it changes"
+        rule: a new check, a new question or a new finished turn comes back.
+        The agent's subject is settled only when it is a plain finished
+        wait — a live question or a permission ask is the agent asking
+        something a review does not answer, and is left on the list.
+        Best-effort: never raises into the verb that called it."""
+        try:
+            self._settle_checked_card(card_id)
+            store = getattr(self, "_inbox_acks", None)
+            if store is not None and session_id:
+                live = self._inbox_live("s:" + session_id)
+                if live is not None and live[0] == "waiting":
+                    store.ack("s:" + session_id, *live)
+                    await self._settle_acknowledged_session(session_id, "waiting")
+            await self._wake_surfaces()
+        except Exception:  # pragma: no cover - a settle must never fail a press
+            logger.debug("settle for card %s failed", card_id[:8], exc_info=True)
+
+    async def _settle_closed_session(self, session_id: str) -> None:
+        """Acknowledge & close by a person: every card the closed session
+        was working on (live link or its own close) is settled as handled,
+        even when the card was already in Done and the close finished
+        nothing — the ordinary case, an agent that closed its own card."""
+        cards = (getattr(self, "_board_state", None) or {}).get("cards") or []
+        ids = [str(c.get("id") or "") for c in cards if isinstance(c, dict)
+               and session_id in (str(c.get("session_id") or ""),
+                                  str(c.get("closed_by") or ""))]
+        for cid in [c for c in ids if c] or [""]:
+            await self._settle_handled_card(cid, session_id)
 
     async def approve_card_plan(self, card_id: str, plan_path: str,
                                 digest: str) -> tuple:
@@ -2074,6 +2571,129 @@ class BoardVerbsMixin:
             return "", "that file is too large to be a plan"
         return resolved, ""
 
+    @staticmethod
+    def _report_shape_refusal(root: str, resolved: str) -> str:
+        """`""`, or the refusal for a scout report that is not in the shape.
+
+        **Blocking** (reads the file) — executor only. Only a report whose
+        resolved path sits under `<root>/scout/` is checked; anything else
+        in the root (an older prose report under `docs/research/`) attaches
+        as before. `resolved` is `_plan_path_refusal`'s realpath, and the
+        root goes through the same `dispatch.normalise_root`, so the
+        comparison is realpath against realpath. The folder's own name is
+        compared without case: a macOS disk is case-insensitive, so
+        `Scout/…` is the same folder and must not skip the check.
+        """
+        base = dispatch.normalise_root(root)
+        if not base:
+            return ""
+        text = str(resolved or "")
+        if not text.startswith(base + os.sep):
+            return ""
+        segment, sep, _rest = text[len(base) + len(os.sep):].partition(os.sep)
+        if not sep or segment.casefold() != scout_report.FOLDER.casefold():
+            return ""
+        # scout_report's own bounded read: non-blocking, no final symlink,
+        # a regular file or nothing — a FIFO swapped in cannot hang the loop's
+        # executor thread here any more than at Promote.
+        problems = scout_report.check(scout_report.read_text(resolved))
+        if not problems:
+            return ""
+        return (board.REPORT_MALFORMED_REFUSAL + scout_report.brief(problems)
+                + " (run python3 .claude/skills/scout/scout_check.py on it)")
+
+    @staticmethod
+    def _canonical_path(path: str) -> str:
+        """`path`'s realpath spelled the way the disk spells it.
+
+        **Blocking** (one `listdir` per component) — executor only. On a
+        case-insensitive volume a realpath keeps whatever case it was typed
+        in, so `…/2026-09-25-FOO/check.md` and the scan's
+        `…/2026-09-25-foo/check.md` name one file under two strings, and a
+        press from the list would never find the card the flag stored. Each
+        component is replaced by the directory entry it names: the exact
+        name when present, else the one entry that matches it without
+        case; an unreadable directory keeps the rest as typed. The flag, the
+        list and the press all store and compare this spelling."""
+        resolved = os.path.realpath(str(path or ""))
+        out = os.sep
+        parts = [part for part in resolved.split(os.sep) if part]
+        for index, part in enumerate(parts):
+            try:
+                names = os.listdir(out)
+            except OSError:
+                return os.path.join(out, *parts[index:])
+            if part not in names:
+                folded = [name for name in names
+                          if name.casefold() == part.casefold()]
+                if len(folded) == 1:
+                    part = folded[0]
+            out = os.path.join(out, part)
+        return out
+
+    @staticmethod
+    def _manual_check_home(resolved: str) -> str:
+        """The enrolled root a resolved check path belongs to, or `""`.
+
+        **The one place rule** the flag, the Checks list and the outcome
+        press all share: `<enrolled root>/manual-check/<folder>/check.md`,
+        exactly three segments, the folder and the file name compared with
+        their exact case (a realpath keeps the case it was typed in, so a
+        case-folded match would store a path the list never joins to)."""
+        text = str(resolved or "")
+        for root in enrollment.enrolled_roots():
+            base = dispatch.normalise_root(root)
+            if base:
+                base = BoardVerbsMixin._canonical_path(base)
+            if not base or not text.startswith(base + os.sep):
+                continue
+            rest = text[len(base) + len(os.sep):].split(os.sep)
+            if (len(rest) == 3 and rest[0] == manual_check.FOLDER
+                    and rest[1] and rest[2] == manual_check.CHECK_NAME):
+                return base
+        return ""
+
+    @staticmethod
+    def _manual_check_path_refusal(root: str, path: str) -> tuple:
+        """Validate the check file a session names. `(resolved, detail)`.
+
+        **Blocking** (realpath, stats, one bounded read) — executor only. A
+        relative path resolves inside the card's own root; the resolved file
+        must then sit where `_manual_check_home` says a check lives, in the
+        enrolled project the card's root belongs to (that root or an ancestor
+        of it) — else `MANUAL_CHECK_PLACE_REFUSAL` — be a regular file, and
+        pass `manual_check.check` — else `MANUAL_CHECK_MALFORMED_REFUSAL` and
+        the problems. The same rule `_manual_check_place` applies at the
+        press, so a flag the daemon accepts is a check the list shows and
+        the press can reach.
+        """
+        base = dispatch.normalise_root(root)
+        if not base:
+            return "", "this card does not say which folder to work in"
+        text = str(path or "").strip()
+        if not text:
+            return "", "a check needs a path"
+        candidate = text if os.path.isabs(os.path.expanduser(text)) \
+            else os.path.join(base, text)
+        resolved = BoardVerbsMixin._canonical_path(
+            os.path.expanduser(candidate))
+        base = BoardVerbsMixin._canonical_path(base)
+        home = BoardVerbsMixin._manual_check_home(resolved)
+        if not home or not (base == home or base.startswith(home + os.sep)):
+            return "", board.MANUAL_CHECK_PLACE_REFUSAL
+        try:
+            if not stat_mod.S_ISREG(os.stat(resolved).st_mode):
+                return "", "there is no file at that path"
+        except OSError:
+            return "", "there is no file at that path"
+        problems = manual_check.check(manual_check.read_text(resolved))
+        if problems:
+            return "", (board.MANUAL_CHECK_MALFORMED_REFUSAL
+                        + manual_check.brief(problems)
+                        + " (run python3 .claude/skills/ship/manual_check.py"
+                        " on it)")
+        return resolved, ""
+
     async def _seed_from_plan(self, card: dict, resolved: str) -> dict:
         """Fill the area and objective a just-attached plan names, where
         nobody has typed one. Both plan-attach routes call this — the
@@ -2098,6 +2718,34 @@ class BoardVerbsMixin:
                 "fill_objective_if_empty", card["id"], objective)
             if seeded is not None:
                 card = seeded
+        # And the cards it waits on, from the plan's `Depends on:` header —
+        # by title or id, resolved against this card's own project at the
+        # moment of the attach, and written only into an empty list so a
+        # person's links always win. A header naming a card that is missing
+        # or ambiguous seeds nothing (a partial list would let the card
+        # start early) and says why in the log; the card is attached either
+        # way, since the attach is the refinement's success, not this line's.
+        refs = await loop.run_in_executor(
+            None, board_workflow.read_plan_depends_on, resolved)
+        if refs:
+            ids, refusal = await loop.run_in_executor(
+                None, functools.partial(
+                    self._resolve_dependency_refs, refs,
+                    str(card.get("root") or ""), str(card.get("id") or "")))
+            if refusal:
+                logger.info("plan %s: dependencies not seeded on card %s: %s",
+                            os.path.basename(str(resolved or "")),
+                            str(card.get("id") or "")[:8], refusal)
+            elif ids:
+                seeded, detail = await self._board_call(
+                    "fill_dependencies_if_empty", card["id"], ids)
+                if seeded is not None:
+                    card = seeded
+                else:
+                    logger.info("plan %s: dependencies not seeded on card "
+                                "%s: %s",
+                                os.path.basename(str(resolved or "")),
+                                str(card.get("id") or "")[:8], detail)
         return card
 
     async def attach_plan_by_session(self, session_id: str, path: str, *, _author_guard=None) -> tuple:
@@ -2128,6 +2776,16 @@ class BoardVerbsMixin:
         Ambiguity and absence fail closed, in words. The path is validated on
         the executor (`_plan_path_refusal`) before the store sees it, and the
         store's own WHERE-clause guard answers the move-while-attaching race.
+
+        **One exception to "more than one fails closed": a batch.** When rung
+        1 finds several cards and every one carries the same `batch_id` — one
+        `refine_cards` press bound them all to this session — the plan file's
+        own `- **Card:**` header picks the card (`_pick_batch_member`), read
+        off disk inside the shared root after `_plan_path_refusal`. The call
+        still names no card; the header may choose only among the cards the
+        daemon bound, and anything else fails closed listing them. The last
+        batch card left reads the header too: a header naming another card
+        is refused, and no header attaches to it.
         """
         if self._board is None:
             return None, "the board is not open"
@@ -2138,6 +2796,10 @@ class BoardVerbsMixin:
         candidates = [c for c in refined
                       if str(c.get("column_name") or "") == "prep"
                       and not str(c.get("plan_path") or "")]
+        # Only the refinement rung may be a batch: the daemon itself bound
+        # these cards to this session, so choosing among them spends nothing
+        # the ladder did not already grant.
+        from_refine = bool(candidates)
         if not candidates:
             prep = await self._board_call("cards", ["prep"]) or []
             cutoff = time.time() - _D.ATTACH_AUTHOR_WINDOW_SECONDS
@@ -2149,11 +2811,51 @@ class BoardVerbsMixin:
             return None, ("no Prep card on Dark Army's board names this session — "
                           "file one with dark_army_add_card (bob_add_card "
                           "in a session started before the rename) first")
-        if len(candidates) > 1:
+        loop = asyncio.get_running_loop()
+        marks = {str(c.get("batch_id") or "") for c in candidates}
+        if from_refine and len(marks) == 1 and "" not in marks:
+            # **The batch rung.** One session refining several cards names the
+            # card through the plan file's own `- **Card:**` header, never
+            # through the call — the tool still takes a path and nothing else
+            # — and the header may only choose among the cards this session
+            # is already bound to. No header, or one naming anything else,
+            # fails closed listing the members. **The last batch card left is
+            # still a batch card**: its header is read too, and a header
+            # naming another card is refused rather than landing that plan
+            # here for good (nothing clears `plan_path`); with no header the
+            # lone card takes the plan, as it would alone. A card with no
+            # `batch_id` never reaches this, so a single Refine reads no
+            # header.
+            def batch_pick():
+                shared = {dispatch.normalise_root(c.get("root") or "")
+                          for c in candidates}
+                if len(shared) != 1:
+                    return None, None
+                resolved, refusal = self._plan_path_refusal(
+                    candidates[0].get("root") or "", path)
+                if refusal:
+                    return None, refusal
+                return board_workflow.read_plan_card(resolved), ""
+            named, refusal = await loop.run_in_executor(None, batch_pick)
+            if named is None and refusal is None:
+                return None, ("this session matches more than one Prep card — "
+                              "a human has to sort that out on the board")
+            if refusal:
+                return None, refusal
+            card = self._pick_batch_member(candidates, named)
+            if card is None and len(candidates) == 1 and not named:
+                card = candidates[0]
+            if card is None:
+                members = "\n".join(
+                    f"{c.get('id') or ''} — {str(c.get('title') or '').strip()}"
+                    for c in candidates)
+                return None, BATCH_ATTACH_AMBIGUOUS_REFUSAL.format(
+                    members=members)
+        elif len(candidates) > 1:
             return None, ("this session matches more than one Prep card — "
                           "a human has to sort that out on the board")
-        card = candidates[0]
-        loop = asyncio.get_running_loop()
+        else:
+            card = candidates[0]
         resolved, refusal = await loop.run_in_executor(
             None, self._plan_path_refusal, card.get("root") or "", path)
         if refusal:
@@ -2183,6 +2885,25 @@ class BoardVerbsMixin:
             self._schedule_auto_start(attached)
         return attached, detail
 
+    @staticmethod
+    def _pick_batch_member(candidates: list, card_id: str):
+        """The card among `candidates` whose id is exactly `card_id`, or
+        `None`.
+
+        The one rule every batch verb resolves a member by: the caller may
+        only choose among the cards the daemon itself bound to its session,
+        and an id that is not one of them — empty, foreign, or a near miss —
+        chooses nothing. Shared with the batch-implement sibling, whose
+        close and report verbs read their id from a file of their own.
+        """
+        wanted = str(card_id or "").strip()
+        if not wanted:
+            return None
+        for card in candidates or []:
+            if str((card or {}).get("id") or "") == wanted:
+                return card
+        return None
+
     async def _handle_board_attach_request(self, msg: dict) -> dict:
         """A session attaching, through Dark Army's channel, the plan it wrote for
         the card it was asked to refine.
@@ -2199,7 +2920,9 @@ class BoardVerbsMixin:
         nothing runs, nothing is typed anywhere, and the human still has to
         read the card and drag it. Strictly less than `dark_army_close_card`
         already tolerates. Anyone loosening the schema to take a `card_id`
-        has deleted the justification, not widened an API.
+        has deleted the justification, not widened an API. The batch rung
+        reads the plan file, never the call, and selects only within the
+        cards the daemon itself bound to this session.
 
         Like the other two, this deliberately does not consult `is_channel` —
         that gate would silently disable the verb in exactly the dispatched
@@ -2231,8 +2954,18 @@ class BoardVerbsMixin:
         session and never named by the caller. Ambiguity and absence fail
         closed, in those two sentences. A non-scout is refused with
         `REPORT_NOT_SCOUT_REFUSAL`. The path is validated on the executor
-        (`_plan_path_refusal`) before the store sees it. No auto-start, no
+        (`_plan_path_refusal`) before the store sees it, and a report under
+        the project's `scout/` folder must also pass `scout_report.check`
+        (`_report_shape_refusal`, `REPORT_MALFORMED_REFUSAL`); a report
+        anywhere else attaches unchecked. What the store records is the
+        resolved absolute realpath, never the caller's relative text — the
+        folder is git-ignored, so the file exists only in this checkout and
+        every hand-off must quote the full path. No auto-start, no
         area/objective seeding, no column move — the card stays In progress.
+        The report's answer block is read once here, on the executor
+        (`scout_report.read_header`), and its verdict and recommendation are
+        stored beside the path for the card face; a report with no block
+        stores empty values, and Promote still re-reads the file itself.
         """
         if self._board is None:
             return None, "the board is not open"
@@ -2255,10 +2988,17 @@ class BoardVerbsMixin:
             None, self._plan_path_refusal, card.get("root") or "", path)
         if refusal:
             return None, refusal
+        refusal = await loop.run_in_executor(
+            None, self._report_shape_refusal, card.get("root") or "", resolved)
+        if refusal:
+            return None, refusal
+        header = await loop.run_in_executor(None, scout_report.read_header, resolved)
         if _author_guard is not None and not _author_guard():
             return None, "Dark Army could not tell which session asked"
         attached, detail = await self._board_call(
-            "attach_report", card["id"], resolved, session_id)
+            "attach_report", card["id"], resolved, session_id,
+            verdict=header.get("verdict", ""),
+            recommendation=header.get("recommendation", ""))
         if attached is not None:
             await self._publish_board()
         return attached, detail
@@ -2340,9 +3080,31 @@ class BoardVerbsMixin:
             # alone: a plan that was attached is a fact, not a link.
             "refine_session_id": "",
             "refine_state": "",
+            # And the batch mark that rides beside it.
+            "batch_id": "",
+            "batch_rank": "",
         })
         async with self._dispatch_lock, self._board_write_lock:
+            before = await self._board_call("get", card_id)
+            # Judged before the write, which clears the card's own mark.
+            loop = asyncio.get_running_loop()
+            owns = await loop.run_in_executor(None, self._batch_owned_by, before)
             card, detail = await self._board_call("update", card_id, update)
+            # The card the batch session is on, taken back — or the last
+            # card that spoke for the batch, in any column: either way
+            # nothing will walk the members still waiting.
+            bid = str((before or {}).get("batch_id") or "")
+            if card is not None and owns and (
+                    self._batch_head_of(before)
+                    or not await loop.run_in_executor(
+                        None, self._batch_has_owner, bid)):
+                # The card a batch session was on (or was starting with) is
+                # being taken back: the members it never reached leave the
+                # batch with a note, as when the session ends. A waiting
+                # member reset on its own (Leave batch) touches nobody else.
+                await self._board_call("release_batch_waiting",
+                                       str(before.get("batch_id") or ""),
+                                       BATCH_LEFT_NOTE)
         if card is not None:
             # The binding baseline and the absence timer are about a link that
             # no longer exists. `_dispatch_attempts` is deliberately *not*
@@ -2358,6 +3120,22 @@ class BoardVerbsMixin:
             await self._publish_board()
         return card, detail
 
+    @staticmethod
+    def _batch_head_of(card: Optional[dict]) -> bool:
+        """Whether this card is the one a batch-implement session is on, or
+        is starting with: it carries the mark and is `dispatching`, or bound
+        `live` and not in Done. A member the session moved past (`ended`)
+        or finished (Done) is not — resetting one of those must not end a
+        batch that is still running. Pure."""
+        card = card or {}
+        if not str(card.get("batch_id") or ""):
+            return False
+        link = str(card.get("link_state") or "")
+        if link == "dispatching":
+            return True
+        return (link == "live" and bool(str(card.get("session_id") or ""))
+                and str(card.get("column_name") or "") != "done")
+
     async def delete_card(self, card_id: str) -> tuple:
         if self._board is None:
             return False, "the board is not open"
@@ -2372,7 +3150,23 @@ class BoardVerbsMixin:
         doomed = attachments.folders_of(
             (before or {}).get("attachments")) if before else set()
         async with self._dispatch_lock, self._board_write_lock:
+            loop = asyncio.get_running_loop()
+            # Re-read under the lock: `before` was read outside it, and an
+            # advance or a reset may have moved the card while this waited.
+            # The batch judgement is made on the card as it is now.
+            current = await self._board_call("get", card_id)
+            owns = await loop.run_in_executor(None, self._batch_owned_by,
+                                              current)
             ok, detail = await self._board_call("delete", card_id)
+            bid = str((current or {}).get("batch_id") or "")
+            if ok and owns and (
+                    self._batch_head_of(current)
+                    or not await loop.run_in_executor(
+                        None, self._batch_has_owner, bid)):
+                # `reset_card`'s rule: deleting the card a batch session is
+                # on releases the members it never reached.
+                await self._board_call("release_batch_waiting", bid,
+                                       BATCH_LEFT_NOTE)
         self._dispatch_attempts.pop(str(card_id), None)
         self._dispatch_baseline.pop(str(card_id), None)
         self._spawn_shell_pids.pop(str(card_id), None)
@@ -2514,9 +3308,123 @@ class BoardVerbsMixin:
         if self._board is None:
             return False, "the board is not open"
         async with self._dispatch_lock:
-            return await self._dispatch_card_locked(
+            ok, detail = await self._dispatch_card_locked(
                 card_id, allow_unplanned, queued_replay,
                 own_terminal=own_terminal)
+        # The press answered the ask, whichever way the start went: a
+        # started or queued card no longer needs asking about.
+        if ok:
+            self._start_ask_map().pop(str(card_id or ""), None)
+        return ok, detail
+
+    # -- Mission Control's ask to start a card ---------------------------
+
+    def _start_ask_map(self) -> dict:
+        """`card_id → {id, asked_at, by}`. Loop thread writes; the snapshot
+        decoration on the executor only reads single keys."""
+        asks = getattr(self, "_start_asks", None)
+        if asks is None:
+            asks = {}
+            self._start_asks = asks
+        return asks
+
+    def _live_start_ask(self, card: dict) -> Optional[dict]:
+        """The ask on this card if it is fresh and the card could still be
+        started, else None. Pure over the card and the clock."""
+        asks = getattr(self, "_start_asks", None) or {}
+        ask = asks.get(str(card.get("id") or ""))
+        if not ask:
+            return None
+        if time.time() - float(ask.get("asked_at") or 0) > START_ASK_TTL_SECONDS:
+            return None
+        if card.get("column_name") not in dispatch._STARTABLE_COLUMNS:
+            return None
+        if card.get("session_id") or card.get("link_state") == "dispatching":
+            return None
+        if card.get("refine_state") in ("dispatching", "live"):
+            return None
+        # Queued by a press (a full project): answered, just waiting its turn.
+        if str(card.get("queue_state") or "") == "queued":
+            return None
+        return ask
+
+    async def drop_start_ask(self, card_id: str) -> bool:
+        """Forget an ask (the person's Dismiss). True when there was one."""
+        dropped = self._start_ask_map().pop(str(card_id or ""), None)
+        if dropped is not None:
+            await self._publish_board()
+        return dropped is not None
+
+    async def ask_start(self, session_id: str, card_id: str) -> tuple:
+        """Mission Control asks for a card to be started. `(card, detail)`.
+
+        **This starts nothing.** It puts the card on Needs you, on the Mac and
+        the phone, as "start asked"; the entry opens the card, and only the
+        person's own press on START — `dispatch_card`, the ordinary verb with
+        every guard it has — starts it. Dismiss on the entry is the No. So the
+        rule that only a deliberate human gesture puts work in front of the
+        launcher is untouched: this verb adds a way to be *asked*, not a way
+        to start.
+
+        Only the Mission Control session may ask. Any other session is
+        refused, so an agent working a card cannot put asks for other work
+        in front of the person.
+        """
+        mission_sid = str((self.mission_snapshot() or {}).get("session_id") or "")
+        if not session_id or not mission_sid or session_id != mission_sid:
+            return None, "only Mission Control can ask Dark Army to start a card"
+        if not self.board_dispatch_enabled:
+            return None, "Dark Army is not allowed to start sessions (see the ⋯ menu)"
+        card_id = str(card_id or "").strip()
+        if not card_id or len(card_id) > 64:
+            return None, "name the card by its id"
+        card = await self._board_call("get", card_id)
+        if not card:
+            return None, "no card has that id"
+        asks = self._start_ask_map()
+        now = time.time()
+        for cid in [c for c, a in asks.items()
+                    if now - float(a.get("asked_at") or 0) > START_ASK_TTL_SECONDS]:
+            asks.pop(cid, None)
+        if card.get("column_name") not in dispatch._STARTABLE_COLUMNS:
+            return None, "only a card in Prep, Backlog or In progress can be started"
+        if card.get("session_id") or card.get("link_state") == "dispatching":
+            return None, "this card is already being worked on"
+        if card.get("refine_state") in ("dispatching", "live"):
+            return None, "this card is being refined — wait for the planner"
+        if card_id not in asks and len(asks) >= MAX_START_ASKS:
+            return None, (f"{MAX_START_ASKS} starts are already waiting on the "
+                          "person — let them answer those first")
+        asks[card_id] = {"id": secrets.token_hex(8), "asked_at": now,
+                         "by": session_id}
+        await self._publish_board()
+        return card, "asked"
+
+    async def _handle_board_start_ask_request(self, msg: dict) -> dict:
+        """`dark_army_request_start`, through Dark Army's channel.
+
+        The hook socket authenticates nothing, so the caller is resolved from
+        the port (`_board_request_session_fresh`), never taken from the
+        message, and must be Mission Control. The card id does cross this
+        boundary — unlike the close and attach verbs — and that is safe for
+        the reason `ask_start` gives: the worst a forger achieves is an entry
+        on Needs you that the person dismisses. Nothing starts without their
+        press on START.
+        """
+        port = int(msg.get("port") or 0)
+        session_id = (await self._board_request_session_fresh(port) or "") if port else ""
+        if not session_id:
+            return {"ok": False, "detail": "Dark Army could not tell which session asked"}
+        if self._board is None:
+            return {"ok": False, "detail": "the board is not open"}
+        card, detail = await self.ask_start(session_id, str(msg.get("card_id") or ""))
+        if card is None:
+            return {"ok": False, "detail": detail}
+        logger.info("Mission Control asked to start board card %s",
+                    str(card.get("id") or "")[:8])
+        return {"ok": True, "detail": detail, "card_id": card.get("id"),
+                "column": card.get("column_name"), "title": card.get("title"),
+                "project": card.get("project")}
 
     #: How many Backlog cards one `start_project` press will walk. Above
     #: `board.MAX_QUEUED_PER_PROJECT` (8) plus the parallel clamp's ceiling
@@ -2674,8 +3582,10 @@ class BoardVerbsMixin:
     async def _dispatch_card_locked(self, card_id: str,
                                     allow_unplanned: bool = False,
                                     queued_replay: bool = False,
-                                    own_terminal: Optional[bool] = None) -> tuple:
-        """The body of `dispatch_card`, under `_dispatch_lock`. No other caller.
+                                    own_terminal: Optional[bool] = None,
+                                    batch: Optional[list] = None) -> tuple:
+        """The body of `dispatch_card`, under `_dispatch_lock`. No other caller
+        but the batch press (`_start_cards_locked`), which passes `batch`.
 
         `queued_replay` says the caller is the queue's drain rather than a
         person, and it changes **two things**. First, what happens to a card
@@ -2690,8 +3600,30 @@ class BoardVerbsMixin:
         it re-runs the same guards a fresh press would hit, and a card it
         cannot start is *dequeued* with the refusal written on it rather than
         retried at reconcile cadence for ever.
+
+        `batch` (the batch-implement press, and only it) is the ordered list
+        of every card one session will work, this card first. It changes
+        three things and no guard: the prompt is
+        `dispatch.implement_batch_prompt(batch)`; a card that could only
+        *wait* — a transient guard refusal, an unmet dependency, a full
+        project — is refused in words and **never enqueued**, because a
+        queue of a batch is not a thing the drain knows how to start; and
+        the store write carries a fresh `batch_id` with `batch_rank` 1,
+        handed back on `self._last_batch_token`. Without `batch` the update
+        dict and the argv are byte-identical to what they were.
         """
+        self._last_batch_token = ""
         card = await self._board_call("get", card_id)
+        # A batch member still waiting its turn is refused before anything
+        # else, hard, never queued: it will be bound by its own session's
+        # `dark_army_next_card`, and a second session on it would be two
+        # sessions racing for one card. Leave batch (`board_reset`) frees it.
+        if card is not None and batch is None and _batch_marked_unbound(card):
+            # Still waiting in Backlog, or dragged out of it with its mark:
+            # either way the batch's own session is the one to bind it.
+            refusal = (BATCH_WAITING_REFUSAL if _batch_waiting(card)
+                       else BATCH_MEMBER_REFUSAL)
+            return await self._queue_hard_refusal(card, refusal, queued_replay)
         # The plan gate, before the guard: a dispatch is an arrival in
         # In progress by construction, and the refusal names the way through
         # (the confirmed press carries `allow_unplanned`). A missing card
@@ -2741,10 +3673,24 @@ class BoardVerbsMixin:
             card, roots=roots, in_flight=in_flight, now=time.time(),
             last_attempt=self._dispatch_attempts.get(str(card_id)))
         if not ok:
+            if batch is not None:
+                # A batch is never queued: the words, and nothing written.
+                return False, detail
             if card is not None and dispatch.is_transient(detail):
                 # It will pass on its own. A person's press joins the queue; a
-                # replay simply waits where it already is.
-                return await self._enqueue_card(card, queued_replay)
+                # replay simply waits where it already is. A card that also
+                # waits on an unfinished card says so rather than blaming the
+                # in-flight bound — the dependency is the longer wait.
+                unmet = None
+                if not queued_replay:
+                    unmet = await loop.run_in_executor(
+                        None, functools.partial(
+                            self._unmet_dependencies, card,
+                            {c["id"]: c for c in all_cards if c.get("id")},
+                            self._dependency_running_ids(
+                                self._agents_snapshot_cache)))
+                return await self._enqueue_card(card, queued_replay,
+                                                unmet=unmet or None)
             return await self._queue_hard_refusal(card, detail, queued_replay)
 
         # The queue gate, *after* `guard`. Here rather than inside `guard`
@@ -2769,10 +3715,37 @@ class BoardVerbsMixin:
         if card is not None:
             active = await loop.run_in_executor(
                 None, self._claiming_session_ids)
+            # The dependency gate, after `guard` for the queue gate's own
+            # reason (only a card that could start once it is free may be
+            # queued) and before the slot rule, because a card waiting on
+            # another card is not waiting for a place. It **queues, never
+            # refuses**: a person's press joins the line with a sentence
+            # naming what it waits for, and the drain's replay holds
+            # silently — `_enqueue_card` returns before any store call —
+            # until every dependency is met. Nothing here starts a card
+            # nobody pressed Start on: a dependency becoming met only lets
+            # the drain replay a card that is already `queued`, and the
+            # replay re-runs every gate above at that instant.
+            running_ids = self._dependency_running_ids(
+                self._agents_snapshot_cache)
+            by_id = {c["id"]: c for c in all_cards if c.get("id")}
+            unmet = await loop.run_in_executor(
+                None, functools.partial(
+                    self._unmet_dependencies, card, by_id,
+                    running_ids, active))
+            if unmet:
+                if batch is not None:
+                    return False, BATCH_DEPENDENCY_REFUSAL
+                return await self._enqueue_card(card, queued_replay,
+                                                active=active, unmet=unmet)
             held = await loop.run_in_executor(
                 None, functools.partial(
-                    self._slot_refusal, card, all_cards, active=active))
+                    self._slot_refusal, card, all_cards, active=active,
+                    running_ids=running_ids))
             if held:
+                if batch is not None:
+                    return False, BATCH_NO_PLACE_REFUSAL.format(
+                        project=str(card.get("project") or "this project"))
                 return await self._enqueue_card(card, queued_replay,
                                                 active=active)
 
@@ -2789,23 +3762,31 @@ class BoardVerbsMixin:
         # The strip in front of it is for cards prepared *before* that was
         # true, whose stored prompt already carries the paths: it cleans the
         # spawned text only, and never what is saved.
-        prompt = dispatch.start_prompt(card)
-        rels = attachments.split_field(card.get("attachments"))
-        if rels:
-            abs_paths = await loop.run_in_executor(
-                None, attachments.resolve_paths, rels)
-            prompt = (attachments.strip_path_lines(prompt, abs_paths)
-                      + attachments.prompt_block_from_abs(abs_paths))
-        # The person's objective rides last, after the attachment block and
-        # after `guard` judged the one-line prompt, so a criterion beginning
-        # with `-` cannot change what the guard saw. Empty when the card has
-        # none: an unobjectived card's argv is byte-identical to before.
-        prompt += dispatch.objective_block(card)
-        slug = str(card.get("area") or "")
-        brief = areas.brief_path(slug)
-        brief_present = bool(brief) and await loop.run_in_executor(
-            None, os.path.isfile, os.path.join(str(card.get("root") or ""), brief))
-        prompt += dispatch.area_block(card, brief_present)
+        if batch is not None:
+            prompt = await self._implement_batch_prompt(batch)
+            refusal = dispatch.prompt_refusal(card["tool"], prompt)
+            if refusal:
+                return False, refusal
+        else:
+            prompt = dispatch.start_prompt(card)
+            rels = attachments.split_field(card.get("attachments"))
+            if rels:
+                abs_paths = await loop.run_in_executor(
+                    None, attachments.resolve_paths, rels)
+                prompt = (attachments.strip_path_lines(prompt, abs_paths)
+                          + attachments.prompt_block_from_abs(abs_paths))
+            # The person's objective rides last, after the attachment block
+            # and after `guard` judged the one-line prompt, so a criterion
+            # beginning with `-` cannot change what the guard saw. Empty when
+            # the card has none: an unobjectived card's argv is
+            # byte-identical to before.
+            prompt += dispatch.objective_block(card)
+            slug = str(card.get("area") or "")
+            brief = areas.brief_path(slug)
+            brief_present = bool(brief) and await loop.run_in_executor(
+                None, os.path.isfile,
+                os.path.join(str(card.get("root") or ""), brief))
+            prompt += dispatch.area_block(card, brief_present)
 
         # The card's own model wins; a card left at Default takes the
         # main-session model chosen for this assistant in this project
@@ -2817,6 +3798,8 @@ class BoardVerbsMixin:
                    or self._agent_model_for(card.get("root"), card["tool"],
                                             "main")))
         name = (card.get("title") or "agent")[:40]
+        if batch is not None:
+            name = (f"batch: {len(batch)} cards")[:40]
         # Everything the fleet already had. The session this launch produces is
         # the first one that is *not* in here — see `_bind_dispatched_card`.
         # Taken *before* the spawn await: the extension's reply can lose the
@@ -2872,7 +3855,7 @@ class BoardVerbsMixin:
         # `bump=False`: Dark Army moving a card it is starting is not somebody
         # editing it, and a change number that moved here would refuse the
         # save of whoever was typing into the card at the time.
-        await self._board_call("update", card["id"], {
+        fields = {
             "link_state": "dispatching",
             # The card moves the moment the terminal opens, not when the session
             # is finally bound. Binding takes up to `DISPATCH_BIND_WINDOW`, and a
@@ -2891,7 +3874,15 @@ class BoardVerbsMixin:
             # second time. Belt and braces, and the braces are one line.
             "queue_state": "",
             "queued_at": None,
-        }, bump=False)
+        }
+        if batch is not None:
+            # The batch's mark, on the head alone: the waiting members are
+            # marked by the caller once this write has landed. Only here, so
+            # a single Start's update is byte-identical to what it was.
+            self._last_batch_token = secrets.token_hex(8)
+            fields["batch_id"] = self._last_batch_token
+            fields["batch_rank"] = "1"
+        await self._board_call("update", card["id"], fields, bump=False)
         await self._publish_board()
         # Where this project stood the moment work started, so the record
         # written at the end has something to measure against. Scheduled and
@@ -2908,10 +3899,193 @@ class BoardVerbsMixin:
                              root=str(card.get("root") or ""))
         return True, spawn_detail
 
+    # --- card dependencies (docs/card-dependencies.md) ---------------------
+
+    def _dependency_entries(self, card: dict, by_id: dict,
+                            running_ids: Optional[set],
+                            active: Optional[set], *,
+                            fetch: bool = True) -> list:
+        """Every dependency of `card` that still names a card, with its met
+        bit: `[{id, title, column_name, met}]` in the stored order.
+        Blocking where `fetch` reads the store; executor only.
+
+        **The one resolver.** The gate, the drain and the decoration all
+        come through here with the same `running_ids` / `active` pair, and
+        "met" is `board_queue.dependency_met` over `_card_session_working` —
+        the manual-check badge's own predicate — so the tile, the gate and
+        the drain cannot disagree about one card. An id `by_id` lacks is
+        looked up with one `cards_by_id` read when `fetch` is on (a
+        dependency finished a week ago is outside the frame); an id that
+        names no card at all is **met and left out** — the rule, not an
+        accident of what the frame happened to hold.
+        """
+        ids = board.parse_ids((card or {}).get("blocked_by"))
+        if not ids:
+            return []
+        known = by_id or {}
+        missing = [i for i in ids if i not in known]
+        extra: dict = {}
+        if missing and fetch and self._board is not None:
+            extra = self._board.cards_by_id(missing)
+        sessions = active if active is not None else set()
+        out = []
+        for dep_id in ids:
+            dep = known.get(dep_id) or extra.get(dep_id)
+            if dep is None:
+                continue
+            if running_ids is None:
+                # No agents snapshot yet (the seconds after a restart): who
+                # is working is unknown, so a bound session counts as
+                # working — a press in that window waits rather than
+                # starting beside a dependency still being worked on.
+                working = str(dep.get("link_state") or "") in (
+                    "dispatching", "live")
+            else:
+                working = self._card_session_working(
+                    dep, running_ids, sessions)
+            out.append({
+                "id": str(dep.get("id") or dep_id),
+                "title": str(dep.get("title") or ""),
+                "column_name": str(dep.get("column_name") or ""),
+                "met": board_queue.dependency_met(dep, working),
+            })
+        return out
+
+    @classmethod
+    def _dependency_running_ids(cls, snapshot) -> Optional[set]:
+        """`_board_running_ids(snapshot)`, or **None** where no agents
+        snapshot has arrived yet — `_dependency_entries`' "unknown", read
+        conservatively. The badge keeps its own self-correcting reading."""
+        snapshot = snapshot or {}
+        if not any(k in snapshot for k in
+                   ("running", "waiting", "sleeping", "finished")):
+            return None
+        return cls._board_running_ids(snapshot)
+
+    def _unmet_dependencies(self, card: dict, by_id: dict,
+                            running_ids: Optional[set] = None,
+                            active: Optional[set] = None, *,
+                            fetch: bool = True) -> list:
+        """The dependencies of `card` that hold it, `_dependency_entries`
+        filtered to `met` false. Executor only. `running_ids` is the caller's
+        `_dependency_running_ids` reading — None meaning no agents snapshot
+        yet, read conservatively — and `active` defaults to one
+        `_claiming_session_ids()` walk. `fetch=False` is for a caller whose
+        `by_id` is already the whole board, where an id it lacks names no
+        card and a store read would find nothing."""
+        if active is None:
+            active = self._claiming_session_ids()
+        return [e for e in self._dependency_entries(
+            card, by_id, running_ids, active, fetch=fetch) if not e["met"]]
+
+    def _dependency_held_ids(self, cards: list, running_ids: Optional[set],
+                             active: Optional[set]) -> set:
+        """The ids of the **queued** cards in `cards` that an unmet dependency
+        holds. What `board_queue.eligible` drops from the drain's head and
+        from `_slot_refusal`'s "queued ahead" rung, so a card that cannot
+        start never stands in another's way. Executor only. Both callers
+        hand the whole board (`BoardStore.cards()`), so no id is outside it
+        and the store is not asked again — this runs on every reconcile."""
+        by_id = {c["id"]: c for c in cards or () if c.get("id")}
+        held = set()
+        for card in cards or ():
+            if str(card.get("queue_state") or "") != "queued":
+                continue
+            if not board.parse_ids(card.get("blocked_by")):
+                continue
+            if self._unmet_dependencies(card, by_id, running_ids, active,
+                                        fetch=False):
+                held.add(str(card.get("id") or ""))
+        return held
+
+    def _dependency_frame(self, cards: list) -> tuple:
+        """`(by_id, dependents)` for one snapshot. Blocking; executor only.
+
+        `by_id` is the frame's cards plus every dependency they name that
+        the frame does not hold, read in **one** `cards_by_id` — never a read
+        per card. `dependents` is the reverse map, `{dependency id: [{id,
+        title}]}`, built off the frame's own cards and leaving Done ones out:
+        "unblocks" a finished card would tell nobody anything.
+        """
+        by_id = {c["id"]: c for c in cards or () if c.get("id")}
+        wanted = []
+        dependents: dict = {}
+        for card in cards or ():
+            ids = board.parse_ids(card.get("blocked_by"))
+            for dep_id in ids:
+                if dep_id not in by_id and dep_id not in wanted:
+                    wanted.append(dep_id)
+            if not ids or str(card.get("column_name") or "") == "done":
+                continue
+            for dep_id in ids:
+                dependents.setdefault(dep_id, []).append({
+                    "id": str(card.get("id") or ""),
+                    "title": str(card.get("title") or "")})
+        if wanted and self._board is not None:
+            by_id = dict(by_id)
+            by_id.update(self._board.cards_by_id(wanted))
+        return by_id, dependents
+
+    def _resolve_dependency_refs(self, refs, root: str,
+                                 exclude_id: str = "") -> tuple:
+        """Card ids for a list of references, or a refusal in words.
+        `(ids, refusal)`; blocking (it reads the board), executor only.
+
+        Each reference is a card id **or an exact title** — trimmed,
+        case-insensitive — among the cards of the same project folder
+        (Done included, the card itself excluded). One reference that names
+        no card, or more than one, refuses the **whole** list: a partial list
+        is a card that starts before something it was meant to wait for.
+        Bounded at `board.MAX_BLOCKERS` references, each clamped at
+        `MAX_DEPENDENCY_REF_CHARS`.
+        """
+        wanted: list = []
+        for ref in refs or ():
+            text = str(ref or "").strip()[:MAX_DEPENDENCY_REF_CHARS]
+            if text and text not in wanted:
+                wanted.append(text)
+            if len(wanted) >= board.MAX_BLOCKERS:
+                break
+        if not wanted:
+            return [], ""
+        mine = dispatch.normalise_root(str(root or ""))
+        if not mine:
+            return [], ("this card names no project folder, so it cannot "
+                        "wait on another card")
+        if self._board is None:
+            return [], "the board is not open"
+        roots: dict = {}
+
+        def same_project(card: dict) -> bool:
+            raw = str(card.get("root") or "")
+            if raw not in roots:
+                roots[raw] = dispatch.normalise_root(raw)
+            return roots[raw] == mine
+
+        pool = [c for c in self._board.cards()
+                if str(c.get("id") or "") != str(exclude_id or "")
+                and same_project(c)]
+        ids: list = []
+        for ref in wanted:
+            by_id = [c for c in pool if str(c.get("id") or "") == ref]
+            if by_id:
+                ids.append(str(by_id[0]["id"]))
+                continue
+            named = [c for c in pool
+                     if str(c.get("title") or "").strip().lower() == ref.lower()]
+            if not named:
+                return [], f'no card in this project is called "{ref}"'
+            if len(named) > 1:
+                return [], (f'"{ref}" names more than one card in this '
+                            "project — use its id")
+            ids.append(str(named[0]["id"]))
+        return board.parse_ids(ids), ""
+
     # --- the per-project work queue -----------------------------------
 
     def _slot_refusal(self, card: dict, all_cards: list,
-                      active: Optional[set] = None) -> bool:
+                      active: Optional[set] = None,
+                      running_ids: Optional[set] = None) -> bool:
         """Whether this card must wait for a place in its project. Blocking-ish
         (it walks the board); handed to the executor by its one caller, which
         also hands it the frame's one `_claiming_session_ids()` reading as
@@ -2949,6 +4123,12 @@ class BoardVerbsMixin:
            joining the back, so every queued card is ahead of it; that case
            cannot be left to the sort key, since an unqueued card's `queued_at`
            of None reads as 0.0 and would jump the whole queue.
+
+        A queued card held by an unmet dependency is **not** ahead of anyone
+        (`board_queue.eligible`): it cannot start, so counting it would let A,
+        waiting on B and queued first, hold B for ever — the same deadlock one
+        rung on. `running_ids` is the caller's reading for that check, the
+        cached agents snapshot's where it has none.
         """
         project = str(card.get("project") or "")
         cid = str(card.get("id") or "")
@@ -2962,6 +4142,12 @@ class BoardVerbsMixin:
                   if str(c.get("project") or "") == project
                   and str(c.get("queue_state") or "") == "queued"
                   and str(c.get("id") or "") != cid]
+        if queued:
+            if running_ids is None:
+                running_ids = self._dependency_running_ids(
+                    self._agents_snapshot_cache)
+            queued = board_queue.eligible(queued, self._dependency_held_ids(
+                all_cards, running_ids, active))
         if str(card.get("queue_state") or "") == "queued":
             mine_key = board_queue.queue_key(card)
             queued = [c for c in queued
@@ -2969,12 +4155,16 @@ class BoardVerbsMixin:
         return bool(queued)
 
     async def _enqueue_card(self, card: dict, queued_replay: bool,
-                            active: Optional[set] = None) -> tuple:
+                            active: Optional[set] = None,
+                            unmet: Optional[list] = None) -> tuple:
         """Hold this card in its project's queue. Always `(False, detail)`.
 
         `active` is the caller's `_claiming_session_ids()` reading, where it
         has one, so the sentence below is composed from the same count the
-        gate just judged.
+        gate just judged. `unmet` is the dependency gate's list, where that
+        is why the card waits: the sentence then names those cards
+        (`_dependency_reason`) instead of counting agents — the badge's own
+        words a frame later, by the decoration's same rule.
 
         `ok=False` keeps `dispatch_card`'s invariant that True means a terminal
         really opened. The panel shows the sentence once on the refusal line;
@@ -3024,6 +4214,12 @@ class BoardVerbsMixin:
             # silently drops an enqueue is a card nobody will ever start.
             return False, detail
         await self._publish_board()
+        if unmet:
+            titles = [str(e.get("title") or "") for e in unmet]
+            logger.info("queued card %s: waiting on %d unfinished card(s)",
+                        card["id"][:8], len(titles))
+            return False, _D._dependency_reason(
+                titles, bool(self.board_autostart_enabled))
         project = str(card.get("project") or "")
         if active is None:
             active = self._claiming_session_ids()
@@ -3301,7 +4497,29 @@ class BoardVerbsMixin:
         if not spawned:
             return False, spawn_detail
 
-        now = time.time()
+        await self._note_refine_spawn(card, time.time(), baseline, shell_pid,
+                                      use_own, batch="")
+        await self._publish_board()
+        logger.info("refining card %s in %s", card["id"][:8], card["root"])
+        self._log_card_event(card, "card_dispatched", tool=tool,
+                             root=str(card.get("root") or ""), phase="refinement")
+        return True, spawn_detail
+
+    async def _note_refine_spawn(self, card: dict, now: float, baseline: set,
+                                 shell_pid, use_own: bool, *, batch: str = "",
+                                 rank: int = 0) -> None:
+        """Record one card's side of a refinement spawn: the cooldown stamp,
+        the bind baseline, the terminal receipt and the store's
+        `refine_state = "dispatching"`.
+
+        `_refine_card_locked`'s tail, lifted out so the batch verb writes each
+        of its cards exactly as a single Refine writes its one. `batch` and
+        `rank` ride the store update **only when `batch` is non-empty**, so a
+        single Refine's update dict is byte-identical to what it was. Every
+        card of a batch gets the same baseline, receipt and stamp, which is
+        what lets `_bind_refining_card` bind them all to the one session on
+        the same pass without a line of its own changing.
+        """
         self._dispatch_attempts[card["id"]] = now
         self._refine_baseline[card["id"]] = baseline
         # The terminal receipt, shared with the dispatch's map: the two verbs
@@ -3335,16 +4553,530 @@ class BoardVerbsMixin:
         # rewrites the stamp for itself; `reset_card` clears the stamp and
         # both link fields in one write, so no interleaving hands one verb
         # the other's clock.
-        await self._board_call("update", card["id"], {
+        fields = {
             "refine_state": "dispatching",
             "dispatched_at": now,
             "dispatch_error": "",
-        })
+        }
+        if batch:
+            fields["batch_id"] = batch
+            fields["batch_rank"] = str(rank)
+        await self._board_call("update", card["id"], fields)
+
+    async def refine_cards(self, card_ids: list) -> tuple:
+        """Dispatch **one** planning session onto several Prep cards.
+        `(ok, detail)`.
+
+        `refine_card`'s sibling for a pile: the same preference, the same
+        lock end to end, every card judged by `refine_guard` against the
+        store at the moment of dispatch, and one spawn. Every card is then
+        written exactly as a single Refine writes its one (`_note_refine_spawn`)
+        plus a shared batch mark — `batch_id`, a token minted here, and
+        `batch_rank`, the card's place in the prompt — which is what
+        `_launch_inflight` counts once and what the attach and the reconcile
+        read. Nothing about a single Refine changes.
+        """
+        if not self.board_dispatch_enabled:
+            return False, "Dark Army is not allowed to start sessions (see the ⋯ menu)"
+        if self._board is None:
+            return False, "the board is not open"
+        async with self._dispatch_lock:
+            return await self._refine_cards_locked(list(card_ids or []))
+
+    async def _refine_cards_locked(self, card_ids: list) -> tuple:
+        """The body of `refine_cards`, under `_dispatch_lock`. No other caller.
+
+        Refuses the whole press on the first card that could not be refined
+        alone, in words naming that card, and writes nothing to any card
+        before the spawn has succeeded.
+        """
+        ids: list = []
+        for raw in card_ids:
+            cid = str(raw or "").strip()
+            if cid and cid not in ids:
+                ids.append(cid)
+        if len(ids) < 2:
+            return False, BATCH_TOO_FEW_REFUSAL
+        if len(ids) > board.MAX_BATCH_CARDS:
+            return False, BATCH_TOO_MANY_REFUSAL.format(limit=board.MAX_BATCH_CARDS)
+        cards: list = []
+        for cid in ids:
+            card = await self._board_call("get", cid)
+            if card is None:
+                return False, "no such card"
+            cards.append(card)
+
+        def title_of(card: dict) -> str:
+            return str(card.get("title") or "").strip() or "a card"
+
+        for card in cards:
+            refusal = await self._enrollment_refusal(card)
+            if refusal:
+                return False, f"{title_of(card)}: {refusal}"
+        loop = asyncio.get_running_loop()
+        card_roots = await loop.run_in_executor(
+            None, lambda: [dispatch.normalise_root(c.get("root") or "")
+                           for c in cards])
+        for card, croot in zip(cards, card_roots):
+            if croot != card_roots[0]:
+                return False, BATCH_MIXED_ROOT_REFUSAL.format(title=title_of(card))
+        tool = str(cards[0].get("tool") or "")
+        for card in cards:
+            if str(card.get("tool") or "") != tool:
+                return False, BATCH_MIXED_TOOL_REFUSAL.format(title=title_of(card))
+        for card in cards:
+            if dispatch.named_plan(card):
+                return False, BATCH_NAMED_PLAN_REFUSAL.format(title=title_of(card))
+
+        # Computed once for the whole press, `_refine_card_locked`'s widening
+        # verbatim: the cards share one root, so they share one answer.
+        roots = await loop.run_in_executor(None, self._known_project_roots)
+        use_own = bool(getattr(self, "board_own_terminal_enabled", False))
+        if use_own:
+            enrolled = await loop.run_in_executor(None, enrollment.enrolled_roots)
+            roots = set(roots) | {dispatch.normalise_root(r) for r in enrolled if r}
+            roots.discard("")
+        in_flight = self._launch_inflight(
+            await self._board_call("cards") or [])
+        now = time.time()
+        for card in cards:
+            ok, detail = dispatch.refine_guard(
+                card, roots=roots, in_flight=in_flight, now=now,
+                last_attempt=self._dispatch_attempts.get(str(card["id"])))
+            if not ok:
+                return False, f"{title_of(card)}: {detail}"
+
+        # One prompt: the batch head and a block per card, then each card's
+        # attachments under a line naming its place. The batch prompt bakes
+        # in no path lines, so nothing is stripped; a vanished copy is
+        # omitted, as a single Refine omits it.
+        prompt = dispatch.refine_batch_prompt(cards)
+        for k, card in enumerate(cards, start=1):
+            rels = attachments.split_field(card.get("attachments"))
+            if not rels:
+                continue
+            abs_paths = await loop.run_in_executor(
+                None, attachments.resolve_paths, rels)
+            block = attachments.prompt_block_from_abs(abs_paths)
+            if block:
+                prompt += f"\n\nAttachments for card {k}:" + block
+        # Belt and braces, as `refine_guard` does for one card: the head is
+        # Dark Army's own, but the check costs nothing and belongs here.
+        refusal = dispatch.prompt_refusal(tool, prompt)
+        if refusal:
+            return False, refusal
+        executable = await loop.run_in_executor(
+            None, dispatch.resolve_executable, tool)
+        if not executable:
+            return False, dispatch.NOT_INSTALLED_REFUSAL.format(tool=tool)
+        root = str(cards[0].get("root") or "")
+        argv = dispatch.argv_for(
+            tool, executable, prompt,
+            model=self._agent_model_for(root, tool, "main"))
+        n = len(cards)
+        name = (f"refine: {n} cards")[:40]
+        # Before the spawn await, `_refine_card_locked`'s stated reason.
+        baseline = self._live_session_ids()
+        spawner = dispatch.spawn_local if use_own else dispatch.spawn
+        # The stamp names one card — the first — because an origin names one;
+        # the others reach the session through `refine_session_id`.
+        spawned, spawn_detail, shell_pid = await spawner(
+            root, argv, name,
+            stamp=origin.stamp("card-refine", cards[0]["id"], "bc-planner"))
+        if not spawned:
+            return False, spawn_detail
+
+        token = secrets.token_hex(8)
+        now = time.time()
+        for k, card in enumerate(cards, start=1):
+            await self._note_refine_spawn(card, now, baseline, shell_pid,
+                                          use_own, batch=token, rank=k)
         await self._publish_board()
-        logger.info("refining card %s in %s", card["id"][:8], card["root"])
-        self._log_card_event(card, "card_dispatched", tool=tool,
-                             root=str(card.get("root") or ""), phase="refinement")
+        logger.info("refining %d cards in one session in %s", n, root)
+        for card in cards:
+            self._log_card_event(card, "card_dispatched", tool=tool,
+                                 root=str(card.get("root") or ""),
+                                 phase="refinement", batch=n)
         return True, spawn_detail
+
+    # --- Batch implementation: several Backlog cards, one session ----------
+    # `plans/2026-09-25-batch-implement-backlog-cards.md`.
+
+    async def start_cards(self, card_ids: list) -> tuple:
+        """Start **one** implementation session on several planned Backlog
+        cards, worked one at a time. `(ok, detail)`.
+
+        `start_project`'s precedent, one gesture on: the person ticked every
+        member at the press, so Dark Army selects no work. Every card is
+        judged against every rule a single Start uses — the plan gate (no
+        `allow_unplanned`: a confirmation is a thing a person gives about
+        one card), the enrolment refusal, `dispatch.guard`, the dependency
+        gate — and a card that fails is **skipped and reported**, never
+        written. Then the slot gate for the project, and one spawn through
+        `_dispatch_card_locked(head, batch=…)`. The session is bound to the
+        first card alone; the rest wait in Backlog carrying only `batch_id`
+        / `batch_rank` until the session's own `dark_army_next_card` binds
+        the next. One bound card at a time is one claim, so the batch
+        counts once against the project's parallel limit by construction.
+
+        `_dispatch_lock` is taken once for the whole press. No event-log
+        kind: the head's `card_dispatched` is `_dispatch_card_locked`'s, and
+        a waiting card writes no diary line.
+        """
+        if not self.board_dispatch_enabled:
+            return False, "Dark Army is not allowed to start sessions (see the ⋯ menu)"
+        if self._board is None:
+            return False, "the board is not open"
+        async with self._dispatch_lock:
+            return await self._start_cards_locked(list(card_ids or []))
+
+    async def _start_cards_locked(self, card_ids: list) -> tuple:
+        """The body of `start_cards`, under `_dispatch_lock`. No other caller.
+
+        Whole-press refusals (too few, too many, two projects, two
+        assistants, grok, no free place) write nothing; per-card refusals
+        skip that card and are named in the reply. Nothing is written to any
+        card before the spawn has succeeded.
+        """
+        ids: list = []
+        for raw in card_ids:
+            cid = str(raw or "").strip()
+            if cid and cid not in ids:
+                ids.append(cid)
+        if len(ids) < 2:
+            return False, BATCH_START_TOO_FEW_REFUSAL
+        if len(ids) > board.MAX_BATCH_CARDS:
+            return False, BATCH_START_TOO_MANY_REFUSAL.format(
+                limit=board.MAX_BATCH_CARDS)
+
+        def title_of(card: dict) -> str:
+            return str(card.get("title") or "").strip() or "a card"
+
+        # In the board's own order (`CARD_ORDER_SQL`), never tick order: the
+        # shared selection is a set, and the line the session works through
+        # is the line the person is looking at.
+        backlog = await self._board_call("cards", ["backlog"]) or []
+        wanted = set(ids)
+        named = [c for c in backlog if str(c.get("id") or "") in wanted]
+        skips: list = []
+        found = {str(c.get("id") or "") for c in named}
+        for cid in ids:
+            if cid in found:
+                continue
+            gone = await self._board_call("get", cid)
+            skips.append((title_of(gone or {}), BATCH_NOT_BACKLOG_REFUSAL))
+        if len(named) < 2:
+            return False, _skip_lines(BATCH_START_TOO_FEW_REFUSAL, skips)
+
+        loop = asyncio.get_running_loop()
+        card_roots = await loop.run_in_executor(
+            None, lambda: [dispatch.normalise_root(c.get("root") or "")
+                           for c in named])
+        for card, croot in zip(named, card_roots):
+            if croot != card_roots[0]:
+                return False, BATCH_START_MIXED_ROOT_REFUSAL.format(
+                    title=title_of(card))
+        tool = str(named[0].get("tool") or "")
+        for card in named:
+            if str(card.get("tool") or "") != tool:
+                return False, BATCH_START_MIXED_TOOL_REFUSAL.format(
+                    title=title_of(card))
+        if tool == "grok":
+            return False, BATCH_TOOL_REFUSAL
+
+        # Computed **once, before any spawn**, so members 2..n are judged
+        # against the board as it stood at the press — never refused by the
+        # head's own launch (`PROJECT_BUSY_REFUSAL`).
+        roots = await loop.run_in_executor(None, self._known_project_roots)
+        if bool(getattr(self, "board_own_terminal_enabled", False)):
+            enrolled = await loop.run_in_executor(None, enrollment.enrolled_roots)
+            roots = set(roots) | {dispatch.normalise_root(r) for r in enrolled if r}
+            roots.discard("")
+        all_cards = await self._board_call("cards") or []
+        in_flight = self._launch_inflight(all_cards)
+        active = await loop.run_in_executor(None, self._claiming_session_ids)
+        running_ids = self._board_running_ids(self._agents_snapshot_cache or {})
+        by_id = {c["id"]: c for c in all_cards if c.get("id")}
+        now = time.time()
+        survivors: list = []
+        for card in named:
+            refusal = ""
+            if str(card.get("kind") or "") == board.KIND_SCOUT:
+                refusal = BATCH_SCOUT_REFUSAL
+            elif str(card.get("queue_state") or "") == "queued":
+                refusal = BATCH_QUEUED_REFUSAL
+            elif str(card.get("batch_id") or ""):
+                refusal = BATCH_WAITING_REFUSAL
+            if not refusal:
+                refusal = await self._plan_gate_refusal(card)
+            if not refusal:
+                refusal = await self._enrollment_refusal(card)
+            if not refusal:
+                ok, detail = dispatch.guard(
+                    card, roots=roots, in_flight=in_flight, now=now,
+                    last_attempt=self._dispatch_attempts.get(str(card["id"])))
+                # A transient refusal is a skip too, never an enqueue: a
+                # queue of a batch is not a thing the drain can start.
+                refusal = "" if ok else detail
+            if not refusal:
+                earlier = {str(c.get("id") or "") for c in survivors}
+                unmet = await loop.run_in_executor(
+                    None, functools.partial(
+                        self._unmet_dependencies, card, by_id,
+                        running_ids, active))
+                # A card waiting on an earlier member of this same batch is
+                # fine: the session reaches it only after that one.
+                if [e for e in unmet if e.get("id") not in earlier]:
+                    refusal = BATCH_DEPENDENCY_REFUSAL
+            if refusal:
+                skips.append((title_of(card), refusal))
+            else:
+                survivors.append(card)
+        if len(survivors) < 2:
+            return False, _skip_lines(BATCH_START_TOO_FEW_REFUSAL, skips)
+
+        head = survivors[0]
+        held = await loop.run_in_executor(
+            None, functools.partial(
+                self._slot_refusal, head, all_cards, active=active,
+                running_ids=running_ids))
+        if held:
+            return False, BATCH_NO_PLACE_REFUSAL.format(
+                project=str(head.get("project") or "this project"))
+
+        ok, detail = await self._dispatch_card_locked(
+            str(head["id"]), batch=survivors)
+        if not ok:
+            return False, _skip_lines(detail, skips)
+        token = str(getattr(self, "_last_batch_token", "") or "")
+        waiting = 0
+        for rank, card in enumerate(survivors[1:], start=2):
+            if not token:
+                break
+            # `bump=False`: Dark Army's own bookkeeping, not a person's edit.
+            # The column stays `backlog`; only the mark is written.
+            marked, _why = await self._board_call("update", card["id"], {
+                "batch_id": token, "batch_rank": str(rank),
+                "dispatch_error": ""}, bump=False) or (None, "")
+            if marked is not None:
+                waiting += 1
+        await self._publish_board()
+        logger.info("started %d cards in one session in %s (%d skipped)",
+                    waiting + 1, card_roots[0], len(skips))
+        return True, _D._start_batch_report(title_of(head), waiting, skips)
+
+    async def _implement_batch_prompt(self, cards: list) -> str:
+        """`dispatch.implement_batch_prompt(cards)` plus what the daemon
+        appends: each member's attachments under a line naming its place,
+        then the area block once per distinct area. The batch prompt bakes
+        in no path lines, so nothing is stripped; a vanished copy is
+        omitted, as a single Start omits it. Loop; the file reads hop."""
+        loop = asyncio.get_running_loop()
+        prompt = dispatch.implement_batch_prompt(cards)
+        for k, card in enumerate(cards, start=1):
+            rels = attachments.split_field(card.get("attachments"))
+            if not rels:
+                continue
+            abs_paths = await loop.run_in_executor(
+                None, attachments.resolve_paths, rels)
+            block = attachments.prompt_block_from_abs(abs_paths)
+            if block:
+                prompt += f"\n\nAttachments for card {k}:" + block
+        seen_areas: set = set()
+        for card in cards:
+            slug = str(card.get("area") or "")
+            if not slug or slug in seen_areas:
+                continue
+            seen_areas.add(slug)
+            brief = areas.brief_path(slug)
+            brief_present = bool(brief) and await loop.run_in_executor(
+                None, os.path.isfile,
+                os.path.join(str(card.get("root") or ""), brief))
+            prompt += dispatch.area_block(card, brief_present)
+        return prompt
+
+    async def advance_batch_by_session(self, session_id: str) -> tuple:
+        """Move a batch session on to its next waiting card.
+        `(ok, detail, card_or_None)`.
+
+        The card is resolved from the session and never named by the
+        caller — `close_card_by_session`'s scope. The card it is on now, if
+        still open, is **left**: marked `ended` with its session kept (so
+        it reads as finished-but-not-closed work, `_consider_work_record`
+        and `_freeze_run_health` run at this seam as at the reconcile's),
+        and the next waiting member in rank order is bound to the session
+        (`bind_session`, In progress, `live`). Each candidate re-runs the
+        per-card rungs — the vanished-plan rung of the plan gate, the
+        enrolment refusal, `dispatch.guard` with no launch bounds (nothing
+        spawns here), the dependency gate — and one that fails leaves the
+        batch with its refusal on it. **Nothing starts**: the person chose
+        every member at the press, and this binds one of them to a session
+        that is already running.
+        """
+        if self._board is None:
+            return False, "the board is not open", None
+        if not session_id:
+            return False, BATCH_NOT_BOUND_REFUSAL, None
+        if not self.board_dispatch_enabled:
+            # The launcher switch removes this too: a card moving into In
+            # progress under a session is work Dark Army put in front of it.
+            return (False,
+                    "Dark Army is not allowed to start sessions (see the ⋯ menu)",
+                    None)
+        async with self._dispatch_lock:
+            return await self._advance_batch_locked(session_id)
+
+    async def _advance_batch_locked(self, session_id: str) -> tuple:
+        """The body of `advance_batch_by_session`, under `_dispatch_lock`."""
+        mine = await self._board_call("by_session", session_id) or []
+        marks = {str(c.get("batch_id") or "") for c in mine}
+        if not mine or len(marks) != 1 or "" in marks:
+            return False, BATCH_NO_BATCH_REFUSAL, None
+        bid = marks.pop()
+        members = await self._board_call("batch_members", bid) or []
+        # Only the batch's owning session may walk it (`_batch_owner`): the
+        # session the press bound, whether or not its first card still
+        # exists. A session that came by a member some other way (a card
+        # dragged out of Backlog and forced onto it) is not this batch's,
+        # and must never take its next card.
+        owner = _batch_owner(members)
+        if owner is None or str(owner.get("session_id") or "") != session_id:
+            return False, BATCH_NO_BATCH_REFUSAL, None
+        current = [m for m in members
+                   if str(m.get("session_id") or "") == session_id
+                   and str(m.get("column_name") or "") != "done"
+                   and str(m.get("link_state") or "") != "ended"]
+        if len(current) > 1:
+            return False, BATCH_BUSY_REFUSAL, None
+        loop = asyncio.get_running_loop()
+        now = time.time()
+        if current:
+            left = current[0]
+            await self._board_call("mark_ended", left["id"], when=now)
+            snapshot = self._agents_snapshot_cache or {}
+            await loop.run_in_executor(
+                None, self._consider_work_record, left, snapshot)
+            await self._collect_work_record_now(str(left["id"]))
+            await loop.run_in_executor(
+                None, self._freeze_run_health, left, snapshot)
+        else:
+            # The card this session has just closed keeps `live` in Done, so
+            # the reconcile would record it only when the whole session ends
+            # — with the last card's report and a file list covering every
+            # card after it. Record it here, off the report the session
+            # printed for it, before the next card is bound.
+            # `_consider_work_record` is idempotent on the run, so the
+            # session's end adds no second record.
+            closed = [m for m in members
+                      if str(m.get("session_id") or "") == session_id
+                      and str(m.get("column_name") or "") == "done"
+                      and str(m.get("closed_by") or "") == session_id]
+            if closed:
+                newest = max(closed,
+                             key=lambda m: float(m.get("done_at") or 0.0))
+                snapshot = self._agents_snapshot_cache or {}
+                await loop.run_in_executor(
+                    None, self._consider_work_record, newest, snapshot)
+                await self._collect_work_record_now(str(newest["id"]))
+                await loop.run_in_executor(
+                    None, self._freeze_run_health, newest, snapshot)
+        reached = max([_batch_rank(m) for m in members
+                       if str(m.get("session_id") or "") == session_id] or [0])
+        size = max([len(members)] + [_batch_rank(m) for m in members])
+        waiting = sorted(
+            [m for m in members
+             if _batch_waiting(m) and _batch_rank(m) > reached],
+            key=_batch_rank)
+        roots = None
+        active = None
+        for member in waiting:
+            if roots is None:
+                roots = await loop.run_in_executor(
+                    None, self._known_project_roots)
+                if bool(getattr(self, "board_own_terminal_enabled", False)):
+                    enrolled = await loop.run_in_executor(
+                        None, enrollment.enrolled_roots)
+                    roots = set(roots) | {dispatch.normalise_root(r)
+                                          for r in enrolled if r}
+                    roots.discard("")
+                active = await loop.run_in_executor(
+                    None, self._claiming_session_ids)
+            refusal = await self._plan_gate_refusal(member, replay=True)
+            if not refusal:
+                refusal = await self._enrollment_refusal(member)
+            if not refusal:
+                # `in_flight=[]`: the advance spawns nothing, so the launch
+                # bounds do not apply; every per-card rung still does.
+                ok, detail = dispatch.guard(member, roots=roots, in_flight=[],
+                                            now=now, last_attempt=None)
+                refusal = "" if ok else detail
+            if not refusal:
+                unmet = await loop.run_in_executor(
+                    None, functools.partial(
+                        self._unmet_dependencies, member, {},
+                        None, active))
+                if unmet:
+                    refusal = BATCH_DEPENDENCY_REFUSAL
+            if refusal:
+                await self._board_call("update", member["id"], {
+                    "dispatch_error": refusal, "batch_id": "",
+                    "batch_rank": ""}, bump=False)
+                continue
+            # Re-read and bind under one store lock: a drag or reset that
+            # landed during the hops above leaves the card alone.
+            bound, _why = await self._board_call(
+                "bind_waiting_member", member["id"], session_id,
+                bid) or (None, "")
+            if bound is None:
+                continue
+            bound, _why = await self._board_call("update", member["id"], {
+                "dispatched_at": now, "dispatch_error": ""},
+                bump=False) or (bound, "")
+            await loop.run_in_executor(
+                None, functools.partial(
+                    self._record_outcome_binding, bound, session_id,
+                    "implementation", late=False))
+            self._schedule_work_baseline(
+                str(member["id"]), str(member.get("root") or ""), now)
+            await self._publish_board()
+            rank = _batch_rank(bound or member)
+            logger.info("batch session %s moved on to card %s (%d of %d)",
+                        session_id[:12], str(member["id"])[:8], rank, size)
+            out = dict(bound or member)
+            out["batch_size"] = size
+            return True, f"now on card {rank} of {size}", out
+        await self._publish_board()
+        return True, "the batch is finished — no card left", None
+
+    async def _handle_board_next_request(self, msg: dict) -> dict:
+        """`dark_army_next_card`, through Dark Army's channel.
+
+        `_handle_board_close_request`'s scope discipline: the message
+        carries **no card id** and the schema has no property for one; the
+        caller is resolved from the port (`_board_request_session_fresh`,
+        the close verb's attribution — this verb is open to Codex and it
+        moves a card). The port is the addressing and the scope is the
+        defence: a forger who reaches it can only move *this* session on to
+        a card the person already chose for it at the press. A card id rides
+        the **reply**, the close verb's existing shape; none is accepted on
+        the request.
+        """
+        port = int(msg.get("port") or 0)
+        session_id = (await self._board_request_session_fresh(port) or "") if port else ""
+        if not session_id:
+            return {"ok": False, "detail": BATCH_NOT_BOUND_REFUSAL}
+        if self._board is None:
+            return {"ok": False, "detail": "the board is not open"}
+        ok, detail, card = await self.advance_batch_by_session(session_id)
+        if not ok:
+            return {"ok": False, "detail": detail}
+        if card is None:
+            return {"ok": True, "detail": detail, "remaining": 0}
+        return {"ok": True, "detail": detail, "card_id": card.get("id"),
+                "title": card.get("title"),
+                "plan_path": card.get("plan_path"),
+                "rank": _batch_rank(card),
+                "size": int(card.get("batch_size") or 0)}
 
     async def ask_card(self, card_id: str, text: str) -> tuple:
         """Ask a question about a card. `(ok, detail)`.
@@ -3625,6 +5357,19 @@ class BoardVerbsMixin:
                          or c.get("refine_state") == "dispatching")
                      and now - float(c.get("dispatched_at") or 0.0)
                      <= dispatch.DISPATCH_BIND_WINDOW]
+        # **One session is one launch, however many cards it was handed.** A
+        # batch press marks every card it handed one session with the same
+        # `batch_id`; counting each would spend the machine-wide bound on a
+        # single terminal. The first card of each batch stands for it, and a
+        # card with no mark is keyed on its own id — so a board with no batch
+        # yields exactly the list above, in the same order.
+        if any(c.get("batch_id") for c in in_flight):
+            launches: dict = {}
+            for c in in_flight:
+                key = ("batch", str(c.get("batch_id"))) if c.get("batch_id") \
+                    else ("card", str(c.get("id") or ""))
+                launches.setdefault(key, c)
+            in_flight = list(launches.values())
         for cid, entry in self._consults.items():
             if entry.get("session_id"):
                 continue
@@ -3956,7 +5701,7 @@ class BoardVerbsMixin:
                 card_prepare.agents_json(
                     mission.AGENT_NAME, mission.AGENT_DESCRIPTION, brief),
                 mission.allowed_tools(canonical), mission.AGENT_NAME,
-                mission.OPENING_PROMPT)
+                mission.OPENING_PROMPT, display_name=mission.NAME)
             spawned, spawn_detail, pid = await dispatch.spawn_local(
                 canonical, argv, mission.PTY_NAME,
                 stamp=origin.stamp("mission"))
@@ -4059,13 +5804,27 @@ class BoardVerbsMixin:
         exited = bool(term is not None and term.exited) or bool(
             term is None and record.get("ended"))
         session_id = str(record.get("session_id") or "")
+        current = ""
         if term is not None and term.session_id:
-            if term.session_id != session_id:
-                session_id = term.session_id
-                self._mission = {**dict(record), "session_id": session_id}
-                self._schedule_mission_save()
-            else:
-                session_id = term.session_id
+            current = term.session_id
+            # The broker keeps a terminal's name across a Dark Army restart
+            # and hands it back on re-adopt, so a terminal can still wear an
+            # id this daemon has already forgotten (evicted, then `/clear`ed).
+            # When a stamped successor is running in it, the stale name is
+            # dropped — `_forget_session`'s own `unbind`, which it missed —
+            # and the next enrich binds the successor the ordinary way.
+            if alive and current not in self._session_states:
+                successor = self._mission_successor(term)
+                if successor and successor != current:
+                    self._pty.unbind(current)
+                    current = successor
+        elif alive:
+            current = self._mission_successor(term)
+        if current and current != session_id:
+            self._mission = {**dict(record), "session_id": current}
+            self._schedule_mission_save()
+        if current:
+            session_id = current
         return {
             "available": True,
             "alive": alive,
@@ -4075,6 +5834,35 @@ class BoardVerbsMixin:
             "name": mission.NAME,
             "opened_at": float(record.get("opened_at") or 0.0),
         }
+
+    def _mission_successor(self, term) -> str:
+        """The live session running inside Mission Control's terminal when
+        the terminal wears no name, else `""`.
+
+        The case this answers: a quiet Mission Control is evicted, which
+        unbinds its terminal's name, and then a `/clear` starts a fresh id
+        in the same process. Nothing re-binds that id, so the record kept
+        the evicted one, and every check keyed on it — `ask_start`'s
+        "only Mission Control", Bearings' skip, the Comm tab — answered for
+        a session that no longer exists. Resolved, never bound (the
+        `_mission_handle_if_named` rule): a candidate must carry the
+        `mission` origin stamp *and* run in this terminal by pid, so a card
+        session or a helper Mission Control spawned (no such stamp) never
+        passes. The newest by last event wins. Loop-only."""
+        handle = str(getattr(term, "handle", "") or "")
+        if not handle:
+            return ""
+        best, best_at = "", -1.0
+        for sid, st in self._session_states.items():
+            if origin.parse(str(st.get("origin") or "")).get("by") != "mission":
+                continue
+            pid = st.get("pid")
+            if not pid or self._pty.owns(pid) != handle:
+                continue
+            at = float(st.get("last_event_monotonic") or 0.0)
+            if at > best_at:
+                best, best_at = sid, at
+        return best
 
     def _schedule_mission_save(self) -> None:
         """Book `_save_mission` on the executor from the loop; written
@@ -4548,7 +6336,19 @@ class BoardVerbsMixin:
                         # column move — a session ending says nothing about
                         # whether a plan was written, and if one *was*,
                         # `attach_plan` already moved the card.
-                        self._board.update(cid, {"refine_state": "ended"})
+                        if card.get("batch_id"):
+                            # A batch member still in Prep when its one
+                            # session went is a card the batch never
+                            # reached: say so, or it reads as refined.
+                            self._board.update(cid, {
+                                "refine_state": "ended",
+                                "batch_id": "",
+                                "batch_rank": "",
+                                "dispatch_error": BATCH_UNPLANNED_NOTE.format(
+                                    rank=str(card.get("batch_rank") or "?")),
+                            })
+                        else:
+                            self._board.update(cid, {"refine_state": "ended"})
                         self._refine_missing_since.pop(cid, None)
                         changed = True
             state = card.get("link_state") or ""
@@ -4560,6 +6360,14 @@ class BoardVerbsMixin:
                 continue
             if sid in live:
                 self._board_missing_since.pop(cid, None)
+                if state == "ended" and card.get("batch_id"):
+                    # A batch member its session moved past
+                    # (`advance_batch_by_session` wrote `ended` while the
+                    # session lives on, on the next card). It stays ended:
+                    # flipping it back to `live` would make the session look
+                    # bound to two open cards, and its stages are the next
+                    # card's now.
+                    continue
                 if state != "live":
                     self._board.mark_live(cid)
                     changed = True
@@ -4568,6 +6376,21 @@ class BoardVerbsMixin:
             first_missing = self._board_missing_since.setdefault(cid, now)
             if state != "ended" and now - first_missing >= self.BOARD_SESSION_GRACE:
                 self._board.mark_ended(cid, when=now)
+                bid = str(card.get("batch_id") or "")
+                if bid:
+                    # The batch's one session has gone: every member it
+                    # never reached goes back to plain Backlog with a note,
+                    # in one statement, and the card it was on leaves the
+                    # batch with it — so a resume of that session finds an
+                    # ordinary interrupted card, not a member to keep ended.
+                    # Only the batch's own session releases it: a card that
+                    # left Backlog with its mark and ran alone is not.
+                    if self._batch_owned_by(card):
+                        self._board.release_batch_waiting(bid, BATCH_LEFT_NOTE)
+                    if str(card.get("column_name") or "") != "done":
+                        self._board.update(cid, {"batch_id": "",
+                                                 "batch_rank": ""},
+                                           bump=False)
                 # The one seam every ended run passes through, whichever way
                 # it ended — the assistant closed the card, left a hand-check,
                 # or simply went quiet. `_record_finished` is the *session*
@@ -4592,7 +6415,7 @@ class BoardVerbsMixin:
         # — the decision and the drift check re-computing it could disagree
         # inside one reconcile, and the walk is not free.
         active = self._claiming_session_ids()
-        self._decide_queue_dispatches(cards, active=active)
+        self._decide_queue_dispatches(cards, active=active, snapshot=snapshot)
         changed |= self._bind_consults(snapshot, now)
         changed |= self._manual_due_drifted(cards, snapshot, active=active)
         changed |= self._needs_you_drifted(cards, active=active)
@@ -4858,9 +6681,18 @@ class BoardVerbsMixin:
             return False
 
     def _decide_queue_dispatches(self, cards: list,
-                                 active: Optional[set] = None) -> None:
+                                 active: Optional[set] = None,
+                                 snapshot: Optional[dict] = None) -> None:
         """Pick at most one startable card per project. Blocking; no side effects
         beyond `_queue_candidates`.
+
+        A queued card held by an unmet dependency is skipped, never picked and
+        never in the way (`board_queue.eligible`): the head is the first
+        *eligible* card in `queue_key` order. `snapshot` is the agents
+        snapshot the reconcile was handed, read for which sessions are
+        working — the cached one where the caller has none — so a dependency
+        flagged for a manual check reads as met here exactly when its badge
+        lights.
 
         **One per project per pass**, which is enforced twice on purpose:
         binding by elimination needs "the first new session in this project" to
@@ -4887,12 +6719,19 @@ class BoardVerbsMixin:
                 return
             if active is None:
                 active = self._claiming_session_ids()
+            running_ids = self._dependency_running_ids(
+                snapshot if snapshot is not None
+                else self._agents_snapshot_cache)
+            held = self._dependency_held_ids(cards, running_ids, active)
             by_project: dict = {}
             for card in queued:
                 by_project.setdefault(str(card.get("project") or ""),
                                       []).append(card)
             for project, rows in by_project.items():
                 rows.sort(key=board_queue.queue_key)
+                rows = board_queue.eligible(rows, held)
+                if not rows:
+                    continue
                 running = len(board_queue.claims(cards, project, active))
                 # The head is the card that would start, so its own root is
                 # the one to resolve — never a label-to-root guess. Within a
@@ -5235,6 +7074,10 @@ class BoardVerbsMixin:
         if not expired:
             return False
         current = self._board.get(cid) or card
+        # Judged while the card is still `dispatching`: the writes below
+        # clear its link, and a batch whose one binding card has let go
+        # has no owner left to ask.
+        owns_batch = self._batch_owned_by(current)
         if str(current.get("column_name") or "") == "done":
             # A Done card that never bound stays in Done. The bind no
             # longer matters, so there is no orange `dispatch_error`.
@@ -5243,6 +7086,7 @@ class BoardVerbsMixin:
                 "dispatched_at": None,
                 "dispatch_error": "",
             })
+            self._release_expired_batch(card, owns_batch)
         else:
             # Nothing appeared. Back to the column the card's own state names, with
             # the reason written on it — and the terminal is left exactly where it
@@ -5260,7 +7104,8 @@ class BoardVerbsMixin:
                 "a session appeared but Dark Army could not prove it was the one it "
                 "started — check the terminal that opened"
                 if proof_refused else
-                "no session appeared — check the terminal that opened")
+                dispatch.first_run_hint(card.get("tool"))
+                or "no session appeared — check the terminal that opened")
             # `bump=False`, the dispatch write's own reason: sending a card
             # back because no session appeared is Dark Army's bookkeeping, not a
             # person changing a word on it.
@@ -5271,6 +7116,7 @@ class BoardVerbsMixin:
                 "dispatched_at": None,
                 "dispatch_error": error,
             }, bump=False)
+            self._release_expired_batch(card, owns_batch)
             # On the executor: `_log_event` appends directly here.
             self._log_card_event(card, "card_dispatch_failed", error=error)
         self._dispatch_baseline.pop(cid, None)
@@ -5278,6 +7124,52 @@ class BoardVerbsMixin:
         self._spawn_pty_pids.pop(cid, None)
         logger.info("card %s gave up waiting for its session", cid[:8])
         return True
+
+    def _batch_owned_by(self, card: Optional[dict]) -> bool:
+        """Whether this card speaks for its batch: it is the batch's owner
+        member (`_batch_owner`), or it is bound to that member's session.
+        Blocking (one store read); executor.
+
+        The gate on every path that releases a batch's waiting members — the
+        session ending, the bind window expiring, a reset or a delete — so a
+        member dragged out of Backlog and started alone can never end the
+        batch it was taken from."""
+        card = card or {}
+        bid = str(card.get("batch_id") or "")
+        if not bid or self._board is None:
+            return False
+        head = _batch_owner(self._board.batch_members(bid))
+        if head is None:
+            return False
+        if str(head.get("id") or "") == str(card.get("id") or ""):
+            return True
+        sid = str(card.get("session_id") or "")
+        return bool(sid) and str(head.get("session_id") or "") == sid
+
+    def _batch_has_owner(self, batch_id: str) -> bool:
+        """Whether any member still speaks for this batch. Blocking;
+        executor. Asked after a reset or delete took a card out of it: a
+        batch nobody owns can never be walked, so its waiting members go
+        back rather than wait for ever."""
+        if not batch_id or self._board is None:
+            return False
+        return _batch_owner(self._board.batch_members(batch_id)) is not None
+
+    def _release_expired_batch(self, card: dict, owns: bool) -> None:
+        """The head of a batch-implement press never bound: its waiting
+        members go back to plain Backlog with `BATCH_LEFT_NOTE`, and the head
+        leaves the batch. Blocking; executor. A card with no mark is
+        untouched, so a single Start's give-up is exactly what it was."""
+        bid = str((card or {}).get("batch_id") or "")
+        if not bid or self._board is None:
+            return
+        # The head leaves the batch **first**: with its link already cleared
+        # it would otherwise match the release's WHERE and have its own
+        # give-up reason overwritten with the members' note.
+        self._board.update(str(card.get("id") or ""),
+                           {"batch_id": "", "batch_rank": ""}, bump=False)
+        if owns:
+            self._board.release_batch_waiting(bid, BATCH_LEFT_NOTE)
 
     def _bind_refining_card(self, card: dict, snapshot: dict,
                             now: float) -> bool:
@@ -5345,11 +7237,15 @@ class BoardVerbsMixin:
             "a session appeared but Dark Army could not prove it was the "
             "refinement it started — check the terminal that opened"
             if proof_refused else
-            "the refinement session never appeared")
+            dispatch.first_run_hint(card.get("tool"), "Refine")
+            or "the refinement session never appeared")
         self._board.update(cid, {
             "refine_state": "",
             "dispatched_at": None,
             "dispatch_error": error,
+            # A batch member that never bound leaves its batch with the link.
+            "batch_id": "",
+            "batch_rank": "",
         })
         self._log_card_event(card, "card_dispatch_failed", error=error)
         self._refine_baseline.pop(cid, None)
@@ -5671,11 +7567,46 @@ class BoardVerbsMixin:
             else:
                 plan_detail = attach_detail or "the plan was not attached"
             await self._publish_board()
+        # The cards this one must wait for, for a card filed **without** a
+        # plan (a follow-up, a Prep note) — a planned card takes them from
+        # its `Depends on:` header above. Ids or exact titles within the
+        # card's own project, resolved here after the create; a reference
+        # that names nothing or two cards refuses the whole list, and the
+        # card is filed regardless: the reply says what went wrong in
+        # `dependencies_detail`, `plan_detail`'s shape. Written through the
+        # ordinary `update`, so the store's cycle, self and same-project
+        # refusals apply exactly as they do to a person's edit.
+        dependencies_detail = ""
+        refs = msg.get("depends_on")
+        if isinstance(refs, str):
+            refs = [refs]
+        if isinstance(refs, (list, tuple)):
+            refs = [str(r)[:MAX_DEPENDENCY_REF_CHARS] for r in refs
+                    if isinstance(r, (str, int)) and str(r).strip()]
+            refs = refs[:board.MAX_BLOCKERS]
+        else:
+            refs = []
+        if refs:
+            ids, refusal = await loop.run_in_executor(
+                None, functools.partial(
+                    self._resolve_dependency_refs, refs,
+                    str(card.get("root") or ""), str(card["id"])))
+            if refusal:
+                dependencies_detail = refusal
+            elif ids:
+                linked, detail = await self._board_call(
+                    "update", card["id"], {"blocked_by": board.join_ids(ids)})
+                if linked is None:
+                    dependencies_detail = detail or "the links were not saved"
+                else:
+                    card = linked
+                    await self._publish_board()
         return {"ok": True, "detail": "added to the board",
                 "card_id": card["id"], "column": card["column_name"],
                 "project": card["project"],
                 "plan_attached": bool(card.get("plan_path")),
-                "plan_detail": plan_detail}
+                "plan_detail": plan_detail,
+                "dependencies_detail": dependencies_detail}
 
     def _knowledge_reach(self, cwd: str) -> tuple:
         """`(known roots, the enrolled root containing cwd)`. Both blocking
@@ -5820,6 +7751,334 @@ class BoardVerbsMixin:
         return await loop.run_in_executor(
             None, self._knowledge_report_sync, root)
 
+    # ── The Checks section: manual-check files across enrolled projects ──
+
+    #: The status filter's words; `""` and `all` keep every check.
+    MANUAL_CHECK_FILTERS = ("", "all") + manual_check.STATUSES
+
+    @staticmethod
+    def _manual_check_place(path: str) -> tuple:
+        """`(resolved, refusal)` for a check file a person names from a
+        client. **Blocking** — executor only. **The security boundary of the
+        outcome verb**: the path arrives over the sealed doors, so it must
+        be absolute, name a regular file that is not a symlink in a dated
+        folder that is not a symlink, and realpath to
+        `<enrolled root>/manual-check/<folder>/check.md`, and the file must
+        pass `manual_check.check`. Anything else is refused in words and
+        nothing is read further."""
+        text = str(path or "").strip()
+        if not text or not os.path.isabs(text):
+            return "", board.MANUAL_CHECK_PLACE_REFUSAL
+        try:
+            if not stat_mod.S_ISREG(os.lstat(text).st_mode):
+                return "", board.MANUAL_CHECK_PLACE_REFUSAL
+            if not stat_mod.S_ISDIR(os.lstat(os.path.dirname(text)).st_mode):
+                return "", board.MANUAL_CHECK_PLACE_REFUSAL
+        except OSError:
+            return "", board.MANUAL_CHECK_PLACE_REFUSAL
+        resolved = BoardVerbsMixin._canonical_path(text)
+        if not BoardVerbsMixin._manual_check_home(resolved):
+            return "", board.MANUAL_CHECK_PLACE_REFUSAL
+        problems = manual_check.check(manual_check.read_text(resolved))
+        if problems:
+            return "", (board.MANUAL_CHECK_MALFORMED_REFUSAL
+                        + manual_check.brief(problems))
+        return resolved, ""
+
+    def _manual_checks_sync(self, root: str = "", query: str = "",
+                            status: str = "") -> dict:
+        """The Checks section's page. **Blocking** — executor only.
+
+        `root` empty means every enrolled root (the person's list across
+        their projects — nothing in a check is a secret the board does not
+        already show); a named root must be enrolled, refused in
+        `_knowledge_enrolled_root`'s words. Per root `manual_check.scan`,
+        then the status filter and `manual_check.matches`, each row joined
+        to a card through `by_manual_check_path`; ordered open first, then
+        newest first."""
+        if root:
+            try:
+                roots = [self._knowledge_enrolled_root(root)]
+            except ValueError as exc:
+                return {"supported": True, "available": False,
+                        "root": str(root), "checks": [],
+                        "truncated": False, "reason": str(exc)}
+        else:
+            roots = sorted(enrollment.enrolled_roots())
+        wanted = str(status or "").strip().lower()
+        if wanted == "all":
+            wanted = ""
+        checks = []
+        truncated = False
+        limit = manual_check.MAX_CHECKS_PER_ROOT
+        for base in roots:
+            found = manual_check.scan(base, limit + 1)
+            if len(found) > limit:
+                truncated = True
+                found = found[:limit]
+            label = enrollment.enrolled_label(base) or os.path.basename(base)
+            # The scan's folder names are the disk's own; the root is put in
+            # the disk's spelling once, so every listed path is the one the
+            # flag stored and the press compares.
+            spelled = BoardVerbsMixin._canonical_path(base)
+            for entry in found:
+                if wanted and entry.get("status", "") != wanted:
+                    continue
+                if not manual_check.matches(entry, query):
+                    continue
+                path = os.path.join(spelled, manual_check.FOLDER,
+                                    entry.get("folder", ""),
+                                    manual_check.CHECK_NAME)
+                cards = self._board.by_manual_check_path(path) \
+                    if self._board is not None else []
+                checks.append({
+                    "path": path,
+                    "folder": entry.get("folder", ""),
+                    "title": entry.get("title", ""),
+                    "card": entry.get("card", ""),
+                    "card_id": str(cards[0].get("id") or "") if cards else "",
+                    "project": entry.get("project", "") or label,
+                    "root": base,
+                    "check": entry.get("check", ""),
+                    "created": entry.get("created", ""),
+                    "status": entry.get("status", ""),
+                    "outcome": entry.get("outcome", ""),
+                    "checked_at": entry.get("checked_at", ""),
+                    "steps_preview": entry.get("steps_preview", ""),
+                    "malformed": bool(entry.get("malformed")),
+                    "problem": entry.get("problem", ""),
+                })
+        checks.sort(key=manual_check.sort_key, reverse=True)
+        checks.sort(key=lambda e: 0 if e["status"] == "open" else 1)
+        return {"supported": True, "available": True,
+                "root": roots[0] if root else "", "checks": checks,
+                "truncated": truncated, "reason": ""}
+
+    async def manual_checks_report(self, root: str = "", query: str = "",
+                                   status: str = "") -> dict:
+        """Every manual check under the enrolled roots (or one), open first
+        then newest first. One `run_in_executor` hop: the scans, the reads
+        and the store joins never run on the loop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._manual_checks_sync, root, query, status)
+
+    def _manual_check_text_sync(self, path: str) -> dict:
+        resolved, refusal = self._manual_check_place(path)
+        if refusal:
+            return {"available": False, "path": str(path or ""),
+                    "text": "", "reason": refusal}
+        text = manual_check.read_text(resolved)
+        if not text:
+            return {"available": False, "path": resolved, "text": "",
+                    "reason": "that check cannot be read"}
+        return {"available": True, "path": resolved, "text": text,
+                "reason": ""}
+
+    async def manual_check_text(self, path: str) -> dict:
+        """One check file's text, `_card_report`'s shape
+        (`{available, path, text, reason}`), only for a file
+        `_manual_check_place` admits now. One executor hop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._manual_check_text_sync, path)
+
+    def _record_manual_outcome_sync(self, path: str, status: str,
+                                    note: str) -> tuple:
+        """`(resolved, header, refusal)`. **Blocking** — executor only.
+        The place re-checked at the write, then `manual_check.write_outcome`,
+        which re-reads the file and refuses anything but `Status: open`. The
+        whole sequence holds `_MANUAL_OUTCOME_LOCK`, so of two concurrent
+        presses exactly one writes. An already-recorded file comes back with
+        its resolved path beside `MANUAL_OUTCOME_RECORDED_REFUSAL`, so the
+        caller can still settle the cards flagged with it."""
+        with _MANUAL_OUTCOME_LOCK:
+            resolved, refusal = self._manual_check_place(path)
+            if refusal:
+                return "", {}, refusal
+            header = manual_check.read_header(resolved)
+            if header.get("status", "") != "open":
+                return resolved, header, board.MANUAL_OUTCOME_RECORDED_REFUSAL
+            refusal = manual_check.write_outcome(resolved, status, note)
+            if refusal == manual_check.RECORDED:
+                return resolved, header, board.MANUAL_OUTCOME_RECORDED_REFUSAL
+            if refusal:
+                return "", {}, refusal
+            return resolved, header, ""
+
+    async def _clear_cards_for_check(self, resolved: str) -> list:
+        """Clear `manual_steps` on every card flagged with this check file
+        that still carries steps; one publish for the lot, then each card's
+        Needs you entry settled. The cards cleared, as the store returned
+        them."""
+        cleared = []
+        if self._board is None:
+            return cleared
+        cards = await self._board_call("by_manual_check_path", resolved) or []
+        for card in cards:
+            if not str(card.get("manual_steps") or ""):
+                continue
+            after, _detail = await self._board_call("clear_manual", card["id"])
+            if after is not None:
+                cleared.append(after)
+        if cleared:
+            await self._publish_board()
+            for card in cleared:
+                await self._settle_handled_card(
+                    str(card.get("id") or ""),
+                    str(card.get("closed_by") or card.get("session_id") or ""))
+        return cleared
+
+    async def record_manual_outcome(self, path: str, status: str,
+                                    note: str = "") -> tuple:
+        """A person recording Passed or Failed on a check file. `(ok,
+        detail)`.
+
+        Dark Army is the file's **single writer**: the three status lines and
+        nothing else (`manual_check.write_outcome`). The guard is current
+        state re-checked at the write — the place, the shape and `Status:
+        open` — so a second press is `MANUAL_OUTCOME_RECORDED_REFUSAL` and
+        writes nothing. Then every card whose flag named this file has its
+        steps cleared through the store's own `clear_manual`, so the badge,
+        the inbox, the lifecycle episode and `_settle_checked_card` follow by
+        the seams they already have; one `_publish_board()` for the lot. A
+        Failed moves no card — Reopen is the person's."""
+        wanted = str(status or "").strip().lower()
+        if wanted not in manual_check.OUTCOMES:
+            return False, manual_check.BAD_OUTCOME
+        text = " ".join(str(note or "").split())[:board.MAX_MANUAL_OUTCOME_CHARS]
+        loop = asyncio.get_running_loop()
+        resolved, header, refusal = await loop.run_in_executor(
+            None, self._record_manual_outcome_sync, path, wanted, text)
+        if refusal == board.MANUAL_OUTCOME_RECORDED_REFUSAL and resolved:
+            # The file already carries an outcome — written by an earlier
+            # press, another app, or a person editing it. The refusal words
+            # stand, but a card still wearing the badge for that file is
+            # settled, or it would keep it for ever with Mark checked hidden.
+            settled = await self._clear_cards_for_check(resolved)
+            for card in settled:
+                self._log_card_event(card, "card_manual_clear")
+            return False, refusal
+        if refusal:
+            return False, refusal
+        cleared = await self._clear_cards_for_check(resolved)
+        for card in cleared:
+            self._log_card_event(card, "card_manual_outcome",
+                                 status=wanted, note=text[:200])
+        if not cleared:
+            self._log_event(
+                "card_manual_outcome",
+                project=str(header.get("project") or ""),
+                title=str(header.get("check") or header.get("card") or ""),
+                detail={"status": wanted, "note": text[:200]})
+        return True, "recorded " + wanted
+
+    def _scout_report_sources(self, root: str = "") -> tuple:
+        """``(roots, cards)`` for the scout-report reads. **Blocking** —
+        the store's lock is taken here, on the executor thread. ``root``
+        narrows to one enrolled project (refused in
+        `_knowledge_enrolled_root`'s words); empty means every enrolled
+        root."""
+        if root:
+            roots = [self._knowledge_enrolled_root(root)]
+        else:
+            roots = sorted(enrollment.enrolled_roots())
+        cards = self._board.reports_index_rows() \
+            if self._board is not None else []
+        return roots, cards
+
+    @staticmethod
+    def _scout_label(root: str) -> str:
+        return enrollment.enrolled_label(root) or os.path.basename(root)
+
+    def _scout_reports_index_sync(self, root: str = "",
+                                  query: str = "") -> dict:
+        roots, cards = self._scout_report_sources(root)
+        if query:
+            return scout_index.search(
+                roots, cards, query, self._scout_label,
+                refusal=BoardVerbsMixin._plan_path_refusal)
+        return scout_index.build(roots, cards, self._scout_label,
+                                 refusal=BoardVerbsMixin._plan_path_refusal)
+
+    def _scout_report_body_sync(self, path: str) -> dict:
+        roots, cards = self._scout_report_sources()
+        return scout_index.read(path, roots, cards, self._scout_label,
+                                refusal=BoardVerbsMixin._plan_path_refusal)
+
+    async def scout_reports_index(self, root: str = "",
+                                  query: str = "") -> dict:
+        """Every scout report under the enrolled roots plus every card's
+        report, newest first, no bodies (`scout_index.build`) — or, with a
+        ``query``, only the reports whose body holds it, each with a
+        snippet (`scout_index.search`, which raises `ValueError` in words
+        on a term out of bounds). One `run_in_executor` hop: the scan, the
+        reads and the store read never run on the loop.
+
+        **One text search at a time per daemon**: a worst-case search reads
+        and folds up to 25 MB, and the Mac and the phone can both ask, so
+        a second waits on `_scout_search_lock` (made on the loop, lazily)
+        rather than taking another executor worker. The plain list is not
+        held behind it."""
+        loop = asyncio.get_running_loop()
+        if not query:
+            return await loop.run_in_executor(
+                None, self._scout_reports_index_sync, root, query)
+        lock = getattr(self, "_scout_search_lock", None)
+        if lock is None:
+            lock = self._scout_search_lock = asyncio.Lock()
+        async with lock:
+            return await loop.run_in_executor(
+                None, self._scout_reports_index_sync, root, query)
+
+    async def scout_report_body(self, path: str) -> dict:
+        """One report's text split into answer block and body, only for a
+        path in the closed set `scout_index.locate` re-checks now. One
+        `run_in_executor` hop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._scout_report_body_sync, path)
+
+    def _plan_sources(self, root: str = "") -> tuple:
+        """``(roots, cards)`` for the plan reads — `_scout_report_sources`'
+        rule over the cards' `plan_path`. **Blocking** — the store's lock
+        is taken here, on the executor thread. ``root`` narrows to one
+        enrolled project (refused in `_knowledge_enrolled_root`'s words);
+        empty means every enrolled root."""
+        if root:
+            roots = [self._knowledge_enrolled_root(root)]
+        else:
+            roots = sorted(enrollment.enrolled_roots())
+        cards = self._board.plans_index_rows() \
+            if self._board is not None else []
+        return roots, cards
+
+    def _plans_index_sync(self, root: str = "") -> dict:
+        roots, cards = self._plan_sources(root)
+        return plan_index.build(roots, cards, self._scout_label,
+                                refusal=BoardVerbsMixin._plan_path_refusal)
+
+    def _plan_body_sync(self, path: str) -> dict:
+        roots, cards = self._plan_sources()
+        return plan_index.read(path, roots, cards, self._scout_label,
+                               refusal=BoardVerbsMixin._plan_path_refusal)
+
+    async def plans_index(self, root: str = "") -> dict:
+        """Every dated plan under the enrolled roots plus every card's
+        plan, newest first, no bodies (`plan_index.build`). One
+        `run_in_executor` hop: the scan, the head reads and the store read
+        never run on the loop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._plans_index_sync, root)
+
+    async def plan_body(self, path: str) -> dict:
+        """One plan's text, only for a path in the closed set
+        `plan_index.locate` re-checks now. One `run_in_executor` hop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._plan_body_sync, path)
+
     def _knowledge_person_sync(self, method: str, root: str, key: str,
                                *rest):
         normalised = self._knowledge_enrolled_root(root)
@@ -5945,13 +8204,17 @@ class BoardVerbsMixin:
         on the close verb, for the same reason.
         """
         port = int(msg.get("port") or 0)
-        session_id = self._board_request_session(port) or "" if port else ""
+        # Fresh native-holder attribution, the close verb's: this verb is open
+        # to Codex too, and a flag is what releases a card's place in the
+        # queue. For Claude this is the announced id, exactly as before.
+        session_id = (await self._board_request_session_fresh(port) or "") if port else ""
         if not session_id:
             return {"ok": False, "detail": "Dark Army could not tell which session asked"}
         if self._board is None:
             return {"ok": False, "detail": "the board is not open"}
         card, detail = await self.flag_manual_by_session(
-            session_id, str(msg.get("steps") or ""))
+            session_id, str(msg.get("steps") or ""),
+            str(msg.get("path") or "")[:1024])
         if card is None:
             return {"ok": False, "detail": detail}
         logger.info("session %s flagged a manual check on board card %s",
@@ -6348,9 +8611,9 @@ class BoardVerbsMixin:
 
         Reads the closing words off the snapshot row the rail already draws
         (`last_text` / `last_summary`, populated for all three providers) —
-        the `## Work done` report lands there whole, so no new parser exists
-        anywhere in this feature (`session_stats` slices on the heading for
-        `last_report`, and interprets nothing inside it).
+        the `## Work done` report lands there whole; the record stores the
+        raw `last_report`, and the parsed shape rides the row alone
+        (`work_report.py`).
 
         Idempotent twice over: `mark_ended` writes `ended` exactly once, but
         a restart re-runs the grace, so a card whose stored record already
@@ -6388,6 +8651,25 @@ class BoardVerbsMixin:
             str(row.get("last_report") or row.get("last_text") or ""),
             str(row.get("last_summary") or ""),
         ))
+
+    async def _collect_work_record_now(self, card_id: str) -> None:
+        """Collect this one card's queued record **now**, awaited, rather
+        than whenever `_flush_work_records` reaches it.
+
+        The batch-implement advance's reason: the record's file list is a
+        diff from the card's baseline to the working tree *at collection*,
+        and the next card of the batch starts editing the same tree the
+        moment it is bound. Collected before that bind, card k's list holds
+        card k's work and not card k+1's. No queued item (already recorded,
+        or already being collected by the flush) is a no-op."""
+        for item in list(self._work_record_queue):
+            if item[0] == card_id:
+                try:
+                    self._work_record_queue.remove(item)
+                except ValueError:
+                    return
+                await self._collect_work_record(*item)
+                return
 
     async def _flush_work_records(self) -> None:
         """Collect the record the reconcile just asked for, one at a time.

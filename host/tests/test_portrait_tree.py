@@ -275,7 +275,7 @@ def test_area_lead_faces_follow_the_delivery_roster():
 
 # ── the six newcomers ───────────────────────────────────────────────────────
 
-NEWCOMERS = ("androll", "captcha", "sawa", "franio", "zosia", "ptyś")
+NEWCOMERS = ("androll", "captcha", "sawa", "franio", "zosia", "ptys")
 
 
 @pytest.mark.parametrize("slug", NEWCOMERS)

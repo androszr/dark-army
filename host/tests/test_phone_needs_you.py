@@ -290,14 +290,15 @@ def test_an_agent_row_offers_its_own_verbs_beside_dismiss():
     # screen sends.
     assert '["session_id": session, "by_person": "1"]' in verbs
     assert '"by_person": "1"' in detail
-    assert '"Acknowledge & close terminal"' in verbs
-    assert '"Acknowledge & close terminal"' in detail
+    # One word list for both apps (`Verbs.swift`, 25 Sep 2026).
+    assert "Verbs.closeTerminal.label" in verbs
+    assert "Verbs.closeTerminal.label" in detail
     # Close is confirmed before it is sent; the swipe only opens the dialog.
     assert "onClose: { closing = item }" in source
-    assert "Close this terminal tab and end the session? There is no undo." in source
+    assert "Verbs.closeTerminal.noUndo" in source
     assert "press(.close, on: item)" in source
     mod = source.split("private struct InboxSwipeModifier", 1)[1].split("\n}\n", 1)[0]
-    assert 'Label("Close"' in mod and 'Label("More"' in mod
+    assert 'Label(Verbs.closeTerminal.label' in mod and 'Label("More"' in mod
     assert "accessibilityActions" in mod
     press = source.split("private func press(_ verb: InboxAgentVerb", 1)[1].split("\n    }\n", 1)[0]
     assert "client.enqueue(" in press and "scope: scope(item)" in press

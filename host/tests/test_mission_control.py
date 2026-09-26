@@ -115,8 +115,10 @@ def test_mission_argv_is_fixed_and_the_prompt_is_last():
     trailing prompt."""
     rules = mission.allowed_tools("/Users/x/dark-army")
     argv = dispatch.mission_argv("/x/claude", '{"a": 1}', rules,
-                                 mission.AGENT_NAME, mission.OPENING_PROMPT)
-    assert argv == ["/x/claude", "--agents", '{"a": 1}',
+                                 mission.AGENT_NAME, mission.OPENING_PROMPT,
+                                 display_name=mission.NAME)
+    assert argv == ["/x/claude", "--name", "Mission Control",
+                    "--agents", '{"a": 1}',
                     "--allowed-tools", *rules,
                     "--agent", "mission-control", mission.OPENING_PROMPT]
     assert argv[-1] == mission.OPENING_PROMPT
@@ -1134,3 +1136,123 @@ def test_no_platform_branch_in_the_new_module():
     for name in ("mission.py", "daemon_board.py"):
         src = (REPO / "host" / "dark_army_daemon" / name).read_text()
         assert "sys.platform" not in src, name
+
+
+# --- always called Mission Control ------------------------------------------
+
+
+def test_the_argv_carries_no_name_flag_when_none_is_given():
+    argv = dispatch.mission_argv("/x/claude", "{}", ["Grep"], "a", "p")
+    assert "--name" not in argv
+
+
+@pytest.mark.asyncio
+async def test_open_names_the_session_mission_control(daemon, checkout,
+                                                      monkeypatch):
+    """The CLI's display name — the Claude app's Remote Control title and
+    the terminal title — is fixed at spawn, not drawn from the chat."""
+    d, _store = daemon
+    _enrol(monkeypatch, checkout)
+    opened = []
+    _stub_spawn(monkeypatch, opened)
+    ok, _detail = await d.open_mission()
+    assert ok
+    argv = opened[0]["argv"]
+    assert argv[argv.index("--name") + 1] == "Mission Control"
+
+
+def _row_named(d, sid):
+    for rows in d.detailed_snapshot().values():
+        if isinstance(rows, list):
+            for row in rows:
+                if row.get("session_id") == sid:
+                    return row
+    raise AssertionError(f"no row for {sid}")
+
+
+def test_a_mission_row_is_always_called_mission_control():
+    """Neither a generated title nor the first message after a `/clear`
+    renames it; a session without the stamp keeps its own name."""
+    d = BobDaemon()
+    d._session_states["s-m"] = {"state": "idle", "last_event": 1e12, "pid": 1,
+                                "origin": origin.stamp("mission")}
+    d._session_states["s-x"] = {"state": "idle", "last_event": 1e12, "pid": 2}
+    d._session_metrics["s-m"] = {"session_name": "Phone helper tab strip UI"}
+    d._session_metrics["s-x"] = {"session_name": "Phone helper tab strip UI"}
+    assert _row_named(d, "s-m")["name"] == "Mission Control"
+    assert _row_named(d, "s-x")["name"] == "Phone helper tab strip UI"
+
+
+# --- a /clear after an eviction ---------------------------------------------
+
+
+def _cleared_mission(d, monkeypatch):
+    """The live shape of 25 Sep 2026: the evicted id on the record, the
+    terminal unbound, and the `/clear` successor running in it."""
+    term = _fake_terminal(d, "h-m")
+    term.name = mission.PTY_NAME
+    d._mission = {"handle": "h-m", "root": "/a", "session_id": "s-evicted",
+                  "opened_at": 1.0}
+    monkeypatch.setattr(d._pty, "owns",
+                        lambda pid: "h-m" if pid in (777, 778) else None)
+    d._session_states["s-new"] = {"state": "working", "pid": 777,
+                                  "origin": origin.stamp("mission"),
+                                  "last_event_monotonic": 10.0}
+    return term
+
+
+def test_the_snapshot_follows_a_clear_after_an_eviction(daemon, monkeypatch):
+    d, _store = daemon
+    _cleared_mission(d, monkeypatch)
+    assert d.mission_snapshot()["session_id"] == "s-new"
+    assert d._mission["session_id"] == "s-new"
+
+
+def test_the_successor_must_carry_the_stamp_and_run_in_the_terminal(
+        daemon, monkeypatch):
+    d, _store = daemon
+    _cleared_mission(d, monkeypatch)
+    d._session_states.pop("s-new")
+    # A card session inside the same process tree, and a mission-stamped
+    # session in some other terminal: neither is Mission Control.
+    d._session_states["s-card"] = {
+        "pid": 778, "origin": origin.stamp("card-start", "c1"),
+        "last_event_monotonic": 99.0}
+    d._session_states["s-far"] = {
+        "pid": 900, "origin": origin.stamp("mission"),
+        "last_event_monotonic": 99.0}
+    assert d.mission_snapshot()["session_id"] == "s-evicted"
+
+
+@pytest.mark.asyncio
+async def test_a_cleared_mission_control_may_still_ask_for_a_start(
+        daemon, monkeypatch):
+    d, _store = daemon
+    _cleared_mission(d, monkeypatch)
+    _card, detail = await d.ask_start("s-new", "nope")
+    assert detail == "no card has that id", "past the identity check"
+    _card, detail = await d.ask_start("s-card", "nope")
+    assert detail == "only Mission Control can ask Dark Army to start a card"
+
+
+def test_a_name_the_broker_kept_for_a_forgotten_id_is_repointed(
+        daemon, monkeypatch):
+    """After a restart the broker re-adopts the terminal still wearing the
+    evicted id; the stamped successor running in it takes over, and the
+    stale name is dropped so the next enrich can bind the successor."""
+    d, _store = daemon
+    _cleared_mission(d, monkeypatch)
+    d._pty.bind("h-m", "s-evicted")
+    assert d.mission_snapshot()["session_id"] == "s-new"
+    assert d._pty.get("h-m").session_id == ""
+    assert d._pty.for_session("s-evicted") is None
+
+
+def test_a_live_bound_session_is_never_repointed(daemon, monkeypatch):
+    d, _store = daemon
+    _cleared_mission(d, monkeypatch)
+    d._pty.bind("h-m", "s-evicted")
+    d._session_states["s-evicted"] = {"pid": 777,
+                                      "origin": origin.stamp("mission")}
+    assert d.mission_snapshot()["session_id"] == "s-evicted"
+    assert d._pty.get("h-m").session_id == "s-evicted"

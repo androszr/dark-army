@@ -478,6 +478,8 @@ def test_the_diarys_kind_tuple_is_unchanged_by_the_auto_start():
         "session_start", "session_end", "session_error",
         "permission_ask", "permission_resolved",
         "card_dispatched", "card_done", "card_manual",
+        # A person's Passed / Failed on a manual check file.
+        "card_manual_outcome",
         "card_dispatch_failed", "card_plan_attached",
         "card_plan_approved", "card_work_recorded",
         # The phone doors' burst alert (access_log.py) — its own event, not

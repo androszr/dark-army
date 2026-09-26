@@ -96,7 +96,10 @@ final class PhoneRouter: ObservableObject {
     /// everything else a link can aim.
     func open(_ url: URL) {
         guard url.scheme == FleetLinks.scheme,
-              let tab = PhoneTab(rawValue: url.host ?? "") else { return }
+              let tab = PhoneTab(stored: url.host ?? "") else { return }
+        // `bobphone://usage` names a Menu section: the tab comes forward
+        // and the section opens on it.
+        pendingSection = MenuSection(rawValue: url.host ?? "")
         pendingSession = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "session" }?.value ?? ""
         go(tab)
@@ -104,6 +107,16 @@ final class PhoneRouter: ObservableObject {
 
     /// The agent a deep link named, `""` for none. Memory only.
     private var pendingSession = ""
+
+    /// The Menu section a deep link named, `nil` for none. Memory only,
+    /// consumed with the tab like the session.
+    private var pendingSection: MenuSection?
+
+    /// Consume the section a link named, if any.
+    func takeSection() -> MenuSection? {
+        defer { pendingSection = nil }
+        return pendingSection
+    }
 
     /// Consume the slot. Called by `ContentView` once it exists and is in
     /// front of an unlocked screen.

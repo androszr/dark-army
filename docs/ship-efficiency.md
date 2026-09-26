@@ -126,6 +126,26 @@ host document moved the aggregate by 40 while this pass was open) — so about
 A byte added to a brief or to `AGENTS.md` counts in every scenario it is read
 in, so those are dearer still.
 
+**25 Sep 2026 — the host document gave bytes back.** Other sessions'
+uncommitted edits had spent the headroom and more: on the live tree
+`inventory --check` printed `scenario loads: 1,977,396 -> 1,450,800 bytes
+(26.6% smaller)`, 27,075 weighted bytes over the 1,423,725 floor, so any new
+line in a subject document failed a card that had not caused it. The
+*trim role load context host* plan moved the hook handler's long aside
+(relocated paragraph `3171734ffe6d`) on from `docs/context-host.md` into
+`docs/hook-door-contract.md`, *The handler*, and shrank the host document's
+Live Activity paragraph to a pointer at the phone and transport contracts
+that already state every rule it held; the host document went from 56,423 to
+48,261 bytes. Afterwards: `scenario loads: 1,977,396 -> 1,385,504 bytes
+(29.9% smaller)`, **38,221 weighted bytes under the floor**. The rule this
+adds: a relocated paragraph may move on from its subject document into the
+long-form contract that document points at, when the task that needs it is
+the one that reaches that contract; the map names the new file, the
+*Edited after the move* row says where it went, and no role loads the
+long-form contract by default, so the move costs nothing in any scenario.
+`LOAD_REDUCTION` and the baseline are unchanged. This supersedes the
+21 Sep figure for the host document in the table above.
+
 The python-only scenario changes `session_stats.py`, and the session state
 model is drawn by both clients, so the map's cross-cutting rule adds the
 panel document to that scope — the figure was 47.9% while the rule added the
@@ -275,7 +295,8 @@ compaction and provider caching change both accounting and cost.
 Every paragraph of the old `CLAUDE.md` (140,021 bytes, 172 paragraphs
 after de-duplication; `host/tests/fixtures/ship_efficiency/claude-md-baseline.json`
 holds their digests) is either **retained** in the compact root, **relocated**
-verbatim to one subject document, or a **deliberate exception** with its reason
+verbatim to one subject document — or, since 25 Sep 2026, on into a long-form
+contract the map names — or a **deliberate exception** with its reason
 and replacement. A digest is the first twelve hex characters of the SHA-256
 of the paragraph with its whitespace folded, so a re-wrap survives and a
 changed word does not. The subject documents are living contracts, so a
@@ -320,7 +341,7 @@ against the tree on that date; the digests are the bound, the counts a reading.
 
 | Digest | Opening | Now in | Words then → now |
 |---|---|---|---:|
-| `3171734ffe6d` | It carries two standing hints into every Claude session | `docs/context-host.md` | 766 → 1058 |
+| `3171734ffe6d` | It carries two standing hints into every Claude session | `docs/hook-door-contract.md` (moved on from the host document, 25 Sep 2026: the *trim role load context host* plan) | 766 → 1090 |
 | `73a633db9cf2` | Two art trees, one roster. Twenty nickname characters | `docs/context-development.md` | 191 → 218 |
 | `8c7abaa2a11f` | bash # Strip: snap the hand-drawn GIF | `docs/context-development.md` | 68 → 63 |
 | `e4d8c73fad3c` | Specialists.swift keeps seven stage de | `docs/context-panel.md` | 98 → 107 |
@@ -382,6 +403,7 @@ against the tree on that date; the digests are the bound, the counts a reading.
 | `b40865bf2b54` | At most one item per row and one per card | `docs/context-panel.md` (the product-name sweep, 22 Sep 2026) | 89 → 90 |
 | `d87f40572036` | Extension dependencies use `npm ci` | `docs/context-development.md` (the product-name sweep, 22 Sep 2026) | 37 → 38 |
 | `387a53d2fbc0` | One source of truth for the buckets | `docs/context-host.md` (`confused` counts only beside a card, 22 Sep 2026) | 61 → 70 |
+| `87a6fa8164e0` | The gate lives inside `_dispatch_card_locked` | `docs/context-board.md` (card dependencies, 24 Sep 2026) | 84 → 74 |
 
 | Old section | Paragraphs | Where they are now |
 |---|---:|---|
@@ -414,6 +436,10 @@ against the tree on that date; the digests are the bound, the counts a reading.
 ```json
 {
  "exceptions": {
+  "9d240e931e6b": {
+   "replacement": "CLAUDE.md, '## Key Constraints', '**Menu-bar width**: `STRIP_BUDGET_PT` (310pt)'",
+   "why": "The strip budget went from 300pt to 310pt on 25 Sep 2026 when a three-digit to-do count measured 300.2pt and the ladder dropped the Codex cluster; the figure is inside the paragraph's recorded opening, so the opening could not stay '(300pt)'. The rest of the paragraph is unchanged."
+  },
   "413b39a0ca65": {
    "replacement": "docs/context-host.md, 'Eight tools, the only inbound verbs here'",
    "why": "The inbound channel verbs went from seven to eight (bob_attach_report); the opening word is the count, so the paragraph's opening could not stay 'Seven tools'."
@@ -512,7 +538,7 @@ against the tree on that date; the digests are the bound, the counts a reading.
   "2f22193dbb3f": "docs/context-host.md",
   "2f8029f1db92": "docs/context-board.md",
   "30335a2130cf": "docs/context-board.md",
-  "3171734ffe6d": "docs/context-host.md",
+  "3171734ffe6d": "docs/hook-door-contract.md",
   "3429cecc2fc5": "docs/context-panel.md",
   "347b12b81587": "docs/context-host.md",
   "3494e2ad7aac": "docs/context-panel.md",
@@ -626,7 +652,6 @@ against the tree on that date; the digests are the bound, the counts a reading.
   "3fc05a2f95b4",
   "e152c6d53fae",
   "130d1aa9bad7",
-  "9d240e931e6b",
   "b772522344c7",
   "1fcccf69db95",
   "f09c6def7fda",

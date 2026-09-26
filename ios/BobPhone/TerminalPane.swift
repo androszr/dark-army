@@ -44,6 +44,9 @@ struct PhoneTerminalPane: View {
     /// the line to it, so a stream that cannot open says so rather than
     /// drawing a black rectangle labelled `live`.
     @State private var linked = false
+    /// Keys typed away and not yet on the Mac, as the coordinator reads
+    /// them back (`showPending`). Empty at home and once they have gone.
+    @State private var pending = ""
 
     static let olderMacSentence = "This Mac's Dark Army is too old to stream a terminal."
 
@@ -74,7 +77,8 @@ struct PhoneTerminalPane: View {
                     onNote: { note = $0 },
                     onExit: { exited = true },
                     onLink: { linked = $0 },
-                    onSpoken: { spoken = $0 })
+                    onSpoken: { spoken = $0 },
+                    onPending: { pending = $0 })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(PhoneTerminalLook.background)
                 .accessibilityElement(children: .ignore)
@@ -85,7 +89,18 @@ struct PhoneTerminalPane: View {
                 // up, is the prompt line — so a person typing from away
                 // watched their own keys vanish behind the sentence that
                 // explains where keys go.
-                if note.isEmpty, client.knowsItIsAway, !exited {
+                if !pending.isEmpty, !exited {
+                    Text(pending)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.phosphor)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(PhoneTerminalLook.background)
+                        .accessibilityLabel("Not yet sent: \(pending)")
+                }
+                if note.isEmpty, pending.isEmpty, client.knowsItIsAway, !exited {
                     Text(AwayKeys.hint)
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.faint)
@@ -111,6 +126,7 @@ struct PhoneTerminalPane: View {
         .onChange(of: agent.sessionId) { _, _ in
             title = ""
             note = ""
+            pending = ""
             exited = false
             linked = false
             cols = 0
@@ -236,11 +252,14 @@ struct PhoneTerminalHost: UIViewRepresentable {
     /// Whether there is a feed at all — the header's `live` / `offline`.
     var onLink: (Bool) -> Void
     var onSpoken: (String) -> Void
+    var onPending: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(client: client, onSize: onSize, onTitle: onTitle,
-                    onNote: onNote, onExit: onExit, onLink: onLink,
-                    onSpoken: onSpoken)
+        let coordinator = Coordinator(client: client, onSize: onSize, onTitle: onTitle,
+                                      onNote: onNote, onExit: onExit, onLink: onLink,
+                                      onSpoken: onSpoken)
+        coordinator.onPending = onPending
+        return coordinator
     }
 
     func makeUIView(context: Context) -> TerminalView {
@@ -266,6 +285,7 @@ struct PhoneTerminalHost: UIViewRepresentable {
         coordinator.onExit = onExit
         coordinator.onLink = onLink
         coordinator.onSpoken = onSpoken
+        coordinator.onPending = onPending
         if coordinator.fontSize != fontSize {
             coordinator.fontSize = fontSize
             view.font = PhoneTerminalLook.font(fontSize)
@@ -327,6 +347,20 @@ struct PhoneTerminalHost: UIViewRepresentable {
         private var awaySending = false
         /// The pause timer behind a batch of printable keys typed away.
         private var awayFlush: DispatchWorkItem?
+        /// The Mac's key bucket as this pane has spent it.
+        private var awayBudget = AwayKeys.Budget()
+        /// How long the held batch waits for a send to come free; zero when
+        /// it is only waiting for the typing to pause.
+        private var heldFor: TimeInterval = 0
+        /// When the held batch may go, so the line under the grid counts
+        /// down rather than freezing on its first number.
+        private var heldUntil: Date?
+        private var heldTick: DispatchWorkItem?
+        /// The session the held keys were typed into. Keys are only ever
+        /// sent there: a pane re-aimed at another agent drops them, out
+        /// loud, rather than typing one agent's line into another.
+        private var pendingFor = ""
+        var onPending: (String) -> Void = { _ in }
 
         /// How long a closed stream waits before it is opened again, and
         /// how long a refusal (the session not hosted *yet*, or a stale
@@ -347,6 +381,9 @@ struct PhoneTerminalHost: UIViewRepresentable {
         static let notHostedNote =
             "Dark Army is no longer hosting this terminal."
         static let keyLostNote = "The terminal is reconnecting; that key was not sent."
+        /// Keys typed from away for one agent, still held when the pane
+        /// moved to another: dropped, never typed into the wrong terminal.
+        static let heldKeysDroppedNote = "Keys held for the previous agent were not sent."
 
         /// Resizes are stated once the pane has stopped moving.
         static let resizeDebounce: TimeInterval = 0.1
@@ -390,6 +427,7 @@ struct PhoneTerminalHost: UIViewRepresentable {
         /// are set synchronously because `updateUIView` compares them on
         /// the very next pass.
         func attach(session: String) {
+            if session != self.session { dropHeldKeys() }
             self.session = session
             exited = false
             gaveUp = false
@@ -415,6 +453,7 @@ struct PhoneTerminalHost: UIViewRepresentable {
         }
 
         func shutdown() {
+            sendHeldKeysOnClose()
             closed = true
             keyboardClaim?.cancel()
             view?.resignFirstResponder()
@@ -546,6 +585,66 @@ struct PhoneTerminalHost: UIViewRepresentable {
             }
             stream = conn
             conn.start()
+            // Keys typed away and still held when the phone came home go up
+            // the stream, in order; it holds them until its head lands. A
+            // batch still on its way over the relay goes first: the drain
+            // waits for its answer (`flushAway`), so nothing typed later
+            // overtakes it.
+            if !awaySending { drainHome() }
+        }
+
+        /// Home again: every held key goes up the stream, in order.
+        private func drainHome() {
+            awayFlush?.cancel()
+            heldTick?.cancel()
+            heldFor = 0
+            heldUntil = nil
+            guard !polled, let stream, !pendingAway.isEmpty,
+                  pendingFor == session else {
+                if !polled { pendingAway = Data() }
+                DispatchQueue.main.async { [weak self] in self?.onPending("") }
+                return
+            }
+            stream.send(input: pendingAway)
+            pendingAway = Data()
+            DispatchQueue.main.async { [weak self] in self?.onPending("") }
+        }
+
+        /// The pane is re-aimed at another agent with keys still held for
+        /// the old one: they are dropped and said so, never re-aimed.
+        private func dropHeldKeys() {
+            awayFlush?.cancel()
+            heldTick?.cancel()
+            heldFor = 0
+            heldUntil = nil
+            guard !pendingAway.isEmpty else { return }
+            pendingAway = Data()
+            let note = Self.heldKeysDroppedNote
+            DispatchQueue.main.async { [weak self] in
+                self?.onPending("")
+                self?.onNote(note)
+            }
+        }
+
+        /// Done pressed with keys still held: they go now, in one write,
+        /// ahead of the phone's own pace — a refusal there is checked
+        /// before anything runs, so the worst case is the keys the person
+        /// already saw held, and the receipt says so.
+        private func sendHeldKeysOnClose() {
+            awayFlush?.cancel()
+            heldTick?.cancel()
+            guard polled, !pendingAway.isEmpty, pendingFor == session,
+                  !session.isEmpty else { return }
+            let payload = pendingAway
+            pendingAway = Data()
+            let session = self.session
+            let client = self.client
+            Task { @MainActor in
+                _ = await client.post(
+                    action: PhoneActions.terminalInput,
+                    fields: ["session_id": session, "bytes": payload.base64EncodedString()],
+                    scope: session, refreshAfter: false)
+            }
         }
 
         /// Away: no socket. The poll leg feeds this sink; a `painted`
@@ -673,21 +772,24 @@ struct PhoneTerminalHost: UIViewRepresentable {
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
             guard !exited else { return }
             if polled {
-                // Away, every send is one relay write against a budget of
-                // ten a minute, so keys are **batched**: held until Enter
-                // or a control key (which act at once), or until the
-                // typing pauses. A sentence typed from the sofa is one
-                // write, not thirty.
+                // Away, every send is one relay write against the Mac's key
+                // bucket, so keys are **batched**: held until a committing
+                // key (Enter, Ctrl-C, Ctrl-D, Escape) or a pause in the
+                // typing. A sentence typed from the sofa, corrections and
+                // all, is one write, not thirty.
+                guard pendingAway.count + data.count <= AwayKeys.maxHeld else {
+                    onNote(Self.keyLostNote)
+                    return
+                }
+                if pendingAway.isEmpty { pendingFor = session }
                 pendingAway.append(contentsOf: data)
                 awayFlush?.cancel()
                 if AwayKeys.flushesAtOnce(data) {
                     flushAway()
                 } else {
-                    let item = DispatchWorkItem { [weak self] in self?.flushAway() }
-                    awayFlush = item
-                    DispatchQueue.main.asyncAfter(deadline: .now() + AwayKeys.pause,
-                                                  execute: item)
+                    scheduleAwayFlush(after: AwayKeys.pause)
                 }
+                showPending()
                 return
             }
             guard let stream else {
@@ -706,9 +808,26 @@ struct PhoneTerminalHost: UIViewRepresentable {
         /// sent together behind it, in order.
         private func flushAway() {
             guard !awaySending, !pendingAway.isEmpty else { return }
+            // Held, not sent, while the Mac's key bucket is empty: a send it
+            // would refuse costs the keys. The line under the grid says how
+            // long.
+            guard polled else { drainHome(); return }
+            guard pendingFor == session else { dropHeldKeys(); return }
+            let wait = awayBudget.wait()
+            if wait > 0 {
+                heldFor = wait
+                heldUntil = Date().addingTimeInterval(wait)
+                scheduleAwayFlush(after: wait)
+                showPending()
+                return
+            }
+            heldFor = 0
+            heldUntil = nil
+            awayBudget.take()
             let payload = pendingAway
             pendingAway = Data()
             awaySending = true
+            showPending(sending: payload)
             let session = self.session
             let client = self.client
             Task { @MainActor [weak self] in
@@ -730,9 +849,70 @@ struct PhoneTerminalHost: UIViewRepresentable {
                 if result.ok { await client.fetchTerminalBytes() }
                 guard let self else { return }
                 self.awaySending = false
+                if !result.ok, result.detail == AwayKeys.slowDown {
+                    // Refused before it ran — the bucket is checked ahead
+                    // of any execution — so the keys go back in front of
+                    // whatever was typed since, in order, and wait for a
+                    // send to come free. Only while the pane still shows
+                    // the session they were typed into.
+                    guard self.session == session else {
+                        self.onNote(Self.heldKeysDroppedNote)
+                        self.showPending()
+                        return
+                    }
+                    self.pendingAway = payload + self.pendingAway
+                    self.pendingFor = session
+                    self.awayBudget.drain()
+                    if !self.polled { self.drainHome(); return }
+                    self.heldFor = AwayKeys.retryAfterRefusal
+                    self.heldUntil = Date().addingTimeInterval(AwayKeys.retryAfterRefusal)
+                    self.scheduleAwayFlush(after: AwayKeys.retryAfterRefusal)
+                    self.showPending()
+                    return
+                }
                 if !result.ok, !result.detail.isEmpty { self.onNote(result.detail) }
+                if !self.polled { self.drainHome(); return }
+                self.showPending()
                 self.flushAway()
             }
+        }
+
+        private func scheduleAwayFlush(after delay: TimeInterval) {
+            awayFlush?.cancel()
+            let item = DispatchWorkItem { [weak self] in self?.flushAway() }
+            awayFlush = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+        }
+
+        /// The line under the grid while keys are on their way: what has
+        /// been typed and not yet reached the Mac, and what it waits for.
+        /// Empty once everything has gone. This is what makes typing from
+        /// away feel live — the Mac's echo arrives a relay round-trip later.
+        private func showPending(sending: Data? = nil) {
+            let held = pendingAway
+            let shown = AwayKeys.preview((sending ?? Data()) + held)
+            if sending == nil, held.isEmpty {
+                onPending("")
+                return
+            }
+            heldTick?.cancel()
+            let state: String
+            if sending != nil || awaySending {
+                state = "sending…"
+            } else if heldFor > 0 {
+                let left = max(heldUntil?.timeIntervalSinceNow ?? heldFor, 0)
+                state = "held \(Int(left.rounded(.up)))s — ten sends a minute"
+                // Redrawn each second until the batch goes.
+                let tick = DispatchWorkItem { [weak self] in
+                    guard let self, self.heldFor > 0, !self.awaySending else { return }
+                    self.showPending()
+                }
+                heldTick = tick
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: tick)
+            } else {
+                state = "sends on ⏎ or a pause"
+            }
+            onPending(shown.isEmpty ? "⌨ · \(state)" : "⌨ \(shown)▌ · \(state)")
         }
 
         func scrolled(source: TerminalView, position: Double) {}
@@ -758,17 +938,104 @@ struct PhoneTerminalHost: UIViewRepresentable {
 /// How keys typed into a terminal from **away** are grouped into relay
 /// writes. Pure, so the XCTest and the Python pin can both read it.
 ///
-/// A key that means "act now" — Enter, a control character, an escape
-/// sequence (arrows, Escape itself) — flushes the batch at once; printable
-/// text is held until the typing pauses for `pause`. The relay allows
-/// `RELAY_MAX_WRITES_PER_MINUTE` (10) writes, and the Mac's own refusal is
-/// what the pane draws when that is spent.
+/// Only a key that *commits* — Enter, Ctrl-C, Ctrl-D, a lone Escape — sends
+/// the batch at once. Everything else (letters, Backspace, Tab, arrows) is
+/// held until the typing pauses for `pause`, so correcting a word is not a
+/// write per Backspace. The Mac counts raw keys on their own bucket,
+/// `RELAY_MAX_KEY_WRITES_PER_MINUTE`, mirrored here as `Budget`: a batch
+/// the Mac would refuse is **held** until a send is free rather than sent
+/// and lost, and a refusal that happens anyway (an older Mac sharing one
+/// bucket with every write) puts the keys back and tries again. No key
+/// typed away is ever dropped for the rate (26 Sep 2026).
 enum AwayKeys {
-    static let pause: TimeInterval = 1.5
-    static let hint = "away: keys are sent on ⏎ or after a pause — ten sends a minute"
+    static let pause: TimeInterval = 0.8
+    /// `relay.RELAY_MAX_KEY_WRITES_PER_MINUTE`, pinned equal by
+    /// `test_phone_glance.py`.
+    static let perMinute = 10
+    /// After the Mac says `slow down` anyway: one send's worth of refill.
+    static let retryAfterRefusal: TimeInterval = 60.0 / Double(perMinute)
+    /// The Mac's own refusal sentence (`relay_client._WRITE_LIMIT_REFUSAL`).
+    static let slowDown = "too many remote requests — slow down"
+    /// The most held keys kept while the budget refills; far past a
+    /// sentence, it only bounds a stuck key.
+    static let maxHeld = 16 * 1024
+    static let hint = "away: keys go on ⏎ or a short pause, batched to ten sends a minute — none are dropped"
 
     static func flushesAtOnce<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
-        bytes.contains { $0 < 0x20 || $0 == 0x7F }
+        if bytes.count == 1, bytes.first == 0x1B { return true }
+        return bytes.contains { $0 == 0x0D || $0 == 0x0A || $0 == 0x03 || $0 == 0x04 }
+    }
+
+    /// The typed-but-unsent text as a person reads it: printable characters,
+    /// a Backspace taking the one before it, escape sequences and other
+    /// control bytes left out. The last `limit` characters.
+    static func preview(_ bytes: Data, limit: Int = 48) -> String {
+        var out: [Character] = []
+        var i = bytes.startIndex
+        while i < bytes.endIndex {
+            let b = bytes[i]
+            if b == 0x1B {
+                // Skip the sequence: ESC, then `[`/`O` and its parameters up
+                // to the final byte.
+                i = bytes.index(after: i)
+                if i < bytes.endIndex, bytes[i] == 0x5B || bytes[i] == 0x4F {
+                    i = bytes.index(after: i)
+                    while i < bytes.endIndex, !(0x40...0x7E).contains(bytes[i]) {
+                        i = bytes.index(after: i)
+                    }
+                    if i < bytes.endIndex { i = bytes.index(after: i) }
+                }
+                continue
+            }
+            if b == 0x7F || b == 0x08 {
+                if !out.isEmpty { out.removeLast() }
+                i = bytes.index(after: i)
+                continue
+            }
+            if b < 0x20 {
+                i = bytes.index(after: i)
+                continue
+            }
+            // One UTF-8 scalar: its lead byte says how long it is.
+            let length = b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4
+            let end = bytes.index(i, offsetBy: length, limitedBy: bytes.endIndex) ?? bytes.endIndex
+            if let text = String(data: bytes[i..<end], encoding: .utf8) {
+                out.append(contentsOf: text)
+            }
+            i = end
+        }
+        return String(out.suffix(limit))
+    }
+
+    /// The Mac's key bucket, as the phone can know it: `perMinute` tokens,
+    /// refilled continuously, one per send. `_Bucket` in `relay_client.py`.
+    struct Budget {
+        private(set) var tokens = Double(AwayKeys.perMinute)
+        private var stamp = Date()
+
+        private mutating func refill(_ now: Date) {
+            let rate = Double(AwayKeys.perMinute) / 60.0
+            tokens = min(Double(AwayKeys.perMinute),
+                         tokens + now.timeIntervalSince(stamp) * rate)
+            stamp = now
+        }
+
+        /// Seconds until a send is free; zero when one is.
+        mutating func wait(_ now: Date = Date()) -> TimeInterval {
+            refill(now)
+            return tokens >= 1 ? 0 : (1 - tokens) * 60.0 / Double(AwayKeys.perMinute)
+        }
+
+        mutating func take(_ now: Date = Date()) {
+            refill(now)
+            tokens = max(0, tokens - 1)
+        }
+
+        /// The Mac said it is spent: believe it.
+        mutating func drain(_ now: Date = Date()) {
+            refill(now)
+            tokens = 0
+        }
     }
 }
 

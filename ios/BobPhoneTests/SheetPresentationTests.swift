@@ -258,4 +258,24 @@ final class SheetPresentationTests: XCTestCase {
         router.show(card("C", title: "Refreshed seed"))
         XCTAssertEqual(router.topState?.id, earlierIdentity)
     }
+
+    /// The agent and a card in In progress are the two sheets answered from
+    /// half height; every other card, and every accessibility size, is large.
+    func testAnInProgressCardIsTheSecondAnsweringCase() {
+        XCTAssertEqual(PhoneSheetKind.initialDetent(.card, column: "in_progress", accessibility: false), .medium)
+        XCTAssertEqual(PhoneSheetKind.detents(.card, column: "in_progress", accessibility: false), [.medium, .large])
+        for column in ["backlog", "prep", "done", nil] as [String?] {
+            XCTAssertEqual(PhoneSheetKind.initialDetent(.card, column: column, accessibility: false), .large)
+            XCTAssertEqual(PhoneSheetKind.detents(.card, column: column, accessibility: false), [.large])
+            XCTAssertEqual(PhoneSheetKind.initialDetent(.agent, column: column, accessibility: false), .medium)
+        }
+        XCTAssertEqual(PhoneSheetKind.initialDetent(.agent, column: "in_progress", accessibility: false), .medium)
+        XCTAssertEqual(PhoneSheetKind.initialDetent(.catchUp, column: "in_progress", accessibility: false), .large)
+        XCTAssertEqual(PhoneSheetKind.initialDetent(.card, column: "in_progress", accessibility: true), .large)
+        XCTAssertEqual(PhoneSheetKind.initialDetent(.agent, column: nil, accessibility: true), .large)
+        XCTAssertEqual(PhoneSheetKind.onKeyboard(.medium), .large)
+        var working = BoardCard(); working.id = "w"; working.column = "in_progress"
+        XCTAssertEqual(PhoneSheet.card(working).cardColumn, "in_progress")
+        XCTAssertNil(PhoneSheet.catchUp().cardColumn)
+    }
 }

@@ -89,14 +89,21 @@ enum TerminalWhereabouts: Equatable {
 
 /// What one agent last said, in a sheet opened from its row.
 ///
-/// The sheet leads with the question and controls, leaving the list behind it.
+/// The sheet leads with the name, one status line (`AgentSheetLead.statusLine`:
+/// what it is doing, for how long, how full its context is) and the card
+/// chip, then what needs a press — permission asks, notification cards and
+/// the low-priority offer at full shape, then Close, Hide, Stop and Delete as
+/// one row of small armed buttons whose sentence shows only while armed. At
+/// half height the still is compact (`AgentSheetLead.stillSize`); dragged up,
+/// it is the large one. A waiting agent's question sits above its answer
+/// controls on the Conversation screen, where every open lands.
 /// A hosted terminal opens full screen because its keyboard needs the height;
 /// Done returns to these details and releases the terminal watch.
 ///
-/// This is the panel's `StdoutPane` at phone measure — its header line and its
-/// body ladder. The agent's last message is drawn as a *document* through the
-/// phone's own `MarkdownText`. Reply, Close, Stop, permission, Dismiss and
-/// abandoned Delete sit under that, absent where the Mac says this row cannot.
+/// Details is the panel's `StdoutPane` at phone measure — its header line and
+/// its body ladder, with the origin lines and the cast quote above the facts.
+/// The agent's last message is drawn as a *document* through the phone's own
+/// `MarkdownText`. Every verb is absent where the Mac says this row cannot.
 ///
 /// A row on a terminal Dark Army hosts gets two tabs under its identity
 /// line, `DetailTab`: **Details** — the ladder above — and **Terminal**, the
@@ -111,6 +118,7 @@ enum TerminalWhereabouts: Equatable {
 struct AgentDetailView: View {
     @EnvironmentObject private var sheets: PhoneSheetRouter
     @Environment(\.phoneSheetEntry) private var sheetEntry
+    @Environment(\.phoneSheetDetent) private var sheetDetent
     @Environment(\.decryptFeedback) private var decryptFeedback
     let seed: Agent
     let category: Category
@@ -135,6 +143,8 @@ struct AgentDetailView: View {
     @State private var settledAs: String?
     @ObservedObject private var dictation = DictationEngine.shared
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Reduce Motion, handed to every `Motion` call on this screen.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Which tab a hosted row is showing. Not persisted and not remembered
     /// per session: `DetailTab.defaultTab` is where every open lands.
     @State private var hostedTab: DetailTab = DetailTab.defaultTab
@@ -238,74 +248,66 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Whether the lead still is tucked away: set by a scroll in either
-    /// pane, cleared by a tap on the name.
+    /// Whether the lead still is tucked away on Main: a tap on the name
+    /// tucks it or brings it back.
     @State private var photoTucked = false
+
+    /// A keyboard is up over this sheet (not the terminal cover's). The
+    /// conversation page scrolls its answer box above it (`typing:`), so
+    /// SEND is always in reach (25 Sep 2026); nothing is folded away —
+    /// off Main the only fixed line is the card's title.
+    @State private var keyboardUp = false
 
     var body: some View {
         VStack(spacing: 0) {
-            // The lead: a smaller still on the left, and beside it who this
-            // is, the card and where it came from. A scroll in either pane
-            // tucks the still away and the text takes the whole width; a
-            // tap on the name brings it back.
-            HStack(alignment: .top, spacing: 12) {
-                if !photoTucked {
-                    PixelMark(character: Cast.character(for: agent),
-                              state: Cast.state(for: agent, category: category),
-                              size: Self.leadPhotoSize)
-                        .transition(.opacity)
-                        .accessibilityHidden(true)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    identity
-                    cardLead
-                    originLead
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
-            // The verbs sit above the tabs, not inside one: Acknowledge,
-            // Stop, Allow and the rest are one reach away on Conversation
-            // and Details alike. Bounded like the terminal's strip, so a
-            // long permission detail cannot push the tabs off the sheet.
-            if hasVerbs {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        verbs
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: dynamicTypeSize.isAccessibilitySize
-                       ? Self.hostedStripMaxHeightLarge : Self.hostedStripMaxHeight)
-                .fixedSize(horizontal: false, vertical: true)
-            }
+            // The tabs lead the sheet: Main first (the lead and the verbs),
+            // then Conversation, Details and — hosted — Terminal.
             PhoneAgentScreenBar(screen: $screen, hosted: hostedTerminal,
                                 needsPress: TerminalStrip.needsPress(
                                     prompts: prompts.count,
                                     questions: agent.questionList.count))
                 .padding(.horizontal, 14)
+                .padding(.top, 8)
                 .padding(.bottom, 8)
-            switch AgentScreen.pane(hosted: hostedTerminal, screen: screen) {
+            let pane = AgentScreen.pane(hosted: hostedTerminal, screen: screen)
+            // Off Main, the only fixed line is the card's title; everything
+            // under it is one scrolling page.
+            if AgentScreen.titleOnly(pane) {
+                titleLine
+                Rectangle().fill(Theme.hair).frame(height: 1)
+            }
+            switch pane {
+            case .main:
+                mainScreen
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .conversation:
                 ConversationScreen(
                     agent: agent, stopped: stopped, client: client,
-                    retainedReply: sheetEntry?.replyDraft(for: agent.sessionId))
+                    retainedReply: sheetEntry?.replyDraft(for: agent.sessionId),
+                    ask: AgentSheetLead.questionText(agent.questionList.map(\.text)),
+                    typing: keyboardUp)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .modifier(TucksPhotoOnScroll(tucked: $photoTucked))
             case .details, .terminal:
                 detailsScreen
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .modifier(TucksPhotoOnScroll(tucked: $photoTucked))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .overlay(ScanlineOverlay())
-
+        .animation(Motion.animation(.easeOut(duration: 0.2), reduced: reduceMotion),
+                   value: keyboardUp)
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardWillShowNotification)) { _ in
+            // The terminal cover's keyboard is the emulator's, over its
+            // own screen; the sheet underneath keeps its lead.
+            guard !sheets.terminalPresented else { return }
+            keyboardUp = true
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardUp = false
+        }
         .decryptSurface("AgentDetailView")
         .fullScreenCover(isPresented: terminalCover) {
             terminalScreen
@@ -379,14 +381,15 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Who this is, beside the lead still: name, provider, quote. A tap
-    /// shows or tucks the still (`photoTucked`). Not the live terminal —
-    /// that cover keeps `hostedIdentity` so the emulator keeps the screen.
+    /// Who this is, beside the lead still: name, provider, and one status
+    /// line — the fleet row's facts in words. A tap shows or tucks the
+    /// still (`photoTucked`). Not the live terminal — that cover keeps
+    /// `hostedIdentity` so the emulator keeps the screen.
     private var identity: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text(nickname)
-                    .font(Theme.mono(15, weight: .medium))
+                    .font(Theme.prose(20, weight: .semibold))
                     .foregroundStyle(Theme.phosphorBright)
                     .fixedSize(horizontal: false, vertical: true)
                 // Which assistant this is — mark and name together, as the
@@ -397,33 +400,47 @@ struct AgentDetailView: View {
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.dim)
             }
-            // Secondary and always one line: a size smaller than the
-            // provider label, shrinking to fit beside the still (the
-            // longest line is 52 characters, ~0.75 on a 375pt phone) and
-            // truncating only below that floor.
-            if !quote.isEmpty {
-                Text(quote)
-                    .font(Theme.mono(Self.quoteSize))
-                    .foregroundStyle(Theme.dim)
-                    .lineLimit(1)
-                    .minimumScaleFactor(Self.quoteMinScale)
-                    .truncationMode(.tail)
-            }
+            // What it is doing, how long, how full: wraps, never capped.
+            // `now` is the snapshot's own stamp, so a held picture does not
+            // read as fresh.
+            let head = PhoneAgentFacts.head(agent: agent, category: liveCategory)
+            let now = client.snapshot.generatedAt
+            Text(AgentSheetLead.statusLine(
+                head: head,
+                age: FleetAge.text(startedAt: agent.startedAt, now: now),
+                ctx: AgentSheetLead.ctxText(pct: agent.metrics.ctxUsedPct,
+                                            marker: agent.trend.pace?.marker ?? "")))
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.dim)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(AgentSheetLead.spokenStatus(
+                    head: head,
+                    age: FleetAge.spoken(startedAt: agent.startedAt, now: now),
+                    ctx: AgentSheetLead.spokenCtx(pct: agent.metrics.ctxUsedPct,
+                                                  pace: agent.trend.pace?.spoken ?? "")))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.easeOut(duration: 0.2)) { photoTucked.toggle() }
+            Motion.animate(.easeOut(duration: 0.2), reduced: reduceMotion) {
+                photoTucked.toggle()
+            }
         }
         .accessibilityAddTraits(.isButton)
         .accessibilityHint(photoTucked ? "Shows the portrait" : "Hides the portrait")
     }
 
-    /// The lead still beside the text: smaller than a sheet still so the
-    /// name, the card and the origin read beside it rather than under it.
+    /// The lead still at full height, beside the text: smaller than a sheet
+    /// still so the name, the status and the card read beside it rather
+    /// than under it. At half height the still is `AgentSheetLead
+    /// .compactStill`; `leadStill` picks by the sheet's detent.
     static let leadPhotoSize: CGFloat = 96
 
-    /// The quote under the name: secondary, one line, shrinking to fit.
+    private var leadStill: CGFloat {
+        AgentSheetLead.stillSize(detent: sheetDetent)
+    }
+
+    /// The quote on Details: secondary, one line, shrinking to fit.
     static let quoteSize: CGFloat = 10
     static let quoteMinScale: CGFloat = 0.7
 
@@ -432,11 +449,11 @@ struct AgentDetailView: View {
     private var hostedIdentity: some View {
         HStack(spacing: 10) {
             PixelMark(character: Cast.character(for: agent),
-                      state: Cast.state(for: agent, category: category),
+                      state: Cast.state(for: agent, category: liveCategory),
                       size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text(nickname)
-                    .font(Theme.mono(15, weight: .medium))
+                    .font(Theme.prose(20, weight: .semibold))
                     .foregroundStyle(Theme.phosphorBright)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 5) {
@@ -533,6 +550,71 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Main: the sheet's lead as one scrolling page — the still beside who
+    /// this is and the card, then every verb, unbounded: the page scrolls,
+    /// so no strip has to cap them.
+    private var mainScreen: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 12) {
+                    if !photoTucked {
+                        PixelMark(character: Cast.character(for: agent),
+                                  state: Cast.state(for: agent, category: liveCategory),
+                                  size: leadStill)
+                            .transition(.opacity)
+                            .accessibilityHidden(true)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        identity
+                        cardLead
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 4)
+                .padding(.bottom, 4)
+                if hasVerbs {
+                    VStack(alignment: .leading, spacing: 10) {
+                        verbs
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    /// The one line kept above every tab but Main: the card's title (a tap
+    /// opens the card), else what the session is on, else its name. Wraps,
+    /// never clipped.
+    @ViewBuilder private var titleLine: some View {
+        let title = !cardLine.isEmpty ? cardLine
+            : (!sessionLine.isEmpty ? sessionLine : nickname)
+        if let card = boardCard, !cardLine.isEmpty {
+            DecryptButton(action: { sheets.show(.card(card)) }) {
+                titleText(title)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open card, \(title)")
+        } else {
+            titleText(title)
+        }
+    }
+
+    private func titleText(_ title: String) -> some View {
+        Text(title)
+            .font(Theme.prose(16, weight: .semibold))
+            .foregroundStyle(Theme.phosphorBright)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
+            .contentShape(Rectangle())
+    }
+
     private var detailsScreen: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -545,12 +627,25 @@ struct AgentDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .clipped()
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 
     @ViewBuilder private var rest: some View {
         CollaborationView(client: client, focus: .session(provider: agent.provider, id: agent.sessionId))
         Rectangle().fill(Theme.hair).frame(height: 1)
         header
+        originLead
+        // Secondary and always one line: a size smaller than the facts,
+        // shrinking to fit (the longest line is 52 characters, ~0.75 on a
+        // 375pt phone) and truncating only below that floor.
+        if !quote.isEmpty {
+            Text(quote)
+                .font(Theme.mono(Self.quoteSize))
+                .foregroundStyle(Theme.dim)
+                .lineLimit(1)
+                .minimumScaleFactor(Self.quoteMinScale)
+                .truncationMode(.tail)
+        }
         facts
         if !agent.name.isEmpty {
             Text("cmd       \(agent.name)")
@@ -572,9 +667,9 @@ struct AgentDetailView: View {
         agent.nickname.isEmpty ? String(agent.sessionId.prefix(8)) : agent.nickname
     }
 
-    /// The character's one line under the name, drawn under the two large
-    /// portraits only (`identity`, `conversationLead`) and never beside the
-    /// 40pt `hostedIdentity`. Empty for a nickname off the roster.
+    /// The character's one line, drawn on Details under the origin lines
+    /// (`rest`) and never in the lead or beside the 40pt `hostedIdentity`.
+    /// Empty for a nickname off the roster.
     private var quote: String {
         CastQuotes.line(forNickname: agent.nickname)
     }
@@ -707,8 +802,8 @@ struct AgentDetailView: View {
             Text(nickname).foregroundStyle(Theme.phosphorBright)
                 .fixedSize(horizontal: false, vertical: true)
             Text("·").foregroundStyle(Theme.faint)
-            Text(category.rawValue)
-                .foregroundStyle(category == .waiting ? Color.red : Theme.dim)
+            Text(liveCategory.rawValue)
+                .foregroundStyle(liveCategory == .waiting ? Color.red : Theme.dim)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .font(Theme.mono(11))
@@ -716,8 +811,8 @@ struct AgentDetailView: View {
         // this is one line about one agent, and a landmark to jump to.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(cardLine.isEmpty
-                            ? "\(nickname), \(category.rawValue)"
-                            : "\(nickname), \(category.rawValue), on card \(cardLine)")
+                            ? "\(nickname), \(liveCategory.rawValue)"
+                            : "\(nickname), \(liveCategory.rawValue), on card \(cardLine)")
         .accessibilityAddTraits(.isHeader)
     }
 
@@ -752,7 +847,7 @@ struct AgentDetailView: View {
         if !agent.currentTool.isEmpty {
             lines.append("tool      \(agent.currentTool)")
         }
-        let isLive = category == .waiting || category == .running || category == .sleeping
+        let isLive = liveCategory == .waiting || liveCategory == .running || liveCategory == .sleeping
         if isLive, agent.subagents > 0 {
             let names = agent.subagentRows.map(\.qualified).filter { !$0.isEmpty }
             if names.isEmpty {
@@ -761,7 +856,7 @@ struct AgentDetailView: View {
                 lines.append("helpers   \(agent.subagents) · " + names.joined(separator: ", "))
             }
         }
-        if category == .waiting {
+        if liveCategory == .waiting {
             lines.append("waiting for you for \(Self.elapsed(agent.idleSeconds))")
         }
         return lines
@@ -776,7 +871,7 @@ struct AgentDetailView: View {
     @ViewBuilder
     private var elsewhereTerminal: some View {
         if !agent.ownTerminal {
-            let sentence = PhoneAgentFacts.happening(agent: agent, category: category)
+            let sentence = PhoneAgentFacts.happening(agent: agent, category: liveCategory)
             let whereabouts = TerminalWhereabouts.of(originBy: agent.originBy,
                                                      hosted: agent.ownTerminal,
                                                      tabGone: agent.tabGone)
@@ -811,13 +906,10 @@ struct AgentDetailView: View {
         // Every question of the dialog, not just the first — a dialog can
         // ask up to four at once, and the ones not shown are the ones left
         // standing in the terminal.
-        let question = agent.questionList
-            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
+        let question = AgentSheetLead.questionText(agent.questionList.map(\.text))
         if !question.isEmpty {
             Text(question)
-                .font(Theme.mono(13))
+                .font(Theme.prose(17))
                 .foregroundStyle(Theme.phosphorBright)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -830,16 +922,22 @@ struct AgentDetailView: View {
         let text = agent.lastText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !summary.isEmpty {
             Text(summary)
-                .font(Theme.mono(13))
+                .font(Theme.prose(17))
                 .foregroundStyle(Theme.dim)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             workReport(for: agent, latest: summary)
         } else if !text.isEmpty {
-            MarkdownText(source: text, base: 13, mono: true)
-                .equatable()
-                .foregroundStyle(Theme.dim)
-                .fixedSize(horizontal: false, vertical: true)
+            // A message that *is* a labelled report keeps only the prose
+            // before its heading; the sections below draw the rest.
+            let shown = agent.workReport?.labelled == true
+                ? WorkReport.prose(before: text) : text
+            if !shown.isEmpty {
+                MarkdownText(source: shown, base: 13, mono: true)
+                    .equatable()
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             workReport(for: agent, latest: text)
         } else {
             workReport(for: agent, latest: "")
@@ -856,12 +954,16 @@ struct AgentDetailView: View {
     /// What the last finished piece of work actually was, under the words that
     /// came after it. The Mac's `StdoutPane.reportToShow` rule, said once here:
     /// nothing where there is no report, and never a second copy of a message
-    /// that *is* the report.
+    /// that *is* the report. A report the Mac split into its labelled parts
+    /// is drawn as those parts (`PhoneWorkReportBlock`) — the message above
+    /// has already given up its copy, so it is drawn either way.
     @ViewBuilder
     private func workReport(for agent: Agent, latest: String) -> some View {
         let report = agent.lastReport.trimmingCharacters(
             in: .whitespacesAndNewlines)
-        if !report.isEmpty, !latest.contains("## Work done") {
+        if let parsed = agent.workReport, parsed.labelled, !report.isEmpty {
+            PhoneWorkReportBlock(parsed: parsed)
+        } else if !report.isEmpty, !latest.contains("## Work done") {
             VStack(alignment: .leading, spacing: 6) {
                 Text("# work done")
                     .font(Theme.mono(11))
@@ -890,13 +992,22 @@ struct AgentDetailView: View {
     private var hasVerbs: Bool {
         !note.isEmpty || !cards.isEmpty || !prompts.isEmpty
             || agent.canLowPriority || agent.canClose || agent.canHide
-            || agent.canStop || category == .abandoned
+            || agent.canStop || liveCategory == .abandoned
     }
 
-    /// Every press on this agent except the reply: the Mac's note, Dismiss,
-    /// Allow / Deny, Low priority, Acknowledge & close, Hide, Stop, Delete.
+    /// Every press on this agent except the reply: first what an ask needs
+    /// (`askVerbs`), then the quiet verbs in one row (`quietVerbs`).
     @ViewBuilder
     private var verbs: some View {
+        askVerbs
+        quietVerbs
+    }
+
+    /// The Mac's note, Dismiss on each notification card, Allow / Deny on
+    /// each permission ask and the low-priority offer — each at its full
+    /// shape, because each is a question put to the person.
+    @ViewBuilder
+    private var askVerbs: some View {
         if !note.isEmpty {
             Text(note)
                 .font(Theme.mono(12))
@@ -905,7 +1016,7 @@ struct AgentDetailView: View {
         ForEach(cards) { card in
             if !card.message.isEmpty {
                 Text(card.message)
-                    .font(Theme.mono(12))
+                    .font(Theme.prose(15))
                     .foregroundStyle(Theme.dim)
             }
             DecryptButton(outAction == PhoneActions.dismiss ? mark : "Dismiss") {
@@ -924,7 +1035,7 @@ struct AgentDetailView: View {
                     .foregroundStyle(Theme.phosphorBright)
                 if !prompt.detail.isEmpty {
                     Text(prompt.detail)
-                        .font(Theme.mono(12))
+                        .font(Theme.prose(15))
                         .foregroundStyle(Theme.dim)
                 }
                 if prompt.answerable {
@@ -952,46 +1063,76 @@ struct AgentDetailView: View {
         if agent.canLowPriority {
             lowPriorityBox
         }
-        if agent.canClose {
-            closeBox
-        }
-        if agent.canHide {
-            VStack(alignment: .leading, spacing: 6) {
-                DecryptButton(outAction == PhoneActions.hideSession || hideAccepted
-                       ? "HIDING…" : "Hide until this thread changes") {
-                    Task {
-                        if await send(PhoneActions.hideSession, ["session_id": agent.sessionId]) {
-                            hideAccepted = true
-                            leaveHiddenDetail()
+    }
+
+    /// Whether any of Close, Hide, Stop and Delete is offered.
+    private var hasQuietVerbs: Bool {
+        agent.canClose || agent.canHide || agent.canStop || liveCategory == .abandoned
+    }
+
+    /// Close, Hide, Stop and Delete as one row of small buttons, each still
+    /// armed before it fires ("Really …?"). A button's sentence is drawn
+    /// only while that button is armed or its press is in play, so a
+    /// finished agent's verbs take one line rather than a stacked block.
+    @ViewBuilder
+    private var quietVerbs: some View {
+        if hasQuietVerbs {
+            VStack(alignment: .leading, spacing: 8) {
+                AdaptiveStack(stacked: dynamicTypeSize.isAccessibilitySize, spacing: 8) {
+                    if agent.canClose {
+                        DecryptButton(closeLabel) {
+                            // The extra field is the assertion that a human
+                            // pressed this button, and it is what separates
+                            // this press from `close-out.sh`'s identical
+                            // action: only a person's press finishes the
+                            // session's board card.
+                            press(.close, action: PhoneActions.closeTerminal,
+                                  fields: ["session_id": agent.sessionId,
+                                           "by_person": "1"])
                         }
+                        .buttonStyle(AlarmOutline(color: arm.close != nil ? Theme.alarm : Theme.phosphor,
+                                                  size: 12))
+                        .disabled(busy)
+                        .accessibilityHint("Closes the terminal tab and ends the session")
+                    }
+                    if agent.canHide {
+                        DecryptButton(outAction == PhoneActions.hideSession || hideAccepted
+                               ? "HIDING…" : Verbs.hide.label) {
+                            Task {
+                                if await send(PhoneActions.hideSession, ["session_id": agent.sessionId]) {
+                                    hideAccepted = true
+                                    leaveHiddenDetail()
+                                }
+                            }
+                        }
+                        .buttonStyle(AlarmOutline(size: 12))
+                        .disabled(busy)
+                        .accessibilityLabel(
+                            outAction == PhoneActions.hideSession || hideAccepted
+                            ? "Hiding" : "Hide \(nickname) until this thread changes")
+                        .accessibilityHint("Hides this row on the Mac and phone until Codex writes to the thread again.")
+                    }
+                    if agent.canStop {
+                        DecryptButton(stopLabel) {
+                            press(.stop, action: PhoneActions.stopSession,
+                                  fields: ["session_id": agent.sessionId])
+                        }
+                        .buttonStyle(AlarmOutline(color: Theme.alarm, size: 12))
+                        .disabled(busy)
+                    }
+                    if liveCategory == .abandoned {
+                        DecryptButton(deleteLabel) {
+                            press(.deleteAgent, action: PhoneActions.deleteAgent,
+                                  fields: ["session_id": agent.sessionId], pop: true)
+                        }
+                        .buttonStyle(AlarmOutline(color: Theme.alarm, size: 12))
+                        .disabled(busy)
                     }
                 }
-                .buttonStyle(AlarmOutline())
-                .disabled(busy)
-                .accessibilityLabel(
-                    outAction == PhoneActions.hideSession || hideAccepted
-                    ? "Hiding" : "Hide \(nickname) until this thread changes")
-                Text("Hides this row on the Mac and phone until Codex writes to the thread again.")
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.dim)
-                    .fixedSize(horizontal: false, vertical: true)
+                if agent.canClose {
+                    closeBox
+                }
             }
-        }
-        if agent.canStop {
-            DecryptButton(stopLabel) {
-                press(.stop, action: PhoneActions.stopSession,
-                      fields: ["session_id": agent.sessionId])
-            }
-            .buttonStyle(AlarmOutline(color: Theme.alarm))
-            .disabled(busy)
-        }
-        if category == .abandoned {
-            DecryptButton(deleteLabel) {
-                press(.deleteAgent, action: PhoneActions.deleteAgent,
-                      fields: ["session_id": agent.sessionId], pop: true)
-            }
-            .buttonStyle(AlarmOutline(color: Theme.alarm))
-            .disabled(busy)
         }
     }
 
@@ -1004,19 +1145,19 @@ struct AgentDetailView: View {
         if outAction == PhoneActions.stopSession || settlingHere {
             return outAction == PhoneActions.stopSession ? mark : "SENDING…"
         }
-        return arm.stop != nil ? "Really stop?" : "Stop"
+        return arm.stop != nil ? Verbs.stop.armedLabel : Verbs.stop.label
     }
 
     private var deleteLabel: String {
         if outAction == PhoneActions.deleteAgent { return mark }
-        return arm.deleteAgent != nil ? "Really delete?" : "Delete"
+        return arm.deleteAgent != nil ? Verbs.delete.armedLabel : Verbs.delete.label
     }
 
     private var lowPriorityLabel: String {
         if outAction == PhoneActions.lowPriority { return mark }
         return arm.lowPriority != nil
-            ? "Really switch to low priority?"
-            : "Low priority"
+            ? Verbs.lowPriority.armedLabel
+            : Verbs.lowPriority.label
     }
 
     private var closeLabel: String {
@@ -1024,8 +1165,8 @@ struct AgentDetailView: View {
             return outAction == PhoneActions.closeTerminal ? mark : "SENDING…"
         }
         return arm.close != nil
-            ? "Really close the terminal?"
-            : "Acknowledge & close terminal"
+            ? Verbs.closeTerminal.armedLabel
+            : Verbs.closeTerminal.label
     }
 
     private func permissionLabel(_ behavior: String, plain: String,
@@ -1035,6 +1176,23 @@ struct AgentDetailView: View {
             return mark
         }
         return arm.permission == behavior ? armed : plain
+    }
+
+    /// The bucket the *current* snapshot holds this agent in, falling back
+    /// to the seed category the sheet was opened with (fixed at open: a
+    /// decision page always opens `.waiting`). Every drawn reading and verb
+    /// gate on this screen reads this, never the seed.
+    private var liveCategory: Category {
+        let a = client.snapshot.agents
+        let id = seed.sessionId
+        let name = AgentSheetLead.liveBucket([
+            ("waiting", a.waiting.contains { $0.sessionId == id }),
+            ("running", a.running.contains { $0.sessionId == id }),
+            ("sleeping", a.sleeping.contains { $0.sessionId == id }),
+            ("finished", a.finished.contains { $0.sessionId == id }),
+            ("abandoned", a.abandoned.contains { $0.sessionId == id }),
+        ])
+        return name.flatMap(Category.init(rawValue:)) ?? category
     }
 
     /// End of a turn: waiting or sleeping in the *current* snapshot, not
@@ -1075,34 +1233,33 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Whether Close's press is in play — queued, on its way, or landed
+    /// and settling until the row leaves the list.
+    private var closeInPlay: Bool {
+        outAction == PhoneActions.closeTerminal
+            || (settlingHere && settledAs == PhoneActions.closeTerminal)
+    }
+
+    /// What Close says under the quiet row, drawn only while it is armed or
+    /// its press is in play: the sentence, and the panel's `WrapUpBar`
+    /// cursor from the confirmed press until the row leaves the list — the
+    /// same window `closeLabel` reads SENDING… for. The button itself is in
+    /// `quietVerbs`.
+    @ViewBuilder
     private var closeBox: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(arm.close != nil
-                 ? "Closes the tab and ends this agent. There is no undo."
-                 : "Done reading? Close this terminal tab and end the session.")
-                .font(Theme.mono(11))
-                .foregroundStyle(arm.close != nil ? Theme.alarm : Theme.dim)
+        if arm.close != nil || closeInPlay {
             HStack(spacing: 8) {
-                // The panel's `WrapUpBar` cursor: beside the button from the
-                // confirmed press until the row leaves the list — the same
-                // window `closeLabel` reads SENDING… for.
-                if outAction == PhoneActions.closeTerminal
-                    || (settlingHere && settledAs == PhoneActions.closeTerminal) {
+                if closeInPlay {
                     AgentChatterView(.caret, wait: .closing, seed: agent.sessionId,
                                      spoken: "Closing the terminal")
                         .id(agent.sessionId)
                 }
-                DecryptButton(closeLabel) {
-                    // The extra field is the assertion that a human pressed
-                    // this button, and it is what separates this press from
-                    // `close-out.sh`'s identical action: only a person's press
-                    // finishes the session's board card.
-                    press(.close, action: PhoneActions.closeTerminal,
-                          fields: ["session_id": agent.sessionId,
-                                   "by_person": "1"])
-                }
-                .buttonStyle(AlarmOutline(color: arm.close != nil ? Theme.alarm : Theme.phosphor))
-                .disabled(busy)
+                Text(arm.close != nil
+                     ? "Closes the tab and ends this agent. There is no undo."
+                     : "Closing the terminal tab and ending the session.")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(arm.close != nil ? Theme.alarm : Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1244,6 +1401,100 @@ struct PhoneAgentScreenBar: View {
     }
 }
 
+/// A finished agent's report as the parts it names — the Mac's
+/// `WorkReportBlock` in the phone's type: `# work done`, then ASKED as prose,
+/// CHANGED and VERIFIED as bullets, UNCHECKED as numbered steps with the dim
+/// "Why not automated" line, or the one line saying nothing was left, and
+/// CARD. Every word and caption is `WorkReport`'s, byte-pinned with the Mac.
+/// Text in full at every size: `Theme.mono` alone, no ceiling, every line
+/// wraps.
+struct PhoneWorkReportBlock: View {
+    let parsed: WorkReport.Parsed
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(WorkReport.heading)
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
+            if parsed.cut {
+                line(WorkReport.cutNote, color: Theme.faint)
+            }
+            ForEach(WorkReport.sections(parsed), id: \.self) { section in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(caption(section))
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.faint)
+                        .fixedSize(horizontal: false, vertical: true)
+                    content(section)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func caption(_ section: WorkReport.Section) -> String {
+        section == .unchecked
+            ? WorkReport.uncheckedCaption(count: WorkReport.total(parsed, .unchecked),
+                                          nothing: parsed.nothingUnchecked)
+            : section.caption
+    }
+
+    @ViewBuilder
+    private func content(_ section: WorkReport.Section) -> some View {
+        switch section {
+        case .asked:
+            line(parsed.asked, color: Theme.dim)
+        case .changed:
+            bullets(parsed.changed, total: WorkReport.total(parsed, .changed))
+        case .verified:
+            bullets(parsed.verified, total: WorkReport.total(parsed, .verified))
+        case .unchecked:
+            if parsed.nothingUnchecked {
+                line(WorkReport.nothingUnchecked, color: Theme.phosphor)
+            } else {
+                ForEach(Array(WorkReport.numbered(parsed.unchecked).enumerated()),
+                        id: \.offset) { item in
+                    line(item.element, color: Theme.phosphorBright)
+                }
+                moreLine(shown: parsed.unchecked.count,
+                         total: WorkReport.total(parsed, .unchecked))
+                if !parsed.whyNotAutomated.isEmpty {
+                    line(parsed.whyNotAutomated, color: Theme.dim)
+                }
+            }
+        case .card:
+            line(parsed.card, color: Theme.dim)
+        }
+    }
+
+    private func bullets(_ items: [String], total: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(items.enumerated()), id: \.offset) { item in
+                line("- " + item.element, color: Theme.dim)
+            }
+            moreLine(shown: items.count, total: total)
+        }
+    }
+
+    /// "+N more" under a list the Mac clamped; nothing when all is drawn.
+    @ViewBuilder
+    private func moreLine(shown: Int, total: Int) -> some View {
+        let more = WorkReport.more(shown: shown, total: total)
+        if !more.isEmpty {
+            line(more, color: Theme.faint)
+        }
+    }
+
+    private func line(_ text: String, color: Color) -> some View {
+        Text(Markdown.inline(text))
+            .font(Theme.mono(13))
+            .foregroundStyle(color)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 /// What a session is doing right now, in one line.
 ///
 /// The Mac's `AgentFacts.happening` in the phone's own terms — the same
@@ -1251,7 +1502,9 @@ struct PhoneAgentScreenBar: View {
 /// phone's `Agent` does not decode. Pure, so both surfaces say the same
 /// thing about the same row.
 enum PhoneAgentFacts {
-    static func happening(agent: Agent, category: Category) -> String {
+    /// What it is doing and its helpers, without the summary — the sheet's
+    /// status line leads with this, and `happening` adds the summary to it.
+    static func head(agent: Agent, category: Category) -> String {
         var parts: [String] = []
         switch category {
         case .waiting:
@@ -1271,8 +1524,20 @@ enum PhoneAgentFacts {
         if agent.subagents > 0 {
             parts.append(agent.subagents == 1 ? "1 helper" : "\(agent.subagents) helpers")
         }
+        return parts.joined(separator: " · ")
+    }
+
+    static func happening(agent: Agent, category: Category) -> String {
+        var parts = [head(agent: agent, category: category)]
         let summary = agent.lastSummary.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !summary.isEmpty { parts.append(summary) }
+        // With no summary, the work report's one line — the Mac's headline.
+        let headline = (agent.workReport?.headline ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summary.isEmpty {
+            parts.append(summary)
+        } else if !headline.isEmpty {
+            parts.append(headline)
+        }
         return parts.joined(separator: " · ")
     }
 }
@@ -1297,22 +1562,3 @@ enum TerminalStrip {
     }
 }
 
-
-/// Tucks the lead still away when the person starts scrolling a pane, from
-/// the scroll phase of the first scroll view inside (iOS 18). iOS 17 has no
-/// such report, and a drag gesture here would compete with the emulator's
-/// own touches, so there the still stays until a tap on the name tucks it.
-private struct TucksPhotoOnScroll: ViewModifier {
-    @Binding var tucked: Bool
-
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.onScrollPhaseChange { _, phase in
-                guard phase == .interacting, !tucked else { return }
-                withAnimation(.easeOut(duration: 0.2)) { tucked = true }
-            }
-        } else {
-            content
-        }
-    }
-}

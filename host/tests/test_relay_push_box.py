@@ -237,7 +237,7 @@ def test_the_activity_leg_is_a_closed_set_and_never_carries_a_title():
     text = _read(PUSH)
     assert 'const ACTIVITY_EVENTS = ["update", "end"];' in text
     assert 'const ACTIVITY_KINDS = ["permission", "question", "attention"];' in text
-    assert "const SLUG_SHAPE = /^[a-z]{0,24}$/;" in text
+    assert '(slug !== "" && !FACE_SLUGS.includes(slug))' in text
     assert "ACTIVITY_STALE_SECONDS = 1800" in text
     branch = text.split("if (body.event !== undefined) {")[1].split("} else {")[0]
     assert '"title"' not in branch and "body.title" not in branch

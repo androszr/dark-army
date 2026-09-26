@@ -31,6 +31,40 @@ enum FleetProjects {
     }
 }
 
+/// The host Mac's battery in words — the one rule the Fleet line and its
+/// spoken label share.
+///
+/// Pure, and kept in this file for `FleetProjects`' reason: a new `.swift`
+/// file would never reach the app target. `nil` means draw nothing: an
+/// older Mac (`available` false), a desktop (`present` false) or a battery
+/// line with no percent.
+enum MacPower {
+    static func line(available: Bool, present: Bool, percent: Int?,
+                     source: String, charge: String) -> String? {
+        guard available, present, let percent else { return nil }
+        let head = "mac battery \(percent)%"
+        guard let word = word(source: source, charge: charge) else { return head }
+        return "\(head) · \(word)"
+    }
+
+    /// The `charge` word first; where the Mac named none, the source.
+    static func word(source: String, charge: String) -> String? {
+        switch charge {
+        case "charging": return "charging"
+        case "discharging": return "on battery"
+        case "charged": return "charged"
+        case "not_charging": return "on power, not charging"
+        case "finishing": return "finishing charge"
+        default: break
+        }
+        switch source {
+        case "ac": return "on power"
+        case "battery": return "on battery"
+        default: return nil
+        }
+    }
+}
+
 /// Fleet, drawn as the Mac's process table.
 ///
 /// One merged table rather than three hardcoded sections. Order is `started_at`
@@ -56,6 +90,20 @@ struct FleetView: View {
                 AgentChatterView(.line, wait: .refreshing, seed: "refresh",
                                  spoken: "Checking with the Mac")
                     .id("refresh")
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Theme.bg)
+            }
+            // The host Mac's battery: a label, never a control. Absent on
+            // a desktop and on an older Mac.
+            if let line = MacPower.line(available: snapshot.power.available,
+                                        present: snapshot.power.present,
+                                        percent: snapshot.power.percent,
+                                        source: snapshot.power.source,
+                                        charge: snapshot.power.charge) {
+                CommentLine(text: line)
+                    .accessibilityLabel(line)
+                    .id("power")
                     .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
                     .listRowBackground(Theme.bg)
@@ -86,7 +134,8 @@ struct FleetView: View {
             }
             ForEach(liveRows) { row in
                 DecryptButton(action: { sheets.show(.agent(row.agent, row.category)) }) {
-                    PhoneProcessRow(agent: row.agent, category: row.category)
+                    PhoneProcessRow(agent: row.agent, category: row.category,
+                                    cardLine: cardLine(for: row.agent))
                 }
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets())
@@ -115,6 +164,12 @@ struct FleetView: View {
         .task { await client.fetchLog(force: true) }
     }
 
+    /// The agent sheet's title line for this row's session.
+    private func cardLine(for agent: Agent) -> String {
+        AgentDetailView.cardLine(card: snapshot.board.card(forSession: agent.sessionId),
+                                 sessionId: agent.sessionId)
+    }
+
     @ViewBuilder
     private func group(_ title: String, rows: [Row]) -> some View {
         if !rows.isEmpty {
@@ -124,7 +179,8 @@ struct FleetView: View {
                 .listRowBackground(Theme.bg)
             ForEach(rows) { row in
                 DecryptButton(action: { sheets.show(.agent(row.agent, row.category)) }) {
-                    PhoneProcessRow(agent: row.agent, category: row.category)
+                    PhoneProcessRow(agent: row.agent, category: row.category,
+                                    cardLine: cardLine(for: row.agent))
                 }
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets())
@@ -279,7 +335,7 @@ struct PhoneProjectStrip: View {
         } label: {
             HStack(spacing: 5) {
                 Text(title)
-                    .font(Theme.mono(12, weight: on ? .semibold : .regular))
+                    .font(Theme.prose(14, weight: on ? .semibold : .regular))
                     // The strip scrolls sideways; a cap here hides nothing.
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     .fixedSize(horizontal: false, vertical: true)

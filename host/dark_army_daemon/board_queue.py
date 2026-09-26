@@ -15,6 +15,13 @@ The cost is stated rather than mitigated: **at a limit above 1, two agents may
 edit one tree, the same file included.** The file-overlap comparison that once
 guarded against it was retired from the decision 24 Aug 2026 and removed
 5 Sep 2026; nothing here is a tie-break or an extra condition on the count.
+
+**A card waiting on another card is not a barrier.** A queued card whose
+dependencies are not all met (`dependency_met`) cannot start, so it must not
+hold a place in the line either: `eligible` drops it before `slot_head` picks
+and before the "no overtaking" rung counts who is ahead. Otherwise A, waiting
+on B and queued first, would hold B for ever — the 23 Aug deadlock argument
+one rung on. Among eligible cards the order is `queue_key`, unchanged.
 """
 
 from __future__ import annotations
@@ -221,3 +228,55 @@ def queue_key(card: Mapping) -> tuple:
     rank = card.get("queue_rank")
     stamp = card.get("queued_at") or 0.0
     return (rank if rank is not None else stamp, str(card.get("id") or ""))
+
+
+def dependency_met(dep: Optional[Mapping], working: bool) -> bool:
+    """Whether one card another waits on counts as finished.
+
+    Three ways to be met, and the rule is the board's own reading of
+    "finished": the card is gone (a deleted or cleared dependency can hold
+    nobody, and the stored id is left alone — `parse_ids`' note); it is in
+    Done, whatever its review state; or **the run that flagged a manual check
+    is still the card's run and has stopped** — the moment the card's own
+    MANUAL CHECK badge lights (`manual_check_due`), with three narrowings the
+    badge does not need, because `manual_steps` outlives the run that wrote
+    it: the card must still be In progress (a card reset to Backlog after a
+    failed check is not finished), not `dispatching` (a re-start for rework
+    is a new run), and bound to the session that flagged it
+    (`manual_session_id`; a rework run re-binds a new one). A flag from
+    before that column (`''`) keeps the column and link tests alone.
+    `working` is the caller's `_card_session_working` answer — asked there
+    because only the daemon holds the hook-stream freshness it needs.
+
+    Pure, no I/O.
+    """
+    if dep is None:
+        return True
+    column = str(dep.get("column_name") or "")
+    if column == "done":
+        return True
+    if not str(dep.get("manual_steps") or "").strip():
+        return False
+    if column != "in_progress":
+        return False
+    if str(dep.get("link_state") or "") == "dispatching":
+        return False
+    flagger = str(dep.get("manual_session_id") or "")
+    if flagger and flagger != str(dep.get("session_id") or ""):
+        return False
+    return not working
+
+
+def eligible(rows: Iterable[Mapping], held_ids) -> list:
+    """`rows` minus the cards held by a dependency, order kept.
+
+    What the drain's head selection and `_slot_refusal`'s "queued ahead"
+    rung both see, so a dependency-held card neither starts nor stands in
+    anybody's way (the module docstring). `held_ids` is the ids the caller
+    resolved as waiting on an unmet dependency.
+
+    Pure, no I/O.
+    """
+    held = {str(i) for i in (held_ids or ())}
+    return [row for row in (rows or ())
+            if str((row or {}).get("id") or "") not in held]

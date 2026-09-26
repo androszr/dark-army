@@ -515,6 +515,9 @@ def test_lan_actions_is_a_chosen_tuple_not_a_prefix():
         # the daemon (see `BobDaemon.request_preference`).
         "board_unqueue", "board_queue_move",
         "set_board_autostart", "set_board_parallel_root",
+        # Refine on several Prep cards in one press, chosen 25 Sep 2026:
+        # every Refine guard per card, one planning session.
+        "board_refine_batch",
     )
     for name in chosen:
         assert name in names

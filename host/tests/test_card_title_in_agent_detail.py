@@ -53,7 +53,7 @@ def test_panel_header_takes_and_draws_the_board_card():
     assert "var boardCard: BoardCard?" in header
     assert SIGNATURE in header
     assert '"Planning: "' in header
-    assert "Text(cardLine)" in header
+    assert "Text(titleLine)" in header
     pane = _code(_block(src, "struct AgentDetailPane"))
     assert "var boardCard: BoardCard?" in pane
     assert "boardCard: boardCard" in pane
@@ -96,14 +96,16 @@ def test_phone_detail_draws_and_opens_the_card():
 
 
 def test_the_phone_draws_the_title_on_both_bodies():
-    """Every row shares one identity band above the screen bar, so the
-    card title is drawn once for Conversation, Details and Terminal."""
+    """Main draws the card in the lead; every other tab keeps the card's
+    title as the one fixed line under the screen bar."""
     src = _read(PHONE_DETAIL)
     view = _code(_block(src, "struct AgentDetailView"))
-    assert view.count("cardLead") >= 2, "declared and drawn on the shared identity band"
+    assert view.count("cardLead") >= 2, "declared and drawn on Main"
+    assert "cardLead" in _code(_block(src, "private var mainScreen: some View"))
     body = _code(_block(src, "var body: some View"))
-    assert "cardLead" in body
-    assert body.index("cardLead") < body.index("PhoneAgentScreenBar(")
+    assert body.index("PhoneAgentScreenBar(") < body.index("titleLine")
+    title = _code(_block(src, "private var titleLine: some View"))
+    assert "cardLine" in title and "sheets.show(.card(card))" in title
 
 
 def test_the_rule_is_spelled_the_same_on_both_sides():
@@ -136,7 +138,11 @@ def test_the_daemon_was_not_touched():
     for path, start in ((DETAIL, "struct AgentDetailHeader"),
                         (PHONE_DETAIL, "struct AgentDetailView")):
         assert "card_title" not in _code(_block(_read(path), start)), path
-    assert "cardTitle" not in _read(DETAIL), DETAIL
+    # The Mac reads the row's `cardTitle` in one place too: the no-card
+    # fallback (`titleLine`), the agents-list row's own order.
+    mac = _code(_read(DETAIL))
+    mline = _code(_block(_read(DETAIL), "private var titleLine: String"))
+    assert mac.count("agent.cardTitle") == mline.count("agent.cardTitle") == 1
     # The phone reads the row's `cardTitle` in one place only: the
     # no-card fallback (`sessionLine`), never the linked lead.
     phone = _code(_read(PHONE_DETAIL))

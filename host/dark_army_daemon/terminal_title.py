@@ -109,7 +109,7 @@ def short(nickname: str) -> str:
     """The three-letter form of a nickname.
 
     Unique across the whole cast as it stands (Cipher/Canon/Captcha →
-    Cip/Can/Cap, Vex/Velvet → Vex/Vel, Proxy/Ptyś → Pro/Pty, Forge/Franio →
+    Cip/Can/Cap, Vex/Velvet → Vex/Vel, Proxy/Ptys → Pro/Pty, Forge/Franio →
     For/Fra), which is not luck but a
     constraint on adding names: a name that collides here would give two tabs
     the same badge. Overflow names (`Cipher-1a2b`) shorten by their stem —

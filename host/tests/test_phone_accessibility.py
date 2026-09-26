@@ -140,8 +140,8 @@ def test_theme_mono_is_the_only_fixed_point_size():
     for path in VIEWS:
         text = _read(path)
         if path.name == "Theme.swift":
-            assert text.count(needle) == 1, (
-                "Theme.mono is the one place a point size is named")
+            assert text.count(needle) == 2, (
+                "Theme.mono and Theme.prose are the two scaled font faces")
             continue
         if path.name == TERMINAL_EXCEPTION:
             # The emulator's own face: `UIFont`, sized in points, never
@@ -190,6 +190,8 @@ def test_theme_mono_scales_from_a_text_style():
     # The no-ceiling rule, in code.
     assert "min(" not in region, "a clamped point size is the ceiling again"
     assert "maximumPointSize" not in region
+    assert "static func prose(" in region
+    assert "design: .default" in region
 
 
 def test_the_panel_theme_is_untouched():
@@ -562,7 +564,8 @@ def test_decorative_art_is_hidden():
             window = "\n".join(lines[i:i + 13])
             assert ".accessibilityHidden(true)" in window, (
                 f"{path.name}:{i + 1} draws a canvas a screen reader would read")
-    assert found >= 2, f"only {found} canvases found; the sweep found none"
+    assert found >= 1, f"only {found} canvases found; the sweep found none"
+    assert "struct ScanlineOverlay: View {\n    var body: some View {\n        EmptyView()" in _read(PHONE / "Theme.swift")
     theme = _read(PHONE / "Theme.swift")
     for struct in ("PixelMark", "BrandMark"):
         assert ".accessibilityHidden(true)" in _struct(theme, struct), struct

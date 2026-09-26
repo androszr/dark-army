@@ -39,8 +39,8 @@ def test_the_skill_spawn_table_names_only_the_chief_of_staff_face():
 
 def test_ptys_is_a_pocket_lead():
     from dark_army_daemon import areas
-    assert areas.pool_for("pocket") == ("mira", "ptyś")
-    assert areas.allocate("pocket", "card", {"mira"}) == "ptyś"
+    assert areas.pool_for("pocket") == ("mira", "ptys")
+    assert areas.allocate("pocket", "card", {"mira"}) == "ptys"
 
 @pytest.mark.parametrize("client", ["panel/Sources/BobPanel", "ios/BobPhone"])
 def test_delivery_area_mirror(client):

@@ -234,3 +234,15 @@ def test_the_desk_does_not_hide_acceptance_behind_the_helper_table():
     assert "picture.acceptance" in view or "acceptanceSentence" in fold
 
 
+
+
+def test_a_history_row_opens_its_run_directly_beneath_itself():
+    """Clicking a wide history row opens the run's details under that row,
+    not in the dock at the foot of the whole list; the bottom dock is drawn
+    only when no visible row carries the open run."""
+    view = PANEL_VIEW.read_text()
+    row = view.split("private func wideRow(", 1)[1].split("\n    private func ", 1)[0]
+    assert "wideRowButton(card" in row
+    assert "run == card.id, opensUnderRow(picture)" in row
+    assert "dock(picture)" in row
+    assert "if !opensUnderRow(picture) {\n                        dock(picture)" in view

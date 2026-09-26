@@ -45,7 +45,7 @@ import uuid
 from pathlib import Path
 from typing import Iterable, Optional
 
-from . import attachments, board_outcomes, work_record
+from . import attachments, board_outcomes, scout_report, work_record
 from .board_lifecycle_store import LifecycleStoreMixin
 from .board_outcome_store import OutcomeStoreMixin
 from .board_queue import queue_key
@@ -54,8 +54,10 @@ from .knowledge_store import KnowledgeStoreMixin
 # `grok_leader` and `vscode_reveal`, none of which import `board`, so this
 # is acyclic; and what it brings the store is a frozen dict of model names,
 # so "the board knows nothing about sessions and can spawn nothing" still
-# holds. Never call a launcher function from here.
-from .dispatch import MODELS
+# holds. Never call a launcher function from here. `normalise_root` is the
+# folder canonicaliser, pure path arithmetic, and the one spelling of "same
+# project" the dependency refusal in `_update_locked` shares with the queue.
+from .dispatch import MODELS, normalise_root
 from .paths import BOARD_PATH, STATE_DIR, ensure_state_dir
 
 logger = logging.getLogger("dark-army.board")
@@ -82,7 +84,21 @@ logger = logging.getLogger("dark-army.board")
 #: and a v24 build reading a v23 row sees zero delegations and no cost.
 #: v25 adds two `cards` columns, `kind` and `report_path`, through the ADD
 #: COLUMN list.
-SCHEMA_VERSION = 25
+#: v26 adds one `cards` column, `manual_check_path`, through the ADD COLUMN
+#: list: the check file `flag_manual` was handed, `''` for none.
+#: v27 adds two `cards` columns, `batch_id` and `batch_rank`, through the ADD
+#: COLUMN list: one session working an ordered list of cards (a batch
+#: refinement today), `''` on every card no batch press wrote.
+#: v28 adds two `cards` columns, `report_verdict` and
+#: `report_recommendation`, through the ADD COLUMN list: the attached
+#: report's answer block as `attach_report` read it, `''` where it had none.
+#: v29 adds no column: `blocked_by` gates Start again (card dependencies,
+#: `docs/card-dependencies.md`), so any value a build from before 20 Sep 2026
+#: left in it is emptied once (`_clear_retired_blocked_by`) rather than
+#: suddenly holding a card nobody linked. It also adds one column,
+#: `manual_session_id`: the session whose `flag_manual` wrote the steps, so a
+#: dependency reads as finished only while that run is the one bound.
+SCHEMA_VERSION = 29
 
 #: Ceiling for board.db-wal, applied per connection in `connect()`. SQLite
 #: reuses a WAL file from its start after a checkpoint but never shrinks
@@ -199,6 +215,12 @@ QUEUE_STATES = ("", "queued")
 #: calibration: past any real pile.
 MAX_QUEUED_PER_PROJECT = 8
 
+#: How many cards one batch press may hand one session (`refine_cards`; the
+#: batch-implement sibling shares it). Eight is `MAX_QUEUED_PER_PROJECT`'s
+#: calibration: a batch is one project's pile, and past eight a person is
+#: better served by two sittings than by one interview that never ends.
+MAX_BATCH_CARDS = 8
+
 #: Refused at the store rather than at a surface, so every route inherits the
 #: bound — including the channel tool, which is reachable by anything on the
 #: machine that can open a socket (see `daemon._handle_channel_message`).
@@ -256,6 +278,9 @@ MAX_MANUAL_STEPS_CHARS = 1000
 #: graph tool; eight is past any real "this needs those" pile and short of a
 #: string that would bloat the snapshot the way an unbounded prompt did.
 MAX_BLOCKERS = 8
+#: How long one id in that list may be. Card ids are 32 hex; the bound keeps a
+#: `board_update` from storing a 200 KB "id" that every frame would then carry.
+MAX_CARD_ID_CHARS = 64
 #: Per-card chat thread, at v12. A new table rather than columns on `cards`,
 #: because a thread is unbounded text and the forward-compatibility rule is
 #: cheapest that way: a v11 build never touches `card_messages`, and this
@@ -337,6 +362,21 @@ CREATE TABLE IF NOT EXISTS cards (
     -- `_WRITABLE` for `closed_by`'s reason, so a surface may clear one and can
     -- never stamp somebody else's card with a chore.
     manual_steps    TEXT NOT NULL DEFAULT '',
+    -- The check file the flag named, at v26: the realpath of a
+    -- `manual-check/<date>-<slug>/check.md` under the card's root, or ''.
+    -- Written by `flag_manual` alone, beside `manual_steps`, so the card,
+    -- the Checks section and the outcome verb can reach one another.
+    -- Deliberately single-spaced so the CREATE and ALTER spellings can be
+    -- pinned against each other by a grep, `area`'s own comment.
+    manual_check_path TEXT NOT NULL DEFAULT '',
+    -- The session that wrote those steps, at v29, by `flag_manual` alone and
+    -- emptied with them by `clear_manual`. A rework run re-binds a new
+    -- session while the old steps stay on the card; a card dependency is
+    -- finished-and-waiting only while the flagging run is still the bound
+    -- one (`board_queue.dependency_met`). '' on a flag from before v29.
+    -- Deliberately single-spaced so the CREATE and ALTER spellings can be
+    -- pinned against each other by a grep.
+    manual_session_id TEXT NOT NULL DEFAULT '',
     -- The human acknowledgement of an assistant's close, at v10. NULL means
     -- nobody has looked at the finished work yet, which is what pins the card
     -- to the top of Done wearing its review banner; a timestamp means a person
@@ -351,7 +391,8 @@ CREATE TABLE IF NOT EXISTS cards (
     -- Cards this one waits on, at v5. Newline-separated ids, same shape as
     -- `workflow`. A finished card never blocks anyone; missing ids stay in the
     -- string (a later restore should still mean something) and are ignored at
-    -- read time. Cycle detection lives in `update`, not here.
+    -- read time. Cycle, self and same-project checks live in `update`, not
+    -- here; what it gates is `docs/card-dependencies.md` (emptied once, v29).
     blocked_by      TEXT NOT NULL DEFAULT '',
     -- The refinement, at v6. `plan_path` is the exit condition of the Prep
     -- column — written by `attach_plan` alone, never through `update`, so no
@@ -363,6 +404,15 @@ CREATE TABLE IF NOT EXISTS cards (
     plan_path       TEXT NOT NULL DEFAULT '',
     refine_session_id TEXT NOT NULL DEFAULT '',
     refine_state    TEXT NOT NULL DEFAULT '',
+    -- One session, an ordered list of cards, at v27. `batch_id` is the token
+    -- one batch press minted and wrote on every card it handed that session;
+    -- `batch_rank` is the card's 1-based place in that order ('2'). Written
+    -- beside the link fields a press already writes and cleared with them, so
+    -- `_launch_inflight` counts one session once. Daemon bookkeeping, on
+    -- `session_id`'s ring. Deliberately single-spaced so the CREATE and ALTER
+    -- spellings can be pinned against each other by a grep.
+    batch_id TEXT NOT NULL DEFAULT '',
+    batch_rank TEXT NOT NULL DEFAULT '',
     -- The approval of a plan *version*, at v15. `plan_approved` is the
     -- SHA-256 of the plan file's bytes as they were when a person read them
     -- and said yes; `plan_approved_at` is when they said it. Two columns
@@ -436,6 +486,14 @@ CREATE TABLE IF NOT EXISTS cards (
     -- each other by a grep, `area`'s own comment.
     kind TEXT NOT NULL DEFAULT '',
     report_path TEXT NOT NULL DEFAULT '',
+    -- The attached report's answer block, at v28: its one-line verdict and
+    -- its recommendation token, as `attach_report` read them at the attach
+    -- (that verb alone writes them, `report_path`'s ring). A display record
+    -- for the card face, never Promote's input: Promote re-reads the file
+    -- at the press, and where the two disagree the file wins for Promote
+    -- and these win for the face. `''` where the report had no block.
+    report_verdict TEXT NOT NULL DEFAULT '',
+    report_recommendation TEXT NOT NULL DEFAULT '',
     -- Retired at v22 as unused '' text. Kept so an older build's INSERT
     -- and SELECT still work. This build never reads or writes them.
     initiative_id   TEXT NOT NULL DEFAULT '',
@@ -659,7 +717,8 @@ def parse_ids(value) -> list:
     Copied from `parse_stages` rather than shared with it: a stage name is
     clamped and a card id is not, and requiring 32-hex here would drop the
     short ids tests and older rows still use. A missing/deleted id stays in
-    the string; `active_blockers` is what ignores it.
+    the string; the daemon's dependency resolver reads a missing card as met
+    (`daemon_board._dependency_entries`).
     """
     if value is None:
         return []
@@ -715,6 +774,10 @@ KIND_LOCKED_REFUSAL = ("a card's kind is chosen in Prep — move it back to "
 SCOUT_PLAN_REFUSAL = "a scout takes a report, not a plan"
 REPORT_NOT_SCOUT_REFUSAL = ("only a scout card takes a report — close a "
                             "build card or attach its plan")
+#: The opening words of the refusal `attach_report_by_session` composes for
+#: a report under the project's `scout/` folder that fails
+#: `scout_report.check`; the problems follow it.
+REPORT_MALFORMED_REFUSAL = "that report is not in the scout shape — "
 
 
 def normalise_kind(value) -> tuple:
@@ -763,11 +826,15 @@ def normalise_priority(value) -> tuple:
 SINGLE_WRITER = {
     "plan_path": "attach_plan",
     "report_path": "attach_report",
+    "report_verdict": "attach_report",
+    "report_recommendation": "attach_report",
     "agent_trail": "record_agents",
     "crew_trail": "record_agents",
     "closed_by": "declare_done",
     "close_note": "declare_done",
     "manual_steps": "flag_manual",
+    "manual_check_path": "flag_manual",
+    "manual_session_id": "flag_manual",
     "reviewed_at": "mark_reviewed",
     "queue_rank": "move_queued",
     "plan_approved": "approve_plan",
@@ -802,6 +869,10 @@ REVISED_COLUMNS = frozenset({
     "priority",
     "area",
     "kind", "report_path",
+    # The attached report's verdict line, at v28: drawn on the card face.
+    "report_verdict", "report_recommendation",
+    # The check file, at v26: drawn under the card's manual-check section.
+    "manual_check_path",
 })
 
 #: What a save guarded by a stale `expected_revision` is refused with. The
@@ -818,6 +889,18 @@ CARD_CHANGED_REFUSAL = ("this card changed on the Mac while you were "
 #: unarmed press sends none and keeps today's statement. Exact text, not a
 #: digest — `manual_steps` is already a bounded stored column.
 MANUAL_CHECK_CHANGED_REFUSAL = "that check has changed or is already cleared"
+#: The opening words of the refusal `flag_manual_by_session` composes for a
+#: check file under the project's `manual-check/` folder that fails
+#: `manual_check.check`; the problems follow it.
+MANUAL_CHECK_MALFORMED_REFUSAL = "that check is not in the manual-check shape — "
+#: A check file named anywhere but `<root>/manual-check/<date>-<slug>/`.
+MANUAL_CHECK_PLACE_REFUSAL = ("a manual check file lives under the project's "
+                              "manual-check folder")
+#: A second Passed / Failed on a check whose file already says so. Equal to
+#: `manual_check.RECORDED` (pinned by a test): the store cannot import it.
+MANUAL_OUTCOME_RECORDED_REFUSAL = "that check already has an outcome"
+#: The person's note on a recorded outcome, clamped (`close_note`'s rule).
+MAX_MANUAL_OUTCOME_CHARS = 400
 #: The review's twin: the close a phone echoes back is not the close on the
 #: card, or the card is reviewed already. Keyed on the close identity
 #: (`closed_by` + `close_note`), **not** `expected_revision`: a title edit
@@ -884,6 +967,13 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         # because a surface that could set it could stamp a card "planned"
         # and walk it past the plan gate with no plan behind it.
         "refine_session_id", "refine_state",
+        # The batch mark, at v27 — the refinement link's ring exactly:
+        # written by the daemon beside `refine_state` when one press hands
+        # one session several cards, cleared with the link, and absent from
+        # `ApiServer._BOARD_FIELDS`, so no surface can claim two cards share
+        # a session. Not `SINGLE_WRITER` (the reconcile and `reset_card`
+        # clear it through `update`), not `REVISED_COLUMNS` (bookkeeping).
+        "batch_id", "batch_rank",
         # The queue pair, at v8 — `session_id`'s ring exactly: store-writable
         # (the dispatch path writes them through `update`) and excluded at the
         # API layer (`ApiServer._BOARD_FIELDS`), so a surface can never put a
@@ -1110,6 +1200,29 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         # PRAGMA-driven and only ever sees this list.
         ("kind", "TEXT NOT NULL DEFAULT ''"),
         ("report_path", "TEXT NOT NULL DEFAULT ''"),
+        # The check file a flag named, at v26. Same DEFAULT rule: a
+        # schema-25 build goes on INSERTing without it and draws no file.
+        # Spelled identically to the CREATE path above, reading
+        # manual_check_path TEXT NOT NULL DEFAULT ''.
+        ("manual_check_path", "TEXT NOT NULL DEFAULT ''"),
+        # The flagging session, at v29 (`flag_manual` alone). Same DEFAULT rule:
+        # a v28 build INSERTs without naming it and never reads it.
+        ("manual_session_id", "TEXT NOT NULL DEFAULT ''"),
+        # The batch mark, at v27. Same DEFAULT rule: a schema-26 build goes
+        # on INSERTing without either and simply never counts a batch once.
+        # Spelled identically to the CREATE path above, reading
+        # batch_id TEXT NOT NULL DEFAULT '' and
+        # batch_rank TEXT NOT NULL DEFAULT ''.
+        ("batch_id", "TEXT NOT NULL DEFAULT ''"),
+        ("batch_rank", "TEXT NOT NULL DEFAULT ''"),
+        # The report's answer block, at v28. Same DEFAULT rule: a schema-27
+        # build goes on INSERTing and attaching without either, and its
+        # cards simply draw no verdict line. Spelled identically to the
+        # CREATE path above, reading
+        # report_verdict TEXT NOT NULL DEFAULT '' and
+        # report_recommendation TEXT NOT NULL DEFAULT ''.
+        ("report_verdict", "TEXT NOT NULL DEFAULT ''"),
+        ("report_recommendation", "TEXT NOT NULL DEFAULT ''"),
     ),
         # `card_runs` gains columns the same way (v24), keyed on its own
         # table: `_add_missing_columns` is PRAGMA-driven per table, so an
@@ -1225,6 +1338,11 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             row = self._conn.execute(
                 "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
             found = int(row["value"]) if row and str(row["value"]).isdigit() else 0
+            # Before the marker moves, never after: a wipe that failed behind
+            # a written 29 would never be tried again, and a leftover list
+            # would start holding cards. Idempotent, so a re-run is harmless.
+            if found < 29:
+                self._clear_retired_blocked_by()
             if found > SCHEMA_VERSION:
                 logger.warning(
                     "board.db was written by a newer build (schema %d > %d); "
@@ -1238,6 +1356,25 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             self._retire_ready()
         if found < 22:
             self._retire_initiatives()
+
+    def _clear_retired_blocked_by(self) -> None:
+        """Empty every leftover dependency list, once, on the upgrade to v29.
+
+        `_retire_initiatives`' shape and reason: a column *this* project
+        retired (20 Sep 2026) and now reads again, so it knows exactly what a
+        stale value would do — hold a card behind links nobody on this board
+        made. Emptied, never dropped: no column moves, and a v28 build opening
+        the file after a downgrade reads the column exactly as it did.
+        Forward-only like every rung here, so a person's links written after
+        the upgrade are never touched by a later open.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE cards SET blocked_by = '' WHERE blocked_by != ''")
+            self._conn.commit()
+        if cur.rowcount:
+            logger.info("board.db: cleared %d leftover dependency list(s)",
+                        cur.rowcount)
 
     def _sweep_orphan_messages(self) -> None:
         """Drop `card_messages` whose card is gone.
@@ -1322,6 +1459,36 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
                 "SELECT * FROM cards WHERE id = ?", (str(card_id),)).fetchone()
         return self._row(row) if row is not None else None
 
+    def cards_by_id(self, ids) -> dict:
+        """`{id: card}` for the named ids that exist; one `SELECT`.
+
+        The dependency resolver's fallback for ids outside the snapshot's
+        frame — a dependency finished a week ago is not in the Done preview —
+        so the frame pays one read however many cards name one, never a
+        `get` per card. An id that names no card is simply absent.
+        """
+        wanted = []
+        for value in ids or ():
+            text = str(value or "").strip()
+            if text and text not in wanted:
+                wanted.append(text)
+        if not wanted:
+            return {}
+        out: dict = {}
+        with self._lock:
+            # SQLite's default host-parameter ceiling is 999; a frame's worth
+            # of dependency ids is bounded by MAX_BLOCKERS per card, but a
+            # chunk keeps the statement legal whatever the board holds.
+            for start in range(0, len(wanted), 500):
+                chunk = wanted[start:start + 500]
+                rows = self._conn.execute(
+                    "SELECT * FROM cards WHERE id IN (%s)"
+                    % ",".join("?" * len(chunk)), tuple(chunk)).fetchall()
+                for row in rows:
+                    card = self._row(row)
+                    out[card["id"]] = card
+        return out
+
     def _card_by_create_token_locked(self, token: str):
         """The card that already holds this create token, or None.
 
@@ -1354,6 +1521,32 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             rows = self._conn.execute(sql, params).fetchall()
         return [self._row(r) for r in rows]
 
+    def reports_index_rows(self) -> list:
+        """Every card that has a report, narrowed to what the report list
+        reads: `id`, `title`, `column_name`, `root`, `report_path`, in
+        `CARD_ORDER_SQL`. Read-only — no column, no schema step; the
+        scout-report index (`scout_index.build`) is its one reader, on the
+        executor."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, title, column_name, root, report_path FROM cards"
+                " WHERE report_path != ''" + CARD_ORDER_SQL).fetchall()
+        return [{"id": r[0], "title": r[1], "column_name": r[2],
+                 "root": r[3], "report_path": r[4]} for r in rows]
+
+    def plans_index_rows(self) -> list:
+        """Every card that has a plan, narrowed to what the plan list
+        reads: `id`, `title`, `column_name`, `root`, `plan_path`, in
+        `CARD_ORDER_SQL` (so the first card on a shared plan is the one
+        its row names). Read-only — no column, no schema step; the plan
+        index (`plan_index.build`) is its one reader, on the executor."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, title, column_name, root, plan_path FROM cards"
+                " WHERE plan_path != ''" + CARD_ORDER_SQL).fetchall()
+        return [{"id": r[0], "title": r[1], "column_name": r[2],
+                 "root": r[3], "plan_path": r[4]} for r in rows]
+
     def by_session(self, session_id: str) -> list:
         """Every card bound to this session. Uses the `cards_by_session` index.
 
@@ -1374,6 +1567,61 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
                 "SELECT * FROM cards WHERE session_id = ?"
                 + CARD_ORDER_SQL, (sid,)).fetchall()
         return [self._row(r) for r in rows]
+
+    def batch_members(self, batch_id: str) -> list:
+        """Every card one batch press marked, in `CARD_ORDER_SQL`.
+
+        `by_session`'s guard for the same reason: `batch_id` defaults to
+        `''`, so `WHERE batch_id = ''` would be every card no batch ever
+        touched. An empty id returns `[]`. Read-only; the batch-implement
+        advance (`advance_batch_by_session`) is its caller, and picks the
+        next member by `batch_rank`, never by this order."""
+        bid = str(batch_id or "")
+        if not bid:
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM cards WHERE batch_id = ?"
+                + CARD_ORDER_SQL, (bid,)).fetchall()
+        return [self._row(r) for r in rows]
+
+    def release_batch_waiting(self, batch_id: str, note: str) -> int:
+        """Take the batch mark off every member no session holds — the ones
+        still waiting in Backlog and any dragged out of it, in any column —
+        with `note` as its orange line. Returns how many.
+
+        `relabel_root`'s shape and its argument: this is Dark Army observing
+        that the session a batch was handed has gone (or never bound), not a
+        person editing a card, so it is one statement over the batch in one
+        transaction and **no `revision` step**. The WHERE clause is the
+        whole scope — the mark, no session, and not still binding
+        (`dispatching`, the head's own give-up clears that one) — so a
+        member already worked (bound, In progress, Done) is untouched
+        however often this runs. No column test: a waiting member a person
+        dragged out of Backlog would otherwise keep its mark for good, and
+        with it a Start refused in words. An empty id is a no-op; the note
+        is clamped at `MAX_CLOSE_NOTE_CHARS`.
+        """
+        bid = str(batch_id or "")
+        if not bid:
+            return 0
+        text = str(note or "").strip()[:MAX_CLOSE_NOTE_CHARS]
+        now = time.time()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                cur = self._conn.execute(
+                    "UPDATE cards SET batch_id = '', batch_rank = '',"
+                    " dispatch_error = ?, updated_at = ?"
+                    " WHERE batch_id = ? AND session_id = ''"
+                    " AND link_state <> 'dispatching'",
+                    (text, now, bid))
+                moved = int(cur.rowcount or 0)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return moved
 
     def add_message(self, card_id: str, author: str, text: str,
                     kind: str = "question", via: str = "") -> tuple:
@@ -2025,6 +2273,8 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             "area": area,
             "kind": kind,
             "report_path": "",
+            "report_verdict": "",
+            "report_recommendation": "",
             "create_token": token,
             "created_at": now,
             "updated_at": now,
@@ -2147,10 +2397,26 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
                 value = join_stages(value)
             elif key == "blocked_by":
                 ids = parse_ids(value)
+                if any(len(i) > MAX_CARD_ID_CHARS for i in ids):
+                    return None, ("a card id is at most "
+                                  f"{MAX_CARD_ID_CHARS} characters")
                 if str(card_id) in ids:
                     return None, "a card cannot wait on itself"
                 if self._creates_cycle(card_id, ids):
                     return None, "those cards already wait on each other"
+                # Same project only: the queue, the drain and the parallel
+                # limit are per project, so a hold on another project's card
+                # would stall this queue with nothing on this project's screen
+                # saying why. An id naming no card is not refused — it cannot
+                # hold anything (a missing dependency reads as met) and a
+                # restore should still mean something (`parse_ids`).
+                mine = normalise_root(str(current.get("root") or ""))
+                for other_id in ids:
+                    other = self.get(other_id)
+                    if other is not None and normalise_root(
+                            str(other.get("root") or "")) != mine:
+                        return None, ("a card can only wait on a card in its "
+                                      "own project")
                 value = join_ids(ids)
             elif key == "position":
                 try:
@@ -2386,7 +2652,8 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             return None, "that card moved or was deleted — nothing was closed"
         return self.get(card_id), "closed"
 
-    def flag_manual(self, card_id: str, session_id: str, steps: str) -> tuple:
+    def flag_manual(self, card_id: str, session_id: str, steps: str,
+                    path: str = "") -> tuple:
         """A session recording the hand-check it is handing back. `(card_or_None,
         detail)`.
 
@@ -2402,9 +2669,17 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         flagged*; the read above decides only the wording of a refusal.
 
         The card must be the caller's own (a non-empty `session_id` equal to
-        the row's, `by_session`'s two guards) and must not be in Done: a check
-        outstanding on a card somebody has already accepted is a contradiction,
-        and the honest route there is Reopen.
+        the row's, `by_session`'s two guards). **A card in Done may be
+        flagged** (v26): a card with an open check goes to Done, and the
+        order an agent picks — flag then close, or close then flag — must
+        not leave a check unrecorded. The WHERE still pins the session and
+        the column the read saw, so nothing widens beyond the session's own
+        card.
+
+        ``path`` is the check file, already validated and realpath'd by the
+        daemon (`_manual_check_path_refusal`); it is written into
+        `manual_check_path` in the same UPDATE. An empty path writes `''`,
+        so re-flagging without a file clears a stale link.
 
         The steps are clamped rather than refused
         (`MAX_MANUAL_STEPS_CHARS`) — Dark Army is relaying somebody's words to a
@@ -2420,23 +2695,39 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         if not owner or not caller or owner != caller:
             return None, "that card is not this session's to flag"
         seen_column = str(current.get("column_name") or "")
-        if seen_column == "done":
-            return None, "that card is already done"
         text = _clamp(steps, MAX_MANUAL_STEPS_CHARS).strip()
         if not text:
             return None, "a manual check needs its steps"
+        check_path = str(path or "")
         now = time.time()
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE cards SET manual_steps = ?, updated_at = ?,"
-                " revision = revision + 1"
+                "UPDATE cards SET manual_steps = ?, manual_check_path = ?,"
+                " manual_session_id = ?,"
+                " updated_at = ?, revision = revision + 1"
                 " WHERE id = ? AND session_id = ? AND column_name = ?",
-                (text, now, str(card_id), caller, seen_column))
+                (text, check_path, caller, now, str(card_id), caller,
+                 seen_column))
             self._conn.commit()
             changed = cur.rowcount
         if not changed:
             return None, "that card moved or was deleted — nothing was flagged"
         return self.get(card_id), "flagged"
+
+    def by_manual_check_path(self, path: str) -> list:
+        """Every card whose flag named this check file, exact match.
+
+        An empty path returns `[]`, `by_session`'s guard and argument:
+        `manual_check_path` defaults to `''`, so `WHERE … = ''` would match
+        every card nobody flagged with a file."""
+        text = str(path or "")
+        if not text:
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM cards WHERE manual_check_path = ?"
+                + CARD_ORDER_SQL, (text,)).fetchall()
+        return [self._row(r) for r in rows]
 
     def clear_manual(self, card_id: str,
                      expected_manual_steps: Optional[str] = None) -> tuple:
@@ -2483,8 +2774,8 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         now = time.time()
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE cards SET manual_steps = '', updated_at = ?,"
-                " revision = revision + 1" + where,
+                "UPDATE cards SET manual_steps = '', manual_session_id = '',"
+                " updated_at = ?, revision = revision + 1" + where,
                 (now,) + params)
             self._conn.commit()
             changed = cur.rowcount
@@ -2580,7 +2871,8 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         attached*, and the read above decides only the wording of a refusal.
 
         One statement does the whole exit: `plan_path` written, the card moved
-        to Backlog, `refine_state` cleared. The Prep column's exit condition is
+        to Backlog, `refine_state` and the batch mark (`batch_id`,
+        `batch_rank`) cleared. The Prep column's exit condition is
         this write and nothing else — `plan_path` is outside `_WRITABLE`, so
         there is exactly one writer, which is what makes "a Backlog card has a
         plan" a checkable claim rather than a convention.
@@ -2612,6 +2904,7 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             cur = self._conn.execute(
                 "UPDATE cards SET plan_path = ?, column_name = 'backlog',"
                 " refine_state = '', refine_session_id = ?, updated_at = ?,"
+                " batch_id = '', batch_rank = '',"
                 " revision = revision + 1"
                 " WHERE id = ? AND column_name = 'prep' AND plan_path = ''",
                 (text, str(session_id or current.get("refine_session_id") or ""),
@@ -2626,7 +2919,8 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             return None, "that card moved — nothing was attached"
         return self.get(card_id), "attached"
 
-    def attach_report(self, card_id: str, path: str, session_id: str) -> tuple:
+    def attach_report(self, card_id: str, path: str, session_id: str, *,
+                      verdict: str = "", recommendation: str = "") -> tuple:
         """A scout attaching the report it wrote. `(card_or_None, detail)`.
 
         `attach_plan`'s shape, for `attach_plan`'s reason: the guard rides in
@@ -2644,6 +2938,14 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         validation (containment, `.md`, size) is the daemon's job — the
         store does not touch the disk. The card stays In progress; closing
         it is `declare_done`.
+
+        `verdict` / `recommendation` are the report's answer block as the
+        daemon read it at the attach (`scout_report.read_header`), written
+        in the same UPDATE under the same guard, so a re-attach replaces
+        them with the path. The verdict is collapsed to one line and
+        clamped at `MAX_SUMMARY_CHARS` (clamp-don't-refuse, `close_note`'s
+        rule); a recommendation outside `scout_report.RECOMMENDATIONS` is
+        stored as `''`, never as the stray word.
         """
         current = self.get(card_id)
         if current is None:
@@ -2656,14 +2958,21 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         text = str(path or "").strip()
         if not text:
             return None, "a report needs a path"
+        line = " ".join(str(verdict or "").split())
+        line = line[:MAX_SUMMARY_CHARS].rstrip()
+        word = str(recommendation or "").strip().lower()
+        if word not in scout_report.RECOMMENDATIONS:
+            word = ""
         now = time.time()
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE cards SET report_path = ?, updated_at = ?,"
+                "UPDATE cards SET report_path = ?, report_verdict = ?,"
+                " report_recommendation = ?, updated_at = ?,"
                 " revision = revision + 1"
                 " WHERE id = ? AND column_name = 'in_progress'"
                 " AND session_id = ? AND kind = 'scout'",
-                (text, now, str(card_id), str(session_id or "")))
+                (text, line, word, now, str(card_id),
+                 str(session_id or "")))
             changed = cur.rowcount
             self._conn.commit()
         if not changed:
@@ -2810,6 +3119,34 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
                          str(card_id)))
             self._conn.commit()
         return self.get(card_id), bool(changed)
+
+    def fill_dependencies_if_empty(self, card_id: str, ids) -> tuple:
+        """Seed the cards this one waits on, only while nobody has set any.
+        `(card_or_None, detail)`.
+
+        `fill_area_if_empty`'s job for the plan's `Depends on:` header, but
+        written through `_update_locked` rather than a bare UPDATE, because a
+        dependency list has refusals a slug has not — a self-wait, a cycle, a
+        card in another project — and a seed must not be the one writer that
+        skips them. The emptiness check and the write share `_lock`, so a
+        person's list typed meanwhile always wins. A refusal answers
+        `(None, words)` and writes nothing; a card that already has a list
+        answers it unchanged with `"already set"`.
+        """
+        wanted = parse_ids(ids)
+        with self._lock:
+            current = self.get(card_id)
+            if current is None:
+                return None, "no such card"
+            if parse_ids(current.get("blocked_by")):
+                return current, "already set"
+            if not wanted:
+                return current, "nothing to fill"
+            card, detail = self._update_locked(
+                card_id, {"blocked_by": join_ids(wanted)})
+            if card is None:
+                return None, detail
+            return card, "filled"
 
     def fill_workflow_if_empty(self, card_id: str, names) -> tuple:
         """Declare stages only while the card still has no workflow.
@@ -3075,26 +3412,6 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
                     (float(i), now, row["id"]))
             self._conn.commit()
 
-    def active_blockers(self, card) -> list:
-        """Live blockers of `card`: missing and Done ids are skipped.
-
-        The stored string may still mention them — a later restore should
-        still mean something, and a Done card must not stick anyone.
-        """
-        out = []
-        for bid in parse_ids((card or {}).get("blocked_by")):
-            other = self.get(bid)
-            if other is None:
-                continue
-            if other.get("column_name") == "done":
-                continue
-            out.append({
-                "id": other["id"],
-                "title": other.get("title") or "",
-                "column_name": other.get("column_name") or "",
-            })
-        return out
-
     def delete(self, card_id: str) -> tuple:
         """Destroy a card. `(ok, detail)`. Nothing is archived — the board is the
         list, and a deleted card was written by the person deleting it."""
@@ -3214,6 +3531,29 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             # binding itself must never refuse the save of somebody who was
             # typing into this card at the time.
             return self.update(card_id, fields, bump=False)
+
+    def bind_waiting_member(self, card_id: str, session_id: str,
+                            batch_id: str) -> tuple:
+        """`bind_session`, but only while the card is still a **waiting**
+        member of `batch_id`: the mark, no session, no link, Backlog.
+        `(card_or_None, detail)`.
+
+        The re-read and the bind share one hold of the store lock (an
+        `RLock`, so `bind_session` re-enters it). That closes the window
+        in which a person's drag or reset could land between the
+        batch-implement advance judging a member and binding it; a card
+        that moved in that window is refused, never bound."""
+        bid = str(batch_id or "")
+        with self._lock:
+            current = self.get(card_id)
+            if current is None:
+                return None, "no such card"
+            if not (bid and str(current.get("batch_id") or "") == bid
+                    and not str(current.get("session_id") or "")
+                    and not str(current.get("link_state") or "")
+                    and str(current.get("column_name") or "") == "backlog"):
+                return None, "that card is no longer waiting in this batch"
+            return self.bind_session(card_id, session_id)
 
     def mark_ended(self, card_id: str, when: Optional[float] = None) -> tuple:
         """The session doing this card is gone. **Not** done: a session ending

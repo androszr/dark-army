@@ -224,6 +224,22 @@ def test_an_acknowledged_subject_stays_hidden():
     assert items and items[0]["kind"] == "awaiting_review"
 
 
+def test_a_flat_question_is_fingerprinted_as_the_phone_reads_it():
+    # A Grok or Codex row publishes its ask as the flat `question` dict with
+    # `questions` empty; the phone hashes `Agent.questionList`, which falls
+    # back to it, so Bearings must too or the ack never matches.
+    flat = {"waiting": [_row("s1", "Vex", questions=[],
+                             question={"text": "Q?"})]}
+    asked = [{"key": "s:s1", "kind": "question",
+              "fp": inbox_ack.fingerprint("question", "Q?")}]
+    assert bearings.needs_your_call(flat, {}, (), [], asked) == []
+
+    # A `waiting` ack does not hide it: its live kind is `question`.
+    waited = [{"key": "s:s1", "kind": "waiting", "fp": "waiting"}]
+    items = bearings.needs_your_call(flat, {}, (), [], waited)
+    assert [item["session_id"] for item in items] == ["s1"]
+
+
 def test_since_narrows_recently_landed_only():
     events = [
         {"kind": "card_done", "text": "old", "ts": 10.0, "card_id": "",

@@ -24,8 +24,11 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   journal/holder/turn checks and bridge 0.1.12+ apply (`docs/codex-contract.md`).
   Codex board MCP exposes add/attach/close only. Private planning-terminal close
   requires a ten-minute receipt from successful session-attributed attachment.
-  Opt-in stopped-native reply uses exact ownership and bridge 0.1.19+;
-  `can_type` stays false. Generic typing, Wrap up, question/permission answers
+  Opt-in stopped-native reply uses exact ownership and bridge 0.1.21+;
+  shared-server TUI replies instead use the local server's explicit direct-input
+  capability and addressed turn protocol (`codex_input.py`), including queued
+  async questions during a turn; `docs/codex-contract.md` states its guards.
+  `can_type` stays false. Generic typing, Wrap up, synchronous question/permission answers
   and app/IDE control stay unsupported. Native review children remain beneath
   their explicit parent as bounded `review_reports`, never independent waiters.
 
@@ -52,113 +55,10 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   fallback is never written** (`_walk_session_pid`'s `found` flag).
   `subprocess` is a module global, so a test can stand in.
 
-  > **It carries two standing hints into every Claude session.** On
-  > `session_start`, for Claude only (never Grok), the handler prints
-  > `TLDR_HINT` and `WORK_REPORT_HINT` on stdout, unconditionally; a third,
-  > `SEARCH_SCOPE_HINT`, lists `search-scope.json`'s folders
-  > (`docs/agent-pack.md`). `bob-tldr`
-  > / `bob-actions` mark a turn that is **waiting on somebody** and are
-  > parsed by `session_stats._TLDR_RE` / `_parse_actions`; the `## Work done`
-  > report marks a turn waiting on **nobody** and is never *interpreted* — it
-  > is for the person in the terminal. The one thing read off it is its
-  > heading: `session_stats._work_report` slices from `## Work done` to the
-  > end of the message into **`last_report`**, kept beside `last_text`,
-  > carried across every later message and cleared by the person's next
-  > prompt. Grok lifts the same heading from `chat_history.jsonl`. The panel
-  > draws it under the latest words as `# work done`
-  > (`StdoutPane.reportToShow`), never twice. Contract tests pin
-  > the marker at both ends and forbid a literal `bob-tldr`/`bob-actions`
-  > comment inside the report text.
-  >
-  > **`WORK_REPORT_HINT` is also the machine-wide lever for how a leftover
-  > check is written.** An `**Unchecked:**` item is **numbered imperative
-  > steps** — what to open, what to press, what the person should see —
-  > followed by one required line beginning `Why not automated:`, and a
-  > session working a board card flags it (`dark_army_needs_manual_check`). A
-  > machine-wide `~/.claude/CLAUDE.md`, outside the repo, carries the same
-  > two rules for sessions Dark Army's hooks do not reach. Contract tests pin the
-  > wording.
-  >
-  > **It lives as a string, not a file**: `NOTIFY_SCRIPT` in `dark_army_menubar/hooks.py`, written out to `~/.dark-army/` on install. Edit the string.
-  >
-  > **A second script guards big reads: `SHUNT_SCRIPT`** — the bytes of
-  > the real module `dark_army_menubar/shunt_hook.py` (ruff reads it,
-  > `test_shunt_script.py` imports `decide()`; edit the file and bump its
-  > version line), installed by `install_shunt_script()` to
-  > `paths.SHUNT_SCRIPT_PATH` under the notify script's rules, in a
-  > **second Dark Army-managed `PreToolUse` group**
-  > (`SHUNT_COMMAND`, `SHUNT_MATCHER`; `_command_is_ours` knows both, so
-  > the group is pruned and rewritten as Dark Army's beside the untouched notify
-  > group). Armed only where the home-skipping walk from `cwd` finds
-  > `.claude/skills/shunt/SKILL.md`, it denies a whole-file read over the
-  > dial (`BOB_SHUNT_MIN_LINES`: the environment, then the project's
-  > `.claude/settings.json` `env`, else 350); what passes is that
-  > SKILL.md's list. **Never for a reviewer**: an `agent_type` ending in
-  > `SHUNT_REVIEWER_SUFFIXES` or a per-session marker under
-  > `paths.SHUNT_EXEMPT_DIR` (0700). **Any failure is an allow**: bounded
-  > reads, no socket, no subprocess, exit 0, silent. Grok's file carries
-  > the group too; Codex gets it alone, key-merged into
-  > `~/.codex/hooks.json` (`CODEX_HOOKS_PATH`, foreign groups kept), run
-  > once hooks are trusted (`docs/codex-ship.md`, step 7). **`install_hooks()`
-  > writes both scripts before any group names them** — a registered
-  > `PreToolUse` command whose file is missing exits 2 and refuses every
-  > Read and Bash on the machine; Grok and Codex writes are best-effort,
-  > the Claude settings write must succeed. The wrappers append one line
-  > per delegation to a ledger under `paths.SHUNT_LEDGER_DIR` (0700, never
-  > content), folded into the card's work record.
-  >
-  > **The `/ship` close-out script is installed the same way** —
-  > `hooks.install_close_out_script()` copies `.claude/skills/ship/close-out.sh`
-  > (bundle resource `dark-army-close-out.sh`, copied by `build.sh`) to
-  > `~/.dark-army/dark-army-close-out` on every launch, compared by
-  > content; every project's copy is a shim handing off to it, arguments
-  > forwarded, under `BOB_CLOSE_OUT_SHIM` — and only to a copy carrying the
-  > `# close-out-contract: leaves-open` and `# close-out-mode: plan`
-  > markers, so a helper from before the leave-open rule or the `--plan`
-  > mode is never handed the job. No source found leaves the
-  > installed copy alone, never unlinked.
-  >
-  > **And on one event it *holds*: the `PermissionRequest` broker.** A
-  > board-dispatched session has no channel, so a "may I run this?" dialog
-  > would otherwise reach Dark Army as a bare `waiting` row nobody could answer.
-  > The hook mints a `request_id` + a `claim`, sends `permission_ask` (tool,
-  > a one-line `description` off `file_path`/`path`/`command`, an
-  > `input_preview`) and, on a positive `hold`, polls `permission_poll`
-  > until a verdict comes back, printing `hookSpecificOutput.decision` to
-  > answer the dialog. **The dialog and the hook run concurrently, and
-  > whichever answer lands first wins** — watched on 2.1.263
-  > (`tools/permission_hold_livefire.py`, which **a CLI bump re-runs**). Not
-  > universal: `awaitAutomatedChecksBeforeDialog` awaits the hooks *before*
-  > the dialog on the `requestDialog` branch and in the **async-subagent
-  > spawn** context, so **an ask raised inside a subagent is never held**.
-  > Bounds: 3s per socket op, a 2s poll, an **1800s** deadline under the
-  > `"timeout": 1860` on the hook entry — **the two move together or not at
-  > all**, a raised deadline under the old timeout capping the hold silently
-  > (`test_permission_broker.py` pins it); **every** failure — no daemon,
-  > no reply, `{"hold": 0}`, `"gone"`, the deadline — exits 0 having printed
-  > nothing. Never `updatedPermissions` and never `updatedInput`: an allow
-  > from Dark Army is an allow *once*. **Silence falls back to the legacy
-  > message** — nothing at all from the first exchange means a daemon too
-  > old to know the verb, so the script sends the old
-  > `{"event": "permission", ...}`; an explicit `{"hold": 0}` is a
-  > *deliberate* refusal and is never double-sent. Claude only:
-  > `_EVENT_ALIASES` maps Grok's `permission_request` onto the same name, but
-  > a Claude-shaped `hookSpecificOutput` is not Grok's stdout contract;
-  > Grok's hooks file carries no `timeout` key at all (`grok_hooks_config()`
-  > strips it); Codex asks arrive by its PermissionRequest
-  > (`docs/cli-permission-modes.md`). Refused for a **subagent's ask**, for
-  > **AskUserQuestion**, for a session with a **live channel**, for a session
-  > Dark Army has no state for, and for a **request id already open** — a refused
-  > hold still runs the ordinary `permission` event, so the row goes to
-  > `waiting` either way. Daemon side: `permission_ask` / `permission_poll`
-  > are `LIFECYCLE_EVENTS` that *reply*; the row carries `via="hook"` and no
-  > `port`, so `_reap_permissions` substitutes **the broker stopped polling**
-  > (`HOOK_PROMPT_POLL_LAPSE_SECONDS`, 15s) for "the channel is gone", with
-  > `hold_until` behind it; `answer_permission` **stages** the verdict for
-  > the next poll and refuses in words once the poll has lapsed. `claim` is a
-  > secret with the channel secret's discipline — stripped in
-  > `_permission_snapshot`, never published, asserted absent. An open prompt
-  > also clears `can_close`.
+  The handler's standing hints, the shunt read guard, the close-out helper
+  install and the `PermissionRequest` broker are `docs/hook-door-contract.md`,
+  *The handler*. `NOTIFY_SCRIPT` is a string in `dark_army_menubar/hooks.py`,
+  written to `~/.dark-army/` on install; edit the string.
 
 - **dark_army_daemon/** — Async Python daemon (asyncio): session state
   tracking with staleness eviction and subagent lifecycle tracking. The board
@@ -181,7 +81,7 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   tokens, duration, turns, per-tool counts and files touched, memoised by
   mtime in a `StatsCache`. A card surfacing plays an `afplay` chime (0.5s
   debounce), muted by `notification_sound`, read when the timer *fires*
-  rather than when it is armed.
+  rather than when it is armed. `power_source.py`: battery, `docs/phone-contract.md`.
 
   **`ptyhost.py` and `pty_broker.py` keep a hosted terminal across a
   restart**, stated in `docs/pty-broker-contract.md`; what must hold: **a child
@@ -231,13 +131,16 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   heartbeats (`CHANNEL_CLAIM_SECONDS`, 45s — over the channel's 30s
   heartbeat, under the 95s staleness window).
 
-  **Eight tools, the only inbound verbs here**, each scoped so that winning
+  **Ten tools, the only inbound verbs here**, each scoped so that winning
   the attach race gains an attacker nothing they did not have. In full, and
   the dual-name window, in `docs/channel-tools.md`; what must hold:
   `tools_for_host` is the one capability boundary and `call_tool` re-checks
-  it (Claude eight, Codex the four board verbs, Grok unregistered
-  and so none; Codex's four all spend `_board_request_session_fresh`). **No
-  verb takes a `card_id` and none takes a project**: the six card verbs
+  it (Claude ten, Codex the six board verbs, Grok unregistered
+  and so none; Codex's six all spend `_board_request_session_fresh`;
+  `dark_army_next_card` moves a batch session to its next card,
+  `docs/channel-tools.md`). **No
+  verb but Mission Control's `dark_army_request_start` (which starts
+  nothing) takes a `card_id`, and none takes a project**: the seven card verbs
   resolve the card from `_channel_session(port)` alone —
   by pid at the moment of use, refusing what they cannot attribute — and an
   agent-written card lands in `prep`, always, whatever the tool's own reply
@@ -369,6 +272,17 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     the phone's link timing (`link_timing.py`, `timing` lines, `?timing=1`):
     `docs/transport-contract.md`, *Every phone request is timed*.
 
+    **The scout-report list and body** (`scout_index.py`, pure; loopback
+    `GET /api/scout-reports`, with a `q=` text search over the bodies, and
+    `GET /api/scout-report`, token-gated;
+    sealed reads `scout_reports` / `scout_report` on both doors) are
+    `docs/transport-contract.md`'s, *`scout_reports` and `scout_report` are
+    sealed reads*.
+
+    **The plan list and body** (`plan_index.py`, pure; loopback
+    `GET /api/plans` / `GET /api/plan`; sealed `plans` / `plan`) are
+    `docs/transport-contract.md`'s, *`plans` and `plan` are sealed reads*.
+
     **The per-frame log pair is behind a switch**: `_log_broadcast` is DEBUG,
     the panel's `snapshot` line behind `Trace.verbose`
     (`BOB_COMPANION_LOG_LEVEL=DEBUG`, `BOB_PANEL_TRACE=1` via `launchctl
@@ -414,33 +328,22 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `set_lock_screen_actions` switch (`_compose_push_act`, identifiers only).
 
     **And the top waiter is a Live Activity on the phone's Lock Screen**
-    (`docs/phone-contract.md`, *The waiting agent is a Live Activity*;
-    `docs/transport-contract.md`, *The buzz has a live-card leg*):
-    `live_activity.py` names the head of Needs you off the published
-    buckets by the phone's own admission and one-entry rule (`waiting`, an
-    open prompt or a notification card admits; a question decides the
-    kind; a `needs_you` card bound to a stopped row takes its entry),
-    `_push_live_activity` updates and ends each phone's card
-    through `relay_client.push_activity_outcome` on the buzz's own gates
-    and bucket — a refused body remembered and never re-sent until the
-    picture changes, so the buzz is never starved behind a card — every
-    row carries `quiet_since`, the one stamp both ends date the card by
-    (each source's own clock, 0.0 where it has none — never `now`, which
-    made a stampless row news every frame; a clock field in
-    `_CLOCK_FIELDS` beside `last_event`, so a working row's every tool
-    call is not news on the stamp alone), a send's answer is discarded
-    once the device's generation moved (a fresh registration, a newer
-    send),
-    `register_activity_token` sits on both `LAN_ACTIONS` and
-    `REMOTE_ACTIONS` beside `register_push_token`, and the token rides no
-    snapshot — `devices_snapshot` publishes `live_activity` as a bool.
+    (`live_activity.py`, `_push_live_activity`; `register_activity_token` on
+    both phone tuples, the token on no snapshot): in full in
+    `docs/phone-contract.md`, *The waiting agent is a Live Activity*, and
+    `docs/transport-contract.md`, *The buzz has a live-card leg*.
   - **Mission Control** (`mission.py`; verbs in `daemon_board.py`) — the
     standing chief-of-staff session on Dark Army's own pty in **Dark Army's
     own checkout**, agent `mission-control` with
     `docs/mission-control-brief.md` (`dispatch.mission_argv`; origin
     `mission`). It **acts like any session**: a write
     raises the ordinary `permission` event; only plain replies are
-    withheld (`daemon._mission_reply`). `mission.allowed_tools(root)`
+    withheld (`daemon._mission_reply`). **It is always called Mission
+    Control**: spawned with `--name "Mission Control"`, and any row
+    stamped `mission` wears `mission.NAME`, never a generated title.
+    After an eviction and a `/clear`, `_mission_successor` resolves (never
+    binds) the stamped session whose pid the terminal owns, so the record
+    and `ask_start` follow it. `mission.allowed_tools(root)`
     builds the `--allowed-tools` grant (pre-approved reads) per spawn:
     `Read(//<root>/**)`, `Read` of `mission.STATE_SCRATCH`, bare `Grep` /
     `Glob`, one Bash rule, `mission.CURL_RULE` =
@@ -633,7 +536,7 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   for the sleeping Zzz, first for the waiting red), which is what stops the
   repaint on a quiet Mac; counts stay **real text** in `labelColor` and only
   the usage cluster (`_usage_image`) is an `NSImage`, resolving its own ink;
-  the collapse ladder (`STRIP_LADDER`, `STRIP_BUDGET_PT` = 300pt, rungs named
+  the collapse ladder (`STRIP_LADDER`, `STRIP_BUDGET_PT` = 310pt, rungs named
   on `StripRung`) is a **measured** search whose floor is the two live figures
   and their counts, and dropping the under-meter is **not** a rung; colour is
   an exception signal alone (`menu_format.USAGE_WARN_PERCENT` 75%,
@@ -817,7 +720,7 @@ A row kept after its tab vanished publishes `tab_gone` (*A Grok turn outlives it
   (transitions only, `_undelivered` drained once after the push,
   each drained alert logged to `buzz-ledger.jsonl` by `buzz_ledger.py` —
   `docs/transport-contract.md`, *The buzz is written down*; the phone leg
-  is filtered (`live_activity.listed_sessions`), gated on Mac presence,
+  is filtered (`live_activity.shown_sessions`), gated on Mac presence,
   held — *The phone leg is filtered, gated and held*),
   and `_type_answer_burst` answers an `AskUserQuestion` dialog with a keystroke
   burst that **follows the installed CLI's widgets** — a CLI bump re-reads the

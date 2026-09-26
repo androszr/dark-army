@@ -387,6 +387,12 @@ final class RelayChannel {
         let previous = Self.inFlight[mailbox]
         let task = Task { () -> Answer in
             _ = await previous?.value
+            // A wake opens the socket and asks in the same breath: a line
+            // still coming up is worth `readyGrace` of waiting, because it
+            // answers in milliseconds and the mailbox in seconds.
+            if let socket = self.socket, socket.comingUp {
+                _ = await socket.ready(within: RelaySocket.readyGrace)
+            }
             // The socket first while it is open **and the Mac is on the
             // other side of it** (the relay's `peer:1`); a line with no
             // peer, a closed socket, a send that failed or no answer

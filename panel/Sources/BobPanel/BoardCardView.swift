@@ -52,6 +52,14 @@ struct BoardCardView: View {
         state.refining.contains(card.id) || card.isRefining
     }
     @State private var jumpHover = false
+    /// Which jump chip holds the keyboard focus, keyed by its row and its
+    /// words: a focused chip brightens as a hovered one does.
+    @FocusState private var jumpFocus: String?
+    /// Under an agent's detail the board is covered: its tile leaves the
+    /// focus chain (`keyboardClaimsSuppressed`).
+    @Environment(\.keyboardClaimsSuppressed) private var keyboardSuppressed
+    /// Reduce Motion, for the reveal ring and the delete fade.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// True while a reverse jump from VS Code has just brought this card into
     /// view. A brief phosphor ring, not a selection: the board has no card
     /// selection and this must not invent one, so it fades on the applier's
@@ -68,20 +76,21 @@ struct BoardCardView: View {
             && card.sessionId.isEmpty
             && !card.isDispatching
             && !card.isRefining
+            // A card waiting its turn in a batch is bound by that batch's
+            // own session; the daemon refuses a second Start on it in
+            // words, so the button is absent rather than inert.
+            && !card.holdsBatchMark
     }
 
     /// Refine's own gate, `canStart`'s shape: absent, never disabled. Prep
     /// only, no plan yet, nothing already refining or running it, and Dark Army
     /// allowed to start sessions at all — Refine *is* Dark Army starting a session,
     /// so it sits behind the same `dispatchEnabled` the daemon checks.
+    ///
+    /// The terms live in `RowSelection.tickable(.prep, …)`, so the Prep row's
+    /// batch tick and this button can never disagree about a card.
     private var canRefine: Bool {
-        chrome.dispatchEnabled
-            && card.column == BoardColumn.prep.rawValue
-            && card.planPath.isEmpty
-            && !card.isScout
-            && !card.isRefining
-            && card.sessionId.isEmpty
-            && !card.isDispatching
+        RowSelection.tickable(.prep, card: card, chrome: chrome)
     }
 
     /// Promote is offered on a Done scout that already has a report. The
@@ -133,6 +142,35 @@ struct BoardCardView: View {
         card.sessionId.isEmpty && !card.isDispatching
     }
 
+    /// The tick box leading the title while this card's row is in select
+    /// mode. Phosphor when ticked; faint and inert where the card could not
+    /// join the selection (`RowSelection.admits`: not refinable right now, or
+    /// a different project from the first card ticked). The Refine button
+    /// stays where it is — the tick is an addition, never a replacement.
+    private func rowTick(_ row: BoardColumn) -> some View {
+        let ticked = state.rowSelection.contains(card.id)
+        let admitted = ticked || RowSelection.admits(
+            row, card: card, given: state.rowSelectionCards, chrome: chrome)
+        return Button {
+            state.toggleRowSelection(card, chrome: chrome)
+        } label: {
+            Image(systemName: ticked ? "checkmark.square" : "square")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(ticked ? Theme.phosphor : Theme.faint)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!admitted)
+        .clickable(admitted)
+        // Backlog's batch verb starts sessions; Prep's refines.
+        .accessibilityLabel(row == .backlog ? "Select for batch start"
+                                            : "Select for batch refine")
+        .accessibilityValue(ticked ? "selected" : "not selected")
+        .accessibilityHint(!admitted ? "This card cannot join this batch"
+                           : row == .backlog ? "Ticks this card to start with the others"
+                           : "Ticks this card to refine with the others")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             statusBanner
@@ -156,9 +194,12 @@ struct BoardCardView: View {
                     .accessibilityLabel("Manual check needed")
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("> \(card.title)")
-                    .font(Theme.mono(12))
-                    .foregroundStyle(Theme.phosphorBright)
+                if let row = state.selectingRow, row.rawValue == card.column {
+                    rowTick(row)
+                }
+                Text(card.title)
+                    .font(Theme.prose(14, weight: .semibold))
+                    .foregroundStyle(Theme.text)
                     // Four lines, in a column twice as wide as it was: a
                     // title is the one thing on the face a person reads to
                     // decide, and a clipped one sends them into the card.
@@ -202,8 +243,8 @@ struct BoardCardView: View {
             }
             if !card.summary.isEmpty {
                 Text(card.summary)
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.dim)
+                    .font(Theme.prose(12))
+                    .foregroundStyle(Theme.muted)
                     // Six, for the same reason as the title's four: the
                     // summary is the field written to be read on the face.
                     .lineLimit(6)
@@ -214,10 +255,28 @@ struct BoardCardView: View {
                 // is mostly clipped machine input is the thing to make people
                 // notice the summary field, not to make comfortable.
                 Text(card.prompt)
-                    .font(Theme.mono(10))
+                    .font(Theme.prose(11))
                     .foregroundStyle(Theme.faint)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            // What a finished scout found — the verdict and the scout's
+            // recommendation as the daemon stored them at the attach,
+            // through `ScoutVerdictLine`, the wording shared with the phone.
+            // One line on the tile, cut short at the end; the card window
+            // draws it in full. Absent where the report had no answer block.
+            if card.isScout,
+               let verdict = ScoutVerdictLine.text(
+                   verdict: card.reportVerdict,
+                   recommendation: card.reportRecommendation) {
+                Text(verdict)
+                    .font(Theme.mono(10))
+                    .foregroundStyle(Theme.phosphor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .accessibilityLabel(ScoutVerdictLine.spoken(
+                        verdict: card.reportVerdict,
+                        recommendation: card.reportRecommendation))
             }
             // What the card has cost so far and how long its assistant has
             // worked — `RunFigures.line`, the wording shared with the phone.
@@ -304,6 +363,16 @@ struct BoardCardView: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if !card.batchLine.isEmpty {
+                // Where this card stands in a batch session — the daemon's
+                // three fields, composed into one line. Phosphor for the
+                // card being worked, faint for one waiting its turn.
+                Text(card.batchLine)
+                    .font(.system(size: 10))
+                    .foregroundStyle(card.isBatchWaiting ? Theme.faint
+                                                         : Theme.phosphor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if card.isQueued {
                 // Secondary ink, deliberately **not** the orange
                 // `dispatchError` style: queued is not an error, it is the
@@ -320,6 +389,22 @@ struct BoardCardView: View {
                     .foregroundStyle(Theme.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // The cards this one waits on and the ones it unblocks — the
+            // daemon's two sentences, verbatim, each drawn only where it sent
+            // one. Secondary ink for the queued line's reason: a link is a
+            // fact about order, not an error.
+            if !card.dependencyLine.isEmpty {
+                Text(card.dependencyLine)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !card.dependentsLine.isEmpty {
+                Text(card.dependentsLine)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !card.dispatchError.isEmpty {
                 HStack(spacing: 4) {
                     Text(card.dispatchError)
@@ -330,23 +415,25 @@ struct BoardCardView: View {
                         .buttonStyle(.link)
                         .font(.system(size: 10))
                         .clickable()
+                        .reportsKeyboardFocus()
                 }
             }
             actions
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Rectangle().fill(Theme.card))
-        .overlay(Rectangle().strokeBorder(stroke, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.cardRadius).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(stroke, lineWidth: 1))
         // Above the ordinary border rather than instead of it: the card's own
         // stroke still says what state it is in, and this only says "here".
-        .overlay(Rectangle()
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
             .strokeBorder(Theme.phosphor, lineWidth: 2)
             .opacity(isRevealed ? 1 : 0))
         .shadow(color: isRevealed ? Theme.phosphor.opacity(0.45)
                                   : (isLive ? Theme.phosphor.opacity(0.12) : .clear),
                 radius: isRevealed ? 16 : (isLive ? 12 : 0))
-        .animation(.easeOut(duration: 0.25), value: isRevealed)
+        .animation(Motion.animation(.easeOut(duration: 0.25), reduced: reduceMotion),
+                   value: isRevealed)
         .opacity(isDeleting ? 0.45 : 1)
         // Nothing on a card that is going anywhere is worth pressing, and a
         // Delete pressed twice is a refusal on a card that no longer exists.
@@ -362,7 +449,8 @@ struct BoardCardView: View {
                     .padding(.horizontal, 10)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: isDeleting)
+        .animation(Motion.animation(.easeOut(duration: 0.15), reduced: reduceMotion),
+                   value: isDeleting)
         .contentShape(Rectangle())
         // A double click opens the card, which is what a double click on a
         // document-shaped thing means everywhere else on this platform. The
@@ -376,6 +464,22 @@ struct BoardCardView: View {
         // `allowsHitTesting(!isDeleting)` above, so a card mid-deletion does not
         // promise a press it is already ignoring.
         .clickable(!isDeleting)
+        // VoiceOver's way in, beside the pointer's double click: the tile
+        // reads as a button and opens the card on its default action, and
+        // "Open card" is listed among its actions. The verbs inside stay
+        // reachable as their own elements.
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { openDetail() }
+        .accessibilityAction(named: "Open card") { openDetail() }
+        // And the keyboard's: Tabbed onto (Full Keyboard Access), the tile
+        // takes the focus like a button and opens on Return or Space, which
+        // the key monitor hands to a focused control — only while the tile
+        // itself is focused (never a verb inside it), never on a covered
+        // board, and never on a card already being deleted.
+        .focusable(!keyboardSuppressed, interactions: .activate)
+        .reportsKeyboardFocus(keys: [.return, .space],
+                              onPress: isDeleting ? nil : { openDetail() })
     }
 
     /// The card's loud header, above everything else on it, because it is the
@@ -495,18 +599,22 @@ struct BoardCardView: View {
     /// `isJumpable` is the daemon's `canJump` or a terminal Dark Army itself hosts,
     /// and every draw site checks it before drawing this.
     private func jumpChip(to row: Agent, help: String) -> some View {
-        Button {
+        let key = "\(row.id)|\(help)"
+        let lit = jumpHover || jumpFocus == key
+        return Button {
             jump(to: row)
         } label: {
             Image(systemName: "arrow.up.forward")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(jumpHover ? Theme.phosphorBright : Theme.faint)
+                .foregroundStyle(lit ? Theme.phosphorBright : Theme.faint)
                 .frame(width: 16, height: 16)
-                .background(Theme.phosphor.opacity(jumpHover ? 0.16 : 0.08))
+                .background(Theme.phosphor.opacity(lit ? 0.16 : 0.08))
                 .overlay(Rectangle().strokeBorder(Theme.hair, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .clickable()
+        .focused($jumpFocus, equals: key)
+        .modifier(ClaimsKeyboardFocus(focused: jumpFocus == key))
         .onHover { jumpHover = $0 }
         .accessibilityLabel(help)
     }
@@ -754,6 +862,7 @@ struct BoardCardView: View {
                 if canRefine {
                     startWhenPlannedTick
                 }
+                if card.holdsBatchMark { small("LEAVE BATCH") { leaveBatch() } }
                 Spacer(minLength: 0)
                 deleteButton
             }
@@ -772,6 +881,7 @@ struct BoardCardView: View {
             case .backlog:
                 if canStart { startButton }
                 if canSpawnHere { startHereButton }
+                // LEAVE BATCH is drawn below the switch, for every column.
             case .inProgress:
                 // Done is the row's outlined verb, so it leads; Back keeps
                 // its place beside it and nothing takes a second line.
@@ -788,6 +898,11 @@ struct BoardCardView: View {
                 small("Reopen") { move(to: .backlog) }
                 if canPromote { small("Promote") { promote() } }
             }
+            // A card still carrying a batch mark with no session of its
+            // own, in whatever column a drag left it: its one way to a
+            // Start of its own is leaving the batch (`board_reset`, which
+            // clears the mark) — the words the daemon's refusal names.
+            if card.holdsBatchMark { small("LEAVE BATCH") { leaveBatch() } }
             deleteButton
         }
         .font(Theme.mono(10))
@@ -954,8 +1069,9 @@ struct BoardCardView: View {
         }
         .buttonStyle(.plain)
         .controlSize(.small)
-        .foregroundStyle(isDeleteArmed ? Color.red : Theme.faint)
+        .foregroundStyle(isDeleteArmed ? Color.red : Theme.dim)
         .clickable()
+        .reportsKeyboardFocus()
     }
 
     private func chip(_ text: String, muted: Bool = false) -> some View {
@@ -976,6 +1092,7 @@ struct BoardCardView: View {
         .controlSize(.small)
         .foregroundStyle(Theme.faint)
         .clickable()
+        .reportsKeyboardFocus()
     }
 
     /// One primary per card, chosen by column (`CardActionWeight`): the
@@ -991,16 +1108,26 @@ struct BoardCardView: View {
                                          @ViewBuilder _ button: () -> Content) -> some View {
         if CardActionWeight.isPrimary(verb, column: card.column, kind: card.kind) {
             button()
-                .buttonStyle(AlarmOutline())
+                .buttonStyle(AlarmOutline(filled: true))
                 .disabled(!enabled)
                 .clickable(enabled)
+                .reportsKeyboardFocus()
         } else {
-            button()
-                .buttonStyle(.plain)
-                .controlSize(.small)
-                .foregroundStyle(armed ? Color.orange : Theme.faint)
-                .disabled(!enabled)
-                .clickable(enabled)
+            // A dim word that is really a button says so: the readable dim
+            // ink, and an underline the moment the pointer or the keyboard
+            // focus lands on it.
+            // Built once here: `button` does not escape, the focus
+            // wrapper's closure does.
+            let verb = button()
+            DimVerbFocus { hovered, focused in
+                verb
+                    .buttonStyle(.plain)
+                    .controlSize(.small)
+                    .foregroundStyle(armed ? Color.orange : Theme.dim)
+                    .underline(hovered || focused, color: armed ? Color.orange : Theme.dim)
+                    .disabled(!enabled)
+                    .clickable(enabled)
+            }
         }
     }
 
@@ -1099,6 +1226,12 @@ struct BoardCardView: View {
         }
     }
 
+    /// Take a waiting card out of its batch: the existing reset, which
+    /// clears the batch mark with the link (the daemon's `reset_card`).
+    private func leaveBatch() {
+        clearError()
+    }
+
     private func clearError() {
         Task { @MainActor in
             let result = await client.boardReset(card.id)
@@ -1121,5 +1254,24 @@ struct BoardCardView: View {
             }
             await client.refresh()
         }
+    }
+}
+
+/// Hover and keyboard focus for one dim card verb, handed to the closure
+/// that draws it, so `weighted` can underline a dim word the moment the
+/// pointer or the focus lands on it. One per verb: a shared flag would
+/// underline every verb on the card at once.
+private struct DimVerbFocus<Content: View>: View {
+    @ViewBuilder let content: (_ hovered: Bool, _ focused: Bool) -> Content
+    @State private var hovered = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        content(hovered, focused)
+            .focused($focused)
+            .onHover { hovered = $0 }
+            // The claim, from this wrapper's own focus: a second `.focused`
+            // on one view would split it.
+            .modifier(ClaimsKeyboardFocus(focused: focused))
     }
 }

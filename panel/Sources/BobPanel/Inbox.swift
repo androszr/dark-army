@@ -55,6 +55,10 @@ enum InboxWireKind: Int, Hashable {
     case endedWork
     case manualCheck
     case waiting
+    /// Mission Control asked for this card to be started. Last so every
+    /// earlier raw value — and so every stored id — is unchanged; its kind
+    /// is ANSWER, because the person is deciding yes or no.
+    case startAsked
 
     var name: String {
         switch self {
@@ -63,12 +67,13 @@ enum InboxWireKind: Int, Hashable {
         case .endedWork: return "ended_work"
         case .manualCheck: return "manual_check"
         case .waiting: return "waiting"
+        case .startAsked: return "start_asked"
         }
     }
 
     var kind: InboxKind {
         switch self {
-        case .permission, .question: return .answer
+        case .permission, .question, .startAsked: return .answer
         case .endedWork, .manualCheck: return .look
         case .waiting: return .stopped
         }
@@ -111,6 +116,8 @@ enum InboxFingerprint {
             return value(kind: name, material: questionMaterial(questions))
         case .manualCheck:
             return value(kind: name, material: card?.manualSteps ?? "")
+        case .startAsked:
+            return value(kind: name, material: card?.startAskId ?? "")
         case .permission, .endedWork:
             return value(kind: name, material: "")
         }
@@ -165,6 +172,10 @@ struct InboxGroup: Identifiable, Hashable {
 }
 
 enum Inbox {
+    /// The line under a start-asked entry, the same words on the phone.
+    static let startAskedDetail =
+        "Mission Control asks to start this. Open it and press START, or Dismiss."
+
     /// Every decision waiting, one per row and one per card.
     ///
     /// `rows` arrives already ranked (the `attentionRows` slice). `prompts` is
@@ -186,7 +197,8 @@ enum Inbox {
                       cards: [BoardCard],
                       answered: Set<String> = [],
                       now: Double = 0,
-                      acks: [InboxAckRecord] = []) -> [InboxItem] {
+                      acks: [InboxAckRecord] = [],
+                      fleet: Agents = Agents()) -> [InboxItem] {
         var out: [InboxItem] = []
 
         for row in rows {
@@ -220,8 +232,11 @@ enum Inbox {
                                      since: waitingSince))
             } else {
                 // What the agent last said in one line, where it left one;
-                // the tool it stopped on otherwise.
-                let detail = agent.lastSummary.isEmpty ? agent.currentTool : agent.lastSummary
+                // its work report's headline (the daemon's line) next; the
+                // tool it stopped on otherwise.
+                let headline = agent.workReport?.headline ?? ""
+                let detail = !agent.lastSummary.isEmpty ? agent.lastSummary
+                    : !headline.isEmpty ? headline : agent.currentTool
                 out.append(InboxItem(wire: .waiting, project: agent.project,
                                      title: name, detail: detail,
                                      target: target, cardId: "",
@@ -238,8 +253,15 @@ enum Inbox {
             // falls back to when it was written — never to `now`, which
             // would restart the clock on every frame.
             if card.needsYou {
+                // What the ended session reported, where its row carries a
+                // report (`fleet`, every bucket); the card's summary else.
+                let ended = card.sessionId.isEmpty ? nil
+                    : rows.first(where: { $0.agent.sessionId == card.sessionId })?.agent
+                        ?? fleet.row(session: card.sessionId)?.0
+                let reported = ended?.workReport?.headline ?? ""
                 out.append(InboxItem(wire: .endedWork, project: card.project,
-                                     title: name, detail: card.summary,
+                                     title: name,
+                                     detail: reported.isEmpty ? card.summary : reported,
                                      target: target, cardId: card.id,
                                      sessionId: card.sessionId,
                                      since: card.knownFinishedAt ?? card.createdAt))
@@ -249,6 +271,16 @@ enum Inbox {
                                      target: target, cardId: card.id,
                                      sessionId: card.sessionId,
                                      since: card.knownFinishedAt ?? card.createdAt))
+            } else if !card.startAskId.isEmpty {
+                // The daemon publishes the ask only while the card could
+                // still take a Start; the entry opens the card, where START
+                // is the yes and Dismiss here is the no.
+                out.append(InboxItem(wire: .startAsked, project: card.project,
+                                     title: name, detail: Inbox.startAskedDetail,
+                                     target: target, cardId: card.id,
+                                     sessionId: "",
+                                     since: card.startAskedAt > 0
+                                         ? card.startAskedAt : card.createdAt))
             }
         }
 
@@ -336,5 +368,27 @@ enum Inbox {
         let refused = refusal.trimmingCharacters(in: .whitespacesAndNewlines)
         if !refused.isEmpty { return refused }
         return queueReason.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// What VoiceOver reads for one entry — the row is one button, so its
+    /// fragments are one sentence: the kind's word, the subject, how long it
+    /// has waited, the detail and Dark Army's own line, in the order they are
+    /// drawn. Composed from the drawn fields only, nothing off the snapshot.
+    /// `waited` is the spoken age the row's clock draws (`FleetAge.spoken`),
+    /// handed in so this file stays Foundation-only; empty for an undated
+    /// entry, which says nothing. `sentence` is the line the row draws under
+    /// the detail (`sentence(for:refusal:queueReason:)`), empty where it
+    /// draws none.
+    static func spokenLabel(for item: InboxItem, waited: String,
+                            sentence: String = "") -> String {
+        // The word is drawn in capitals; spoken, it is a word, not letters.
+        var parts = [item.kind.word.lowercased(), item.title]
+        if !waited.isEmpty { parts.append("waiting " + waited) }
+        parts.append(item.detail)
+        parts.append(sentence)
+        return parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
     }
 }

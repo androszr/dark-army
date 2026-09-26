@@ -621,3 +621,180 @@ def test_objective_backfill_on_launch(tmp_path, monkeypatch):
         assert d._backfill_board_workflows() == 0
     finally:
         store.close()
+
+
+# --- parse_header_card: which card a batch plan is for ------------------------
+
+
+def test_parse_header_card_reads_the_first_card_header_with_the_bullet_optional():
+    assert board_workflow.parse_header_card("- **Card:** abc123\n") == "abc123"
+    assert board_workflow.parse_header_card("**Card:**   abc123  \n") == "abc123"
+    assert board_workflow.parse_header_card("- **Card:** `abc123`\n") == "abc123"
+    text = "# Plan\n\n- **Area:** desk\n- **Card:** first\n\n- **Card:** second\n"
+    assert board_workflow.parse_header_card(text) == "first"
+
+
+def test_parse_header_card_treats_placeholders_and_none_as_no_card():
+    for value in ("<id — only when the prompt gave one; omit the line otherwise>",
+                  "NONE", "n/a", "", "-"):
+        assert board_workflow.parse_header_card(f"- **Card:** {value}\n") == ""
+    # `Card id:` in prose, a plain `Card:` word and no header at all are no card.
+    assert board_workflow.parse_header_card("Card id: abc\nCard: abc\n") == ""
+    assert board_workflow.parse_header_card("") == ""
+
+
+def test_read_plan_card_reads_the_file_and_fails_quietly(tmp_path):
+    plan = tmp_path / "plan.md"
+    plan.write_text("# p\n\n- **Card:** deadbeef\n")
+    assert board_workflow.read_plan_card(plan) == "deadbeef"
+    assert board_workflow.read_plan_card(tmp_path / "missing.md") == ""
+
+
+# --- the `Depends on:` header (docs/card-dependencies.md) --------------------
+
+
+@pytest.mark.parametrize("line,want", [
+    ("- **Depends on:** Build the foundation | Ship it",
+     ["Build the foundation", "Ship it"]),
+    # A title holding commas is one reference: ` | ` is the only separator.
+    ("- **Depends on:** Front door and server-side progress: sign-up, email "
+     "links, guests",
+     ["Front door and server-side progress: sign-up, email links, guests"]),
+    ("- **Depends on:** Front door: sign-up, email links | `abc123`",
+     ["Front door: sign-up, email links", "abc123"]),
+    ('**Depends on:** "Quoted title" | Other', ["Quoted title", "Other"]),
+    ("- **Depends on:** A | A | B", ["A", "B"]),
+    ("- **Depends on:** <exact titles or ids of cards in this project that "
+     "must finish first, or omit the line>", []),
+    ("- **Depends on:** none", []),
+    ("- **Depends on:** N/A", []),
+    ("- **Depends on:**", []),
+])
+def test_parse_header_depends_on(line, want):
+    assert board_workflow.parse_header_depends_on(
+        "# Plan\n\n" + line + "\n- **Area:** desk\n") == want
+
+
+def test_the_depends_on_header_is_capped_and_only_the_first_counts():
+    many = " | ".join(f"card {i}" for i in range(12))
+    got = board_workflow.parse_header_depends_on(
+        f"- **Depends on:** {many}\n- **Depends on:** later prose\n")
+    assert got == [f"card {i}" for i in range(board_workflow.MAX_BLOCKERS)]
+    assert board_workflow.parse_header_depends_on("Depends on: prose") == []
+    assert board_workflow.parse_header_depends_on("") == []
+
+
+def test_read_plan_depends_on_reads_the_file_and_fails_to_nothing(tmp_path):
+    path = tmp_path / "plan.md"
+    path.write_text("- **Depends on:** The foundation\n")
+    assert board_workflow.read_plan_depends_on(path) == ["The foundation"]
+    assert board_workflow.read_plan_depends_on(tmp_path / "missing.md") == []
+
+
+def test_depends_on_guidance_parity():
+    """All three plan templates carry the same `Depends on:` header and
+    comment; the comment is the planner's whole instruction (no role loads
+    the template's words twice, `docs/card-dependencies.md`)."""
+    root = Path(__file__).resolve().parents[2]
+    paths = [root / p for p in (".claude/skills/ship/templates/plan.md", ".agents/skills/ship/templates/plan.md", "host/dark_army_menubar/agent_pack/template/.claude/skills/ship/templates/plan.md")]
+    blocks = [[line for line in p.read_text().splitlines()
+               if line.startswith(("- **Depends on:**", "<!-- Depends on:"))]
+              for p in paths]
+    assert len(blocks[0]) == 2
+    assert blocks[0] == blocks[1] == blocks[2]
+    # The template's own placeholder seeds nothing.
+    assert board_workflow.parse_header_depends_on(blocks[0][0]) == []
+    assert "/api/state/pretty" in blocks[0][1] and "never guessed" in blocks[0][1]
+
+
+def _attach_harness(tmp_path, monkeypatch):
+    from dark_army_daemon.board import BoardStore
+    from dark_army_daemon.daemon import BobDaemon
+    store = BoardStore(tmp_path / "board.db"); store.connect()
+    d = BobDaemon(); d._board = store
+
+    async def publish(): pass
+    monkeypatch.setattr(d, "_publish_board", publish)
+    return d, store
+
+
+@pytest.mark.asyncio
+async def test_attach_seeds_the_dependencies_a_plan_names_by_title(
+        tmp_path, monkeypatch):
+    d, store = _attach_harness(tmp_path, monkeypatch)
+    try:
+        dep, _ = store.create({"title": "Build the Foundation",
+                               "root": str(tmp_path)})
+        other, _ = store.create({"title": "other", "root": str(tmp_path)})
+        path = tmp_path / "plan.md"
+        path.write_text(f"- **Depends on:** build the foundation | {other['id']}\n")
+        card, _ = store.create({"title": "x", "root": str(tmp_path)})
+        store.update(card["id"], {"refine_session_id": "r", "refine_state": "live"})
+        attached, detail = await d.attach_plan_by_session("r", str(path))
+        assert attached is not None, detail
+        from dark_army_daemon.board import parse_ids
+        assert parse_ids(store.get(card["id"])["blocked_by"]) == [
+            dep["id"], other["id"]]
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_attach_never_overwrites_a_persons_dependencies(
+        tmp_path, monkeypatch):
+    d, store = _attach_harness(tmp_path, monkeypatch)
+    try:
+        mine, _ = store.create({"title": "mine", "root": str(tmp_path)})
+        store.create({"title": "the plan's", "root": str(tmp_path)})
+        path = tmp_path / "plan.md"
+        path.write_text("- **Depends on:** the plan's\n")
+        card, _ = store.create({"title": "x", "root": str(tmp_path)})
+        store.update(card["id"], {"blocked_by": mine["id"],
+                                  "refine_session_id": "r",
+                                  "refine_state": "live"})
+        attached, detail = await d.attach_plan_by_session("r", str(path))
+        assert attached is not None, detail
+        assert store.get(card["id"])["blocked_by"] == mine["id"]
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_an_ambiguous_title_in_the_header_seeds_nothing_and_logs(
+        tmp_path, monkeypatch, caplog):
+    """A partial list would let the card start before something it was
+    meant to wait for, so one title naming two cards seeds none — and the
+    plan is attached all the same."""
+    d, store = _attach_harness(tmp_path, monkeypatch)
+    try:
+        store.create({"title": "twin", "root": str(tmp_path)})
+        store.create({"title": "Twin", "root": str(tmp_path)})
+        store.create({"title": "single", "root": str(tmp_path)})
+        path = tmp_path / "plan.md"
+        path.write_text("- **Depends on:** single | twin\n")
+        card, _ = store.create({"title": "x", "root": str(tmp_path)})
+        store.update(card["id"], {"refine_session_id": "r", "refine_state": "live"})
+        with caplog.at_level("INFO"):
+            attached, detail = await d.attach_plan_by_session("r", str(path))
+        assert attached is not None, detail
+        assert attached["plan_path"]
+        assert store.get(card["id"])["blocked_by"] == ""
+        assert any("dependencies not seeded" in r.getMessage()
+                   and "more than one card" in r.getMessage()
+                   for r in caplog.records)
+    finally:
+        store.close()
+
+
+def test_a_card_line_quoted_in_the_plan_body_is_not_the_header():
+    """A work report's own `**Card:**` line quoted below the first section
+    must not name the plan's card (25 Sep 2026)."""
+    from dark_army_daemon import board_workflow as bw
+
+    body = ("# Title\n\n- **Date:** 2026-09-25\n\n## Context\n\n"
+            "**Card:** Moved it to Done.\n- **Depends on:** Other card\n")
+    assert bw.parse_header_card(body) == ""
+    assert bw.parse_header_depends_on(body) == []
+    header = "# Title\n\n- **Card:** abc123\n- **Depends on:** One | Two\n\n## Context\n"
+    assert bw.parse_header_card(header) == "abc123"
+    assert bw.parse_header_depends_on(header) == ["One", "Two"]

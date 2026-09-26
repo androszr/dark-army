@@ -338,13 +338,45 @@ def test_the_header_adds_no_second_voice():
 def test_the_prompt_count_redacts_on_the_lock_screen():
     views = _read(VIEWS)
     assert "sensitive: Bool = false" in views
-    assert '("\\(summary.needsYou) need you", WidgetTheme.alarm, true)' in views
+    assert '("\\(summary.needsYou) need you", WidgetTheme.attention, true)' in views
     assert views.count(".privacySensitive()") >= 5
 
 
 def test_the_widget_still_restates_rather_than_importing_the_theme():
     body = _phase_body(_read(PBXPROJ), "7B0B0E1A0000000000000131 /* Sources */")
     assert "Theme.swift" not in body
+
+
+def test_the_widget_compiles_the_apps_generated_signal_tokens():
+    pbx = _read(PBXPROJ)
+    body = _phase_body(pbx, "7B0B0E1A0000000000000131 /* Sources */")
+    assert "A51A1D000000000000000005 /* SignalTokens.generated.swift in Sources */" in body
+    assert "A51A1D000000000000000001 /* SignalTokens.generated.swift */" in pbx
+    assert "A51A1D000000000000000005 /* SignalTokens.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51A1D000000000000000001" in pbx
+    tests_body = _phase_body(pbx, "DEC1510B000000000000003E /* Sources */")
+    assert "A51A1D000000000000000006 /* SignalTokens.generated.swift in Sources */" in tests_body
+    assert not (WIDGET_DIR / "SignalTokens.generated.swift").exists()
+
+
+def test_widget_signal_roles_keep_attention_and_failures_distinct():
+    views = _read(VIEWS)
+    theme = views.split("enum WidgetTheme {")[1].split("struct FleetWidgetView")[0]
+    assert "Color(red:" not in theme
+    for role in ("surface", "text", "muted", "accent", "attention", "danger", "line"):
+        assert f"SignalTokens.{role}" in theme
+    assert "if percent >= critPercent { return danger }" in theme
+    assert "if percent >= warnPercent { return attention }" in theme
+    assert "return text" in theme
+    assert "case \"alert\": return WidgetTheme.attention" in views
+    assert "alarmed ? WidgetTheme.attention" in views
+    assert "stale ? WidgetTheme.attention : WidgetTheme.muted" in views
+
+    activity = _read(WIDGET_DIR / "NeedsYouActivityViews.swift")
+    assert ".activityBackgroundTint(WidgetTheme.bg)" in activity
+    assert ".activitySystemActionForegroundColor(WidgetTheme.accent)" in activity
+    assert ".keylineTint(WidgetTheme.attention)" in activity
+    assert "stale ? WidgetTheme.muted : WidgetTheme.text" in activity
+    assert "stale ? WidgetTheme.muted : WidgetTheme.attention" in activity
 
 
 def test_the_widget_never_asks_for_the_diary():

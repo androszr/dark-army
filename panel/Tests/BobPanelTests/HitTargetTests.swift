@@ -19,18 +19,20 @@ final class HitTargetTests: XCTestCase {
     }
 
     func testVerticalPadDrawsTheBox() {
-        XCTAssertEqual(AlarmOutline.vPad, 4)
+        XCTAssertEqual(AlarmOutline.vPad, 8)
     }
 
     func testStrokeDrawsTheBorder() {
         XCTAssertEqual(AlarmOutline.stroke, 1)
     }
 
-    func testHeldInkIsUntouched() {
-        XCTAssertEqual(AlarmOutline.heldInk, 0.4)
+    /// Raised from 0.4 on 25 Sep 2026: alarm ink at 0.4 measured 1.79:1 on
+    /// the ground, unreadable; 0.65 reads (`host/tests/test_theme_contrast.py`).
+    func testHeldInkIsReadable() {
+        XCTAssertEqual(AlarmOutline.heldInk, 0.65)
     }
 
-    func testHeldEdgeIsUntouched() {
-        XCTAssertEqual(AlarmOutline.heldEdge, 0.3)
+    func testHeldEdgeIsReadable() {
+        XCTAssertEqual(AlarmOutline.heldEdge, 0.45)
     }
 }

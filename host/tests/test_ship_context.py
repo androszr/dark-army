@@ -197,7 +197,9 @@ def test_the_preservation_map_resolves_and_every_old_paragraph_has_a_home():
     # Nineteen later that day: retiring the old install's migration code made
     # the build flags table's opening `--install` row false (09d9af449624).
     # Twenty later that day: the panel context's opening named the old settings folder's path inside its first seventy characters (c71aacfefc02).
-    assert len(pmap["exceptions"]) <= 20, "every exception is a verified stale statement, named"
+    # Twenty-one since 25 Sep 2026: the strip budget went 300pt -> 310pt and
+    # the figure sits inside the Key Constraints bullet's opening (9d240e931e6b).
+    assert len(pmap["exceptions"]) <= 21, "every exception is a verified stale statement, named"
     for entry in pmap["exceptions"].values():
         assert entry["why"] and entry["replacement"]
     problems, edited = se.preservation_report(ROOT, pmap, baseline)
@@ -208,7 +210,7 @@ def test_the_preservation_map_resolves_and_every_old_paragraph_has_a_home():
     listed = _edited_after_the_move(doc)
     assert listed, "the document lists the paragraphs known to be edited after the move"
     for note in edited:
-        assert "was edited in docs/context-" in note or "was edited in CLAUDE.md in place" in note, note
+        assert "was edited in docs/" in note or "was edited in CLAUDE.md in place" in note, note
         d = note.split()[2]
         assert d in listed, f"an edited relocation the document does not list: {note}"
     assert len(edited) <= len(listed)
@@ -254,7 +256,8 @@ def test_the_baseline_fixture_is_the_saved_pre_ship_copy_and_the_generator_repro
 
 def test_the_relocated_paragraphs_are_verbatim_including_the_baseline_hunk():
     """The paragraph the pre-ship working tree carried (the `CardActionWeight`
-    sentence) must have travelled whole into the panel document."""
+    sentence) must have travelled whole into the panel document, and the hook
+    handler's aside on from the host document into docs/hook-door-contract.md."""
     panel = (ROOT / "docs/context-panel.md").read_text(encoding="utf-8")
     assert "**A card outlines one verb, chosen by its column** (`CardActionWeight`)" in panel
     board = (ROOT / "docs/context-board.md").read_text(encoding="utf-8")
@@ -262,7 +265,8 @@ def test_the_relocated_paragraphs_are_verbatim_including_the_baseline_hunk():
     assert "Six properties hold it down" in board
     host = (ROOT / "docs/context-host.md").read_text(encoding="utf-8")
     assert "### Session State Model" in host
-    assert "`_reap_permissions` substitutes" in host
+    hook_door = (ROOT / "docs/hook-door-contract.md").read_text(encoding="utf-8")
+    assert "`_reap_permissions` substitutes" in hook_door
 
 
 def test_the_preservation_check_notices_a_dropped_paragraph(tmp_path):

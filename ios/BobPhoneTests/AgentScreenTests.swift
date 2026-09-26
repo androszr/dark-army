@@ -2,16 +2,24 @@ import XCTest
 @testable import BobPhone
 
 final class AgentScreenTests: XCTestCase {
-    func testTheConversationIsTheFirstScreenWhereTheMacSupportsIt() {
-        XCTAssertEqual(AgentScreen.defaultScreen(supported: true), .conversation)
-        XCTAssertEqual(AgentScreen.defaultScreen(supported: false), .details)
-        XCTAssertEqual(AgentScreen.defaultScreen, .conversation)
+    func testMainIsTheFirstScreenWhateverTheMacServes() {
+        XCTAssertEqual(AgentScreen.defaultScreen(supported: true), .main)
+        XCTAssertEqual(AgentScreen.defaultScreen(supported: false), .main)
+        XCTAssertEqual(AgentScreen.defaultScreen, .main)
     }
 
     func testChipsHostedAndUnhosted() {
         XCTAssertEqual(AgentScreen.chips(hosted: false),
-                       [.conversation, .details])
-        XCTAssertEqual(AgentScreen.chips(hosted: true).last, .terminal)
+                       [.main, .conversation, .details])
+        XCTAssertEqual(AgentScreen.chips(hosted: true),
+                       [.main, .conversation, .details, .terminal])
+    }
+
+    func testOnlyMainDrawsTheWholeLead() {
+        XCTAssertFalse(AgentScreen.titleOnly(.main))
+        XCTAssertTrue(AgentScreen.titleOnly(.conversation))
+        XCTAssertTrue(AgentScreen.titleOnly(.details))
+        XCTAssertTrue(AgentScreen.titleOnly(.terminal))
     }
 
     func testPaneWithoutAHostedTerminalFallsToDetails() {
@@ -25,6 +33,7 @@ final class AgentScreenTests: XCTestCase {
         XCTAssertEqual(AgentScreen.detailTab(.terminal), .terminal)
         XCTAssertEqual(AgentScreen.detailTab(.conversation), .details)
         XCTAssertEqual(AgentScreen.detailTab(.details), .details)
+        XCTAssertEqual(AgentScreen.detailTab(.main), .details)
     }
 
     func testClockHidesZeroAndFormatsTheRest() {

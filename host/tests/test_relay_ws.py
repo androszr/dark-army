@@ -222,11 +222,44 @@ class _Phone:
             return frame
         return None
 
+    async def answer_to(self, frame_id: str, timeout: float = 5.0):
+        """The answer to the frame `frame_id`, the phone's own rule;
+        everything else that arrives first is held for the next `receive`."""
+        deadline = time.monotonic() + timeout
+        held = self.held
+        self.held = []
+        try:
+            while time.monotonic() < deadline:
+                frame = await self.receive(
+                    timeout=max(0.01, deadline - time.monotonic()))
+                if frame is None:
+                    return None
+                if frame["body"].get("re") == frame_id:
+                    return frame
+                held.append(frame)
+            return None
+        finally:
+            self.held = held + self.held
+
 
 def _picture(n: int) -> dict:
     return {"running": [{"session_id": f"s{n}", "name": f"S{n}",
                          "state": "working"}],
             "sleeping": [], "waiting": [], "abandoned": [], "finished": []}
+
+
+def _slow_replies(srv, monkeypatch):
+    """Force the arming push ahead of the arming reply: the reply's
+    `_remote_run` (no `prebuilt`) sleeps first, the push's (`prebuilt`
+    set, `_push_all`) goes at once."""
+    real_run = srv._remote_run
+
+    async def run(kind, payload, device_id, *, prebuilt=None):
+        if prebuilt is None:
+            await asyncio.sleep(0.2)
+        return await real_run(kind, payload, device_id, prebuilt=prebuilt)
+
+    monkeypatch.setattr(srv, "_remote_run", run)
 
 
 async def _armed_phone(conn, srv, key, fake, kind: str = "usage",
@@ -347,8 +380,8 @@ async def test_a_displaced_phone_gets_no_push_until_it_re_arms(connector):
     assert second.refused == []
     assert conn.socket_word("dev-1") == relay_ws.SOCKET_OPEN
     # A fresh verified `state` request re-arms, and the next change pushes.
-    await second.send("state", {"done": "review", "with_usage": True})
-    reply = await second.receive()
+    frame_id = await second.send("state", {"done": "review", "with_usage": True})
+    reply = await second.answer_to(frame_id)
     assert reply is not None and reply["kind"] == "reply"
     assert reply["body"]["status"] == 200
     assert conn.socket_word("dev-1") == relay_ws.SOCKET_ARMED
@@ -579,7 +612,10 @@ async def test_a_lapsed_lease_refuses_in_the_lease_words_and_runs_nothing(
 @pytest.mark.asyncio
 async def test_a_replayed_frame_is_dropped_and_answered_with_ctr_expected(connector):
     conn, srv, _daemon, key, fake = connector
-    phone = await _armed_phone(conn, srv, key, fake, kind="state")
+    # The counter refusal has `re: ""`, so its reply cannot be matched.
+    # Take the arming push before reading that refusal.
+    phone = await _armed_phone(conn, srv, key, fake, kind="state",
+                               take_owed_push=True)
     await phone.send("state", {}, ctr=1)  # the counter already accepted
     err = await phone.receive()
     assert err is not None and err["kind"] == "err"
@@ -612,6 +648,44 @@ async def test_a_replayed_command_token_is_answered_from_the_receipt_ledger(
     assert first["body"]["status"] == second["body"]["status"] == 200
     assert first["body"]["body"] == second["body"]["body"]
     assert calls == ["dismiss"]
+    await phone.close()
+
+
+@pytest.mark.asyncio
+async def test_the_arming_push_overtaking_the_reply_is_held_for_the_next_receive(
+        connector, monkeypatch):
+    conn, srv, _daemon, key, fake = connector
+    monkeypatch.setattr(relay_ws, "WS_PUSH_MIN_INTERVAL", 0.0)
+    _slow_replies(srv, monkeypatch)
+    phone = await _armed_phone(conn, srv, key, fake, kind="usage")
+    assert len(phone.held) == 1 and phone.held[0]["kind"] == "push"
+    push = await phone.receive()
+    assert push["kind"] == "push" and phone.held == []
+    digest = json.loads(push["body"]["body"])["state_digest"]
+    await _until(lambda: conn._pushed_digest.get("dev-1") == digest,
+                 message="the Mac never remembered the arming push")
+    frame_id = await phone.send("state", {})
+    reply = await phone.answer_to(frame_id)
+    assert reply is not None and reply["kind"] == "reply"
+    assert reply["body"]["re"] == frame_id
+    await phone.close()
+
+
+@pytest.mark.asyncio
+async def test_the_arming_push_overtaking_the_reply_is_taken_when_asked(
+        connector, monkeypatch):
+    conn, srv, _daemon, key, fake = connector
+    monkeypatch.setattr(relay_ws, "WS_PUSH_MIN_INTERVAL", 0.0)
+    _slow_replies(srv, monkeypatch)
+    phone = await _armed_phone(conn, srv, key, fake, kind="usage",
+                               take_owed_push=True)
+    assert phone.held == []
+    frame_id = await phone.send("state", {})
+    reply = await phone.answer_to(frame_id)
+    assert reply is not None and reply["kind"] == "reply"
+    assert reply["body"]["re"] == frame_id
+    assert phone.held == []
+    assert await phone.receive(timeout=0.3) is None
     await phone.close()
 
 
@@ -952,8 +1026,8 @@ async def test_a_start_racing_a_stop_leaves_the_connector_armed_capable(
         await _until(lambda: conn.socket_word("dev-1") == relay_ws.SOCKET_OPEN,
                      message="the restarted connector never opened its line")
         # The phone's socket outlived the Mac's; it re-arms the new line.
-        await phone.send("state", {"done": "review", "with_usage": True})
-        reply = await phone.receive()
+        frame_id = await phone.send("state", {"done": "review", "with_usage": True})
+        reply = await phone.answer_to(frame_id)
         assert reply is not None and reply["kind"] == "reply"
         assert conn.socket_word("dev-1") == relay_ws.SOCKET_ARMED
         srv.on_agents_change(_picture(7))
@@ -1210,3 +1284,48 @@ def test_the_socket_is_started_only_while_both_switches_are_on():
         loop.run_until_complete(drive())
     finally:
         loop.close()
+
+
+@pytest.mark.asyncio
+async def test_the_phone_arriving_on_the_line_wakes_the_mailbox(connector):
+    """The relay's `peer:1` is the first word that the phone woke: the
+    lane hands it to `relay.note_phone_arrived`, which the mailbox
+    connector's idle sleep waits on (25 Sep 2026). The phone leaving —
+    `peer:0` — ends the arm, so a line opened at home and closed on the
+    home answer holds the mailbox for seconds, not ninety."""
+    conn, srv, _daemon, key, fake = connector
+    relay._peer_mem.pop("dev-1", None)
+    relay._peer_left_mem.pop("dev-1", None)
+    phone = _Phone(key, fake.url)
+    await phone.connect()
+    await _until(lambda: relay.last_phone_arrived_at("dev-1") > 0,
+                 message="peer:1 did not reach the mailbox's wake stamp")
+    await phone.close()
+    await _until(lambda: relay.last_phone_arrived_at("dev-1") == 0.0,
+                 message="peer:0 did not end the arm")
+    relay._peer_mem.pop("dev-1", None)
+    relay._peer_left_mem.pop("dev-1", None)
+
+
+@pytest.mark.asyncio
+async def test_a_padded_peer_word_from_the_phone_side_never_arms(connector):
+    """The relay drops a client frame only when it starts with `peer:`, so
+    `" peer:1"` reaches the Mac as the phone's own text. It may disarm, like
+    any `peer:` word, but only the relay's exact `peer:1` stamps the wake
+    (security review, 25 Sep 2026)."""
+    conn, srv, _daemon, key, fake = connector
+    relay._peer_mem.pop("dev-1", None)
+    relay._peer_left_mem.pop("dev-1", None)
+    phone = _Phone(key, fake.url)
+    await phone.connect()
+    try:
+        await _until(lambda: relay.last_phone_arrived_at("dev-1") > 0,
+                     message="the relay's own peer:1 did not stamp")
+        relay._peer_mem.pop("dev-1", None)
+        for padded in (" peer:1", "\tpeer:1", "peer:1 "):
+            await phone.ws.send(padded)
+        await asyncio.sleep(0.3)
+        assert relay.last_phone_arrived_at("dev-1") == 0.0
+    finally:
+        await phone.close()
+        relay._peer_mem.pop("dev-1", None)

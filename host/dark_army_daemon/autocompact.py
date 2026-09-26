@@ -21,9 +21,10 @@ window whose extension is new enough to type is not compacted and is not
 suppressed either — it gets the banner it has always got. Reachability is the
 daemon's to decide; this module only takes the answer.
 
-* **Only for the rules that mean "full".** `ctx-full` always (it fires at 90%,
-  or on `exceeds_200k` at any percentage), and `ctx-runway` only at `crit` —
-  a session with twenty minutes of room does not need its history rewritten yet.
+* **Only for the rules that mean "full".** `ctx-full` always (it fires at
+  `signals.CTX_CRIT_PCT`, 85%, or on `exceeds_200k` at any percentage), and
+  `ctx-runway` only at `crit` — a session with twenty minutes of room does not
+  need its history rewritten yet.
 * **Claude and Grok.** Both clients expand `/compact` on the input line. The
   channel cannot carry a slash command for either of them; the terminal can.
 * **One attempt per episode, then the human.** After `SETTLE_SECONDS` the

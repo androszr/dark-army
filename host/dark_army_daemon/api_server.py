@@ -47,9 +47,9 @@ from . import (access_log, agent_report, attachments, bearings, board,
                board_workflow, card_timeline, claude_usage, codex_spenders,
                command_receipts, conversation, daemon_board,
                devices, enrollment, event_log, fleet_figures, grok_billing,
-               lan_hosts, limits, live_activity,
-               mission, relay, srp, terminal_stream, vtgrid, work_record,
-               workspace)
+               lan_hosts, limits, live_activity, manual_check,
+               mission, relay, scout_index, srp, terminal_stream, vtgrid,
+               work_record, workspace)
 from .paths import STATE_DIR, ensure_state_dir
 
 logger = logging.getLogger("dark-army.api")
@@ -257,6 +257,7 @@ _OMITTABLE_SECTIONS = (
     "counts", "notifications", "agents", "signals", "mesh",
     "collaboration", "permissions",
     "board", "enrollment", "devices", "inbox", "security", "mission",
+    "power",
 )
 
 
@@ -798,6 +799,10 @@ class ApiServer:
             # is stated, never inferred; no handle rides here.
             "mission": self._daemon.mission_snapshot()
             if hasattr(self._daemon, "mission_snapshot") else {},
+            # The host Mac's power source for the phone's Fleet tab.
+            # `available` is stated; no clock and no secret ride here.
+            "power": self._daemon.power_snapshot()
+            if hasattr(self._daemon, "power_snapshot") else {},
             "reconciler_available": getattr(
                 self._daemon._agents_poller, "available", None
             ),
@@ -1210,6 +1215,68 @@ class ApiServer:
                                         b'{"error":"forbidden"}')
                     return
                 status, ctype, body = await self._knowledge_report_for(
+                    request.query)
+                await self._respond(writer, status, ctype, body)
+                return
+            if request.path == "/api/scout-reports" and request.method == "GET":
+                # Token-gated although a read, exactly as `/api/knowledge`:
+                # every watched project's report titles and verdicts, or
+                # with `?q=` the reports whose body holds the term (a text
+                # search, `scout_index.search`). `_authorised`'s token
+                # half; empty Origin is allowed on GET. Host already ran
+                # above.
+                if not self._authorised(request):
+                    await self._respond(writer, 403, "application/json",
+                                        b'{"error":"forbidden"}')
+                    return
+                status, ctype, body = await self._scout_reports_for(
+                    request.query)
+                await self._respond(writer, status, ctype, body)
+                return
+            if request.path == "/api/scout-report" and request.method == "GET":
+                # One report's text — token-gated like `/api/knowledge`, and
+                # only for a path in `scout_index.locate`'s closed set.
+                if not self._authorised(request):
+                    await self._respond(writer, 403, "application/json",
+                                        b'{"error":"forbidden"}')
+                    return
+                status, ctype, body = await self._scout_report_for(
+                    request.query)
+                await self._respond(writer, status, ctype, body)
+                return
+            if request.path == "/api/plans" and request.method == "GET":
+                # Token-gated although a read, exactly as
+                # `/api/scout-reports`: every watched project's plan titles.
+                # `_authorised`'s token half; empty Origin is allowed on
+                # GET. Host already ran above.
+                if not self._authorised(request):
+                    await self._respond(writer, 403, "application/json",
+                                        b'{"error":"forbidden"}')
+                    return
+                status, ctype, body = await self._plans_for(request.query)
+                await self._respond(writer, status, ctype, body)
+                return
+            if request.path == "/api/plan" and request.method == "GET":
+                # One plan's text — token-gated like `/api/scout-report`, and
+                # only for a path in `plan_index.locate`'s closed set.
+                if not self._authorised(request):
+                    await self._respond(writer, 403, "application/json",
+                                        b'{"error":"forbidden"}')
+                    return
+                status, ctype, body = await self._plan_for(request.query)
+                await self._respond(writer, status, ctype, body)
+                return
+            if request.path == "/api/manual-checks" and request.method == "GET":
+                # Token-gated although a read, exactly as `/api/knowledge`:
+                # every watched project's leftover checks and their steps.
+                # `?root=&q=&status=` is the list, `?path=` one file's text.
+                # `_authorised`'s token half; empty Origin is allowed on
+                # GET. Host already ran above.
+                if not self._authorised(request):
+                    await self._respond(writer, 403, "application/json",
+                                        b'{"error":"forbidden"}')
+                    return
+                status, ctype, body = await self._manual_checks_for(
                     request.query)
                 await self._respond(writer, status, ctype, body)
                 return
@@ -2488,7 +2555,8 @@ class ApiServer:
         if kind in ("state", "usage", "log", "card", "card_sync", "catch_up",
                     "outcomes", "work_record", "agent_report", "lifecycle",
                     "terminal", "conversation", "done", "knowledge",
-                    "access_log", "bearings", "action"):
+                    "access_log", "bearings", "scout_reports",
+                    "scout_report", "manual_checks", "plans", "plan", "action"):
             status, ctype, out = await self._sealed_run(
                 kind, payload, device_id, actions=self.LAN_ACTIONS,
                 check_lease=False, record=False)
@@ -2898,7 +2966,22 @@ class ApiServer:
                      # Turning a finished scout's report into a Prep build
                      # card. Loopback-only in v1; chosen for the phone on
                      # 21 Sep 2026 — see `LAN_ACTIONS`.
-                     "board_promote")
+                     "board_promote",
+                     # A person's Passed / Failed on a manual check file.
+                     # Keyed on the file, never a card: handled before the
+                     # card_id check. On both phone tuples — see
+                     # `LAN_ACTIONS`.
+                     "board_manual_outcome",
+                     # Refine on several Prep cards with one planning
+                     # session. Keyed on a list of cards (`card_ids`), so
+                     # handled before the card_id check. On both phone
+                     # tuples since 25 Sep 2026 — see `LAN_ACTIONS`.
+                     "board_refine_batch",
+                     # Start several planned Backlog cards in one session,
+                     # worked one at a time. Keyed on `card_ids`, handled
+                     # before the card_id check. On both phone tuples since
+                     # 25 Sep 2026 — see `LAN_ACTIONS`.
+                     "board_start_batch")
 
     #: The phone writes, and the whole set of them. Named here rather than
     #: matched with a prefix: a prefix test would enrol whatever a future
@@ -2968,6 +3051,14 @@ class ApiServer:
         # nothing else. Its own line, chosen on purpose; no parenthesis in
         # this block.
         "board_manual_clear",
+        # Recording Passed or Failed on a leftover check from the phone,
+        # keyed on the check file and never a card. Dark Army writes the
+        # three status lines of that file and nothing else, only into a
+        # regular file under an enrolled project's manual-check folder that
+        # still says open, re-checked at the write; a second press is
+        # refused and writes nothing. Its own line, chosen on purpose; no
+        # parenthesis in this block.
+        "board_manual_outcome",
         # Saying "I have read this close" from the phone. The field is
         # closed, the act is open: reviewed_at is outside _BOARD_FIELDS and
         # only this named verb stamps it. The press echoes closed_by and
@@ -3001,6 +3092,25 @@ class ApiServer:
         # it dispatches nothing, and the store refuses a second press. No
         # parenthesis in this block.
         "board_promote",
+        # Refine on several Prep cards in one press, from the phone. It is
+        # board_refine repeated under the same guards: refine_cards re-runs
+        # dispatch.refine_guard and the enrolment refusal per card under
+        # _dispatch_lock, the root, the tool and eligibility are read off
+        # the store at the press, the first card that fails refuses the
+        # whole press before any write, it spawns exactly one planning
+        # process, it carries no skip_plan_gate, and it is refused outright
+        # when board_dispatch is off. Keyed on card_ids. No parenthesis in
+        # this block.
+        "board_refine_batch",
+        # Start several planned Backlog cards in one session from the
+        # phone, worked one at a time. It is board_dispatch repeated under
+        # the same guards: start_cards re-runs the plan gate, the enrolment
+        # refusal, dispatch.guard and the dependency gate per card under
+        # _dispatch_lock, skips and names a card that fails, refuses a full
+        # project, spawns exactly one process, carries no skip_plan_gate and
+        # is refused outright when board_dispatch is off. Keyed on card_ids.
+        # No parenthesis in this block.
+        "board_start_batch",
     )
 
     #: The phone writes **from away**, and the whole set of them. It starts
@@ -3079,6 +3189,12 @@ class ApiServer:
         # the store. Away it rides the lease like every other write. No
         # parenthesis in this block.
         "board_manual_clear",
+        # Away as well as at home, and its own decision: the check a person
+        # finishes on the sofa is the one they want to record there. It
+        # rewrites three lines of one check file that still says open, and
+        # away it rides the lease like every other write. No parenthesis in
+        # this block.
+        "board_manual_outcome",
         # Away as well as at home, and its own decision: reading a result on
         # the train and not being able to say "seen" would leave the inbox
         # half-built. It stamps one timestamp, accepts no outcome, and away
@@ -3108,6 +3224,20 @@ class ApiServer:
         # card off the scout's own row and starts nothing; away it rides
         # the lease like every other write. No parenthesis in this block.
         "board_promote",
+        # Away as well as at home, and its own decision rather than a copy
+        # of the line above: triaging a pile of Prep ideas is a sofa job,
+        # and the press can start nothing a person could not start one
+        # Refine at a time — every Refine guard runs per card, one planning
+        # session opens. Away it rides the lease, Face ID and the receipt
+        # token like every write. No parenthesis in this block.
+        "board_refine_batch",
+        # Away as well as at home, and its own decision: the morning's pile
+        # of planned cards is exactly what somebody away from the desk wants
+        # moving, and the press can start nothing a person could not start
+        # one card at a time — every Start guard runs per card, one session
+        # opens. Away it rides the lease, Face ID and the receipt token like
+        # every write. No parenthesis in this block.
+        "board_start_batch",
     )
 
     #: The board names inside `LAN_ACTIONS`. Membership, not a prefix.
@@ -3122,8 +3252,14 @@ class ApiServer:
         # The two acknowledgements; their echo keys ride the payload intact
         # and are read by `_board_action` with `"k" in payload`.
         "board_manual_clear", "board_review",
+        # Keyed on `path`, handled above the `card_id` check.
+        "board_manual_outcome",
         # `_board_action` reads `card_id` alone for it.
         "board_promote",
+        # Keyed on `card_ids`, handled above the `card_id` check.
+        "board_refine_batch",
+        # Keyed on `card_ids`, handled above the `card_id` check.
+        "board_start_batch",
     })
 
     async def _lan_run(self, action: str, payload: dict,
@@ -3615,6 +3751,42 @@ class ApiServer:
             # rides the JSON body, never a query string — logs and envelope
             # fields must not leak a path on the relay.
             return await self._knowledge_report_for(payload)
+        if kind == "scout_reports":
+            # Every watched project's scout reports, newest first, no
+            # bodies. `knowledge`'s rule: a **read**, above the `action`
+            # branch — neither action tuple, no lease check, no
+            # `remote_activity` record. An optional `root` and an optional
+            # text search `q` ride the JSON body, never a query string — a
+            # search term must not reach the relay's logs any more than a
+            # path.
+            return await self._scout_reports_for(payload)
+        if kind == "scout_report":
+            # One report's text, fetched when the phone opens it. The same
+            # read rule; `path` rides the JSON body (a path on a query
+            # string would reach the relay's logs) and is re-checked
+            # against `scout_index.locate`'s closed set at the read.
+            return await self._scout_report_for(payload)
+        if kind == "manual_checks":
+            # The Checks section: every enrolled project's manual checks, or
+            # one file's text when `path` is in the body. `knowledge`'s
+            # rule: a **read**, above the `action` branch — neither action
+            # tuple, no lease check, no `remote_activity` record. `root`,
+            # `q`, `status` and `path` ride the JSON body, never a query
+            # string.
+            return await self._manual_checks_for(payload)
+        if kind == "plans":
+            # Every watched project's plans, newest first, no bodies.
+            # `scout_reports`' rule: a **read**, above the `action` branch —
+            # neither action tuple, no lease check, no `remote_activity`
+            # record. An optional `root` rides the JSON body, never a query
+            # string.
+            return await self._plans_for(payload)
+        if kind == "plan":
+            # One plan's text, fetched when the phone opens it. The same
+            # read rule; `path` rides the JSON body (a path on a query
+            # string would reach the relay's logs) and is re-checked
+            # against `plan_index.locate`'s closed set at the read.
+            return await self._plan_for(payload)
         if kind == "action":
             action = str(payload.get("action") or "")
             # `board_create` alone is exempt: a card may be written *with*
@@ -3747,6 +3919,73 @@ class ApiServer:
             return 400, "application/json", json.dumps(
                 {"error": str(exc)}).encode()
 
+    async def _manual_checks_for(self, query_or_payload):
+        """The Checks section — loopback `GET /api/manual-checks` and the
+        sealed `manual_checks` kind. With `path`, one check's text
+        (`manual_check_text`); otherwise the list, `root` empty meaning
+        every enrolled root, `q` a search (≤ 200 characters), `status` one
+        of `all`, `open`, `passed`, `failed` or empty. A malformed request is
+        400 in words."""
+        try:
+            if isinstance(query_or_payload, dict):
+                params = {k: v for k, v in query_or_payload.items()
+                          if k in ("root", "q", "status", "path")}
+            else:
+                raw = parse_qs(query_or_payload or "", keep_blank_values=True)
+                if any(len(v) != 1 for v in raw.values()):
+                    raise ValueError("report parameters must not repeat")
+                params = {k: v[0] for k, v in raw.items()}
+            if "path" in params:
+                path = str(params.get("path") or "").strip()
+                if not path:
+                    raise ValueError("a manual check needs its path")
+                if len(path) > 1024:
+                    raise ValueError("a path must be at most 1024 characters")
+                handler = getattr(self._daemon, "manual_check_text", None)
+                document = (await handler(path) if handler else {
+                    "available": False, "path": path, "text": "",
+                    "reason": "Dark Army cannot read manual checks"})
+                return 200, "application/json", json.dumps(
+                    document, allow_nan=False).encode()
+            root = str(params.get("root") or "").strip()
+            query = str(params.get("q") or "").strip()
+            status = str(params.get("status") or "").strip().lower()
+            if len(root) > 1024:
+                raise ValueError(
+                    "a project root must be at most 1024 characters")
+            if len(query) > 200:
+                raise ValueError("a search must be at most 200 characters")
+            if status not in daemon_board.BoardVerbsMixin.MANUAL_CHECK_FILTERS:
+                raise ValueError(
+                    "status must be all, open, passed or failed")
+            handler = getattr(self._daemon, "manual_checks_report", None)
+            report = (await handler(root, query, status) if handler else {
+                "supported": True, "available": False, "root": root,
+                "checks": [], "truncated": False,
+                "reason": "Dark Army cannot read manual checks"})
+            return 200, "application/json", self._manual_checks_page_bytes(
+                report)
+        except (ValueError, TypeError) as exc:
+            return 400, "application/json", json.dumps(
+                {"error": str(exc)}).encode()
+
+    @staticmethod
+    def _manual_checks_page_bytes(report):
+        """Bound plaintext at 300 000 bytes before sealing,
+        `_knowledge_page_bytes`' rule: oversize drops the *last* checks of
+        the page (open first, newest first, so the oldest settled go) and
+        sets `truncated: true`; an included check is never shortened."""
+        checks = report.get("checks")
+        if not isinstance(checks, list):
+            report["checks"] = []
+            checks = report["checks"]
+        while True:
+            body = json.dumps(report, allow_nan=False).encode()
+            if len(body) <= 300_000 or len(checks) <= 1:
+                return body
+            checks.pop()
+            report["truncated"] = True
+
     @staticmethod
     def _knowledge_page_bytes(report):
         """Bound plaintext at 300_000 bytes before sealing.
@@ -3775,6 +4014,155 @@ class ApiServer:
             omitted.insert(0, key)
             report["truncated"] = True
             report["omitted_keys"] = omitted
+
+    @staticmethod
+    def _scout_params(query_or_payload) -> dict:
+        """The parameters of a scout-report read: the JSON body on the
+        sealed doors, the query string on loopback (`parse_qs` with blanks
+        kept, a repeated key refused in words)."""
+        if isinstance(query_or_payload, dict):
+            return dict(query_or_payload)
+        params = parse_qs(query_or_payload or "", keep_blank_values=True)
+        if any(len(v) != 1 for v in params.values()):
+            raise ValueError("report parameters must not repeat")
+        return {k: v[0] for k, v in params.items()}
+
+    async def _scout_reports_for(self, query_or_payload):
+        """The scout-report list — loopback `GET /api/scout-reports` and the
+        sealed `"scout_reports"` kind. No `root` means every enrolled root;
+        a `root` that is present but empty, or not enrolled, is a 400 in
+        words (`_knowledge_enrolled_root`'s), never an empty list. A `q`
+        asks for a text search over the bodies (`scout_index.search`):
+        under `MIN_QUERY_CHARS` or over `MAX_QUERY_CHARS` is a 400 in
+        words; the page bound applies to its reply the same."""
+        try:
+            params = self._scout_params(query_or_payload)
+            root = str(params.get("root") or "").strip()
+            if "root" in params and not root:
+                raise ValueError("Dark Army needs an enrolled project")
+            if len(root) > 1024:
+                raise ValueError(
+                    "a project root must be at most 1024 characters")
+            query = " ".join(str(params.get("q") or "").split())
+            if "q" in params:
+                if len(query) < scout_index.MIN_QUERY_CHARS:
+                    raise ValueError(scout_index.QUERY_TOO_SHORT)
+                if len(query) > scout_index.MAX_QUERY_CHARS:
+                    raise ValueError(scout_index.QUERY_TOO_LONG)
+            handler = getattr(self._daemon, "scout_reports_index", None)
+            if handler is None:
+                report = {
+                    "supported": True, "available": False, "rows": [],
+                    "truncated": False, "omitted": 0, "roots": 0}
+            elif query:
+                report = await handler(root, query)
+            else:
+                report = await handler(root)
+            return 200, "application/json", \
+                self._scout_reports_page_bytes(report)
+        except (ValueError, TypeError) as exc:
+            return 400, "application/json", json.dumps(
+                {"error": str(exc)}).encode()
+
+    async def _scout_report_for(self, query_or_payload):
+        """One report's text — loopback `GET /api/scout-report?path=` and the
+        sealed `scout_report` kind (`path` in the JSON body there). A
+        missing or empty `path` is a 400 in words; a path outside the
+        closed set is a 200 `available: false` with the refusal in
+        `reason` (`scout_index.locate`)."""
+        try:
+            params = self._scout_params(query_or_payload)
+            if "path" not in params:
+                raise ValueError("Dark Army needs the report's path")
+            path = str(params.get("path") or "").strip()
+            if not path:
+                raise ValueError("Dark Army needs the report's path")
+            if len(path) > 4096:
+                raise ValueError(
+                    "a report path must be at most 4096 characters")
+            handler = getattr(self._daemon, "scout_report_body", None)
+            report = (await handler(path) if handler else {
+                "available": False, "path": path, "header": {}, "body": "",
+                "has_header": False, "reason": "Dark Army cannot read reports"})
+            return 200, "application/json", json.dumps(
+                report, allow_nan=False).encode()
+        except (ValueError, TypeError) as exc:
+            return 400, "application/json", json.dumps(
+                {"error": str(exc)}).encode()
+
+    async def _plans_for(self, query_or_payload):
+        """The plan list — loopback `GET /api/plans` and the sealed
+        `"plans"` kind. `_scout_reports_for`' rule: no `root` means every
+        enrolled root; a `root` that is present but empty, or not enrolled,
+        is a 400 in words, never an empty list. The page is bounded by
+        `_scout_reports_page_bytes`, dropping the oldest rows."""
+        try:
+            params = self._scout_params(query_or_payload)
+            root = str(params.get("root") or "").strip()
+            if "root" in params and not root:
+                raise ValueError("Dark Army needs an enrolled project")
+            if len(root) > 1024:
+                raise ValueError(
+                    "a project root must be at most 1024 characters")
+            handler = getattr(self._daemon, "plans_index", None)
+            report = (await handler(root) if handler else {
+                "supported": True, "available": False, "rows": [],
+                "truncated": False, "omitted": 0, "roots": 0})
+            return 200, "application/json", \
+                self._scout_reports_page_bytes(report)
+        except (ValueError, TypeError) as exc:
+            return 400, "application/json", json.dumps(
+                {"error": str(exc)}).encode()
+
+    async def _plan_for(self, query_or_payload):
+        """One plan's text — loopback `GET /api/plan?path=` and the sealed
+        `plan` kind (`path` in the JSON body there). A missing or empty
+        `path` is a 400 in words; a path outside the closed set is a 200
+        `available: false` with the refusal in `reason`
+        (`plan_index.locate`)."""
+        try:
+            params = self._scout_params(query_or_payload)
+            if "path" not in params:
+                raise ValueError("Dark Army needs the plan's path")
+            path = str(params.get("path") or "").strip()
+            if not path:
+                raise ValueError("Dark Army needs the plan's path")
+            if len(path) > 4096:
+                raise ValueError(
+                    "a plan path must be at most 4096 characters")
+            handler = getattr(self._daemon, "plan_body", None)
+            report = (await handler(path) if handler else {
+                "available": False, "path": path, "body": "",
+                "reason": "Dark Army cannot read plans"})
+            return 200, "application/json", json.dumps(
+                report, allow_nan=False).encode()
+        except (ValueError, TypeError) as exc:
+            return 400, "application/json", json.dumps(
+                {"error": str(exc)}).encode()
+
+    @staticmethod
+    def _scout_reports_page_bytes(report):
+        """Bound plaintext at 300_000 bytes before sealing —
+        `_knowledge_page_bytes`' loop. The list is **newest first**, so
+        popping the tail drops the **oldest** rows, which is the right end
+        to lose; `omitted` counts them, `truncated` says so, and nothing is
+        skipped-and-continued past."""
+        rows = report.get("rows")
+        if not isinstance(rows, list):
+            report["rows"] = []
+            rows = report["rows"]
+        try:
+            omitted = int(report.get("omitted") or 0)
+        except (TypeError, ValueError):
+            omitted = 0
+        while True:
+            body = json.dumps(report, allow_nan=False).encode()
+            if len(body) <= 300_000 or len(rows) <= 1:
+                return body
+            rows.pop()
+            omitted += 1
+            report["truncated"] = True
+            report["omitted"] = omitted
 
     async def _outcome_report_for(self, query):
         import math
@@ -4023,9 +4411,14 @@ class ApiServer:
     #: and it happens automatically when a card leaves Done — Reopen is the undo.
     #: Note that `column_name` **is** here, so a human moving a card to Done goes
     #: on working through `board_update` and is untouched by any of this.
-    #: `blocked_by` is **gone** from here (2026-09-20): cards no longer wait
-    #: on cards, no surface draws the list, and a payload naming it is dropped
-    #: like any unknown key. `position` is **not** here: a client sending an
+    #: `blocked_by` is **here** again (card dependencies,
+    #: `docs/card-dependencies.md`): the cards this one waits on are a thing a
+    #: person states about their own card, `model`'s side of the line. The
+    #: joined ids ride as one string (`str(...)` below, newline-separated);
+    #: a self-wait, a cycle and a card in another project are refused at the
+    #: store, in `_update_locked`, so every writer inherits them. `create`
+    #: never writes it — a link is set on a card that exists, through
+    #: `board_update`. `position` is **not** here: a client sending an
     #: arbitrary float is the thing `board_reorder` exists to prevent.
     #: `plan_path`, `refine_session_id` and `refine_state` are **deliberately
     #: absent** too, each on the side of the line it belongs to: the refine
@@ -4067,7 +4460,10 @@ class ApiServer:
                      # JSON integer `0` stores `""` — unscored, not zero.
                      # Both clients therefore send `String(...)`.
                      "priority", "area", "kind",
-                     "beneficiary", "intended_benefit", "success_criterion", "outcome_check_on")
+                     "beneficiary", "intended_benefit", "success_criterion", "outcome_check_on",
+                     # The cards this one waits on, as one string of
+                     # newline-joined ids (comment above).
+                     "blocked_by")
 
     #: Keys in a board payload that are the envelope rather than the card, and
     #: so do not count as "the caller named a field". `skip_plan_gate` is the
@@ -4106,7 +4502,10 @@ class ApiServer:
                        # "named fields, all dropped".
                        "expected_manual_steps", "expected_closed_by",
                        "expected_close_note",
-                       "expected_outcome_revision", "confirm_outcome_scope_change")
+                       "expected_outcome_revision", "confirm_outcome_scope_change",
+                       # The batch verbs' list of cards, comma-joined
+                       # (`_card_ids`). Envelope, never a card field.
+                       "card_ids")
 
     def _board_fields(self, payload: dict) -> dict:
         out = {}
@@ -4152,6 +4551,23 @@ class ApiServer:
         the allow-list, so the update is not empty.
         """
         return any(k not in self._BOARD_ENVELOPE for k in payload)
+
+    @staticmethod
+    def _card_ids(payload: dict):
+        """The batch verbs' `card_ids`, parsed once: a comma-joined string
+        (`DaemonClient.post` is `[String: String]`), split, stripped, empties
+        dropped and duplicates dropped in order. `None` when the value is not
+        a string or names no card — the caller's 400. Bounds are the
+        daemon's (`board.MAX_BATCH_CARDS`), refused in words there."""
+        raw = payload.get("card_ids")
+        if not isinstance(raw, str) or len(raw) > 4096:
+            return None
+        ids: list = []
+        for part in raw.split(","):
+            cid = part.strip()
+            if cid and cid not in ids:
+                ids.append(cid)
+        return ids or None
 
     @staticmethod
     def _echo_kwargs(payload: dict, keys: tuple) -> dict:
@@ -4269,6 +4685,43 @@ class ApiServer:
                 body = json.dumps({"ok": False, "error": str(exc),
                                    "detail": str(exc)}).encode()
                 return 400, "application/json", body
+            body = json.dumps({"ok": ok, "detail": detail}).encode()
+            return (200 if ok else 409), "application/json", body
+        if action == "board_manual_outcome":
+            # Keyed on the check file, never a card: a check may outlive or
+            # predate its card. Above the `no card_id` line for
+            # `board_start_project`'s reason. The daemon re-checks the place,
+            # the shape and `Status: open` at the write.
+            path = str(payload.get("path") or "").strip()
+            outcome = str(payload.get("status") or "").strip().lower()
+            if not path or len(path) > 1024:
+                return 400, "application/json", b'{"error":"no path"}'
+            if outcome not in manual_check.OUTCOMES:
+                return (400, "application/json",
+                        b'{"error":"status must be passed or failed"}')
+            note = str(payload.get("note") or "")[
+                :board.MAX_MANUAL_OUTCOME_CHARS]
+            ok, detail = await self._daemon.record_manual_outcome(
+                path, outcome, note)
+            body = json.dumps({"ok": ok, "detail": detail}).encode()
+            return (200 if ok else 409), "application/json", body
+        if action == "board_refine_batch":
+            # Several cards, one session: keyed on `card_ids`, so handled
+            # **above** the `no card_id` line for `board_start_project`'s
+            # reason.
+            ids = self._card_ids(payload)
+            if ids is None:
+                return 400, "application/json", b'{"error":"no card_ids"}'
+            ok, detail = await self._daemon.refine_cards(ids)
+            body = json.dumps({"ok": ok, "detail": detail}).encode()
+            return (200 if ok else 409), "application/json", body
+        if action == "board_start_batch":
+            # `board_refine_batch`'s shape for the Backlog row: one session,
+            # several planned cards, worked one at a time (`start_cards`).
+            ids = self._card_ids(payload)
+            if ids is None:
+                return 400, "application/json", b'{"error":"no card_ids"}'
+            ok, detail = await self._daemon.start_cards(ids)
             body = json.dumps({"ok": ok, "detail": detail}).encode()
             return (200 if ok else 409), "application/json", body
         if not card_id:
@@ -4551,6 +5004,7 @@ class ApiServer:
         if with_plan:
             report["plan"] = self._card_plan(card)
             report["report"] = self._card_report(card)
+            report["manual_check"] = self._card_manual_check(card)
         if with_timeline:
             report["timeline"] = self._card_timeline(card)
         return report
@@ -4631,6 +5085,31 @@ class ApiServer:
         if not text:
             return {"available": False, "path": path, "text": "",
                     "reason": "that report could not be read"}
+        return {"available": True, "path": path, "text": text, "reason": ""}
+
+    def _card_manual_check(self, card) -> dict:
+        """The check file a card was flagged with, for the sealed read —
+        `_card_report`'s twin on `manual_check_path`, the flag's own
+        containment and shape rule (`_manual_check_path_refusal`) and the same
+        stated `available`. **Blocking — executor only**, reached only from
+        `_card_collect`."""
+        if not isinstance(card, dict):
+            return {"available": False, "path": "", "text": "",
+                    "reason": "no such card"}
+        path = str(card.get("manual_check_path") or "")
+        if not path:
+            return {"available": False, "path": "", "text": "",
+                    "reason": "this card has no manual check file"}
+        resolved, refusal = \
+            daemon_board.BoardVerbsMixin._manual_check_path_refusal(
+                str(card.get("root") or ""), path)
+        if refusal:
+            return {"available": False, "path": path, "text": "",
+                    "reason": refusal}
+        text = manual_check.read_text(resolved)
+        if not text:
+            return {"available": False, "path": path, "text": "",
+                    "reason": "that check could not be read"}
         return {"available": True, "path": path, "text": text, "reason": ""}
 
     async def _card_report_for(self, query: str):
@@ -5096,7 +5575,8 @@ class ApiServer:
 
         Query: `session` (required, ≤ 200 chars), `since` (an int in
         ``0..10**9``, default 0), `key` (≤ 64 chars of ``[A-Za-z0-9:_-]``,
-        default empty). A repeated key is 400 in words. An unknown session
+        default empty), `agent` (optional, ``conversation.AGENT_ID_RE``:
+        one of the session's helpers, paged from its own journal). A repeated key is 400 in words. An unknown session
         is 404 in words; every other page is 200 with the JSON as-is.
         """
         multi = parse_qs(query or "", keep_blank_values=True)
@@ -5123,10 +5603,17 @@ class ApiServer:
             return 400, "application/json", json.dumps(
                 {"error": "key must be at most 64 letters, digits, colons, "
                           "underscores or hyphens"}).encode()
+        agent = str(params.get("agent") or "")
+        if agent and not re.fullmatch(conversation.AGENT_ID_RE, agent):
+            return 400, "application/json", json.dumps(
+                {"error": "agent must be at most 64 letters, digits, "
+                          "underscores or hyphens"}).encode()
         handler = getattr(self._daemon, "conversation_page", None)
         if handler is None:
             page = {"available": False,
                     "reason": conversation.NO_TRANSCRIPT_REASON}
+        elif agent:
+            page = await handler(session_id, since, key, agent=agent)
         else:
             page = await handler(session_id, since, key)
         if (isinstance(page, dict)

@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from .board import parse_stages
+from .board import MAX_BLOCKERS, parse_stages
 from . import areas
 
 logger = logging.getLogger(__name__)
@@ -489,3 +489,99 @@ def parse_header_objective(text: str) -> dict:
 
 def read_plan_objective(path) -> dict:
     return parse_header_objective(read_plan_text(path))
+
+
+#: The card a plan was written for, as one header line beside `Area:` —
+#: written by the planner only when a batch prompt handed it a `Card id:`,
+#: and read by the attach only when the calling session is refining more
+#: than one card (`attach_plan_by_session`). The session names the card
+#: through the file, never through the tool call.
+_CARD_LINE = re.compile(r"^(?:-\s*)?\*\*Card:\*\*\s*(.*)$")
+
+
+def _header_lines(text: str):
+    """The plan's lines above its first `## ` section: the header list.
+    A `**Card:**` or `**Depends on:**` line quoted in the body (a work
+    report's own `**Card:**` line, say) is prose, never the header."""
+    for line in (text or "").splitlines():
+        if line.startswith("## "):
+            return
+        yield line
+
+
+def parse_header_card(text: str) -> str:
+    """The first `- **Card:** <id>` header's value, or `""`.
+
+    A template placeholder (`<...>`) or a `NONE` word is no card, the
+    objective's rule; one pair of backticks around the id is tolerated,
+    because a planner writing an identifier reaches for them. Only the first
+    header counts — a later line quoting another card is prose."""
+    for line in _header_lines(text):
+        match = _CARD_LINE.match(line.strip())
+        if not match:
+            continue
+        value = match.group(1).strip()
+        if len(value) >= 2 and value[0] == value[-1] == "`":
+            value = value[1:-1].strip()
+        if value.lower() in _OBJECTIVE_NONE or (
+                value.startswith("<") and value.endswith(">")):
+            return ""
+        return value
+    return ""
+
+
+def read_plan_card(path) -> str:
+    return parse_header_card(read_plan_text(path))
+
+
+#: The cards a plan must wait for, as one header line beside `Area:`:
+#: `- **Depends on:** <exact titles or ids>`, read at the attach
+#: (`daemon_board._seed_from_plan`) and resolved against the card's own
+#: project there. Matched on the label alone, the objective lines' rule.
+_DEPENDS_LINE = re.compile(r"^(?:-\s*)?\*\*Depends on:\*\*\s*(.*)$")
+
+
+def _strip_ref(part: str) -> str:
+    """One reference, with the quotes or backticks a planner wraps a title
+    in removed — `"Build the foundation"` and `` `a1b2…` `` name the card
+    their words name."""
+    text = str(part or "").strip()
+    while len(text) >= 2 and text[0] == text[-1] and text[0] in "`\"'":
+        text = text[1:-1].strip()
+    return text
+
+
+def parse_header_depends_on(text: str) -> list:
+    """The first `- **Depends on:**` header's references, in order.
+
+    Separated by ` | ` — the `Stages:` header's separator — and **only** by
+    it: most real titles hold a comma ("sign-up, email links, guests"), and
+    a comma split would turn one such title into fragments that resolve to
+    nothing and seed nothing. A placeholder (`<...>`) or one of `_OBJECTIVE_NONE`'s words is no
+    list (`[]`), the objective's rule; repeats are dropped and the list is
+    capped at `MAX_BLOCKERS`, the store's own bound. Only the first header
+    counts: a later line quoting one is prose.
+    """
+    for line in _header_lines(text):
+        match = _DEPENDS_LINE.match(line.strip())
+        if not match:
+            continue
+        value = match.group(1).strip()
+        if value.lower() in _OBJECTIVE_NONE or (
+                value.startswith("<") and value.endswith(">")):
+            return []
+        parts = value.split(" | ")
+        out: list = []
+        for part in parts:
+            ref = _strip_ref(part)
+            if not ref or ref.lower() in _OBJECTIVE_NONE or ref in out:
+                continue
+            out.append(ref)
+            if len(out) >= MAX_BLOCKERS:
+                break
+        return out
+    return []
+
+
+def read_plan_depends_on(path) -> list:
+    return parse_header_depends_on(read_plan_text(path))

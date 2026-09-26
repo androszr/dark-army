@@ -152,8 +152,11 @@ def test_fresh_repo_gets_the_block(tmp_path, monkeypatch):
     assert text.count(HEADER) == 1
     lines = text.splitlines()
     for wanted in (".env", "!.env.example", "plans/", "docs/research/",
-                   "node_modules/", ".DS_Store"):
+                   "/scout/", "/manual-check/", "user-data/", "node_modules/",
+                   ".DS_Store"):
         assert wanted in lines
+    assert lines.index("docs/research/") < lines.index("/scout/")
+    assert lines.index("/scout/") < lines.index("/manual-check/")
     assert lines.index(".env.*") < lines.index("!.env.example")
     offered = pack_render.gitignore_lines("web")
     assert _offered_row(folder) == sorted({pack_gitignore.canonical(x) for x in offered})
@@ -175,6 +178,8 @@ def test_existing_file_lines_kept_and_not_doubled(tmp_path, monkeypatch):
     assert HEADER in tail
     assert ".env" in tail.splitlines()
     assert "docs/research/" in tail.splitlines()
+    assert "/scout/" in tail.splitlines()
+    assert "/manual-check/" in tail.splitlines()
 
 
 def test_second_install_and_resync_change_nothing(tmp_path, monkeypatch):
@@ -237,6 +242,93 @@ def test_new_shipped_line_is_added_on_the_next_resync(tmp_path, monkeypatch):
     assert after == before + "extra/\n"
     assert after.count(HEADER) == 1
     assert _offered_row(folder) == sorted(offered + ["extra"])
+
+
+def test_user_data_reaches_a_project_synced_by_an_older_build(tmp_path, monkeypatch):
+    """A project a release before user-data/ kept in step gains the line once.
+
+    The seam is the ledger row: it is what tells "never offered" from
+    "deleted on purpose". Removing the line from the file and its canonical
+    form from the row together replays the row an older build wrote; the
+    deleted-on-purpose branch is
+    test_offer_once_a_deleted_line_stays_deleted_on_resync's. No stub: the
+    shipped starter list itself must carry the line.
+    """
+    root, folder = _project(tmp_path, monkeypatch)
+    ok, detail, _ = pack_install.install_pack(folder, "web", "xx", "sample-app")
+    assert ok, detail
+    target = root / ".gitignore"
+    lines = target.read_text(encoding="utf-8").splitlines()
+    assert lines.count("user-data/") == 1
+    kept = [x for x in lines if x != "user-data/"]
+    target.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    older = [x for x in _offered_row(folder) if x != "user-data"]
+    assert pack_ledger.update(folder, gitignore_offered=older) is not None
+    before = target.read_text(encoding="utf-8")
+    pack_install.resync_all()
+    after = target.read_text(encoding="utf-8")
+    assert after == before + "user-data/\n"
+    assert after.count(HEADER) == 1
+    assert after.splitlines().count("user-data/") == 1
+    assert "user-data" in _offered_row(folder)
+    assert pack_ledger.entry(folder)["last_result"] == "ok"
+
+
+def test_a_project_offered_the_old_line_gains_scout_on_resync(tmp_path, monkeypatch):
+    """A project offered the starter block before `/scout/` shipped keeps its
+    `docs/research/` line and gains `/scout/` on the next launch resync —
+    offer-once adds the new line and never re-offers the old one. The line
+    is anchored: a `scout` folder deeper in the project stays tracked."""
+    root, folder = _project(tmp_path, monkeypatch)
+    real = pack_render.gitignore_lines
+    older = [x for x in real("web") if x != "/scout/"]
+    assert "docs/research/" in older and "/scout/" not in older
+    monkeypatch.setattr(pack_render, "gitignore_lines", lambda *a, **k: list(older))
+    assert pack_install.install_pack(folder, "web", "xx", "sample-app")[0]
+    target = root / ".gitignore"
+    assert "/scout/" not in target.read_text(encoding="utf-8").splitlines()
+    assert "scout" not in _offered_row(folder)
+    monkeypatch.setattr(pack_render, "gitignore_lines", real)
+    pack_install.resync_all()
+    lines = target.read_text(encoding="utf-8").splitlines()
+    assert lines.count("/scout/") == 1
+    assert lines.count("docs/research/") == 1
+    offered = _offered_row(folder)
+    assert "scout" in offered and "docs/research" in offered
+
+
+def test_a_project_offered_scout_gains_manual_check_once_on_resync(
+        tmp_path, monkeypatch):
+    """A project offered the starter block with `/scout/` and before
+    `/manual-check/` shipped gains the new line on its next launch resync,
+    once, and `/scout/` is not doubled — offer-once, the rule."""
+    root, folder = _project(tmp_path, monkeypatch)
+    real = pack_render.gitignore_lines
+    older = [x for x in real("web") if x != "/manual-check/"]
+    assert "/scout/" in older and "/manual-check/" not in older
+    monkeypatch.setattr(pack_render, "gitignore_lines", lambda *a, **k: list(older))
+    assert pack_install.install_pack(folder, "web", "xx", "sample-app")[0]
+    target = root / ".gitignore"
+    assert "/manual-check/" not in target.read_text(encoding="utf-8").splitlines()
+    monkeypatch.setattr(pack_render, "gitignore_lines", real)
+    pack_install.resync_all()
+    pack_install.resync_all()
+    lines = target.read_text(encoding="utf-8").splitlines()
+    assert lines.count("/manual-check/") == 1
+    assert lines.count("/scout/") == 1
+    assert "manual-check" in _offered_row(folder)
+
+
+def test_the_manual_check_line_is_anchored_at_the_project_root():
+    lines = pack_render.gitignore_lines("web")
+    assert "/manual-check/" in lines and "manual-check/" not in lines
+    assert lines.index("/scout/") < lines.index("/manual-check/")
+
+
+def test_the_scout_line_is_anchored_at_the_project_root():
+    lines = pack_render.gitignore_lines("web")
+    assert "/scout/" in lines and "scout/" not in lines
+    assert lines.index("docs/research/") < lines.index("/scout/")
 
 
 def test_both_profiles_contribute_each_line_once(tmp_path, monkeypatch):

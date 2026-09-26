@@ -160,12 +160,21 @@ def test_only_the_composer_changed():
     """The scope answer, asserted rather than trusted. The board's rows
     joined the composer on 21 Sep 2026 (`BoardView.swift`, the search's
     way out — `test_phone_board_search.py`); nothing else dismisses a
-    keyboard by scrolling."""
+    keyboard by scrolling. On 25 Sep 2026 every scrolling screen that holds
+    a text box joined them (the card, the agent sheet's conversation and
+    details, the comm log — `test_phone_keyboard_hide.py`); the tap-away
+    stays the composer's alone. The scout reports list, with its search
+    box, joined on 25 Sep 2026, and the plans list, its twin, the same
+    day."""
+    drags = {"BoardView.swift", "CardDetailView.swift", "AgentDetailView.swift",
+             "ConversationView.swift", "CommView.swift", "ScoutReportsView.swift",
+             "PlansView.swift"}
     for path in _swift_files():
-        if path == COMPOSER or path.name == "BoardView.swift":
+        if path == COMPOSER:
             continue
         text = _read(path)
-        assert "scrollDismissesKeyboard" not in text, path.name
+        if path.name not in drags:
+            assert "scrollDismissesKeyboard" not in text, path.name
         assert "focusedField = nil" not in text, path.name
 
 
@@ -340,7 +349,7 @@ def test_prepare_is_drawn_once_and_between_the_idea_and_title_fields():
 def test_the_prepare_notes_travel_with_the_button():
     text = _read(COMPOSER)
     block = _prepare_block(text)
-    for line in ("Writing from away through the relay",
+    for line in ("Writing from away — this can take up to two minutes.",
                  "Prepare needs the Mac, which is out of reach right now."):
         assert line in block, line
         assert text.count(line) == 1, line
