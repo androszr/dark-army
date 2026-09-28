@@ -117,3 +117,35 @@ def test_starter_gitignore_ships_beside_the_template():
 def test_no_gitignore_inside_the_template():
     root = HOST / "dark_army_menubar" / "agent_pack"
     assert not (root / "template" / ".gitignore").exists()
+
+
+GUARD_ROWS = (
+    "Read(~/.dark-army/api-token)",
+    "Read(~/.dark-army/relay.json)",
+    "Read(~/.dark-army/devices.json)",
+    "Read(~/.dark-army/grok-bot.json)",
+    "Read(~/.dark-army/grok-bot.secrets)",
+    "Read(~/.dark-army/grok-bot-mcp-token)",
+    "Read(~/.bob-companion/**)",
+    "Read(**/.dark-army/key)",
+    "Read(**/.bob-companion/key)",
+    "Bash(cat ~/.dark-army/relay.json*)",
+    "Bash(cat ~/.dark-army/devices.json*)",
+    "Bash(cat ~/.dark-army/grok-bot*)",
+    "Bash(cat .dark-army/key*)",
+)
+
+
+def test_the_guard_rows_are_pinned_in_the_template_and_this_checkout():
+    """The same deny rows in the pack template and this checkout's own
+    settings (never rendered by the pack); a Bash row uses the CLI's `*`
+    wildcard, never `:*` after a path, which would match nothing."""
+    import json
+    template = HOST / "dark_army_menubar" / "agent_pack" / "template" / ".claude" / "settings.json"
+    template_deny = json.loads(template.read_text(encoding="utf-8").replace(
+        "{{ALLOW_ROWS}}", ""))["permissions"]["deny"]
+    own_deny = json.loads((REPO / ".claude" / "settings.json").read_text(
+        encoding="utf-8"))["permissions"]["deny"]
+    for row in GUARD_ROWS:
+        assert row in template_deny
+        assert row in own_deny

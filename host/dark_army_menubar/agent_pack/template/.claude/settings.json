@@ -32,7 +32,20 @@
     ],
     "deny": [
       "Bash(git reset:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Read(~/.dark-army/api-token)",
+      "Read(~/.dark-army/relay.json)",
+      "Read(~/.dark-army/devices.json)",
+      "Read(~/.dark-army/grok-bot.json)",
+      "Read(~/.dark-army/grok-bot.secrets)",
+      "Read(~/.dark-army/grok-bot-mcp-token)",
+      "Read(~/.bob-companion/**)",
+      "Read(**/.dark-army/key)",
+      "Read(**/.bob-companion/key)",
+      "Bash(cat ~/.dark-army/relay.json*)",
+      "Bash(cat ~/.dark-army/devices.json*)",
+      "Bash(cat ~/.dark-army/grok-bot*)",
+      "Bash(cat .dark-army/key*)"
     ]
   }
 }

@@ -44,9 +44,14 @@ publicly.
   raises an alert under Settings → **Security** (*Access log…*).
 - **Most reads on the local API are unauthenticated**, so
   `curl :19874/api/state` works; the knowledge notes, conversation and access
-  log reads need the token. Anything that changes state needs the `X-Bob-Token` header, read from
-  `~/.dark-army/api-token` (mode 0600), which a web page in your browser cannot
-  obtain. Every request, read or write, must also be *addressed* to loopback: a
+  log reads need a token. Anything that changes state needs the **desk token**
+  in the `X-Bob-Token` header: it lives only in memory, is handed to the panel
+  over a private pipe, and reaches your own command-line tools only through
+  Settings → Advanced → **Copy desk key**. The file `~/.dark-army/api-token`
+  (mode 0600) is the **session token**, readable by any program running as
+  you, so it only closes terminals, brings the panel forward and opens a few
+  reads (`docs/transport-contract.md`, *The loopback door has two tokens*).
+  Neither is something a web page in your browser can obtain. Every request, read or write, must also be *addressed* to loopback: a
   `Host` header naming anything else is refused, which stops a page using DNS
   rebinding to read what it cannot read cross-origin.
 

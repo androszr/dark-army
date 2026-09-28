@@ -649,7 +649,8 @@ struct SettingsEntryView: View {
             SettingsBorderedButton(
                 title: row.title,
                 danger: SettingsControls.drawsDanger(row),
-                armed: row.id == SettingsMenuModel.killRowId && state.killArmed,
+                armed: (row.id == SettingsMenuModel.killRowId && state.killArmed)
+                    || (row.id == SettingsMenuModel.deskTokenRowId && state.deskTokenArmed),
                 checked: row.checked,
                 disabled: row.disabled,
                 press: press)

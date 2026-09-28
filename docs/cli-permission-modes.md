@@ -45,6 +45,12 @@ the inventory check. None of these rows permits editing, committing,
 pushing, deletion or a default mode change. Claude Code and Grok read the
 project's `.claude/settings.json` rows; Codex keeps its own approval policy.
 
+The same pack also owns `deny` rows that keep Claude Code's file reader and
+the obvious `cat` spellings off Dark Army's key files — the enrolment key,
+the session-token file and the phone, relay and bot keys — and this checkout
+carries the same rows (`docs/agent-pack.md`). They are a second layer, not
+the fix: the file key is the session token and opens no desk verb.
+
 ## Recording a live ask
 
 The exact Grok option labels and Codex hook payload must be recorded from a

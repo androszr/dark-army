@@ -144,3 +144,19 @@ def test_gitignore_offered_defaults_and_round_trips(tmp_path, ledger_path):
                          project="new", gitignore_offered=["plans"])
     assert pack_ledger.entry(str(tmp_path / "new"))["gitignore_offered"] == ["plans"]
     assert "gitignore_offered" not in pack_ledger.published()[0]
+
+
+def test_settings_deny_owned_defaults_to_none_and_round_trips(tmp_path, ledger_path):
+    """A row an older build wrote has no `settings_deny_owned` and reads as
+    none owned, so the first resync adds the guard rows and removes none."""
+    ledger_path.write_text(
+        json.dumps({"version": 1, "projects": [
+            {"root": str(tmp_path / "old"), "profile": "web", "prefix": "xx"}]}),
+        encoding="utf-8",
+    )
+    assert pack_install._owned_for(str(tmp_path / "old"), "settings_deny_owned") == []
+    pack_ledger.update(str(tmp_path / "old"),
+                       settings_deny_owned=["Read(**/.dark-army/key)"])
+    assert pack_ledger.entry(str(tmp_path / "old"))["settings_deny_owned"] == [
+        "Read(**/.dark-army/key)"]
+    assert "settings_deny_owned" not in pack_ledger.published()[0]

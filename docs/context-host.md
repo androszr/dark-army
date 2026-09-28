@@ -202,6 +202,12 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `load_or_create_token` uses `os.open(..., O_CREAT|O_EXCL, 0o600)`, never
     write-then-chmod.
 
+    **The loopback door has a desk token and a session token.** The desk
+    token is memory only and reaches the panel over its stdin pipe; the file
+    is the session token, which only closes terminals, pops the panel and
+    reads (`_session_authorised`, `SESSION_ACTIONS`, `SESSION_READS`;
+    `docs/transport-contract.md`, *The loopback door has two tokens*).
+
     **The Bearings digest** (`bearings.py`, pure; loopback `GET
     /api/bearings`; sealed `bearings` on both doors) is
     `docs/transport-contract.md`'s, *`bearings` is a sealed read*.
@@ -481,8 +487,8 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `sys.modules`, so every constant derived from it (`BOARD_PATH`,
     `PREFS_PATH`, …) is isolated by default and no test can reach the running
     fleet's files. The panel carries the same guard as `PanelStateDirectory`
-    (`CardDrafts`, `CardAttachments`, `PanelPlacement`, `PanelLock`, the API
-    token), so a `swift test` run never banks cards into the real Drafts
+    (`CardDrafts`, `CardAttachments`, `PanelPlacement`, `PanelLock`), so a
+    `swift test` run never banks cards into the real Drafts
     sheet.
 
   - **`terminal_title.py`** — the agent's badge on its own VS Code /

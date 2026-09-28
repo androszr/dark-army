@@ -24,6 +24,13 @@ linker = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(linker)
 
 
+@pytest.fixture(autouse=True)
+def _no_desk_token_in_the_environment(monkeypatch):
+    """A person's exported desk token must not leak into these cases: the
+    `--token-file` ones pin the file route."""
+    monkeypatch.delenv("DARK_ARMY_DESK_TOKEN", raising=False)
+
+
 def _cards():
     return json.loads(STATE.read_text())["board"]["cards"]
 
@@ -286,3 +293,34 @@ def test_live_reads_carry_no_token_and_the_write_does(stub, tmp_path, capsys):
     assert isinstance(linker._OPENER, linker.urllib.request.OpenerDirector)
     assert not any(isinstance(h, linker.urllib.request.ProxyHandler)
                    and h.proxies for h in linker._OPENER.handlers)
+
+
+def test_the_desk_token_beats_the_token_file(stub, tmp_path, monkeypatch,
+                                             capsys):
+    """`DARK_ARMY_DESK_TOKEN` (or `--token`) wins over `--token-file`: the
+    file on disk is the session token, which `board_update` refuses."""
+    token = tmp_path / "api-token"
+    token.write_text("session-on-disk")
+    monkeypatch.setenv("DARK_ARMY_DESK_TOKEN", "desk-from-env")
+    code = linker.main(["--project", "ai-viber", "--map", str(MAP),
+                        "--state-file", str(STATE), "--base-url", stub,
+                        "--token-file", str(token), "--apply"])
+    assert code == 0, capsys.readouterr()
+    assert _Stub.posts and all(h == "desk-from-env"
+                               for _, h, _, _ in _Stub.posts)
+    _Stub.posts = []
+    code = linker.main(["--project", "ai-viber", "--map", str(MAP),
+                        "--state-file", str(STATE), "--base-url", stub,
+                        "--token", "desk-from-flag",
+                        "--token-file", str(token), "--apply"])
+    assert code == 0, capsys.readouterr()
+    assert _Stub.posts and all(h == "desk-from-flag"
+                               for _, h, _, _ in _Stub.posts)
+
+
+def test_the_help_names_the_desk_token_and_the_session_file(capsys):
+    with pytest.raises(SystemExit):
+        linker.main(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "DARK_ARMY_DESK_TOKEN" in out
+    assert "session token" in out

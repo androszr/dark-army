@@ -130,6 +130,10 @@ cd host && grep -rn "0\.0\.0\.0\|INADDR_ANY\|host=\"\"\|API_HOST\s*=" \
   dark_army_daemon/ | head
 # Both halves of the write gate: the token AND the Origin allowlist.
 grep -rn "x-bob-token\|api-token\|origin" dark_army_daemon/api_server.py
+# The two tiers: the file is the session token, the desk token is memory only.
+grep -rn "session_token\|_session_authorised\|SESSION_ACTIONS\|SESSION_READS" \
+  dark_army_daemon/api_server.py
+grep -rn "desk_token" dark_army_daemon/ dark_army_menubar/ | grep -iE "log|print|state|snapshot" | head
 grep -rn "chmod\|0o600\|0o700" dark_army_daemon/*.py dark_army_menubar/*.py | head
 ls -l ~/.dark-army/api-token 2>/dev/null
 # The token must never reach a log line or an error body.
@@ -137,7 +141,10 @@ grep -rn "token" dark_army_daemon/api_server.py | grep -iE "log|print|write|body
 ```
 
 A non-loopback bind is `BLOCK`. A token file that is not owner-only is `WARN`. A
-token in a log line is `BLOCK`.
+token in a log line is `BLOCK`. A desk token in a log line, on a snapshot or
+written to any file is `BLOCK`, and so is a desk verb reachable through
+`_session_authorised` (`docs/transport-contract.md`, *The loopback door has
+two tokens*).
 
 ### 5. Destructive verbs still guarded
 

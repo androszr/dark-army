@@ -285,3 +285,20 @@ def test_the_hold_ceiling_is_stated_either_way():
     assert ceiling
     if verdict != lf.CONCURRENT:
         assert ceiling == "n/a", ceiling
+
+
+def test_read_token_refuses_without_the_desk_token(monkeypatch):
+    """Every verb the livefire sends is a desk verb, so it reads the desk
+    token from the environment and never the on-disk session token — and
+    says where to get it when it is missing."""
+    monkeypatch.delenv("DARK_ARMY_DESK_TOKEN", raising=False)
+    with pytest.raises(lf.Refusal) as err:
+        lf.read_token()
+    assert "Copy desk key" in str(err.value)
+    assert "DARK_ARMY_DESK_TOKEN" in str(err.value)
+    assert not hasattr(lf, "TOKEN_PATH")
+
+
+def test_read_token_returns_the_desk_token_from_the_environment(monkeypatch):
+    monkeypatch.setenv("DARK_ARMY_DESK_TOKEN", "  desk-value\n")
+    assert lf.read_token() == "desk-value"

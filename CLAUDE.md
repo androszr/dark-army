@@ -164,8 +164,9 @@ stated in full, with its reasons, in the subject document named.
   third-party import, no 3.10+ syntax. Every walk-up for a project key
   **skips `Path.home()`** (`docs/context-host.md`, *bob-companion-notify*,
   *enrollment.py*).
-- **Panel writes send `X-Bob-Token`**, never `Authorization: Bearer`; reads
-  are ungated, so the wrong header looks like it works. Every panel model
+- **Panel writes send `X-Bob-Token`**, never `Authorization: Bearer` — the
+  desk token off the context push, never a file; the file is the session
+  token. Reads are ungated, so the wrong header looks like it works. Every panel model
   decodes through tolerant helpers: one absent key must never blank the panel
   (`docs/context-panel.md`, *the API layer*).
 - **A request has to be addressed to loopback**: `_loopback_host` above the

@@ -990,7 +990,7 @@ async def test_the_timing_rollups_ride_the_read_only_behind_the_opt_in(
                       count=2, window_seconds=600, hops=hops)
     assert log.append("refusal", door="lan", peer="10.0.0.9",
                       reason="plaintext")
-    token = token_path.read_text().strip()
+    token = srv.token   # desk-only: every paired phone's name
     headers = {"X-Bob-Token": token}
     status, out = await fetch("/api/access-log", port=loop_port, headers=headers)
     assert status == 200
@@ -1028,7 +1028,7 @@ async def test_the_loopback_read_is_token_gated(server, token_path):
     srv, daemon, recorder, (loop_port, _lan) = server
     status, _ = await fetch("/api/access-log", port=loop_port)
     assert status == 403
-    token = token_path.read_text().strip()
+    token = srv.token   # desk-only: every paired phone's name
     status, out = await fetch("/api/access-log?limit=5", port=loop_port,
                               headers={"X-Bob-Token": token})
     assert status == 200
@@ -1107,7 +1107,7 @@ async def test_the_loopback_ack_is_awaited_and_gated(server, token_path, tmp_pat
     status, _ = await fetch("/api/action", port=loop_port, data=body)
     assert status in (403, 404)
     assert daemon.security_snapshot()["alerts"]
-    token = token_path.read_text().strip()
+    token = srv.token   # desk-only: every paired phone's name
     status, out = await fetch("/api/action", port=loop_port, data=body,
                               headers={"X-Bob-Token": token,
                                        "Content-Type": "application/json"})

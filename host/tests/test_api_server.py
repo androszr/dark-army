@@ -108,6 +108,8 @@ async def fetch_headers(*args, **kwargs):
 
 
 def test_token_is_created_once_and_locked_down(token_path):
+    """The file is the **session token** since the desk/session split; it is
+    still created once, 0600, and read back unchanged across restarts."""
     first = load_or_create_token()
     assert first and token_path.exists()
     assert token_path.stat().st_mode & 0o777 == 0o600
@@ -1818,7 +1820,8 @@ async def test_a_rebound_host_cannot_act_either(server, token_path):
 
 def test_the_token_is_created_private(tmp_path, monkeypatch):
     """Created 0600, not created-then-chmodded: the window between the two is
-    the whole file readable at whatever the umask allows."""
+    the whole file readable at whatever the umask allows. The file is the
+    session token; the desk token is never written anywhere."""
     path = tmp_path / "api-token"
     monkeypatch.setattr(api_mod, "API_TOKEN_PATH", path)
     monkeypatch.setattr(api_mod, "ensure_state_dir", lambda: tmp_path)
@@ -1838,6 +1841,286 @@ async def test_an_empty_token_authorises_nothing(server):
     req = api_mod._Request("POST", "/api/action", {},
                            {"x-bob-token": "", "host": "localhost"}, b"{}")
     assert srv._authorised(req) is False
+
+
+# --- two tokens: the desk token and the session token ------------------------
+#
+# `srv.token` is the desk token (memory only); `token_path.read_text()` is the
+# session token — the file every same-user process can read. A request made
+# with only what is on disk may close a terminal, pop the panel and read, and
+# nothing else (`docs/transport-contract.md`, *The loopback door has two
+# tokens*).
+
+
+def _post(action: dict, token: str, **headers):
+    return fetch("/api/action", json.dumps(action).encode(),
+                 {"X-Bob-Token": token, **headers})
+
+
+@pytest.mark.asyncio
+async def test_desk_and_session_tokens_differ_and_only_the_session_one_is_on_disk(
+        server, token_path):
+    srv, _ = server
+    assert srv.token and srv.session_token
+    assert srv.token != srv.session_token
+    assert token_path.read_text().strip() == srv.session_token
+    assert srv.token not in token_path.read_text()
+
+
+@pytest.mark.asyncio
+async def test_the_session_token_is_the_file_that_was_already_there(token_path):
+    """The downgrade seam: the value already on disk becomes the session
+    token and the file is never re-minted, so an older build after a
+    downgrade reads exactly what it wrote."""
+    token_path.write_text("olddisk\n")
+    before = token_path.read_bytes()
+    srv = ApiServer(BobDaemon(), port=PORT)
+    await srv.start()
+    try:
+        assert srv.session_token == "olddisk"
+        assert srv.token and srv.token != "olddisk"
+    finally:
+        await srv.stop()
+    assert token_path.read_bytes() == before
+
+
+@pytest.mark.asyncio
+async def test_the_session_token_cannot_answer_a_permission_prompt(
+        server, token_path):
+    """(success criterion) The side door the split closes: `request_id` is
+    public on `/api/state`, so the verdict must need the desk token."""
+    srv, daemon = server
+    answered = []
+
+    async def answer(request_id, behavior):
+        answered.append((request_id, behavior))
+        return True, ""
+
+    daemon.answer_permission = answer
+    verdict = {"action": "permission_verdict", "request_id": "req-1",
+               "behavior": "allow"}
+    status, body = await _post(verdict, token_path.read_text().strip())
+    assert status == 403
+    assert "desk token" in json.loads(body)["detail"]
+    assert answered == [], "the verdict must still be unset"
+    status, _ = await _post(verdict, srv.token)
+    assert status != 403
+    assert answered == [("req-1", "allow")]
+
+
+@pytest.mark.asyncio
+async def test_the_session_token_cannot_dispatch_or_start_a_card(
+        board_server, token_path, monkeypatch):
+    """(success criterion) Starting a card spends money and opens a terminal:
+    the file's token is refused before the daemon sees the press."""
+    from dark_army_daemon import dispatch
+    srv, _daemon, store = board_server
+    spawned = []
+    monkeypatch.setattr(dispatch, "spawn",
+                        lambda *a, **k: spawned.append(a) or (False, "stub"))
+    monkeypatch.setattr(dispatch, "spawn_local",
+                        lambda *a, **k: spawned.append(a) or (False, "stub"))
+    card, _ = store.create({"title": "x", "tool": "claude", "root": "/tmp",
+                            "column_name": "backlog", "project": "bob"})
+    session = token_path.read_text().strip()
+    for action in ({"action": "board_dispatch", "card_id": card["id"]},
+                   {"action": "board_create", "title": "agent-made",
+                    "prompt": "go"}):
+        status, body = await board_fetch(
+            "/api/action", json.dumps(action).encode(),
+            {"X-Bob-Token": session})
+        assert status == 403, (action, body)
+        assert "desk token" in json.loads(body)["detail"]
+    assert spawned == []
+    assert [c["title"] for c in store.cards()] == ["x"]
+    # The desk token gets past the gate (the daemon then answers in its own
+    # words — here a folder that is not a known project).
+    status, _ = await board_fetch(
+        "/api/action",
+        json.dumps({"action": "board_dispatch", "card_id": card["id"]}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status != 403
+
+
+@pytest.mark.asyncio
+async def test_the_session_token_cannot_type_into_a_terminal(server, token_path):
+    """(success criterion) Typing into another agent's pty is a desk verb."""
+    srv, daemon = server
+    typed = []
+
+    async def terminal_input(session_id, text, **kwargs):
+        typed.append((session_id, text))
+        return True, ""
+
+    daemon.terminal_input = terminal_input
+    press = {"action": "terminal_input", "session_id": "sess-1",
+             "text": "yes"}
+    status, body = await _post(press, token_path.read_text().strip())
+    assert status == 403
+    assert "desk token" in json.loads(body)["detail"]
+    assert typed == [], "the broker must see no write"
+    status, _ = await _post(press, srv.token)
+    assert status != 403
+    assert typed == [("sess-1", "yes")]
+
+
+@pytest.mark.asyncio
+async def test_the_session_token_closes_a_terminal_but_never_by_person(
+        server, token_path):
+    """The agent's own close-out keeps working with the file's token, but
+    `by_person` — the board's third door into Done — is the desk's alone."""
+    srv, daemon = server
+    closes = []
+
+    async def close_session_terminal(session_id, by_person=False):
+        closes.append((session_id, by_person))
+        return True, ""
+
+    daemon.close_session_terminal = close_session_terminal
+    session = token_path.read_text().strip()
+    close = {"action": "close_terminal", "session_id": "sess-1"}
+    status, _ = await _post(close, session)
+    assert status == 200
+    assert closes == [("sess-1", False)]
+    status, body = await _post(dict(close, by_person=True), session)
+    assert status == 403
+    assert "desk token" in json.loads(body)["detail"]
+    assert closes == [("sess-1", False)], "no close, no card finished"
+    status, _ = await _post(dict(close, by_person=True), srv.token)
+    assert status == 200
+    assert closes[-1] == ("sess-1", True)
+
+
+@pytest.mark.asyncio
+async def test_the_session_token_reveals_the_panel_and_reads_a_conversation(
+        server, token_path):
+    srv, daemon = server
+    session = token_path.read_text().strip()
+
+    async def reveal_panel_for_terminal(shell_pid, tty):
+        return True, ""
+
+    async def conversation(query):
+        return 200, "application/json", b'{"ok":true}'
+
+    daemon.reveal_panel_for_terminal = reveal_panel_for_terminal
+    srv._conversation_report_for = conversation
+    status, _ = await _post({"action": "reveal_panel", "shell_pid": 1,
+                             "tty": ""}, session)
+    assert status == 200
+    status, _ = await fetch("/api/conversation?session=s",
+                            headers={"X-Bob-Token": session})
+    assert status == 200
+    # The stream types and the access log names every phone: desk only.
+    for path in ("/api/terminal/stream?session=s", "/api/access-log"):
+        status, _ = await fetch(path, headers={"X-Bob-Token": session})
+        assert status == 403, path
+    assert set(api_mod.SESSION_READS) >= {"/api/conversation"}
+    assert "/api/terminal/stream" not in api_mod.SESSION_READS
+    assert "/api/access-log" not in api_mod.SESSION_READS
+
+
+@pytest.mark.asyncio
+async def test_the_forbidden_body_names_the_desk_token_only_for_the_session_tier(
+        server):
+    """A guessed token hears nothing more than `forbidden`."""
+    status, body = await _post({"action": "noop"}, "guessed-token")
+    assert status == 403
+    assert json.loads(body) == {"error": "forbidden"}
+
+
+@pytest.mark.asyncio
+async def test_an_empty_session_token_authorises_nothing(server):
+    """A failed bind empties both tokens; an empty secret must never equal an
+    absent header on the session tier either."""
+    srv, _ = server
+    srv.token = ""
+    srv.session_token = ""
+    req = api_mod._Request("POST", "/api/action", {},
+                           {"x-bob-token": "", "host": "localhost"}, b"{}")
+    assert srv._session_authorised(req) is False
+    assert srv._authorised(req) is False
+
+
+@pytest.mark.asyncio
+async def test_neither_token_is_on_the_snapshot(server):
+    srv, _ = server
+    frame = json.dumps(srv.state())
+    assert srv.token not in frame
+    assert srv.session_token not in frame
+    status, body = await fetch("/api/state")
+    assert status == 200
+    assert srv.token.encode() not in body
+    assert srv.session_token.encode() not in body
+
+
+@pytest.mark.asyncio
+async def test_origin_is_checked_on_the_session_tier_too(server, token_path):
+    srv, daemon = server
+    closes = []
+
+    async def close_session_terminal(session_id, by_person=False):
+        closes.append(session_id)
+        return True, ""
+
+    daemon.close_session_terminal = close_session_terminal
+    status, _ = await _post({"action": "close_terminal", "session_id": "s"},
+                            token_path.read_text().strip(),
+                            Origin="https://evil.example")
+    assert status == 403
+    assert closes == []
+
+
+def _every_action_name() -> set:
+    """Every action name `api_server` dispatches on, read off the source and
+    the named tuples — never a hand list that can drift from the routing."""
+    import re
+    src = open(api_mod.__file__, encoding="utf-8").read()
+    names = set(re.findall(
+        r'(?:action|name|kind)\s*(?:==|!=)\s*"([a-z_]+)"', src))
+    for m in re.finditer(r'(?:action|name)\s+(?:not\s+)?in\s+\(([^)]*)\)', src):
+        names |= set(re.findall(r'"([a-z_]+)"', m.group(1)))
+    for tup in ("BOARD_ACTIONS", "LAN_ACTIONS", "REMOTE_ACTIONS",
+                "MISSION_ACTIONS"):
+        names |= set(getattr(ApiServer, tup, ()))
+    names |= set(api_mod.SESSION_ACTIONS) | {"noop"}
+    return names
+
+
+@pytest.mark.asyncio
+async def test_every_action_but_the_session_tier_refuses_the_file_token(
+        board_server, token_path):
+    """The sweep: every action the daemon knows, POSTed with only what is on
+    disk, is 403 unless it is on `SESSION_ACTIONS` — and `close_terminal`
+    with `by_person` is 403 too. A new verb lands on the desk tier unless
+    someone deliberately widens the session tier."""
+    srv, daemon, _store = board_server
+    names = _every_action_name()
+    assert len(names) > 40, "the source read found too few verbs to mean anything"
+    assert {"permission_verdict", "board_dispatch", "terminal_input",
+            "reply", "stop_session"} <= names
+
+    async def ok(*_a, **_k):
+        return True, ""
+
+    daemon.close_session_terminal = ok
+    daemon.close_refinement_terminal = ok
+    daemon.reveal_panel_for_terminal = ok
+    session = token_path.read_text().strip()
+    fields = {"session_id": "sess-1", "card_id": "c1", "request_id": "r1",
+              "behavior": "allow", "text": "yes", "root": "/tmp",
+              "title": "t", "prompt": "p", "device_id": "d", "id": "x"}
+    passed = []
+    for name in sorted(names):
+        for extra in ({}, {"by_person": True}):
+            body = dict(fields, action=name, **extra)
+            status, _ = await board_fetch(
+                "/api/action", json.dumps(body).encode(),
+                {"X-Bob-Token": session})
+            if status != 403:
+                passed.append((name, bool(extra)))
+    assert {name for name, _ in passed} <= set(api_mod.SESSION_ACTIONS), passed
+    assert ("close_terminal", True) not in passed
 
 
 # --- the board ---------------------------------------------------------------

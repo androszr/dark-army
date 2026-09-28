@@ -737,3 +737,29 @@ async def test_running_codex_production_handoff(home, monkeypatch, refinement_ha
 
 # Imported fixture has one owner and is shared with the receipt/action cases.
 from tests.test_board_refine import refinement_handoff  # noqa: E402,F401 — pytest fixture
+
+
+def test_the_script_sends_only_session_tier_verbs_and_never_by_person():
+    """The close-out helper keeps reading `~/.dark-army/api-token`, which is
+    the **session token**: it works only because every verb it sends is on
+    `api_server.SESSION_ACTIONS` and it never asks to finish a card
+    (`by_person`, the board's third door into Done, is a desk verb). A grep,
+    not an edit — the script's text is the contract, and its pack twin and
+    every installed copy stay byte-identical."""
+    import filecmp
+    import re
+
+    from dark_army_daemon import api_server
+
+    text = REPO_SCRIPT.read_text()
+    assert "by_person" not in text
+    actions = set(re.findall(r'\baction="([a-z_]+)"', text))
+    assert actions == {"close_terminal", "close_refinement_terminal"}
+    assert actions <= set(api_server.SESSION_ACTIONS)
+    for desk_verb in ("permission_verdict", "board_dispatch", "board_create",
+                      "board_update", "terminal_input", "reply"):
+        assert f'"{desk_verb}"' not in text
+    twin = (Path(__file__).resolve().parents[1] / "dark_army_menubar"
+            / "agent_pack" / "template" / ".claude" / "skills" / "ship"
+            / "close-out.sh")
+    assert filecmp.cmp(REPO_SCRIPT, twin, shallow=False)

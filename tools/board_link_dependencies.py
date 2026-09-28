@@ -30,6 +30,13 @@ come. The list a line names **replaces** that card's list.
 `--state-file` reads an `/api/state` body from disk instead of the live
 board — the test seam, so no test ever reads a real board. Contract:
 `docs/card-dependencies.md`.
+
+`board_update` is a desk verb: the write needs Dark Army's **desk token**,
+read from `DARK_ARMY_DESK_TOKEN` (Settings → Advanced → Copy desk key, then
+`export DARK_ARMY_DESK_TOKEN=…`) or `--token`, which win over `--token-file`.
+The file `~/.dark-army/api-token` is the session token: sent with
+`--token-file`, every write is refused in the daemon's words, naming the desk
+token.
 """
 
 from __future__ import annotations
@@ -45,6 +52,9 @@ from pathlib import Path
 
 DEFAULT_BASE_URL = "http://127.0.0.1:19874"
 DEFAULT_TOKEN_FILE = "~/.dark-army/api-token"
+#: Where the desk token comes from by default: the environment, not an argv,
+#: because another process can read this one's argv as easily as its env.
+DESK_TOKEN_ENV = "DARK_ARMY_DESK_TOKEN"
 #: The store's own bound (`board.MAX_BLOCKERS`), restated: this script runs
 #: with no package to import it from, and a longer list would be cut short
 #: by the store without a word.
@@ -216,7 +226,15 @@ def main(argv=None) -> int:
     parser.add_argument("--map", required=True, dest="map_path",
                         help="the list: '<card> <- <card> | <card>' per line")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
-    parser.add_argument("--token-file", default=DEFAULT_TOKEN_FILE)
+    parser.add_argument("--token",
+                        default=os.environ.get(DESK_TOKEN_ENV, ""),
+                        help="Dark Army's desk token (default: "
+                             "$DARK_ARMY_DESK_TOKEN; Settings → Advanced → "
+                             "Copy desk key). Wins over --token-file.")
+    parser.add_argument("--token-file", default=DEFAULT_TOKEN_FILE,
+                        help="read the token from this file instead; "
+                             "~/.dark-army/api-token is the session token, "
+                             "and board_update refuses it")
     parser.add_argument("--state-file",
                         help="read an /api/state body from this file "
                              "instead of the live board")
@@ -230,7 +248,7 @@ def main(argv=None) -> int:
 
     try:
         rows = parse_map(Path(args.map_path).read_text(encoding="utf-8"))
-        token = ""
+        token = str(args.token or "").strip()
         if args.state_file:
             state = json.loads(Path(args.state_file).read_text(encoding="utf-8"))
         else:

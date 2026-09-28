@@ -443,16 +443,24 @@ def _lan_port() -> int:
     return int(os.environ.get("BOB_COMPANION_LAN_PORT", "19875"))
 
 
+#: Where the person's own tools find Dark Army's desk token. The file on disk
+#: is the session token, which the device verbs refuse; the desk token lives
+#: in memory and the person copies it from Settings → Advanced.
+DESK_TOKEN_ENV = "DARK_ARMY_DESK_TOKEN"
+DESK_TOKEN_MISSING = ("Dark Army's desk token is not set — Settings → Advanced → "
+                      "Copy desk key, then export DARK_ARMY_DESK_TOKEN")
+
+
 def post_loopback(payload: dict) -> dict:
-    """One loopback ``/api/action``. The token stays in the header."""
+    """One loopback ``/api/action``. The token stays in the header.
+
+    The desk token, from ``DARK_ARMY_DESK_TOKEN`` — pairing and unpairing are
+    desk verbs (`docs/transport-contract.md`, *The loopback door has two
+    tokens*), so the on-disk session token would only be refused."""
     port = _api_port()
-    try:
-        token = (paths.STATE_DIR / "api-token").read_text(
-            encoding="utf-8").strip()
-    except OSError as exc:
-        raise BotError("Dark Army is not running") from exc
+    token = os.environ.get(DESK_TOKEN_ENV, "").strip()
     if not token:
-        raise BotError("Dark Army is not running")
+        raise BotError(DESK_TOKEN_MISSING)
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/api/action",

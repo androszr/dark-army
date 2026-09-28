@@ -145,7 +145,12 @@ paragraph as `3171734ffe6d`).
 > `# close-out-contract: leaves-open` and `# close-out-mode: plan`
 > markers, so a helper from before the leave-open rule or the `--plan`
 > mode is never handed the job. No source found leaves the
-> installed copy alone, never unlinked.
+> installed copy alone, never unlinked. The helper reads
+> `~/.dark-army/api-token`, which is the **session token** and never the
+> desk token: its two verbs (`close_terminal`, `close_refinement_terminal`, never
+> `by_person`) are the session tier's, so an agent closing its own tab still
+> works and finishes no card (`docs/transport-contract.md`, *The loopback
+> door has two tokens*).
 >
 > **And on one event it *holds*: the `PermissionRequest` broker.** A
 > board-dispatched session has no channel, so a "may I run this?" dialog

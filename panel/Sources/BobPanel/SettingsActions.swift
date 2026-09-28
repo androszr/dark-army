@@ -23,6 +23,8 @@ final class SettingsWindowState: ObservableObject {
     /// armed verb has one: a shared slot would let arming one row aim
     /// another's confirmation — and this is the row where that matters most.
     @Published var killArmed = false
+    /// Copy desk key's arming slot — its own, `killArmed`'s reason.
+    @Published var deskTokenArmed = false
     @Published var designSystemOpen = false
     /// Foldable headings (`SettingsSearch.foldable`) a person has opened.
     /// Closed by default and not persisted: the window is reused for the
@@ -170,6 +172,7 @@ final class SettingsActions {
             packArmed: state.packArmed,
             stopSyncArmed: state.stopSyncArmed,
             killArmed: state.killArmed,
+            deskTokenArmed: state.deskTokenArmed,
             agentModels: client.context.settings.agentModels,
             security: client.snapshot.security)
     }
@@ -203,6 +206,7 @@ final class SettingsActions {
     func handleCustom(_ action: SettingsRow.CustomAction) {
         switch action {
         case .killSwitch:
+            state.deskTokenArmed = false
             state.unenrolArmed = nil
             state.unpairArmed = nil
             state.awayOffArmed = nil
@@ -220,16 +224,19 @@ final class SettingsActions {
             }
         case .enrolFolder:
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             chooseFolderToEnrol()
         case .recordShortcut:
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             beginRecordingShortcut()
         case .unenrol(let root):
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             if state.unenrolArmed == root {
@@ -240,16 +247,19 @@ final class SettingsActions {
             }
         case .pairDevice:
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             presentPairing()
         case .relayAddress:
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             presentRelaySheet()
         case .unpair(let deviceId):
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             if state.unpairArmed == deviceId {
@@ -260,6 +270,7 @@ final class SettingsActions {
             }
         case .awayDays(let deviceId, let days):
             state.killArmed = false
+            state.deskTokenArmed = false
             // Granting is not destructive, so it fires on the first press —
             // and it disarms any half-pressed End, which the person has
             // plainly changed their mind about.
@@ -269,6 +280,7 @@ final class SettingsActions {
             Task { _ = await client.setAwayDays(deviceId, days: days) }
         case .lockScreenActions(let deviceId, let enabled):
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             state.awayOffArmed = nil
@@ -277,6 +289,7 @@ final class SettingsActions {
             Task { _ = await client.setLockScreenActions(deviceId, enabled: enabled) }
         case .botAccess(let deviceId, let side, let mode):
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             state.awayOffArmed = nil
@@ -295,6 +308,7 @@ final class SettingsActions {
             }
         case .awayOff(let deviceId):
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             if state.awayOffArmed == deviceId {
@@ -305,6 +319,7 @@ final class SettingsActions {
             }
         case .installPack(let root, let profile):
             state.killArmed = false
+            state.deskTokenArmed = false
             state.unenrolArmed = nil
             state.unpairArmed = nil
             state.awayOffArmed = nil
@@ -319,6 +334,7 @@ final class SettingsActions {
             }
         case .stopPackSync(let root):
             state.killArmed = false
+            state.deskTokenArmed = false
             state.unenrolArmed = nil
             state.unpairArmed = nil
             state.awayOffArmed = nil
@@ -331,21 +347,38 @@ final class SettingsActions {
             }
         case .knowledge(let root):
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             onKnowledge?(root)
         case .manualChecks(let root):
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             onManualChecks?(root)
         case .accessLog:
             state.killArmed = false
+            state.deskTokenArmed = false
             state.packArmed = nil
             state.stopSyncArmed = nil
             onAccessLog?()
         case .designSystem:
             state.designSystemOpen = true
+        case .copyDeskToken:
+            state.killArmed = false
+            state.packArmed = nil
+            state.stopSyncArmed = nil
+            if state.deskTokenArmed {
+                state.deskTokenArmed = false
+                let token = client.context.deskToken
+                // Never an empty clipboard: the row is drawn only while the
+                // panel holds a key, and a push could not have emptied it.
+                guard !token.isEmpty else { return }
+                DeskTokenClipboard.copy(token)
+            } else {
+                state.deskTokenArmed = true
+            }
         }
     }
 
@@ -512,4 +545,39 @@ private func dictationShortcutLabel(keyCode: UInt16,
         parts = "key\(keyCode)"
     }
     return String(parts.prefix(8))
+}
+
+/// Puts the desk key on the clipboard the way a password manager does: the
+/// string, plus the `org.nspasteboard` markers that tell clipboard-history
+/// managers to skip it (concealed) and not to keep it (transient), and a
+/// clear after `clearAfter` seconds unless something else has been copied
+/// since. The markers are a convention those apps honour, not a lock.
+@MainActor
+enum DeskTokenClipboard {
+    static let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    static let transient = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+    /// Seconds the key stays on the clipboard.
+    static let clearAfter: TimeInterval = 60
+
+    /// Every type the copy declares, the plain string first so a paste works.
+    static var types: [NSPasteboard.PasteboardType] { [.string, concealed, transient] }
+
+    static func copy(_ token: String, to board: NSPasteboard = .general) {
+        board.declareTypes(types, owner: nil)
+        board.setString(token, forType: .string)
+        board.setString(token, forType: concealed)
+        board.setString("", forType: transient)
+        let stamp = board.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + clearAfter) {
+            clearIfUnchanged(board, since: stamp)
+        }
+    }
+
+    /// Clears the board only if nothing was copied since `stamp`.
+    @discardableResult
+    static func clearIfUnchanged(_ board: NSPasteboard, since stamp: Int) -> Bool {
+        guard board.changeCount == stamp else { return false }
+        board.clearContents()
+        return true
+    }
 }

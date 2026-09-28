@@ -112,6 +112,24 @@ after a confirmed press per project.
   `test_shunt_skill.py`; the settings window's **Worker** row is drawn only
   where `pack_render.ships_shunt()` says the template carries the skill.
 
+- **The pack owns guard `deny` rows too** (28 Sep 2026, the desk/session
+  key split): `Read` rows for the enrolment key (`**/.dark-army/key`, its
+  legacy twin), the session-token file `~/.dark-army/api-token`, the phone,
+  relay and bot key files and the legacy `~/.bob-companion/**` link, plus
+  `Bash(cat …*)` rows for the same key files — never the whole state
+  folder, because agents are told to read `~/.dark-army/search-scope.json`.
+  `merge_settings` replaces them by the owned-rows rule
+  (`settings_deny_owned` on the ledger row; an older row reads as none
+  owned, so the first resync adds them once) and keeps a project's own
+  `deny` rows. Ownership covers every template `deny` row, so that same
+  first resync also brings the older `Bash(git reset:*)` and
+  `Bash(git checkout:*)` rows to a project whose `settings.json` predates
+  them — a narrowing, never a widening. They are a **second layer** for one assistant: Codex and Grok
+  do not read them and an agent can spell a read another way; the fix is the
+  split, which leaves nothing on disk that answers a prompt, starts a card
+  or types into a terminal (`docs/transport-contract.md`, *The loopback door
+  has two tokens*).
+
 - **The gate helper ships with the pack** (21 Sep 2026, the ship-run audit):
   `template/.claude/skills/ship/gate.sh` is the generic twin of Dark Army's
   own `.claude/skills/ship/gate.sh` — the attempt ledger (`dispatch`, `run`

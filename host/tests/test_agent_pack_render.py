@@ -248,7 +248,7 @@ def test_merge_settings_keeps_foreign_rows_and_keys():
             "allow": ["Bash(git status:*)", "Bash(pnpm lint)"],
         },
     }).encode()
-    out, owned = pack_render.merge_settings(
+    out, owned, owned_deny = pack_render.merge_settings(
         existing, managed, owned=["Bash(git status:*)"])
     parsed = json.loads(out)
     assert parsed["extra"] is True
@@ -257,6 +257,48 @@ def test_merge_settings_keeps_foreign_rows_and_keys():
     assert "Bash(pnpm lint)" in parsed["permissions"]["allow"]
     assert "Bash(git status:*)" in parsed["permissions"]["allow"]
     assert owned == ["Bash(git status:*)", "Bash(pnpm lint)"]
+    assert owned_deny == []
+
+
+def test_merge_settings_owns_its_deny_rows_and_keeps_the_projects():
+    """A project's own deny rows survive; the pack's are replaced as a set,
+    and an older ledger row (owned_deny None) removes nothing."""
+    existing = json.dumps({
+        "permissions": {
+            "allow": [],
+            "deny": ["Bash(git push:*)", "Read(~/.dark-army/old)"],
+        },
+    }).encode()
+    managed = json.dumps({
+        "permissions": {
+            "allow": [],
+            "deny": ["Read(**/.dark-army/key)"],
+        },
+    }).encode()
+    out, _allow, owned_deny = pack_render.merge_settings(
+        existing, managed, [], owned_deny=["Read(~/.dark-army/old)"])
+    deny = json.loads(out)["permissions"]["deny"]
+    assert deny == ["Bash(git push:*)", "Read(**/.dark-army/key)"]
+    assert owned_deny == ["Read(**/.dark-army/key)"]
+    out, _allow, _owned = pack_render.merge_settings(existing, managed, [])
+    deny = json.loads(out)["permissions"]["deny"]
+    assert deny == ["Bash(git push:*)", "Read(~/.dark-army/old)",
+                    "Read(**/.dark-army/key)"]
+
+
+def test_the_template_denies_reading_dark_armys_secrets():
+    """The guard rows are a second layer beside the desk/session split
+    (docs/agent-pack.md): the enrolment key, the session-token file and the
+    phone/relay/bot keys, never the whole state folder — agents are told to
+    read ~/.dark-army/search-scope.json."""
+    rows = pack_render.settings_deny_rows(
+        _mapping("web")[pack_render.SETTINGS_KEY])
+    for row in ("Read(~/.dark-army/api-token)", "Read(**/.dark-army/key)",
+                "Read(~/.bob-companion/**)",
+                "Bash(cat ~/.dark-army/grok-bot*)"):
+        assert row in rows
+    assert not any("search-scope" in row or row == "Read(~/.dark-army/**)"
+                   for row in rows)
 
 
 def test_merge_settings_refuses_unparseable():
