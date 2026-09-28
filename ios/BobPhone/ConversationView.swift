@@ -538,11 +538,16 @@ struct ConversationTurnRow: View {
     @ViewBuilder private var rowBody: some View {
         switch turn.kind {
         case "user":
-            Text("> \(turn.text)")
-                .font(Theme.mono(13))
-                .foregroundStyle(Theme.phosphorBright)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            // Rendered like the agent's turns: a prompt is often a pasted
+            // plan or handoff, and verbatim it reads as asterisks and fences.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(">")
+                    .font(Theme.mono(13))
+                MarkdownText(source: turn.text, base: 13, mono: true)
+                    .equatable()
+            }
+            .foregroundStyle(Theme.phosphorBright)
+            .fixedSize(horizontal: false, vertical: true)
         case "agent":
             VStack(alignment: .leading, spacing: 2) {
                 Text(nickname)

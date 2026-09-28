@@ -393,6 +393,38 @@ def _fold(*records) -> list:
     return acc.turns
 
 
+def test_a_compaction_summary_is_a_note_not_the_persons_turn():
+    """The summary `/compact` hands the agent is a `user` record Claude Code
+    wrote. Folded as the person's turn it drew pages of raw markdown under
+    "You said:"; it is one note line, and a real prompt after it still counts."""
+    summary = {
+        "type": "user",
+        "isCompactSummary": True,
+        "timestamp": "2026-09-28T18:20:00Z",
+        "message": {"role": "user", "content": (
+            "This session is being continued from a previous conversation.\n"
+            "9. **Next step.** Write the final handoff\n   ```\n   ## Work done\n   ```")},
+    }
+    prompt = {
+        "type": "user",
+        "timestamp": "2026-09-28T18:21:00Z",
+        "message": {"role": "user", "content": "carry on"},
+    }
+    turns = _fold(summary, prompt)
+    assert [t.kind for t in turns] == ["note", "user"]
+    assert turns[0].text == conversation.COMPACTED_NOTE
+    assert "Next step" not in turns[0].text
+    assert turns[1].text == "carry on"
+
+
+def test_the_phone_draws_a_typed_turn_through_the_markdown_renderer():
+    view = CONV_VIEW.read_text()
+    user = view[view.index('case "user":', view.index("private var rowBody")):
+                view.index('case "agent":', view.index("private var rowBody"))]
+    assert "MarkdownText(source: turn.text" in user
+    assert 'Text("> \\(turn.text)")' not in user
+
+
 def test_a_panel_reply_is_the_persons_turn_with_the_tag_stripped():
     turns = _fold(_channel_record("2026-09-06T15:52:44.883Z", "Accept"))
     assert len(turns) == 1

@@ -54,6 +54,8 @@ _TOOL_BRIEF_KEYS = (
     "command", "file_path", "path", "pattern", "query", "url",
     "description", "prompt",
 )
+#: The one line a compaction summary folds to.
+COMPACTED_NOTE = "context compacted — the agent continues from a summary"
 #: The close of the wrapper Dark Army's channel puts around a reply.
 CHANNEL_CLOSE_TAG = "</channel>"
 
@@ -287,6 +289,14 @@ def fold_claude(obj: dict, acc: _Accum, *, sidechain: bool = False) -> None:
                 body = channel_reply_text(lead)
                 if body:
                     _push(acc, "user", ts, text=body)
+            return
+        # The summary `/compact` (or an automatic compaction) hands the agent
+        # is a `user` record Claude Code wrote, not the person's words: drawn
+        # as one it read "You said:" over pages of raw markdown. The turns it
+        # summarises are still earlier in this same journal, so one line
+        # saying where the break is covers it.
+        if obj.get("isCompactSummary") is True:
+            _push(acc, "note", ts, text=COMPACTED_NOTE)
             return
         if lead.startswith(_SYNTHETIC_PROMPT_PREFIXES):
             return
