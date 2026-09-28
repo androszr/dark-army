@@ -317,3 +317,71 @@ def test_replacing_selected_file_changes_the_on_disk_reading(tmp_path, monkeypat
     assert before["artifact_mtime"] == 1000 and before["stale"]
     assert after["artifact_mtime"] == 3000 and not after["stale"]
     assert before["panel_binary"] == after["panel_binary"] == binary
+
+
+def _git_checkout_with_side_folder(tmp_path):
+    """A real main checkout (marked by host/build.sh) with a card's side folder
+    under `.worktrees/`, made by git itself so the `.git` file and `commondir`
+    are exactly what a board Start leaves behind."""
+    main = _make_checkout(tmp_path, "dark-army")
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(main), *args], check=True,
+                       capture_output=True, env=env)
+    git("init", "-q", "-b", "main")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init")
+    side = main / ".worktrees" / "card-0001"
+    git("worktree", "add", "-q", "-b", "card/0001", str(side))
+    return main.resolve(), side
+
+
+def test_a_side_folder_belongs_to_its_main_checkout(tmp_path):
+    """A card's side folder is temporary, so it is never Dark Army's own
+    checkout: the helper answers the main checkout it was made from."""
+    main, side = _git_checkout_with_side_folder(tmp_path)
+
+    assert dev_build.main_checkout(side) == main
+    assert dev_build.main_checkout(main) == main
+
+
+def test_a_folder_that_is_no_worktree_is_left_alone(tmp_path):
+    plain = _make_checkout(tmp_path, "plain")
+    assert dev_build.main_checkout(plain) == plain
+    odd = _make_checkout(tmp_path, "odd")
+    (odd / ".git").write_text("not a pointer\n")
+    assert dev_build.main_checkout(odd) == odd
+    dangling = _make_checkout(tmp_path, "dangling")
+    (dangling / ".git").write_text(f"gitdir: {tmp_path / 'gone'}\n")
+    assert dev_build.main_checkout(dangling) == dangling
+
+
+def test_an_app_stamped_with_a_side_folder_finds_the_main_checkout(tmp_path, monkeypatch):
+    """The install that split a session off under `card-…`: an app built from
+    a side folder before build.sh learned to stamp the main checkout."""
+    app, module = _make_bundle(tmp_path)
+    main, side = _git_checkout_with_side_folder(tmp_path)
+    (app / "Contents" / "Resources" / dev_build.REPO_ROOT_STAMP).write_text(f"{side}\n")
+    monkeypatch.setattr(dev_build, "__file__", str(module))
+    monkeypatch.delattr(sys, "frozen", raising=False)
+
+    assert dev_build.find_repo_root() == main
+
+
+def test_build_sh_stamps_the_main_checkout_from_a_side_folder(tmp_path):
+    """build.sh's stamp lines, run against a real side folder, write the main
+    checkout; against the main checkout, the main checkout."""
+    main, side = _git_checkout_with_side_folder(tmp_path)
+    text = (Path(__file__).resolve().parents[1] / "build.sh").read_text()
+    start = text.index('    STAMP_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"')
+    end = text.index('Resources/repo-root"', start) + len('Resources/repo-root"')
+    snippet = text[start:end]
+    for built_from in (side, main):
+        out = tmp_path / "Contents" / "Resources"
+        out.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", snippet],
+            check=True, env={**os.environ, "SCRIPT_DIR": str(built_from / "host"),
+                             "APP": str(tmp_path)}, cwd=tmp_path)
+        assert (out / "repo-root").read_text().strip() == str(main)

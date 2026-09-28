@@ -107,8 +107,38 @@ def _stamped_repo_root() -> Optional[Path]:
     except OSError:
         return None
     if root.is_absolute() and (root / "host" / "build.sh").is_file():
-        return root
+        return main_checkout(root)
     return None
+
+
+def main_checkout(root: Path) -> Path:
+    """The main checkout `root` belongs to when it is a linked git worktree — a
+    board card's side folder under `.worktrees/` — otherwise `root` unchanged.
+
+    A side folder is temporary (Done removes it), so it is never Dark Army's own
+    checkout: an app installed from one enrolled the side folder as a project of
+    its own at launch, and every session inside it split off under the side
+    folder's name. Read from the files git leaves (`.git` is a file naming the
+    worktree's git folder, whose `commondir` names the shared one), never by
+    running git. Anything unexpected answers `root`, as before."""
+    try:
+        text = (root / ".git").read_text(encoding="utf-8")
+    except OSError:  # a directory (the main checkout itself) or nothing at all
+        return root
+    if not text.startswith("gitdir:"):
+        return root
+    gitdir = Path(text[len("gitdir:"):].strip())
+    if not gitdir.is_absolute():
+        gitdir = root / gitdir
+    try:
+        common = gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()
+        common = common.resolve()
+    except OSError:
+        return root
+    main = common.parent
+    if common.name == ".git" and (main / "host" / "build.sh").is_file():
+        return main
+    return root
 
 
 def find_repo_root() -> Optional[Path]:

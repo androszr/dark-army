@@ -632,7 +632,8 @@ def enroll_self() -> tuple:
         return False, "no source tree to enrol"
     if root is None:
         return False, "no source tree to enrol"
-    return enroll(str(root))
+    # A card's side folder is never the checkout to enrol: its main checkout is.
+    return enroll(str(dev_build.main_checkout(root)))
 
 
 # The memo for `self_root()`: `None` until the first call, then the answer for
@@ -658,7 +659,7 @@ def self_root() -> str:
         from dark_army_menubar import dev_build
         root = dev_build.find_repo_root()
         if root is not None:
-            found = normalise(str(root))
+            found = normalise(str(dev_build.main_checkout(root)))
     except Exception:
         logger.debug("could not locate Dark Army's own repo root", exc_info=True)
         found = ""

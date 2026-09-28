@@ -412,6 +412,30 @@ def test_self_root_is_the_normalised_checkout_and_is_memoised(self_memo, tmp_pat
     assert calls == [1]
 
 
+def test_self_root_from_a_side_folder_is_the_main_checkout(self_memo, tmp_path):
+    """Run or installed from a card's side folder, Dark Army's own checkout is
+    still the main one — the side folder goes when its card is Done."""
+    from dark_army_menubar import dev_build
+    from tests.test_dev_build import _git_checkout_with_side_folder
+    main, side = _git_checkout_with_side_folder(tmp_path)
+    self_memo.setattr(dev_build, "find_repo_root", lambda: side)
+    assert enrollment.self_root() == os.path.realpath(str(main))
+
+
+def test_enroll_self_from_a_side_folder_enrols_the_main_checkout(monkeypatch, tmp_path):
+    """The launch that split every session in a side folder off under its own
+    `card-…` tab: an app built there enrolled the side folder as a project."""
+    from dark_army_menubar import dev_build
+    from tests.test_dev_build import _git_checkout_with_side_folder
+    main, side = _git_checkout_with_side_folder(tmp_path)
+    monkeypatch.setattr(dev_build, "find_repo_root", lambda: side)
+    enrollment.enroll_self()
+    roots = enrollment.enrolled_roots()
+    assert os.path.realpath(str(main)) in roots
+    assert os.path.realpath(str(side)) not in roots
+    assert enrollment.enrolled_label(str(side / "host")) == "dark-army"
+
+
 def test_observe_checklist_passes_the_memoised_self_root(
         enforce_enrolment, tmp_path, monkeypatch):
     own, _ = _enrol(tmp_path, "dark-army")

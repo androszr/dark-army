@@ -465,7 +465,15 @@ cp "$SCRIPT_DIR/../LICENSE" "$APP/Contents/Resources/"
 # A plain `./build.sh` bundle still finds its source through the ancestor walk,
 # because host/dist/ is inside the repo.
 if [ "$INSTALL" = 1 ]; then
-    ( cd "$SCRIPT_DIR/.." && pwd ) > "$APP/Contents/Resources/repo-root"
+    # Built from a card's side folder (a linked git worktree), the stamp names
+    # the main checkout: Done removes the side folder, and an app pointing at
+    # it enrolled it at launch as a project of its own. `git-common-dir` is the
+    # main checkout's `.git` for a worktree and this checkout's own otherwise.
+    STAMP_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+    COMMON_GIT="$(git -C "$STAMP_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    [ "${COMMON_GIT##*/}" = ".git" ] && [ -f "${COMMON_GIT%/.git}/host/build.sh" ] \
+        && STAMP_ROOT="${COMMON_GIT%/.git}"
+    printf '%s\n' "$STAMP_ROOT" > "$APP/Contents/Resources/repo-root"
 fi
 
 # The provenance note: what this app was actually built from — the extension
