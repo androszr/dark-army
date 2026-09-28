@@ -1,3 +1,4 @@
+import CryptoKit
 import LocalAuthentication
 import SwiftUI
 import UIKit
@@ -13,6 +14,9 @@ struct BobPhoneApp: App {
     @StateObject private var pairing = PairingStore()
     @StateObject private var client = PhoneClient()
     @StateObject private var outbox = OutboxStore()
+    /// Where the person was — tab, section, sheet trail, typed text. A
+    /// shared instance (`PhoneRouter.shared`'s pattern), so observed.
+    @ObservedObject private var place = PhonePlaceStore.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -75,6 +79,8 @@ struct BobPhoneApp: App {
                     // a real backgrounding must not be the one path where
                     // the half-typed card was never written.
                     outbox.flushDraftNow()
+                    // And where the person was, for the same reason.
+                    place.flushNow()
                     // The app-switcher snapshot is taken at `.inactive`, so
                     // leaving the fleet on screen there is a Face ID bypass.
                     // Skip only while the app's own unlock sheet is up
@@ -117,6 +123,7 @@ struct BobPhoneApp: App {
                     // hierarchy down and takes the composer's `@State` with
                     // it. This ordering is the fix; the debounce is comfort.
                     outbox.flushDraftNow()
+                    place.flushNow()
                     DictationEngine.shared.stop()
                     lock.lock()
                     // The lock is unconditional, as before. The poller is
@@ -207,11 +214,17 @@ struct BobPhoneApp: App {
                     client.receipts.load()
                     client.heldPicture.load()
                     client.notificationLog.load()
+                    place.load()
                     // The draft is on disk again; if it was on screen when
                     // the app went away, ask for it back.
                     outbox.armResumeIfNeeded()
                     if let record = pairing.record {
                         PhoneRouter.shared.pair(token: record.token)
+                        // The saved place is stamped like the router's slot;
+                        // adopted before it is armed, so another Mac's
+                        // place is never applied, even once.
+                        place.adopt(identity: pairingIdentity(token: record.token))
+                        place.arm()
                         // After `pair`, so the token the buzzes are filed
                         // under is the current pairing's; after `load`, so
                         // what was banked before the gate joins the file
@@ -249,6 +262,7 @@ struct BobPhoneApp: App {
                         // yet when the tray is read, and a refusal there
                         // would lose the tray itself.
                         PushRegistrar.shared.forgetBanked()
+                        place.forget()
                     }
                 }
                 // Locking stops nothing here: `.background` pauses the
@@ -258,6 +272,9 @@ struct BobPhoneApp: App {
                 if record == nil { decryptFeedback.cancel() }
                 if let record, lock.unlocked {
                     PhoneRouter.shared.pair(token: record.token)
+                    // A pairing made or changed while unlocked: places are
+                    // stamped with it from now on, another Mac's dropped.
+                    place.adopt(identity: pairingIdentity(token: record.token))
                     // The unlock gate's `load()` re-publishes the Keychain's
                     // copy, whose counters `suspend()` moved at
                     // `.background`; a record that differs from the last
@@ -278,6 +295,12 @@ struct BobPhoneApp: App {
             }
         }
     }
+}
+
+/// The pairing a saved place belongs to: SHA-256 hex of the token, the same
+/// identity `PhoneRouter.pair(token:)` stamps its slot with. Never the token.
+private func pairingIdentity(token: String) -> String {
+    SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
 }
 
 extension PairingRecord {
@@ -406,6 +429,8 @@ struct ContentView: View {
     /// exists behind the Face-ID gate, so consuming the slot here is what
     /// keeps the gate in front of every deep link.
     @ObservedObject private var router = PhoneRouter.shared
+    /// Where the person was; applied once per unlock, behind the gate.
+    @ObservedObject private var place = PhonePlaceStore.shared
 
     /// Bound so a resumed draft can bring its own tab to the front.
     @State private var selectedTab: PhoneTab = .needs
@@ -413,6 +438,18 @@ struct ContentView: View {
     /// here so a deep link can open one after bringing the tab forward.
     @State private var menuOpen: MenuSection?
     @StateObject private var sheets = PhoneSheetRouter()
+    /// A restored sheet trail waiting for a picture to match it against —
+    /// the held one or the first live one. Resolving against an empty
+    /// snapshot would call every subject gone.
+    @State private var pendingTrail: [PhonePlace.Entry]?
+    /// The tab and section the saved place put on screen, while its trail
+    /// still waits: the person moving off them first drops the trail.
+    @State private var placeLanding: PlaceLanding?
+
+    private struct PlaceLanding: Equatable {
+        var tab: PhoneTab
+        var section: MenuSection?
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -466,14 +503,27 @@ struct ContentView: View {
         .tint(Theme.phosphor)
         .toolbarBackground(Theme.bar, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
-        // Bring the draft's own tab to the front; the root there answers the
-        // same signal by pushing the composer.
-        .onAppear { applyResumeTab() }
+        // One arrival, in order: the saved place first (it steps aside when
+        // anything below is waiting), then the draft's own tab — whose root
+        // answers the same signal by pushing the composer — then the tab a
+        // notification tap or widget link asked for. All post-unlock, never
+        // by the tap itself.
+        .onAppear {
+            place.compose = { currentPlace() }
+            applyPlace()
+            applyResumeTab()
+            applyPendingTab()
+        }
+        .onDisappear { place.compose = nil }
+        .onChange(of: place.armSignal) { applyPlace() }
+        .onChange(of: client.snapshot.generatedAt) { applyPlaceTrailIfReady() }
         .onChange(of: outbox.resumeSignal) { applyResumeTab() }
-        // And the tab a notification tap or widget link asked for — applied
-        // here, post-unlock, never by the tap itself.
-        .onAppear { applyPendingTab() }
         .onChange(of: router.signal) { applyPendingTab() }
+        // The place moves: kept in memory at once, on disk after a pause,
+        // and flushed whole at the lock.
+        .onChange(of: selectedTab) { dropWaitingTrailIfMoved(); stashPlace() }
+        .onChange(of: menuOpen) { dropWaitingTrailIfMoved(); stashPlace() }
+        .onChange(of: sheets.stack) { stashPlace() }
         .sheet(item: Binding(get: { sheets.presentation }, set: { if $0 == nil { sheets.close() } })) { _ in
             PhoneSheetFrame(client: client, outbox: outbox)
                 .environmentObject(sheets)
@@ -481,11 +531,92 @@ struct ContentView: View {
         .environmentObject(sheets)
     }
 
+    /// The saved place, taken once: the tab and the Menu section at once,
+    /// the sheet trail when there is a picture to match it against.
+    private func applyPlace() {
+        guard !PhonePlaceRules.wins(pendingTab: router.pendingTab != nil,
+                                    pendingReceipt: router.pendingReceipt != nil,
+                                    composerResume: outbox.resumeTab != nil) else {
+            place.setAside()
+            return
+        }
+        guard let saved = place.take() else { return }
+        selectedTab = PhoneTab(stored: saved.tab) ?? .needs
+        menuOpen = MenuSection(rawValue: saved.menuSection)
+        pendingTrail = saved.trail.isEmpty ? nil : saved.trail
+        placeLanding = PlaceLanding(tab: selectedTab, section: menuOpen)
+        applyPlaceTrailIfReady()
+    }
+
+    /// A trail still waiting for a picture never pops open over a tab or a
+    /// section the person has moved to meanwhile; its typed text is kept.
+    private func dropWaitingTrailIfMoved() {
+        guard let trail = pendingTrail, let landing = placeLanding,
+              landing != PlaceLanding(tab: selectedTab, section: menuOpen) else { return }
+        place.keepDrafts(of: trail)
+        pendingTrail = nil
+        placeLanding = nil
+    }
+
+    /// Reopen the saved trail up to the first rung whose subject the picture
+    /// no longer lists. A trail the person already replaced by opening a
+    /// sheet keeps only its typed text.
+    private func applyPlaceTrailIfReady() {
+        guard let trail = pendingTrail, client.snapshot.generatedAt != 0 else { return }
+        pendingTrail = nil
+        placeLanding = nil
+        guard sheets.stack.isEmpty else {
+            place.keepDrafts(of: trail)
+            return
+        }
+        let snapshot = client.snapshot
+        let cut = PhonePlaceRules.cut(trail,
+                                      agents: Set(snapshot.agents.all.map(\.sessionId)),
+                                      cards: Set(snapshot.board.cards.map(\.id)))
+        var rungs: [(PhoneSheet, PhonePlace.Entry)] = []
+        var dropped = cut.dropped
+        for (index, entry) in cut.kept.enumerated() {
+            guard let sheet = PhoneSheet.fromPlace(entry, snapshot: snapshot) else {
+                dropped = cut.kept[index...].map { ($0, "not resolved") } + dropped
+                break
+            }
+            rungs.append((sheet, entry))
+        }
+        place.noteDropped(dropped)
+        place.keepDrafts(of: dropped.map(\.0))
+        if !rungs.isEmpty { sheets.restore(rungs) }
+    }
+
+    /// Where the person is now, for the store's `compose` and its stash.
+    private func currentPlace() -> PhonePlace {
+        PhonePlace(pairing: place.identity, tab: selectedTab.rawValue,
+                   menuSection: menuOpen?.rawValue ?? "",
+                   push: place.profileShowing(on: selectedTab.rawValue) ? "profile" : "",
+                   trail: pendingTrail ?? sheets.placeTrail())
+    }
+
+    private func stashPlace() {
+        place.stash(currentPlace())
+    }
+
     private func applyResumeTab() {
-        if let tab = outbox.resumeTab { selectedTab = tab }
+        if let tab = outbox.resumeTab {
+            // A banked draft that was on screen wins over the saved place.
+            place.setAside()
+            place.keepDrafts(of: pendingTrail ?? [])
+            pendingTrail = nil
+            selectedTab = tab
+        }
     }
 
     private func applyPendingTab() {
+        if router.pendingTab != nil || router.pendingReceipt != nil {
+            // A tap or a link wins over the saved place — even one already
+            // restored, as `sheets.close()` / `sheets.route` below make it.
+            place.setAside()
+            place.keepDrafts(of: pendingTrail ?? [])
+            pendingTrail = nil
+        }
         if let tab = router.take() { selectedTab = tab; sheets.close() }
         if let section = router.takeSection() { menuOpen = section }
         if let route = router.pendingReceipt { sheets.route(route) }
@@ -562,6 +693,8 @@ struct PhoneTabRoot<Content: View>: View {
 
     @State private var composing = false
     @State private var showingProfile = false
+    /// The saved place's profile push is reapplied through here.
+    @ObservedObject private var place = PhonePlaceStore.shared
 
     var body: some View {
         Group {
@@ -620,10 +753,16 @@ struct PhoneTabRoot<Content: View>: View {
         // the signal and its first chance to ask is `.onAppear`.
         .onAppear { applyResume() }
         .onChange(of: outbox.resumeSignal) { applyResume() }
+        .onChange(of: place.pushSignal) { applyResume() }
+        .onChange(of: showingProfile) { _, showing in
+            place.noteProfile(showing, on: tab.rawValue)
+            if let now = place.compose?() { place.stash(now) }
+        }
     }
 
     private func applyResume() {
         if outbox.takeResume(for: tab) { composing = true }
+        if place.takePush(for: tab.rawValue) == "profile" { showingProfile = true }
     }
 
     /// A first connect, not a lost one: the status is still settling *and*

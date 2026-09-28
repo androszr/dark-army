@@ -3147,6 +3147,7 @@ final class PhoneClient: ObservableObject {
         catchUpRequests.cancel()
         historyGeneration += 1
         PhoneRouter.shared.forget()
+        PhonePlaceStore.shared.forget()
         status = .unpaired
         lastError = "no longer paired"
         snapshot = Snapshot()

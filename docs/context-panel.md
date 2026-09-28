@@ -251,6 +251,10 @@ the same list as **compact rows** (`InboxRow`; a card entry is undated),
 (`docs/phone-contract.md`), and its session entries come from the live
 buckets alone (`PhoneInbox.liveBuckets`), the Mac's `Category.live`.
 
+The phone restores the tab, Menu section, sheet trail and drafts after the
+lock and a cold launch (`docs/phone-contract.md`,
+*The phone comes back where you left it*).
+
 **The rail uses Signal** (`Theme.swift`, `docs/design-system.md`). Generated
 semantic tokens from `design-system/tokens.json` supply graphite surfaces,
 warm text, green actions, amber attention and red failure. Human prose uses

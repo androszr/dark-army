@@ -70,6 +70,83 @@ struct PhoneSheet: Identifiable, Equatable {
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
 }
 
+/// The trail as data, for the saved place (`PhonePlace.swift`).
+extension PhoneSheet {
+    /// Kind and key for the three subjects the place restores — an agent,
+    /// a card, the whole Catch up list — and nil for the rest.
+    var placeEntry: PhonePlace.Entry? {
+        switch subject {
+        case .agent(let agent, _): return PhonePlace.Entry(kind: kind.rawValue, key: agent.sessionId)
+        case .card(let card): return PhonePlace.Entry(kind: kind.rawValue, key: card.id)
+        case .catchUp(.none): return PhonePlace.Entry(kind: kind.rawValue, key: "all")
+        default: return nil
+        }
+    }
+
+    /// The subject a saved rung names, against the picture the phone holds:
+    /// an agent by its session, a card by its id. Nil where the picture no
+    /// longer lists it — never a guess, never a fetch.
+    static func fromPlace(_ entry: PhonePlace.Entry, snapshot: Snapshot) -> PhoneSheet? {
+        switch entry.kind {
+        case PhoneSheetKind.agent.rawValue:
+            guard let (agent, category) = PhoneInbox.uniqueAgent(
+                session: entry.key, agents: snapshot.agents) else { return nil }
+            return .agent(agent, category)
+        case PhoneSheetKind.card.rawValue:
+            guard let card = snapshot.board.cards.first(where: { $0.id == entry.key }) else { return nil }
+            return .card(card)
+        case PhoneSheetKind.catchUp.rawValue:
+            return entry.key == "all" ? .catchUp() : nil
+        default:
+            return nil
+        }
+    }
+}
+
+@MainActor
+extension PhonePlace.CardDraft {
+    /// What a card rung holds, or nil when nothing was typed or opened.
+    /// The editors' text is kept only once the person touched them, with
+    /// the revision it was typed against; an untouched editor is seeded from
+    /// the card again. `note` is the Mac's words, not the person's: not kept.
+    init?(held: PhoneCardDraftState) {
+        let base = held.draftTouched ? held.editRevision : nil
+        let touched = base != nil
+        guard touched || held.editing || held.messageOpen
+                || !held.messageText.isEmpty else { return nil }
+        self.init(title: touched ? held.draftTitle : "",
+                  summary: touched ? held.draftSummary : "",
+                  prompt: touched ? held.draftPrompt : "",
+                  priority: touched ? held.draftPriority : "",
+                  area: touched ? held.draftArea : "",
+                  draftFor: touched ? held.draftFor : "",
+                  touched: touched, baseRevision: base, editing: held.editing,
+                  messageOpen: held.messageOpen, messageText: held.messageText)
+    }
+
+    /// Hand the saved text back to a fresh rung's draft. `draftFor` and
+    /// `draftTouched` stop the card screen reseeding the editors over it;
+    /// `editRevision` makes its Save quote the revision the text was typed
+    /// against, so a card changed since is refused with the Mac's copy.
+    /// Touched text with no revision (an older file) is not restored.
+    func fill(_ held: PhoneCardDraftState) {
+        held.messageOpen = messageOpen
+        held.messageText = messageText
+        guard touched, let baseRevision else { return }
+        // The editor reopens only with its own text: an open editor seeded
+        // afresh would mark itself touched and block the full read's refill.
+        held.editing = editing
+        held.editRevision = baseRevision
+        held.draftTitle = title
+        held.draftSummary = summary
+        held.draftPrompt = prompt
+        held.draftPriority = priority
+        held.draftArea = area
+        held.draftFor = draftFor
+        held.draftTouched = true
+    }
+}
+
 /// Text and its revision context survive Back; live controls never live here.
 @MainActor
 final class PhoneCardDraftState: ObservableObject {
@@ -82,6 +159,10 @@ final class PhoneCardDraftState: ObservableObject {
     @Published var draftArea = ""
     @Published var draftFor = ""
     @Published var draftTouched = false
+    /// The revision the touched editors were typed against; nil while
+    /// untouched. What a guarded Save quotes, so a restored edit is still
+    /// refused against a card changed since.
+    @Published var editRevision: Int?
     @Published var editing = false
     @Published var conflict: CardStated?
     @Published var cachedPlanText: String?
@@ -106,6 +187,35 @@ final class PhoneSheetEntryState {
     private var cards: [String: PhoneCardDraftState] = [:]
     private var replies: [String: PhoneReplyDraft] = [:]
     private var notification: (route: PendingReceipt, epoch: Int, page: CatchUpPage)?
+    /// The agent page this rung shows, so Back and a restore return to it.
+    /// A fresh rung says Main, so every fresh open still lands there.
+    var agentScreen: AgentScreen = AgentScreen.defaultScreen
+
+    init() {}
+
+    /// A rung rebuilt from the saved place (or a displaced draft): the page
+    /// it was on — Terminal demoted to Details — and the text typed into it.
+    init(restoring saved: PhonePlace.Entry?) {
+        guard let saved else { return }
+        agentScreen = AgentScreen(rawValue: PhonePlaceRules.restoredScreen(saved.agentScreen))
+            ?? AgentScreen.defaultScreen
+        if !saved.replyText.isEmpty {
+            replyDraft(for: saved.key).text = saved.replyText
+        }
+        if let draft = saved.cardDraft {
+            draft.fill(cardDraft(for: saved.key))
+        }
+    }
+
+    /// This rung as the saved place records it; nil for a subject the place
+    /// never restores.
+    func placeEntry(for sheet: PhoneSheet) -> PhonePlace.Entry? {
+        guard var entry = sheet.placeEntry else { return nil }
+        if sheet.kind == .agent { entry.agentScreen = agentScreen.rawValue }
+        entry.replyText = replies[entry.key]?.text ?? ""
+        entry.cardDraft = cards[entry.key].flatMap(PhonePlace.CardDraft.init(held:))
+        return entry
+    }
 
     func cardDraft(for id: String) -> PhoneCardDraftState {
         if let held = cards[id] { return held }
@@ -185,12 +295,41 @@ final class PhoneSheetRouter: ObservableObject {
             // Refresh the seed while preserving the text already being edited.
             stack[stack.count - 1] = entry
         } else if stack.count == Self.MAX_DEPTH {
-            entryStates[entryStates.count - 1] = PhoneSheetEntryState()
+            entryStates[entryStates.count - 1] = freshState(for: entry)
             stack[stack.count - 1] = entry
         } else {
-            entryStates.append(PhoneSheetEntryState())
+            entryStates.append(freshState(for: entry))
             stack.append(entry)
         }
+    }
+
+    /// A new rung, carrying the text a tap or a draft displaced from the
+    /// saved place when this is that subject (`PhonePlaceStore.setAside`).
+    private func freshState(for entry: PhoneSheet) -> PhoneSheetEntryState {
+        guard let displaced = PhonePlaceStore.shared.takeOrphanDraft(for: entry.id) else {
+            return PhoneSheetEntryState()
+        }
+        return PhoneSheetEntryState(restoring: displaced)
+    }
+
+    /// Replace the trail with rungs rebuilt from the saved place, in one
+    /// assignment each (`route(_:)`'s shape) so the presenter flips nil to
+    /// item once rather than animating a presentation per rung.
+    func restore(_ trail: [(PhoneSheet, PhonePlace.Entry)]) {
+        let rungs = Array(trail.prefix(Self.MAX_DEPTH))
+        entryStates = rungs.map { PhoneSheetEntryState(restoring: $0.1) }
+        stack = rungs.map(\.0)
+    }
+
+    /// The trail as the saved place records it, bottom first, stopping at
+    /// the first rung it never restores.
+    func placeTrail() -> [PhonePlace.Entry] {
+        var trail: [PhonePlace.Entry] = []
+        for (sheet, state) in zip(stack, entryStates) {
+            guard let entry = state.placeEntry(for: sheet) else { break }
+            trail.append(entry)
+        }
+        return trail
     }
     func back() {
         guard !stack.isEmpty else { return }

@@ -653,6 +653,10 @@ struct Agents: Decodable {
 
     var live: [Agent] { running + waiting + sleeping }
 
+    /// Every row in every bucket — the walk `AgentDetailView.agent` makes,
+    /// and what a saved sheet trail is matched against.
+    var all: [Agent] { waiting + running + sleeping + finished + abandoned }
+
     /// Find a session's row and the bucket it is in — the panel's own
     /// `Agents.row(session:)`, copied because the card screen needs the same
     /// lookup and a fourth open-coded walk over the buckets is how two
