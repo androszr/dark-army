@@ -5,7 +5,7 @@ import Foundation
 /// agent and a card in In progress are the two sheets answered from half
 /// height, everything else opens large.
 enum PhoneSheetKind: String, CaseIterable {
-    case agent, card, catchUp, decision, workFile, notification, image
+    case agent, card, catchUp, decision, workFile, notification
 
     /// The one board column whose card is answered from, and the only place
     /// the phone's sheet code spells it.

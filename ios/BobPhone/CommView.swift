@@ -459,7 +459,8 @@ struct HelperConversationPane: View {
     @State private var expanded: Set<Int> = []
     @State private var openRuns: Set<Int> = []
     @State private var atBottom = true
-    @EnvironmentObject private var sheets: PhoneSheetRouter
+    /// A chip's picture, in its own sheet over this pane (`PicturePopup`).
+    @State private var picture: PicturePick?
 
     private var key: String { ConversationSubject.key(session: session, agent: agentId) }
 
@@ -477,6 +478,7 @@ struct HelperConversationPane: View {
             Rectangle().fill(Theme.hair).frame(height: 1)
             list
         }
+        .picturePopup($picture, client: client)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Theme.bg)
         .overlay(ScanlineOverlay())
@@ -576,7 +578,7 @@ struct HelperConversationPane: View {
                 expanded: expanded.contains(turn.seq),
                 result: result(for: turn),
                 onToggle: { toggle(turn.seq) },
-                onImage: { path in sheets.show(.image(session, path)) })
+                onImage: { path in picture = PicturePick(sessionId: session, path: path) })
         case .run(let tools):
             ConversationRunRow(
                 tools: tools,

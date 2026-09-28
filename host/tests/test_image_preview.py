@@ -657,3 +657,31 @@ def test_a_folder_holding_home_under_another_name_is_a_whole_disk(tmp_path):
     other = tmp_path / "proj"
     other.mkdir()
     assert ip._whole_disk(other.resolve(), held, home) is False
+
+
+def test_closing_a_picture_returns_to_the_same_conversation():
+    """The picture is its own sheet over the conversation, never a rung on
+    the phone's sheet trail: a rung replaces the agent screen, which came
+    back rebuilt on Main at the top."""
+    view = _phone("ConversationView.swift")
+    comm = _phone("CommView.swift")
+    host = _phone("PhoneSheetHost.swift")
+    assert "sheets.show(.image" not in view + comm
+    assert "case image" not in host and "PhoneImageSheetView" not in host
+    screen = view[view.index("struct ConversationScreen"):
+                  view.index("struct ConversationTurnRow")]
+    assert "@State private var picture: PicturePick?" in screen
+    assert ".picturePopup($picture, client: client)" in screen
+    # On the screen's outer stack, beside the reply box, not inside the
+    # scrolling page whose onAppear jumps to the bottom.
+    body = screen[screen.index("var body: some View"):]
+    body = body[:body.index("private var page")]
+    assert ".picturePopup($picture, client: client)" in body
+    chips = view[view.index("struct ConversationImageChips"):]
+    chips = chips[:chips.index("\n}\n")]
+    assert "resignFirstResponder" in chips
+    pane = comm[comm.index("struct HelperConversationPane"):]
+    assert ".picturePopup($picture, client: client)" in pane
+    popup = view[view.index("struct PicturePopup"):
+                 view.index("struct PhoneImageSheetView")]
+    assert "sheet(item: pick)" in popup and "dismiss()" in popup

@@ -179,7 +179,9 @@ def test_sheet_stills_and_arrivals_only_chrome():
     assert conv_body.index("ForEach(rows)") < conv_body.index("part: .choices")
     assert conv_body.index("page\n") < conv_body.index("part: .composer")
     assert ".defaultScrollAnchor(.bottom)" in conv_body
-    assert conv_body.count("scrollTo(Self.answerAnchor, anchor: .bottom)") == 3
+    # Open, new turn at the foot, keyboard up, and one `jump` for a message
+    # just sent or "↓ n new" pressed (26 Sep 2026).
+    assert conv_body.count("scrollTo(Self.answerAnchor, anchor: .bottom)") == 4
     assert "messageWindow" not in conv
     assert conv.count("AnswerBox(") == 2
     ui = (PHONE / "DecryptFeedback.swift").read_text()

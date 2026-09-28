@@ -145,6 +145,7 @@ DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 		E5A5C0DE0000000000000802 /* AgentScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000801 /* AgentScreen.swift */; };
 		E5A5C0DE0000000000000804 /* ConversationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000803 /* ConversationModels.swift */; };
 		E5A5C0DE0000000000000806 /* ConversationCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000805 /* ConversationCache.swift */; };
+		E5A5C0DE00000000000009A2 /* ConversationLive.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE00000000000009A1 /* ConversationLive.swift */; };
 		E5A5C0DE0000000000000808 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000807 /* ConversationView.swift */; };
 		E5A5C0DE000000000000080A /* ConversationCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE0000000000000809 /* ConversationCacheTests.swift */; };
 		E5A5C0DE000000000000080C /* AgentScreenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A5C0DE000000000000080B /* AgentScreenTests.swift */; };
@@ -322,6 +323,7 @@ DEC1510B000000000000003C = {isa = PBXFileReference; explicitFileType = wrapper.c
 		E5A5C0DE0000000000000801 /* AgentScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/AgentScreen.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE0000000000000803 /* ConversationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/ConversationModels.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE0000000000000805 /* ConversationCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/ConversationCache.swift; sourceTree = SOURCE_ROOT; };
+		E5A5C0DE00000000000009A1 /* ConversationLive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/ConversationLive.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE0000000000000807 /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/ConversationView.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE0000000000000809 /* ConversationCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/ConversationCacheTests.swift; sourceTree = SOURCE_ROOT; };
 		E5A5C0DE000000000000080B /* AgentScreenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/AgentScreenTests.swift; sourceTree = SOURCE_ROOT; };
@@ -463,6 +465,7 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				E5A5C0DE0000000000000803 /* ConversationModels.swift */,
 				A65EEAD00000000000000001 /* AgentSheetLead.swift */,
 				E5A5C0DE0000000000000805 /* ConversationCache.swift */,
+				E5A5C0DE00000000000009A1 /* ConversationLive.swift */,
 				E5A5C0DE0000000000000807 /* ConversationView.swift */,
 				E5A5C0DE0000000000000301 /* LinkTiming.swift */,
 				E5A5C0DE0000000000000901 /* RelaySocket.swift */,
@@ -793,6 +796,7 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				E5A5C0DE0000000000000802 /* AgentScreen.swift in Sources */,
 				E5A5C0DE0000000000000804 /* ConversationModels.swift in Sources */,
 				E5A5C0DE0000000000000806 /* ConversationCache.swift in Sources */,
+				E5A5C0DE00000000000009A2 /* ConversationLive.swift in Sources */,
 				E5A5C0DE0000000000000808 /* ConversationView.swift in Sources */,
 				E5A5C0DE0000000000000302 /* LinkTiming.swift in Sources */,
 				E5A5C0DE0000000000000902 /* RelaySocket.swift in Sources */,

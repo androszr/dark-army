@@ -14,6 +14,11 @@ struct ConversationScreen<Header: View>: View {
     /// controls: an `AskUserQuestion`
     /// call's tool line carries no words of its own. Empty for no question.
     var ask: String = ""
+    /// The agent is working right now (the live `running` bucket): the page
+    /// is followed quickly and `now` is drawn under the turns.
+    var running: Bool = false
+    /// What it is doing, in the fleet row's words (`PhoneAgentFacts.head`).
+    var now: String = ""
     /// Drawn above the turns, inside the one page. Empty at every call
     /// site today.
     private let header: Header
@@ -28,7 +33,14 @@ struct ConversationScreen<Header: View>: View {
     /// `windowStep` at a time from the top.
     @State private var window: Int
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @EnvironmentObject private var sheets: PhoneSheetRouter
+    /// The picture opened from a chip, in its own sheet over this one: the
+    /// conversation under it stays mounted, so closing it returns to the
+    /// same tab at the same scroll position.
+    @State private var picture: PicturePick?
+    /// Rows that arrived while the person was scrolled up to read.
+    @State private var unseen: Int
+    /// Stepped to ask the page to go to its foot.
+    @State private var jump: Int
     // Computed, not stored: a generic type cannot hold a static stored
     // property, and the archive build refuses it.
     static var windowStep: Int { 300 }
@@ -36,6 +48,8 @@ struct ConversationScreen<Header: View>: View {
     init(agent: Agent, stopped: Bool, client: PhoneClient,
          retainedReply: PhoneReplyDraft? = nil,
          ask: String = "",
+         running: Bool = false,
+         now: String = "",
          typing: Bool = false,
          @ViewBuilder header: () -> Header) {
         self.agent = agent
@@ -44,12 +58,31 @@ struct ConversationScreen<Header: View>: View {
         self.retainedReply = retainedReply
         self.ask = ask
         self.typing = typing
+        self.running = running
+        self.now = now
         self.header = header()
         self._expanded = State(initialValue: [])
         self._openRuns = State(initialValue: [])
         self._atBottom = State(initialValue: true)
         self._onScreen = State(initialValue: false)
         self._window = State(initialValue: Self.windowStep)
+        self._unseen = State(initialValue: 0)
+        self._jump = State(initialValue: 0)
+    }
+
+    /// Messages the person sent that the journal has not recorded yet.
+    private var echoes: [ConversationLive.Echo] {
+        ConversationLive.echoes(receipts: client.receipts.receipts,
+                                sessionId: agent.sessionId, turns: turns,
+                                now: Date().timeIntervalSince1970)
+    }
+
+    private var following: Bool {
+        ConversationLive.follows(running: running, echoes: echoes.count)
+    }
+
+    private var nowLine: String {
+        ConversationLive.nowLine(running: running, head: now)
     }
 
     private var turns: [ConversationTurn] {
@@ -91,6 +124,9 @@ struct ConversationScreen<Header: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             page
+            if !atBottom, unseen > 0 {
+                newRow
+            }
             Rectangle().fill(Theme.hair).frame(height: 1)
             AnswerBox(agent: agent, stopped: stopped, client: client,
                       retainedReply: retainedReply, part: .composer)
@@ -98,13 +134,26 @@ struct ConversationScreen<Header: View>: View {
                 .padding(.vertical, 8)
                 .background(Theme.bg)
         }
+        .picturePopup($picture, client: client)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             onScreen = true
             client.watchConversation(agent.sessionId)
             Task { await client.catchUpConversation(agent.sessionId) }
         }
+        .task(id: "\(agent.sessionId)|\(following)") {
+            // The quick follow: at home a small page about every second
+            // while the agent works or a sent message has not shown; away,
+            // the Mac's pushed picture asks instead (`PhoneClient.tookPush`).
+            client.followConversation(following)
+            guard following else { return }
+            while !Task.isCancelled {
+                if !client.knowsItIsAway { await client.followConversationOnce() }
+                try? await Task.sleep(nanoseconds: ConversationLive.followPause)
+            }
+        }
         .onDisappear {
+            client.followConversation(false)
             // Only this screen's own watch: a sheet closing over another
             // agent's screen must not clear the one underneath, whose
             // `onAppear` may already have run.
@@ -138,6 +187,12 @@ struct ConversationScreen<Header: View>: View {
                             rowView(row)
                                 .id(row.id)
                         }
+                        ForEach(echoes) { echo in
+                            ConversationEchoRow(echo: echo)
+                        }
+                        if !nowLine.isEmpty {
+                            ConversationNowLine(text: nowLine, seed: agent.sessionId)
+                        }
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -158,7 +213,7 @@ struct ConversationScreen<Header: View>: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .id(Self.answerAnchor)
-                    .onAppear { atBottom = true }
+                    .onAppear { atBottom = true; unseen = 0 }
                     .onDisappear { atBottom = false }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -167,9 +222,25 @@ struct ConversationScreen<Header: View>: View {
             .scrollDismissesKeyboard(.interactively)
             .defaultScrollAnchor(.bottom)
             .onAppear { proxy.scrollTo(Self.answerAnchor, anchor: .bottom) }
-            .onChange(of: turns.count) { _, _ in
-                guard atBottom else { return }
+            .onChange(of: turns.count) { old, new in
+                guard atBottom else {
+                    if new > old { unseen += new - old }
+                    return
+                }
                 proxy.scrollTo(Self.answerAnchor, anchor: .bottom)
+            }
+            .onChange(of: echoes.count) { old, new in
+                // The person just pressed SEND: their words are what they
+                // want to see, wherever they had scrolled.
+                if new > old { jump += 1 }
+            }
+            .onChange(of: jump) { _, _ in
+                // One scroll for the two asks to go to the foot: a message
+                // just sent, and the "↓ n new" row pressed.
+                unseen = 0
+                Motion.animate(.easeOut(duration: 0.2), reduced: reduceMotion) {
+                    proxy.scrollTo(Self.answerAnchor, anchor: .bottom)
+                }
             }
             .onChange(of: typing) { _, up in
                 // The keyboard came up over the page: bring the field and
@@ -193,7 +264,7 @@ struct ConversationScreen<Header: View>: View {
                 expanded: expanded.contains(turn.seq),
                 result: result(for: turn),
                 onToggle: { toggle(turn.seq) },
-                onImage: { path in sheets.show(.image(agent.sessionId, path)) }
+                onImage: { path in picture = PicturePick(sessionId: agent.sessionId, path: path) }
             )
         case .run(let tools):
             ConversationRunRow(
@@ -208,6 +279,23 @@ struct ConversationScreen<Header: View>: View {
                 onToggleTool: { toggle($0) }
             )
         }
+    }
+
+    /// "↓ 3 new": rows arrived while the person was scrolled up to read.
+    /// A stack sibling above the composer, never painted over the page; a
+    /// press goes to the foot.
+    private var newRow: some View {
+        DecryptButton(action: { jump += 1 }) {
+            Text(ConversationLive.newPill(unseen))
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.phosphor)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(unseen == 1 ? "1 new turn, go to it"
+                                        : "\(unseen) new turns, go to them")
     }
 
     /// The turns above the drawn window, one press for another
@@ -304,10 +392,55 @@ struct ConversationScreen<Header: View>: View {
 extension ConversationScreen where Header == EmptyView {
     init(agent: Agent, stopped: Bool, client: PhoneClient,
          retainedReply: PhoneReplyDraft? = nil, ask: String = "",
-         typing: Bool = false) {
+         running: Bool = false, now: String = "", typing: Bool = false) {
         self.init(agent: agent, stopped: stopped, client: client,
-                  retainedReply: retainedReply, ask: ask, typing: typing,
+                  retainedReply: retainedReply, ask: ask,
+                  running: running, now: now, typing: typing,
                   header: { EmptyView() })
+    }
+}
+
+/// A message the person just sent, drawn as their turn is (`> words`) but
+/// dimmer and marked `sending` or `delivered`, until the journal records
+/// it and the real turn takes its place (`ConversationLive.echoes`).
+struct ConversationEchoRow: View {
+    let echo: ConversationLive.Echo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(ConversationLive.mark(echo))
+                .font(Theme.mono(10))
+                .foregroundStyle(echo.delivered ? Theme.phosphor : Theme.dim)
+            Text("> \(echo.text)")
+                .font(Theme.mono(13))
+                .foregroundStyle(Theme.phosphorBright)
+                .opacity(0.7)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("You, \(ConversationLive.mark(echo)): \(echo.text)")
+    }
+}
+
+/// What the agent is doing right now, one dim line under the turns while
+/// it works — the fleet row's words, with the caret that says it is live.
+struct ConversationNowLine: View {
+    let text: String
+    let seed: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("// \(text)")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.dim)
+                .fixedSize(horizontal: false, vertical: true)
+            AgentChatterView(.caret, wait: .opening, seed: seed, spoken: "The agent is working")
+                .id(seed)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(text)
     }
 }
 
@@ -462,7 +595,15 @@ struct ConversationImageChips: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(Array(paths.enumerated()), id: \.offset) { pair in
-                    DecryptButton(action: { onOpen(pair.offset) }) {
+                    DecryptButton(action: {
+                        // Put the reply keyboard away first: UIKit would
+                        // hand focus back when the picture closes, and the
+                        // rising keyboard scrolls the page to the bottom.
+                        UIApplication.shared.sendAction(
+                            #selector(UIResponder.resignFirstResponder),
+                            to: nil, from: nil, for: nil)
+                        onOpen(pair.offset)
+                    }) {
                         HStack(spacing: 6) {
                             Image(systemName: "photo")
                                 .font(Theme.mono(11))
@@ -584,6 +725,59 @@ struct ZoomablePicture: UIViewRepresentable {
                             animated: true)
             }
         }
+    }
+}
+
+/// One picture a chip opened: which session's project, which path.
+struct PicturePick: Identifiable, Equatable {
+    let sessionId: String
+    let path: String
+    var id: String { sessionId + "/" + path }
+}
+
+/// The picture's own sheet, presented by the conversation that opened it
+/// rather than pushed onto the phone's one sheet trail: a rung on that
+/// trail replaces the agent screen, which comes back rebuilt on Main at
+/// the top. Close or a drag down returns to the conversation untouched.
+struct PicturePopup: View {
+    @ObservedObject var client: PhoneClient
+    let pick: PicturePick
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(ImageLinks.name(pick.path))
+                    .font(Theme.mono(14, weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .accessibilityAddTraits(.isHeader)
+                DecryptButton(action: { dismiss() }) {
+                    Text("Close").font(Theme.mono(12))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.phosphor)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            Rectangle().fill(Theme.hair).frame(height: 1)
+                .padding(.horizontal, 14)
+            PhoneImageSheetView(client: client, sessionId: pick.sessionId, path: pick.path)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Theme.bg)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Theme.bg)
+    }
+}
+
+extension View {
+    /// Presents a chip's picture over this view, leaving this view mounted.
+    func picturePopup(_ pick: Binding<PicturePick?>, client: PhoneClient) -> some View {
+        sheet(item: pick) { PicturePopup(client: client, pick: $0) }
     }
 }
 

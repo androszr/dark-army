@@ -518,6 +518,12 @@ final class PhoneClient: ObservableObject {
     @Published private(set) var conversationWatching: String?
     /// Last `available: false` reason per session, the status line's words.
     @Published private(set) var conversationUnavailable: [String: String] = [:]
+    /// The watched conversation is being followed quickly — the agent is
+    /// working or a sent message has not shown (`ConversationLive.follows`).
+    /// Set by the screen; read by the home follow loop and `tookPush`.
+    private(set) var conversationFollowing = false
+    /// One follow ask at a time, whichever of the two asked.
+    private var conversationFollowInFlight = false
     static let homeCatchUpHops = 40
     static let awayCatchUpHops = 3
     /// The session whose Dark Army-owned terminal is on screen, set by the agent
@@ -875,6 +881,14 @@ final class PhoneClient: ObservableObject {
         _ = takeUsage(from: body, record: record)
         publishWidgetSummary()
         lastHeard = Date()
+        // Away, a pushed picture means something moved on the Mac: the
+        // followed conversation is asked for now, not at the next 8s
+        // check-in. No conversation text rides the push itself.
+        if ConversationLive.kicksOnPush(following: conversationFollowing,
+                                        watching: conversationWatching,
+                                        inFlight: conversationFollowInFlight) {
+            Task { [weak self] in await self?.followConversationOnce() }
+        }
         let stamped = (payload["ts"] as? Double)
             ?? (payload["ts"] as? NSNumber)?.doubleValue ?? 0
         let now = Date().timeIntervalSince1970
@@ -2737,6 +2751,27 @@ final class PhoneClient: ObservableObject {
             conversationUnavailable[sid] = page.reason
         }
         return page.more
+    }
+
+    /// The Conversation screen saying whether it wants the quick follow.
+    func followConversation(_ on: Bool) {
+        conversationFollowing = on
+    }
+
+    /// One follow ask for the watched conversation: a page, and at most
+    /// two more while the Mac says there is more. Skipped while another
+    /// follow ask is out, in the background run, or with nothing watched.
+    /// `fetchConversation` itself is untouched; its pages dedupe in the
+    /// cache, so a check-in's page landing beside this one is harmless.
+    func followConversationOnce() async {
+        guard !conversationFollowInFlight, !backgroundRun, departedAt == nil,
+              conversationWatching != nil else { return }
+        conversationFollowInFlight = true
+        defer { conversationFollowInFlight = false }
+        for _ in 0..<3 {
+            let more = await fetchConversation()
+            if !more { break }
+        }
     }
 
     /// Page until `more` is false, bounded by the hop caps, stopping when

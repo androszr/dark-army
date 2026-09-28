@@ -421,7 +421,7 @@ the emulator's keyboard up an always-open strip left the terminal a
 sliver. An older Mac
 (`terminal_stream_supported` absent) gets one sentence and no emulator.
 
-**A picture an agent names opens in a sheet.** `ImageLinks.paths` finds each picture path in an agent's message (a bare name right after a path takes that folder; web addresses and hidden folders never match; at most twelve) and `ConversationImageChips` draws them as chips under the message, outside its combined accessibility element. A tap opens the `image` sheet subject on **that one picture**, and only a tapped picture is ever asked of the Mac, which serves it only from Dark Army's own checkout or an onboarded project, never Documents, Desktop or elsewhere at home (the sealed `image` read, `docs/transport-contract.md`) — no prefetch, no neighbours, no filmstrip. The sheet draws it with pinch and double-tap zoom (`ZoomablePicture`, a `UIScrollView`, so a GIF still moves), the Mac's facts about the file and what was shrunk, and offers **no way to save it**: no Share, no Photos. The phone's only copy is `ImageMemo` — memory only, never disk, sixteen at most, each dropped a day after it arrived (pruned on every applied state) and all of them with the pairing.
+**A picture an agent names opens in a sheet.** `ImageLinks.paths` finds each picture path in an agent's message (a bare name right after a path takes that folder; web addresses and hidden folders never match; at most twelve) and `ConversationImageChips` draws them as chips under the message, outside its combined accessibility element. A tap opens **that one picture** in its own sheet (`PicturePopup`, `.picturePopup` on `ConversationScreen` and `HelperConversationPane`) presented over the conversation, never a rung on the sheet trail — a rung replaced the agent screen, which came back rebuilt on Main at the top — so Close or a drag down returns to the same tab at the same scroll position; and only a tapped picture is ever asked of the Mac, which serves it only from Dark Army's own checkout or an onboarded project, never Documents, Desktop or elsewhere at home (the sealed `image` read, `docs/transport-contract.md`) — no prefetch, no neighbours, no filmstrip. The sheet draws it with pinch and double-tap zoom (`ZoomablePicture`, a `UIScrollView`, so a GIF still moves), the Mac's facts about the file and what was shrunk, and offers **no way to save it**: no Share, no Photos. The phone's only copy is `ImageMemo` — memory only, never disk, sixteen at most, each dropped a day after it arrived (pruned on every applied state) and all of them with the pairing.
 
 **Main carries the card's journey** (`CardJourney`, `JourneyRail` in
 `AgentDetailView.swift`, 26 Sep 2026): under the lead, on a session working
@@ -456,7 +456,23 @@ Main and Needs you keeps its stopped-and-channel gate. `DetailTab` still
 decides the stream. Turns are
 oldest-first, newest at the bottom: `>` for the person, `MarkdownText` for
 the agent, one dim `⚙` line per tool (tap for brief and a one-line result,
-never the bytes). Follows new turns only at the bottom.
+never the bytes). Follows new turns only at the bottom; scrolled up, a
+`↓ n new` row above the composer goes to the foot, and never paints over
+the page. **The tab is live while it is watched (26 Sep 2026,
+`ConversationLive`):** a message sent from it is drawn at once under the
+turns as an echo marked `sending`, then `delivered` once the Mac took it,
+read from the press's own receipt; the journal's person turn with the same
+words, written after the press, replaces it, and an echo still waiting
+after three minutes, refused or stuck is dropped (the refusal is the answer
+box's note). While the agent is `running` or an echo waits, the page is
+followed quickly — at home one small conversation page about every second
+(`PhoneClient.followConversationOnce`, one ask at a time, `fetchConversation`
+unchanged); away, the Mac's own socket push asks for the page
+(`tookPush`), never a faster relay loop — and the check-in cadence below is
+untouched. One dim line under the turns says what the agent is doing, the
+fleet row's words (`PhoneAgentFacts.head`), only while it is working.
+Answers arrive a whole message or tool call at a time: a journal is written
+per message, never per word.
 `ConversationCacheStore` is pairing-stamped, pruned at five days.
 Catch-up 40 hops at home, 3 away; never `backgroundRefresh`. When the
 hops left cannot reach the present (`ConversationCatchUp.jump`), the cursor

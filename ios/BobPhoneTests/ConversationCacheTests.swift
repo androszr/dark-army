@@ -306,3 +306,104 @@ final class ImageMemoTests: XCTestCase {
         XCTAssertNotNil(memo.get(session: "s", path: "\(ImageMemo.limit).png"))
     }
 }
+
+/// The live Conversation tab's rules (`ConversationLive`).
+final class ConversationLiveTests: XCTestCase {
+    private func reply(_ id: String, _ text: String, session: String = "s",
+                       state: Receipt.State = .sent, at: Double = 1000) -> Receipt {
+        var r = Receipt(id: id, action: PhoneActions.reply, scope: session,
+                        fields: ["session_id": session, "text": text],
+                        effect: .none, pairingToken: "p")
+        r.state = state
+        r.createdAt = at
+        return r
+    }
+
+    private func user(_ seq: Int, _ text: String, ts: Double) -> ConversationTurn {
+        ConversationTurn(seq: seq, kind: "user", ts: ts, text: text)
+    }
+
+    func testASentMessageIsEchoedAtOnceMarkedSending() {
+        let echoes = ConversationLive.echoes(
+            receipts: [reply("a", "keep going", state: .queued)],
+            sessionId: "s", turns: [], now: 1001)
+        XCTAssertEqual(echoes.map(\.text), ["keep going"])
+        XCTAssertEqual(ConversationLive.mark(echoes[0]), "sending")
+    }
+
+    func testTheMacTakingItMarksItDelivered() {
+        for state in [Receipt.State.accepted, .done] {
+            let echoes = ConversationLive.echoes(
+                receipts: [reply("a", "hi", state: state)],
+                sessionId: "s", turns: [], now: 1001)
+            XCTAssertEqual(echoes.map(\.delivered), [true])
+            XCTAssertEqual(ConversationLive.mark(echoes[0]), "delivered")
+        }
+    }
+
+    func testTheRealTurnReplacesTheEcho() {
+        let turns = [user(4, "keep   going\n", ts: 1003)]
+        XCTAssertTrue(ConversationLive.echoes(
+            receipts: [reply("a", "keep going")],
+            sessionId: "s", turns: turns, now: 1004).isEmpty)
+    }
+
+    func testAWrappedTurnStillCounts() {
+        let turns = [user(4, "[phone] keep going please", ts: 1003)]
+        XCTAssertTrue(ConversationLive.landed(text: "keep going", createdAt: 1000,
+                                              turns: turns))
+    }
+
+    func testAnOlderTurnWithTheSameWordsDoesNotSwallowANewMessage() {
+        let turns = [user(1, "yes", ts: 100)]
+        let echoes = ConversationLive.echoes(
+            receipts: [reply("a", "yes", at: 1000)],
+            sessionId: "s", turns: turns, now: 1001)
+        XCTAssertEqual(echoes.map(\.text), ["yes"])
+    }
+
+    func testRefusedStuckOldAndOtherSessionsAreNotEchoed() {
+        let receipts = [
+            reply("r", "no", state: .refused),
+            reply("k", "no", state: .stuck),
+            reply("o", "old", at: 1000 - ConversationLive.echoLifetime - 1),
+            reply("x", "elsewhere", session: "other"),
+        ]
+        XCTAssertTrue(ConversationLive.echoes(receipts: receipts, sessionId: "s",
+                                              turns: [], now: 1000).isEmpty)
+    }
+
+    func testEchoesAreOldestFirstAndOtherVerbsAreIgnored() {
+        var stop = reply("z", "")
+        stop.action = PhoneActions.dismiss
+        let echoes = ConversationLive.echoes(
+            receipts: [reply("b", "second", at: 1002), stop, reply("a", "first", at: 1001)],
+            sessionId: "s", turns: [], now: 1003)
+        XCTAssertEqual(echoes.map(\.id), ["a", "b"])
+    }
+
+    func testFollowingRunsWhileWorkingOrWhileAMessageIsOnItsWay() {
+        XCTAssertTrue(ConversationLive.follows(running: true, echoes: 0))
+        XCTAssertTrue(ConversationLive.follows(running: false, echoes: 1))
+        XCTAssertFalse(ConversationLive.follows(running: false, echoes: 0))
+    }
+
+    func testAPushAsksOnlyWhenFollowingAWatchedConversationWithNoAskOut() {
+        XCTAssertTrue(ConversationLive.kicksOnPush(following: true, watching: "s", inFlight: false))
+        XCTAssertFalse(ConversationLive.kicksOnPush(following: false, watching: "s", inFlight: false))
+        XCTAssertFalse(ConversationLive.kicksOnPush(following: true, watching: nil, inFlight: false))
+        XCTAssertFalse(ConversationLive.kicksOnPush(following: true, watching: "", inFlight: false))
+        XCTAssertFalse(ConversationLive.kicksOnPush(following: true, watching: "s", inFlight: true))
+    }
+
+    func testTheNowLineIsDrawnOnlyWhileWorking() {
+        XCTAssertEqual(ConversationLive.nowLine(running: true, head: " Working — running Bash "),
+                       "Working — running Bash")
+        XCTAssertEqual(ConversationLive.nowLine(running: false, head: "Working"), "")
+    }
+
+    func testTheNewPill() {
+        XCTAssertEqual(ConversationLive.newPill(0), "")
+        XCTAssertEqual(ConversationLive.newPill(3), "↓ 3 new")
+    }
+}

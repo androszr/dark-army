@@ -295,6 +295,8 @@ struct AgentDetailView: View {
                     agent: agent, stopped: stopped, client: client,
                     retainedReply: sheetEntry?.replyDraft(for: agent.sessionId),
                     ask: AgentSheetLead.questionText(agent.questionList.map(\.text)),
+                    running: liveCategory == .running,
+                    now: PhoneAgentFacts.head(agent: agent, category: liveCategory),
                     typing: keyboardUp)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .details, .terminal:

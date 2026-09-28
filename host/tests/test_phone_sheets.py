@@ -38,7 +38,7 @@ precondition(PhoneSheetKind.answers(.agent, column: nil))
 precondition(PhoneSheetKind.onKeyboard(.medium) == .large)
 precondition(PhoneSheetKind.onKeyboard(.large) == .large)
 precondition(PhoneSheetKind.presentsTerminalFullScreen(kind) == (kind == .agent))
-precondition(PhoneSheetKind.allCases.count == 7)
+precondition(PhoneSheetKind.allCases.count == 6)
 ''')
     binary = folder / "rules"
     subprocess.run([swift, str(PHONE / "PhoneSheet.swift"), str(main), "-o", str(binary)],
@@ -46,7 +46,7 @@ precondition(PhoneSheetKind.allCases.count == 7)
     return binary
 
 
-@pytest.mark.parametrize("kind", ["agent", "card", "catchUp", "decision", "workFile", "notification", "image"])
+@pytest.mark.parametrize("kind", ["agent", "card", "catchUp", "decision", "workFile", "notification"])
 @pytest.mark.parametrize("accessibility", ["false", "true"])
 @pytest.mark.parametrize("column", ["-", "prep", "backlog", "in_progress", "done"])
 def test_executed_detent_and_terminal_policy(rules_binary, kind, accessibility, column):

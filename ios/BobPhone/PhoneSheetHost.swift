@@ -10,8 +10,6 @@ struct PhoneSheet: Identifiable, Equatable {
         case decision(DecisionItem)
         case workFile(String, Int, WorkRecordFile)
         case notification(PendingReceipt)
-        /// One picture a message names, in its session's project.
-        case image(String, String)
     }
     let subject: Subject
 
@@ -23,9 +21,6 @@ struct PhoneSheet: Identifiable, Equatable {
         Self(subject: .workFile(cardId, index, file))
     }
     static func notification(_ receipt: PendingReceipt) -> Self { Self(subject: .notification(receipt)) }
-    static func image(_ sessionId: String, _ path: String) -> Self {
-        Self(subject: .image(sessionId, path))
-    }
 
     // Aliases keep the Foundation-only rule table authoritative.
     static let initialDetent = PhoneSheetKind.initialDetent
@@ -42,7 +37,6 @@ struct PhoneSheet: Identifiable, Equatable {
         case .decision: return .decision
         case .workFile: return .workFile
         case .notification: return .notification
-        case .image: return .image
         }
     }
     /// The one subject fact the rule table reads: a card's column decides
@@ -60,7 +54,6 @@ struct PhoneSheet: Identifiable, Equatable {
         case .decision(let item): key = item.id
         case .workFile(let cardId, let index, _): key = "\(cardId)/\(index)"
         case .notification(let receipt): key = "\(receipt.generation)/\(receipt.receiptId)/\(receipt.sequence)"
-        case .image(let sessionId, let path): key = "\(sessionId)/\(path)"
         }
         return kind.rawValue + "/" + key
     }
@@ -72,7 +65,6 @@ struct PhoneSheet: Identifiable, Equatable {
         case .decision(let item): return item.title
         case .workFile(_, _, let file): return file.path
         case .notification: return "Notification"
-        case .image(_, let path): return ImageLinks.name(path)
         }
     }
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
@@ -333,8 +325,6 @@ struct PhoneSheetFrame: View {
             DecisionDetailView(item: item, client: client)
         case .workFile(let cardId, let index, let file):
             PhoneWorkRecordFileView(client: client, cardId: cardId, index: index, file: file)
-        case .image(let sessionId, let path):
-            PhoneImageSheetView(client: client, sessionId: sessionId, path: path)
         case .notification(let receipt):
             NotificationDestinationView(route: receipt, client: client, onAvailability: { available in
                 guard router.topState?.id == entryIdentity else { return }
