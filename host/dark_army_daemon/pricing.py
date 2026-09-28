@@ -90,6 +90,9 @@ RATES: dict[str, Rate] = {
     "claude-opus-4-8": Rate(5.00, 25.00),
     "claude-opus-4-7": Rate(5.00, 25.00),
     "claude-opus-4-6": Rate(5.00, 25.00),
+    # Same ordering rule: the 5-5 row must sit above "claude-sonnet-5".
+    # Sonnet 5.5 is $2/$10 with cache reads at $0.20/MTok, the default 0.10x.
+    "claude-sonnet-5-5": Rate(2.00, 10.00),
     "claude-sonnet-5": Rate(3.00, 15.00,
                             intro_input=2.00, intro_output=10.00,
                             intro_until="2026-08-31"),

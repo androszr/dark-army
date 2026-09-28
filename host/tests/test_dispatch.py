@@ -1964,6 +1964,17 @@ def test_the_opus_5_5_pins_are_on_the_menu():
         "claude", "--model", "claude-opus-5-5", "do it"]
 
 
+def test_the_sonnet_5_5_pins_are_on_the_menu():
+    """Sonnet 5.5 is pinnable by exact id and as its 1M-context variant,
+    newest first in the Sonnet family: after "sonnet", before Sonnet 5."""
+    t = dispatch.MODELS["claude"]
+    assert t.index("sonnet") < t.index("claude-sonnet-5-5") < t.index(
+        "claude-sonnet-5-5[1m]") < t.index("claude-sonnet-5")
+    assert dispatch.argv_for("claude", "claude", "do it",
+                             model="claude-sonnet-5-5") == [
+        "claude", "--model", "claude-sonnet-5-5", "do it"]
+
+
 def test_a_fable_pin_rides_the_argv_verbatim():
     """A card pinned to Fable 5.1 starts on exactly that id, not the family's
     latest — pinned byte for byte like the other model-flag tests."""

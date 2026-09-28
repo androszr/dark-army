@@ -262,3 +262,14 @@ def test_opus_5_5_has_its_own_row_above_opus_5():
     assert (rate.input, rate.output) == (4.00, 20.00)
     assert resolve_rate("claude-opus-5-5[1m]") is rate
     assert cost_usd("claude-opus-5-5", cache_read=1_000_000) == pytest.approx(0.20)
+
+
+def test_sonnet_5_5_has_its_own_row_above_sonnet_5():
+    """Without its own row above "claude-sonnet-5" a Sonnet 5.5 turn would be
+    priced at Sonnet 5's post-promotion $3/$15, half as much again."""
+    keys = list(pricing.RATES)
+    assert keys.index("claude-sonnet-5-5") < keys.index("claude-sonnet-5")
+    rate = resolve_rate("claude-sonnet-5-5")
+    assert (rate.input, rate.output) == (2.00, 10.00)
+    assert resolve_rate("claude-sonnet-5-5[1m]") is rate
+    assert cost_usd("claude-sonnet-5-5", cache_read=1_000_000) == pytest.approx(0.20)
