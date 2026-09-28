@@ -780,6 +780,11 @@ class BoardVerbsMixin:
             # key — which decodes false, so the phone draws the timing
             # section **absent** rather than present and 404ing.
             "lifecycle_supported": True,
+            # And on `queue_writable`'s argument once more: this daemon
+            # serves the sealed `history_week` read, and an older one simply
+            # sends no key — which decodes false, so the phone's History
+            # tile stays dim with a sentence rather than lit and 404ing.
+            "history_week_supported": True,
             # And on the same argument once more: this daemon admits the
             # three objective text fields on a sealed `board_create`, and an
             # older one answers 403 for the *whole* create — so the phone
@@ -10605,6 +10610,11 @@ class BoardVerbsMixin:
                 "outcomes_reason": outcomes_reason,
                 "measurements_available": not getattr(
                     self, "_outcomes_unavailable", False),
+                # True until a Codex journal pass has read every journal:
+                # the ledger then says Codex is still being read, and its
+                # token cost is a floor rather than the period's whole.
+                "codex_history_partial": bool(getattr(
+                    self, "_codex_history_partial", True)),
                 "other_days": other_days,
                 **joined,
             }

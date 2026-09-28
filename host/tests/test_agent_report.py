@@ -317,3 +317,53 @@ def test_by_agent_filtered_to_no_sessions_returns_no_rows(store):
     _turn(store, "s1", agent="bc-implementer", agent_id="a1")
     assert store.by_agent(30, session_ids=[]) == []
     assert store.by_agent(30, session_ids=None), "None is still the whole machine"
+
+
+def test_join_copies_the_token_cost_and_the_reported_dollar_side_by_side():
+    """Two kinds of money on one session: copied, never summed, and the card's
+    `cost_usd` is still assigned from the rollup's existing key."""
+    report = agent_report.join(
+        _runs(("c1", "s1"), ("c1", "s2")), [],
+        {"s1": {"cost_usd": 1.25, "turns": 4, "token_cost_usd": 3.5,
+                "reported_cost_usd": 0.0, "token_unpriced_turns": 1,
+                "cache_split_unknown_turns": 2}},
+        {}, {},
+    )
+    card = report["cards"][0]
+    by_id = {s["session_id"]: s for s in card["sessions"]}
+    assert by_id["s1"]["token_cost_usd"] == pytest.approx(3.5)
+    assert by_id["s1"]["reported_cost_usd"] == 0.0     # a real zero stays
+    assert by_id["s1"]["token_unpriced_turns"] == 1
+    assert by_id["s1"]["cache_split_unknown_turns"] == 2
+    assert by_id["s2"]["token_cost_usd"] is None
+    assert by_id["s2"]["reported_cost_usd"] is None
+    assert card["cost_usd"] == pytest.approx(1.25)
+
+
+def test_session_efficiency_to_join_carries_a_codex_token_cost(store):
+    """A Codex session has no reported dollar and no Claude estimate; its
+    token cost still reaches the card's session."""
+    _turn(store, "codex:t1", model="gpt-6-sol", provider="codex",
+          input_tokens=1_000_000, cache_read=1_000_000, output_tokens=0)
+    efficiency = store.session_efficiency(["codex:t1"])
+    runs = [{"card_id": "c1", "provider": "codex", "session_id": "codex:t1",
+             "phase": "implementation", "root": "/p", "bound_at": 1.0}]
+    session = agent_report.join(runs, [], efficiency, {}, {})["cards"][0]["sessions"][0]
+    assert session["token_cost_usd"] == pytest.approx(0.20)
+    assert session["reported_cost_usd"] is None
+    assert session["estimated_cost_usd"] is None
+    assert session["measured_cost_usd"] is None
+
+
+def test_join_carries_the_split_of_a_codex_labelled_claude_session(store):
+    """8 of 53 Codex runs on this Mac were Claude sessions: the split, not
+    the label, says whose tokens were priced."""
+    _turn(store, "s1", model="claude-opus-4-8", provider="claude",
+          output_tokens=1_000_000)
+    runs = [{"card_id": "c1", "provider": "codex", "session_id": "s1",
+             "phase": "implementation", "root": "/p", "bound_at": 1.0}]
+    session = agent_report.join(runs, [], store.session_efficiency(["s1"]),
+                                {}, {})["cards"][0]["sessions"][0]
+    assert session["provider"] == "codex"
+    assert session["claude_token_cost_usd"] == pytest.approx(25.0)
+    assert session["codex_token_cost_usd"] is None

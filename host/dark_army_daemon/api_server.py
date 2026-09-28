@@ -168,6 +168,32 @@ LAN_KEEPALIVE_COUNT = 4
 HOME_UPDATE_REFUSAL = ("update the Dark Army phone app and pair it again — this Mac "
                        "only takes sealed requests")
 
+# The sealed `history_week` read is a **closed** projection of
+# `agent_efficiency_report(7, "")`: every row is rebuilt from these tuples,
+# never copied through, so a card's title, a person's name or a project root
+# (a path) can never ride the relay by accident. They are exactly the fields
+# the shared week fold (`LedgerWeek`, byte-pinned Mac/phone) reads for the
+# token cost, the reported dollar and the not-priced marks.
+HISTORY_WEEK_CARD_KEYS = ("card_id", "sessions")
+HISTORY_WEEK_SESSION_KEYS = (
+    "session_id", "provider", "phase", "bound_at", "known",
+    "token_cost_usd", "claude_token_cost_usd", "grok_token_cost_usd",
+    "codex_token_cost_usd", "token_unpriced_turns", "reported_cost_usd",
+)
+HISTORY_WEEK_DAY_KEYS = (
+    "day", "claude_token_cost_usd", "grok_token_cost_usd",
+    "codex_token_cost_usd", "claude_reported_cost_usd",
+    "grok_reported_cost_usd", "claude_token_unpriced_sessions",
+    "grok_token_unpriced_sessions", "codex_token_unpriced_sessions",
+    "claude_token_unpriced_session_ids", "grok_token_unpriced_session_ids",
+    "codex_token_unpriced_session_ids",
+)
+# The body's own keys. `truncated` is present only when the page cut cards.
+HISTORY_WEEK_BODY_KEYS = (
+    "supported", "available", "range_days", "from", "to", "generated_at",
+    "partial", "codex_history_partial", "cards", "other_days", "truncated",
+)
+
 # A request line plus headers. Anything larger is not a client of ours.
 MAX_HEADER_BYTES = 16 * 1024
 MAX_BODY_BYTES = 256 * 1024
@@ -1269,6 +1295,17 @@ class ApiServer:
                     return
                 status, ctype, body = await self._knowledge_report_for(
                     request.query)
+                await self._respond(writer, status, ctype, body)
+                return
+            if request.path == "/api/history-week" and request.method == "GET":
+                # The sealed `history_week` read's loopback twin, token-gated
+                # exactly as `/api/knowledge`: `_authorised`'s token half;
+                # empty Origin is allowed on GET. Host already ran above.
+                if not self._authorised(request):
+                    await self._respond(writer, 403, "application/json",
+                                        b'{"error":"forbidden"}')
+                    return
+                status, ctype, body = await self._history_week_for({})
                 await self._respond(writer, status, ctype, body)
                 return
             if request.path == "/api/scout-reports" and request.method == "GET":
@@ -2458,6 +2495,15 @@ class ApiServer:
                                     json.dumps(
                                         {"error": HOME_UPDATE_REFUSAL}).encode())
                 return
+            if request.path == "/api/history-week" and request.method == "GET":
+                # The week rides the sealed `history_week` kind on
+                # `/api/home`, never plaintext. `/api/history` is not listed
+                # here and keeps its 404.
+                self._record_access("lan", peer, "plaintext")
+                await self._respond(writer, 426, "application/json",
+                                    json.dumps(
+                                        {"error": HOME_UPDATE_REFUSAL}).encode())
+                return
             if request.path == "/api/terminal" and request.method == "GET":
                 # A terminal's screen rides the sealed `terminal` kind, never
                 # plaintext: it is every line an agent printed.
@@ -2678,7 +2724,7 @@ class ApiServer:
                     "terminal", "conversation", "done", "knowledge",
                     "access_log", "bearings", "scout_reports",
                     "scout_report", "manual_checks", "plans", "plan", "image",
-                    "action"):
+                    "history_week", "action"):
             status, ctype, out = await self._sealed_run(
                 kind, payload, device_id, actions=self.LAN_ACTIONS,
                 check_lease=False, record=False)
@@ -3971,6 +4017,12 @@ class ApiServer:
             # never a query string, and the path is confined to that
             # session's own project at the read.
             return await self._image_for(payload)
+        if kind == "history_week":
+            # The phone's History: the last seven days, machine-wide, cut to
+            # a closed key set. `log`'s rule: a **read**, above the `action`
+            # branch — neither action tuple, no lease check, no
+            # `remote_activity` record. It takes no query; the week is fixed.
+            return await self._history_week_for(payload)
         if kind == "action":
             action = str(payload.get("action") or "")
             # `board_create` alone is exempt: a card may be written *with*
@@ -4594,6 +4646,102 @@ class ApiServer:
                 report, offset)
         except (ValueError, TypeError) as exc:
             return 400, "application/json", json.dumps({"error": str(exc)}).encode()
+
+    async def _history_week_for(self, payload=None):
+        """The sealed `history_week` read and its loopback twin: the last
+        seven days across the whole Mac, the same `agent_efficiency_report(7,
+        "")` call the Mac's `/api/history?range=7d` makes with no project.
+
+        No query: ``payload`` is ignored. The answer is a **projection**, not
+        the report: every card, session and leftover day is rebuilt from
+        `HISTORY_WEEK_*_KEYS` through `dict.get`, so a key the report did not
+        carry (or carried as null) stays absent — never a 0, which would
+        price a day at $0.00 — and a stored 0 stays 0. Nothing is priced
+        here; the phone folds it with `LedgerWeek`, the Mac's own rule.
+        Runs on the daemon loop; the report's store reads already hop to the
+        executor.
+        """
+        handler = getattr(self._daemon, "agent_efficiency_report", None)
+        if handler is None:
+            body = {"supported": True, "available": False,
+                    "reason": "this Mac's Dark Army does not keep the week"}
+            return 200, "application/json", json.dumps(body).encode()
+        report = await handler(7, "")
+        if not isinstance(report, dict) or not report.get("available"):
+            reason = ""
+            if isinstance(report, dict):
+                reason = str(report.get("reason") or "")
+            body = {"supported": True, "available": False,
+                    "reason": reason or "the week could not be read"}
+            return 200, "application/json", json.dumps(body).encode()
+
+        def pick(row, keys):
+            out = {}
+            for key in keys:
+                value = row.get(key) if isinstance(row, dict) else None
+                if value is not None:
+                    out[key] = value
+            return out
+
+        cards = []
+        for card in report.get("cards") or []:
+            if not isinstance(card, dict):
+                continue
+            row = pick(card, [k for k in HISTORY_WEEK_CARD_KEYS if k != "sessions"])
+            row["sessions"] = [pick(session, HISTORY_WEEK_SESSION_KEYS)
+                               for session in card.get("sessions") or []
+                               if isinstance(session, dict)]
+            cards.append(row)
+        days = [pick(day, HISTORY_WEEK_DAY_KEYS)
+                for day in report.get("other_days") or []
+                if isinstance(day, dict)]
+        body = {
+            "supported": True,
+            "available": True,
+            "range_days": 7,
+            "from": report.get("from"),
+            "to": report.get("to"),
+            "generated_at": report.get("generated_at"),
+            # The week is a floor, not the whole, when the join was capped
+            # (`MAX_JOINED_SESSIONS`) or a card list was cut upstream.
+            "partial": bool(report.get("sessions_truncated")
+                            or report.get("cards_truncated")),
+            "codex_history_partial": bool(report.get("codex_history_partial")),
+            "cards": cards,
+            "other_days": days,
+        }
+        return 200, "application/json", self._history_week_page_bytes(body)
+
+    @staticmethod
+    def _history_week_page_bytes(body):
+        """`_agent_report_page_bytes`' loop over `cards` alone: the same
+        300 KB plaintext budget before sealing, for the same reason. Cards
+        are halved from the tail until the page fits, and `truncated: True`
+        says so — a cut lowers the week's total, so it is stated, never
+        inferred. Should the leftover days alone still overflow, their
+        session-id lists (a de-duplication aid, not money) go next."""
+        cards = body.get("cards") or []
+        while True:
+            out = json.dumps(body, allow_nan=False).encode()
+            if len(out) <= 300_000:
+                return out
+            if cards:
+                keep = len(cards) // 2
+                del cards[keep:]
+                body["truncated"] = True
+                continue
+            stripped = False
+            for day in body.get("other_days") or []:
+                for key in ("claude_token_unpriced_session_ids",
+                            "grok_token_unpriced_session_ids",
+                            "codex_token_unpriced_session_ids"):
+                    if day.pop(key, None) is not None:
+                        stripped = True
+            if not stripped:
+                return json.dumps({
+                    "supported": True, "available": False,
+                    "reason": "the week exceeds the response limit"}).encode()
+            body["truncated"] = True
 
     @staticmethod
     def _agent_report_page_bytes(report, offset):

@@ -627,11 +627,17 @@ def test_daily_report_counts_unpriced_turns_instead_of_hiding_them(store):
     assert row["unpriced_turns"] == 1
 
 
-def test_daily_report_uses_the_promotional_rate_for_the_right_day(store):
+def test_daily_report_uses_the_promotional_rate_for_the_right_day(store, monkeypatch):
+    # Sonnet 5's own window was dropped when its page stopped printing an end
+    # date; a promo row stands in for the next launch price.
+    from dark_army_daemon import pricing
+    monkeypatch.setitem(pricing.RATES, "claude-test-promo", pricing.Rate(
+        3.00, 15.00, intro_input=2.00, intro_output=10.00,
+        intro_until="2026-08-31"))
     store.add_turn("s1", datetime(2026, 7, 20, 12, 0).timestamp(), message_id="a",
-                   model="claude-sonnet-5", input_tokens=1_000_000)
+                   model="claude-test-promo", input_tokens=1_000_000)
     store.add_turn("s1", datetime(2026, 9, 20, 12, 0).timestamp(), message_id="b",
-                   model="claude-sonnet-5", input_tokens=1_000_000)
+                   model="claude-test-promo", input_tokens=1_000_000)
     by_day = {r["day"]: r["cost_usd"] for r in store.daily_report(days=3650)}
     assert by_day["2026-07-20"] == pytest.approx(2.0)
     assert by_day["2026-09-20"] == pytest.approx(3.0)
@@ -810,6 +816,7 @@ def test_upgrading_to_v6_backfills_provider_and_keeps_scan_positions(tmp_path):
     first.upsert_session("c1", project="p", primary_model="claude-opus-5")
     first.add_turn("c1", time.time(), message_id="m1", model="claude-opus-5")
     first.set_scan_position("/x/a.jsonl", 123.0, 10)
+    first.set_scan_position("/g/s/updates.jsonl", 124.0, -50)
     first._conn.execute("UPDATE schema_meta SET value = '5' WHERE key = 'version'")
     first._conn.execute("UPDATE sessions SET provider = NULL")
     first._conn.execute("UPDATE turns SET provider = NULL")
@@ -824,8 +831,10 @@ def test_upgrading_to_v6_backfills_provider_and_keeps_scan_positions(tmp_path):
         assert by_id["g1"] == "grok"
         assert by_id["c1"] == "claude"
         assert second._query("SELECT provider FROM turns")[0]["provider"] == "claude"
-        # v6 added columns, not a new transcript field — do not rescan Claude.
-        assert second.scan_position("/x/a.jsonl") == (123.0, 10)
+        # v6 added columns, not a new transcript field. The v7 step on the
+        # way up re-reads Claude transcripts for the cache split and keeps
+        # every Grok position (see the v7 test below).
+        assert second.scan_position("/g/s/updates.jsonl") == (124.0, -50)
     finally:
         second.close()
 
@@ -1497,3 +1506,267 @@ def test_provider_unpriced_rows_and_time_bounds(store):
     assert group["measurement"] == "unpriced" and group["partial"]
     assert group["models"][0]["pct"] is None
     assert group["models"][0]["cost_usd"] is None
+
+
+# --- token cost beside the reported dollar ------------------------------------
+#
+# `token_cost_usd` is counted tokens at the publisher's price. It rides beside
+# `cost_usd` / `measured_cost_usd` / `estimated_cost_usd`, which keep their
+# meaning, and beside `reported_cost_usd`, which it is never summed into.
+
+
+def test_a_claude_group_with_no_turn_cost_gets_a_token_cost_and_no_report(store):
+    now = time.time()
+    store.add_turn("c", now, message_id="c1", model="claude-opus-4-8",
+                   output_tokens=1_000_000, provider="claude")
+    facts = store.session_efficiency(["c"])["c"]
+    assert facts["token_cost_usd"] == pytest.approx(25.0)
+    assert "reported_cost_usd" not in facts
+    assert facts["token_unpriced_turns"] == 0
+    # The legacy estimate is unchanged beside it.
+    assert facts["estimated_cost_usd"] == pytest.approx(25.0)
+
+
+def test_a_grok_session_gets_both_and_the_token_price_is_not_the_ticks(store):
+    now = time.time()
+    store.add_turn("g", now, message_id="g1", model="grok-4.6",
+                   input_tokens=100_000, cache_read=40_000,
+                   output_tokens=10_000, cost_usd=0.07, provider="grok")
+    facts = store.session_efficiency(["g"])["g"]
+    # 60k uncached x $2 + 40k cached x $0.50 + 10k out x $6, per million.
+    expected = (60_000 * 2.0 + 40_000 * 0.5 + 10_000 * 6.0) / 1e6
+    assert facts["token_cost_usd"] == pytest.approx(expected)
+    assert facts["reported_cost_usd"] == pytest.approx(0.07)
+    assert facts["token_cost_usd"] != pytest.approx(facts["reported_cost_usd"])
+    assert facts["measured_cost_usd"] == pytest.approx(0.07)
+
+
+def test_a_mixed_grok_group_prices_every_turn_s_tokens(store):
+    """The stamped subset stays `measured_cost_usd`; the token side prices the
+    unstamped turn too, and a NULL tick adds nothing to the report."""
+    now = time.time()
+    store.add_turn("g", now, message_id="g1", model="grok-4.6",
+                   input_tokens=1_000, output_tokens=1_000, cost_usd=0.5,
+                   provider="grok")
+    store.add_turn("g", now + 1, message_id="g2", model="grok-4.6",
+                   input_tokens=1_000, output_tokens=1_000, provider="grok")
+    facts = store.session_efficiency(["g"])["g"]
+    one = (1_000 * 2.0 + 1_000 * 6.0) / 1e6
+    assert facts["token_cost_usd"] == pytest.approx(2 * one)
+    assert facts["measured_cost_usd"] == pytest.approx(0.5)
+    assert facts["reported_cost_usd"] == pytest.approx(0.5)
+    assert facts["unpriced_turns"] == 1           # the legacy count, unchanged
+
+
+def test_a_grok_turn_over_the_long_cutoff_is_unpriced_not_tiered(store):
+    """A Grok usage record sums every model call of a turn, so a turn over
+    200,000 input cannot say which of its requests reached the long tier."""
+    now = time.time()
+    store.add_turn("g", now, message_id="g1", model="grok-4.6",
+                   input_tokens=3_000_000, output_tokens=10, cost_usd=1.0,
+                   provider="grok")
+    facts = store.session_efficiency(["g"])["g"]
+    assert "token_cost_usd" not in facts
+    assert facts["token_unpriced_turns"] == 1
+    assert facts["reported_cost_usd"] == pytest.approx(1.0)
+
+
+def test_a_model_with_tokens_and_no_rate_counts_unpriced_and_adds_nothing(store):
+    now = time.time()
+    store.add_turn("u", now, message_id="u1", model="not-a-priced-model",
+                   output_tokens=500, provider="claude")
+    store.add_turn("x", now, message_id="x1", model="gpt-9-nobody",
+                   input_tokens=500, provider="codex")
+    facts = store.session_efficiency(["u", "x"])
+    for sid in ("u", "x"):
+        assert "token_cost_usd" not in facts[sid]
+        assert facts[sid]["token_unpriced_turns"] == 1
+    rows = store.other_daily(1, exclude=[])
+    assert rows[0]["claude_token_cost_usd"] == 0
+    assert rows[0]["codex_token_cost_usd"] == 0
+    assert rows[0]["claude_token_unpriced_sessions"] == 1
+    assert rows[0]["codex_token_unpriced_sessions"] == 1
+
+
+def test_other_daily_puts_codex_on_its_own_key_and_not_on_claude_s(store):
+    day = datetime(2026, 9, 20, 12, 0).timestamp()
+    store.add_turn("codex:t", day, message_id="x1", model="gpt-6-sol",
+                   input_tokens=1_000_000, cache_read=500_000,
+                   output_tokens=100_000, provider="codex")
+    row = store.other_daily(3650, exclude=[])[0]
+    expected = (500_000 * 2.0 + 500_000 * 0.2 + 100_000 * 10.0) / 1e6
+    assert row["codex_token_cost_usd"] == pytest.approx(expected)
+    assert row["claude_token_cost_usd"] == 0
+    for key in ("claude_measured_cost_usd", "claude_estimated_cost_usd",
+                "estimated_cost_usd", "claude_output_tokens"):
+        assert row[key] == 0, key
+    assert row["unpriced_sessions"] == 0
+    assert "codex_reported_cost_usd" not in row
+
+
+def test_other_daily_splits_token_cost_and_reports_by_provider(store):
+    day = datetime(2026, 9, 20, 12, 0).timestamp()
+    store.add_turn("c", day, message_id="c1", model="claude-opus-4-8",
+                   output_tokens=1_000_000, provider="claude")
+    store.upsert_session("c", cost_usd=7.25, cost_source=COST_MEASURED,
+                         provider="claude")
+    store.add_turn("g", day, message_id="g1", model="grok-4.6",
+                   input_tokens=1_000, output_tokens=1_000, cost_usd=0.4,
+                   provider="grok")
+    row = store.other_daily(3650, exclude=[])[0]
+    assert row["claude_token_cost_usd"] == pytest.approx(25.0)
+    assert row["grok_token_cost_usd"] == pytest.approx(0.008)
+    assert row["claude_reported_cost_usd"] == pytest.approx(7.25)
+    assert row["grok_reported_cost_usd"] == pytest.approx(0.4)
+    # Two kinds of money, side by side: the legacy keys are untouched.
+    assert row["claude_estimated_cost_usd"] == pytest.approx(25.0)
+    assert row["grok_measured_cost_usd"] == pytest.approx(0.4)
+
+
+def test_a_leftover_session_s_report_lands_whole_on_its_latest_day(store):
+    first = datetime(2026, 9, 20, 12, 0).timestamp()
+    store.add_turn("c", first, message_id="c1", model="claude-opus-4-8",
+                   output_tokens=10, provider="claude")
+    store.add_turn("c", first + 86400, message_id="c2", model="claude-opus-4-8",
+                   output_tokens=10, provider="claude")
+    store.upsert_session("c", cost_usd=3.0, cost_source=COST_MEASURED,
+                         provider="claude")
+    rows = {row["day"]: row for row in store.other_daily(3650, exclude=[])}
+    assert "claude_reported_cost_usd" not in rows["2026-09-20"]
+    assert rows["2026-09-21"]["claude_reported_cost_usd"] == pytest.approx(3.0)
+
+
+def test_a_measured_zero_is_reported_and_no_measured_row_omits_the_key(store):
+    now = time.time()
+    for sid in ("zero", "estimate", "none"):
+        store.add_turn(sid, now, message_id=sid, model="claude-opus-4-8",
+                       output_tokens=10, provider="claude")
+    store.upsert_session("zero", cost_usd=0.0, cost_source=COST_MEASURED,
+                         provider="claude")
+    store.upsert_session("estimate", cost_usd=9.0, cost_source=COST_ESTIMATED,
+                         provider="claude")
+    facts = store.session_efficiency(["zero", "estimate", "none"])
+    assert facts["zero"]["reported_cost_usd"] == 0.0
+    assert "reported_cost_usd" not in facts["estimate"]
+    assert "reported_cost_usd" not in facts["none"]
+
+
+def test_the_token_cost_uses_the_recorded_cache_split(store):
+    now = time.time()
+    store.add_turn("c", now, message_id="c1", model="claude-opus-4-8",
+                   cache_creation=3_000_000, cache_write_5m=1_000_000,
+                   cache_write_1h=2_000_000, provider="claude")
+    store.add_turn("c", now + 1, message_id="c2", model="claude-opus-4-8",
+                   cache_creation=1_000_000, provider="claude")
+    facts = store.session_efficiency(["c"])["c"]
+    # Split: 1M x $6.25 + 2M x $10. Unsplit: the 5-minute rate, 1M x $6.25.
+    assert facts["token_cost_usd"] == pytest.approx(6.25 + 20.0 + 6.25)
+    assert facts["cache_split_unknown_turns"] == 1
+    row = store.other_daily(1, exclude=[])[0]
+    assert row["cache_split_unknown_turns"] == 1
+
+
+def test_codex_turns_stay_out_of_every_report_that_predates_them(store):
+    """The daily table, the model mix, the totals, the hour profile and the
+    Usage view's attribution read the rows they read before Codex history."""
+    now = time.time()
+    store.add_turn("c", now, message_id="c1", model="claude-opus-4-8",
+                   output_tokens=100, provider="claude")
+    before = (store.daily_report(30), store.by_model(30), store.totals(30),
+              store.hourly_report(30), store.usage_attribution(since=now - 60),
+              store.daily_tokens(30), store.usage_provider_groups(now - 60, now + 60))
+    store.add_turn("codex:t", now, message_id="x1", model="gpt-6-sol",
+                   input_tokens=5_000, output_tokens=100, provider="codex")
+    after = (store.daily_report(30), store.by_model(30), store.totals(30),
+             store.hourly_report(30), store.usage_attribution(since=now - 60),
+             store.daily_tokens(30), store.usage_provider_groups(now - 60, now + 60))
+    assert after == before
+
+
+# --- schema 7: the cache-write split ------------------------------------------
+
+
+def test_upgrading_to_v7_forgets_claude_positions_and_keeps_grok_s(tmp_path):
+    """The split is a Claude transcript field. Forgetting a Grok position would
+    re-read every Grok session for a column it never fills."""
+    path = tmp_path / "history.db"
+    first = HistoryStore(path)
+    first.connect()
+    first.set_scan_position("/c/-Users-x/abc.jsonl", 123.0, 10)
+    first.set_scan_position("/g/enc/sid/updates.jsonl", 124.0, -50)
+    first._conn.execute("UPDATE schema_meta SET value = '6' WHERE key = 'version'")
+    first._conn.commit()
+    first.close()
+
+    second = HistoryStore(path)
+    second.connect()
+    try:
+        assert second.scan_position("/c/-Users-x/abc.jsonl") == (0.0, 0)
+        assert second.scan_position("/g/enc/sid/updates.jsonl") == (124.0, -50)
+        columns = {r["name"] for r in second._query(
+            "SELECT name FROM pragma_table_info('turns')")}
+        assert {"cache_write_5m", "cache_write_1h"} <= columns
+    finally:
+        second.close()
+
+
+def test_a_v6_file_gains_nullable_split_columns_an_old_insert_still_lands(tmp_path):
+    path = tmp_path / "history.db"
+    first = HistoryStore(path)
+    first.connect()
+    first.close()
+    conn = sqlite3.connect(path)
+    # What an older build's INSERT names: no split columns at all.
+    conn.execute("INSERT INTO turns(message_id, session_id, ts, day, model,"
+                 " output_tokens, provider) VALUES('m', 's', 1.0, '2026-09-20',"
+                 " 'claude-opus-4-8', 5, 'claude')")
+    conn.commit()
+    row = conn.execute("SELECT cache_write_5m, cache_write_1h FROM turns").fetchone()
+    conn.close()
+    assert row == (None, None)
+
+
+def test_a_second_insert_fills_the_split_and_rewrites_nothing_else(store):
+    now = time.time()
+    assert store.add_turn("g", now, message_id="m1", model="grok-4.6",
+                          input_tokens=10, cache_creation=300, cost_usd=0.5,
+                          provider="grok")
+    assert not store.add_turn("g", now + 5, message_id="m1", model="other",
+                              input_tokens=99, cache_creation=999, cost_usd=9.0,
+                              provider="claude", cache_write_5m=100,
+                              cache_write_1h=200)
+    row = store._query("SELECT * FROM turns WHERE message_id = 'm1'")[0]
+    assert (row["cache_write_5m"], row["cache_write_1h"]) == (100, 200)
+    assert row["cost_usd"] == 0.5
+    assert (row["input_tokens"], row["cache_creation"]) == (10, 300)
+    assert (row["provider"], row["model"], row["ts"]) == ("grok", "grok-4.6", now)
+    # A later insert with no split leaves the recorded one alone.
+    store.add_turn("g", now, message_id="m1", model="grok-4.6", provider="grok")
+    row = store._query("SELECT * FROM turns WHERE message_id = 'm1'")[0]
+    assert (row["cache_write_5m"], row["cache_write_1h"]) == (100, 200)
+
+
+def test_a_session_s_token_cost_is_split_by_the_turns_provider(store):
+    """The run label can say codex for a Claude session; the split follows
+    the turns that were priced."""
+    now = time.time()
+    store.add_turn("s", now, message_id="c", model="claude-opus-4-8",
+                   output_tokens=1_000_000, provider="claude")
+    store.add_turn("s", now + 1, message_id="x", model="gpt-6-sol",
+                   output_tokens=100_000, provider="codex")
+    facts = store.session_efficiency(["s"])["s"]
+    assert facts["claude_token_cost_usd"] == pytest.approx(25.0)
+    assert facts["codex_token_cost_usd"] == pytest.approx(1.0)
+    assert "grok_token_cost_usd" not in facts
+    assert facts["token_cost_usd"] == pytest.approx(26.0)
+
+
+def test_other_daily_names_the_unpriced_sessions_so_a_range_counts_each_once(store):
+    first = datetime(2026, 9, 20, 12, 0).timestamp()
+    for n, ts in enumerate((first, first + 86400)):
+        store.add_turn("u", ts, message_id=f"u{n}", model="not-a-priced-model",
+                       output_tokens=5, provider="claude")
+    rows = store.other_daily(3650, exclude=[])
+    assert [r["claude_token_unpriced_session_ids"] for r in rows] == [["u"], ["u"]]
+    assert {sid for r in rows for sid in r["claude_token_unpriced_session_ids"]} == {"u"}
+    assert all(r["codex_token_unpriced_session_ids"] == [] for r in rows)

@@ -289,6 +289,10 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `GET /api/plans` / `GET /api/plan`; sealed `plans` / `plan`) are
     `docs/transport-contract.md`'s, *`plans` and `plan` are sealed reads*.
 
+    **The phone's week** (loopback `GET /api/history-week`, token-gated;
+    sealed `history_week` on both doors, a closed projection) is
+    `docs/transport-contract.md`'s, *`history_week` is a sealed read*.
+
     **The per-frame log pair is behind a switch**: `_log_broadcast` is DEBUG,
     the panel's `snapshot` line behind `Trace.verbose`
     (`BOB_COMPANION_LOG_LEVEL=DEBUG`, `BOB_PANEL_TRACE=1` via `launchctl

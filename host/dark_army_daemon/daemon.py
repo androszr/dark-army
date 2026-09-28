@@ -77,6 +77,7 @@ from . import areas
 from . import identity
 from .identity import IdentityStore
 from . import pid_resolver
+from . import codex_history
 from . import grok_scan
 from . import terminal_title
 from . import transcript_scan
@@ -12539,6 +12540,15 @@ class BobDaemon(BoardVerbsMixin):
                     )
                     if grok.get("turns_added"):
                         logger.info("Grok history backfill: %s", grok)
+                    # Codex's journals, after Grok, in the same executor hop
+                    # pattern: History's token cost reads their turns. A
+                    # bounded pass that stopped early is remembered, so the
+                    # report can say Codex is still being read rather than
+                    # publish a short read as the whole period.
+                    codex = await loop.run_in_executor(
+                        None, codex_history.scan, self._history
+                    )
+                    self._codex_history_partial = bool(codex.get("partial"))
                 except Exception:
                     logger.warning("transcript scan failed", exc_info=True)
             await asyncio.sleep(TRANSCRIPT_SCAN_INTERVAL)

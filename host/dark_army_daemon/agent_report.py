@@ -49,9 +49,19 @@ def ledger_who(crew) -> str:
 
 #: Copied onto a session the history store still has. Absent on the rollup
 #: stays JSON null — a 0 would draw as a measured nothing.
+#:
+#: `token_cost_usd` (counted tokens at the publisher's price) and
+#: `reported_cost_usd` (the dollar Claude or Grok reported) are two kinds of
+#: money and are copied side by side, never summed; the Mac ledger alone
+#: draws them. The older keys keep their meaning for the phone.
 _SESSION_FIGURES = (
     "model", "measured_cost_usd", "estimated_cost_usd", "output_tokens",
     "input_tokens", "cache_read", "cache_hit_ratio", "duration_ms",
+    "token_cost_usd", "token_unpriced_turns", "reported_cost_usd",
+    "cache_split_unknown_turns",
+    # The token cost split by the provider of the turns priced — not by
+    # the run's provider label, which can name Codex for a Claude session.
+    "claude_token_cost_usd", "grok_token_cost_usd", "codex_token_cost_usd",
 )
 
 

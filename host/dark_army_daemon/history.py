@@ -19,10 +19,19 @@ Design notes worth keeping:
   than discovering, so each row stores the local day it belongs to.
 * **Cost carries its provenance.** `measured` comes from Claude Code's own
   `total_cost_usd` or from Grok's stamped ticks; `estimated` is ours, from
-  tokens and a Claude price list. Grok is never estimated — it reports exact
-  ticks, and a guessed rate would be a worse number in the same cell. Summing
-  measured and estimated without saying so would quietly turn a guess into a
-  number.
+  tokens and a Claude price list. `cost_usd`, `measured_cost_usd` and
+  `estimated_cost_usd` keep exactly that meaning, and Grok and Codex never
+  reach the Claude estimate. Summing measured and estimated without saying so
+  would quietly turn a guess into a number.
+* **Token cost is a third, separate figure.** `token_cost_usd` (on
+  `session_efficiency` and, split by provider, on `other_daily`) is the counted
+  tokens of Claude, Grok and Codex at each publisher's per-token price, read
+  at query time and never written back. Grok and Codex are priced per turn,
+  because a long-context tier is chosen per request; a turn with no rate or
+  no counted tokens adds no dollar and counts as unpriced. The dollar a
+  provider *reported* — Claude's statusline total, Grok's ticks — rides beside
+  it as `reported_cost_usd`, never summed into it and absent, not 0, where
+  nothing was reported. Codex reports no dollar.
 * **Writes are synchronous and must run off the event loop.** sqlite3 blocks; the
   caller is responsible for the executor. Nothing here awaits.
 """
@@ -42,7 +51,7 @@ from .paths import HISTORY_PATH, STATE_DIR, ensure_state_dir
 
 logger = logging.getLogger("dark-army.history")
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Turn-level and sample-level rows are the bulk and the least interesting once
 # they have been rolled up. State events and compactions age at the same
@@ -60,6 +69,15 @@ COST_ESTIMATED = "estimated"
 # (v4's derived tables, say) leaves the positions alone. See `_migrate`.
 _RESCAN_ON_UPGRADE_TO = {2, 3}
 
+# Schema versions that taught the *Claude* transcript scanner a new column
+# and nothing else. v7 stores each turn's cache-write split (5-minute vs
+# 1-hour), which only Claude transcripts carry, so only Claude positions are
+# forgotten: a Grok `updates.jsonl` position (`…/updates.jsonl`) is kept, or
+# the upgrade would re-read every Grok session for a column it never fills.
+# Forgetting alone backfills nothing — `add_turn` fills the split on the
+# re-read's conflict, which `INSERT OR IGNORE` by itself would not.
+_CLAUDE_RESCAN_ON_UPGRADE_TO = {7}
+
 # Schema versions that change how a *digest* is rolled up out of rows already in
 # the database. Digests are keyed on the session's `last_seen` and only rebuild
 # when the session moves on, so a change to the aggregation itself is invisible
@@ -75,6 +93,15 @@ _RESCAN_ON_UPGRADE_TO = {2, 3}
 # entirely for 79 sessions. Together they are why the animation classifier
 # returned two distinct answers across the whole corpus.
 _REBUILD_DIGESTS_ON_UPGRADE_TO = {5}
+
+# The turns the reports that predate Codex history read. `codex_history`
+# writes Codex journal turns into `turns` for the History ledger's token cost
+# alone; every older report (the daily table, the model mix, the hourly
+# profile, the totals, the Usage view's attribution) keeps reading exactly
+# the rows it read before, so none of them folds Codex into Claude and the
+# Usage view does not count journals it already reads through
+# `codex_spenders` a second time.
+_NOT_CODEX = "COALESCE(provider, 'claude') != 'codex'"
 
 # Stamped onto a digest that must rebuild. Below every real `last_seen`, so
 # `digest_candidates`' staleness test fires, and negative so it can never be
@@ -116,7 +143,11 @@ CREATE TABLE IF NOT EXISTS turns (
     -- NULL means "price from tokens" for Claude, or "unknown" for a Grok turn
     -- that arrived unpriced — never treat NULL as free.
     cost_usd        REAL,
-    provider        TEXT                    -- claude | grok
+    provider        TEXT,                   -- claude | grok | codex
+    -- The cache write's split by TTL, when the record stated one. NULL means
+    -- the record gave only the total (`cache_creation`); 0 means it said 0.
+    cache_write_5m  INTEGER,
+    cache_write_1h  INTEGER
 );
 -- Claude Code writes several records per response, all sharing message.id, and
 -- only the last carries final usage. Summing them multiplies the bill; this index
@@ -368,6 +399,10 @@ class HistoryStore:
             ("attr_mcp_tool", "TEXT"),
             ("cost_usd", "REAL"),
             ("provider", "TEXT"),
+            # Nullable, no default: an older build's INSERT omits them and
+            # still lands, and NULL is exactly "the split was not recorded".
+            ("cache_write_5m", "INTEGER"),
+            ("cache_write_1h", "INTEGER"),
         ),
         "sessions": (
             ("provider", "TEXT"),
@@ -427,12 +462,23 @@ class HistoryStore:
                 # a bump that needs one has to say so.
                 crossed = _RESCAN_ON_UPGRADE_TO & set(range(found + 1,
                                                             SCHEMA_VERSION + 1))
+                claude_only = _CLAUDE_RESCAN_ON_UPGRADE_TO & set(
+                    range(found + 1, SCHEMA_VERSION + 1))
                 if crossed:
                     cleared = self._conn.execute("DELETE FROM scan_state").rowcount
                     logger.info(
                         "history.db upgraded from schema %d to %d; forgetting %d "
                         "transcript scan positions so the new columns can be "
                         "backfilled", found, SCHEMA_VERSION, cleared,
+                    )
+                elif claude_only:
+                    cleared = self._conn.execute(
+                        "DELETE FROM scan_state"
+                        " WHERE path NOT LIKE '%/updates.jsonl'").rowcount
+                    logger.info(
+                        "history.db upgraded from schema %d to %d; forgetting %d "
+                        "Claude transcript scan positions so the cache-write "
+                        "split can be backfilled", found, SCHEMA_VERSION, cleared,
                     )
                 else:
                     logger.info(
@@ -596,9 +642,19 @@ class HistoryStore:
 
     def add_turn(self, session_id: str, ts: float, **fields) -> bool:
         """Insert one deduplicated turn. Returns False if `message_id` was already
-        recorded — the normal outcome when a transcript is re-scanned."""
+        recorded — the normal outcome when a transcript is re-scanned.
+
+        A re-scanned turn that now states its cache-write split fills
+        `cache_write_5m` / `cache_write_1h` on the stored row, and nothing
+        else: the insert is `OR IGNORE`, so without this second statement a
+        forgotten scan position would re-read every transcript and store no
+        split. `cost_usd`, the token counts and `provider` are never
+        rewritten — a Grok tick must survive a re-scan untouched."""
         if not session_id:
             return False
+        write_5m = fields.get("cache_write_5m")
+        write_1h = fields.get("cache_write_1h")
+        split = write_5m is not None and write_1h is not None
         row = {
             "message_id": fields.get("message_id"),
             "session_id": session_id,
@@ -620,14 +676,23 @@ class HistoryStore:
                 "attr_mcp_server", "attr_mcp_tool")},
             "cost_usd": fields.get("cost_usd"),
             "provider": fields.get("provider") or None,
+            "cache_write_5m": int(write_5m) if split else None,
+            "cache_write_1h": int(write_1h) if split else None,
         }
         columns = ", ".join(row)
         placeholders = ", ".join("?" for _ in row)
-        return self._write(
+        added = self._write(
             f"INSERT OR IGNORE INTO turns({columns}) VALUES({placeholders})",
             tuple(row.values()),
             want_rowcount=True,
         )
+        if not added and split and row["message_id"]:
+            self._write(
+                "UPDATE turns SET cache_write_5m = ?, cache_write_1h = ?"
+                " WHERE message_id = ?",
+                (row["cache_write_5m"], row["cache_write_1h"], row["message_id"]),
+            )
+        return added
 
     def add_compaction(self, session_id: str, ts: float, uuid: str = "",
                        trigger: str = "", pre_tokens: Optional[int] = None) -> bool:
@@ -887,7 +952,8 @@ class HistoryStore:
             "SELECT day, model, SUM(input_tokens) AS input_tokens,"
             " SUM(output_tokens) AS output_tokens, SUM(cache_read) AS cache_read,"
             " SUM(cache_creation) AS cache_creation, COUNT(*) AS turns"
-            " FROM turns WHERE ts >= ? GROUP BY day, model ORDER BY day",
+            f" FROM turns WHERE ts >= ? AND {_NOT_CODEX}"
+            " GROUP BY day, model ORDER BY day",
             (cutoff,),
         )]
 
@@ -913,8 +979,8 @@ class HistoryStore:
             " SUM(CASE WHEN cost_usd IS NOT NULL THEN 1 ELSE 0 END)"
             "   AS measured_turns,"
             " SUM(cost_usd) AS measured_cost"
-            " FROM turns WHERE ts >= ? GROUP BY day, model, provider"
-            " ORDER BY day",
+            f" FROM turns WHERE ts >= ? AND {_NOT_CODEX}"
+            " GROUP BY day, model, provider ORDER BY day",
             (self._since(days),),
         )
         out: dict[str, dict] = {}
@@ -995,7 +1061,7 @@ class HistoryStore:
             " SUM(CASE WHEN cost_usd IS NOT NULL THEN 1 ELSE 0 END)"
             "   AS measured_turns,"
             " SUM(cost_usd) AS measured_cost"
-            " FROM turns WHERE ts >= ? GROUP BY model, day",
+            f" FROM turns WHERE ts >= ? AND {_NOT_CODEX} GROUP BY model, day",
             (self._since(days),),
         ):
             entry = folded.setdefault(row["model"], {
@@ -1318,7 +1384,166 @@ class HistoryStore:
             entry["model"] = max(models, key=models.get) if models else ""
             if entry["unpriced_turns"] and not entry["cost_usd"]:
                 entry["cost_usd"] = None
+        self._add_token_figures(folded, batches, since)
         return folded
+
+    def _add_token_figures(self, folded: dict, batches: list,
+                           since: float) -> None:
+        """Put the token cost and the reported dollar on each session rollup.
+
+        Beside `cost_usd` / `measured_cost_usd` / `estimated_cost_usd`, never
+        in them. `token_cost_usd` is present only where some counted token met
+        a published rate, and `<provider>_token_cost_usd` splits it by the
+        provider of the turns priced (each present only where that provider
+        priced something); `token_unpriced_turns` counts the turns that did not.
+        `reported_cost_usd` is Claude's statusline total for the whole session
+        (`sessions.cost_usd` where `cost_source` is measured — one number, not
+        split by day or window) or the sum of Grok's stamped ticks inside the
+        window; absent where nothing was reported, and a stored 0 is present.
+        Codex reports no dollar. `cache_split_unknown_turns` counts Claude
+        turns whose cache write had no 5-minute/1-hour split and was priced at
+        the 5-minute rate."""
+        from . import pricing
+
+        for batch in batches:
+            marks = ",".join("?" * len(batch))
+            for part in self._token_parts(pricing, since, marks, tuple(batch)):
+                entry = folded.get(part["session_id"])
+                if entry is None:
+                    continue
+                if part["cost"] is not None:
+                    entry["token_cost_usd"] = (
+                        entry.get("token_cost_usd", 0.0) + part["cost"])
+                    # Split by the provider of the turns actually priced,
+                    # never by the label a run was filed under: a Codex
+                    # card's run can be a Claude session.
+                    key = f"{part['provider']}_token_cost_usd"
+                    entry[key] = entry.get(key, 0.0) + part["cost"]
+                entry["token_unpriced_turns"] = (
+                    entry.get("token_unpriced_turns", 0) + part["unpriced"])
+                entry["cache_split_unknown_turns"] = (
+                    entry.get("cache_split_unknown_turns", 0)
+                    + part["split_unknown"])
+                if part["reported"] is not None:
+                    entry["reported_cost_usd"] = (
+                        entry.get("reported_cost_usd", 0.0) + part["reported"])
+            for sid, cost in self._claude_reported(marks, tuple(batch)).items():
+                entry = folded.get(sid)
+                if entry is not None:
+                    entry["reported_cost_usd"] = cost
+        for entry in folded.values():
+            entry.setdefault("token_unpriced_turns", 0)
+            entry.setdefault("cache_split_unknown_turns", 0)
+
+    def _claude_reported(self, marks: str, batch: tuple) -> dict:
+        """`{session_id: cost}` for the Claude sessions whose statusline total
+        was recorded — `cost_source` measured, a stored 0 included."""
+        return {
+            row["session_id"]: float(row["cost_usd"])
+            for row in self._query(
+                "SELECT session_id, cost_usd FROM sessions"
+                f" WHERE session_id IN ({marks}) AND cost_source = ?"
+                "   AND cost_usd IS NOT NULL"
+                "   AND COALESCE(provider, 'claude') = 'claude'",
+                (*batch, COST_MEASURED),
+            )
+        }
+
+    def _token_parts(self, pricing, since: float, marks: str, batch: tuple):
+        """The token-cost pieces for some sessions: one dict per Claude
+        (session, day, model, split-known) group and one per Grok or Codex turn.
+
+        Each piece is `{session_id, day, provider, cost, unpriced,
+        split_unknown, reported}`. Claude is grouped because its price does
+        not move with prompt length (a `[1m]` id is its own row) — only by day
+        (a rate's day) and by whether the split was recorded. Grok and Codex
+        are priced turn by turn: a long-context tier is chosen per request,
+        and a day's sum would pick one tier for short and long prompts alike.
+
+        This never goes through `_cost_of_turn_group`: a stamped Grok tick is
+        not a token price and does not stand in for a missing rate, and a
+        token price never replaces a tick. The tick is `reported`."""
+        for row in self._query(
+            "SELECT session_id, day, model, COUNT(*) AS turns,"
+            " SUM(input_tokens) AS input_tokens,"
+            " SUM(output_tokens) AS output_tokens,"
+            " SUM(cache_read) AS cache_read,"
+            " SUM(cache_creation) AS cache_creation,"
+            " SUM(cache_write_5m) AS cache_write_5m,"
+            " SUM(cache_write_1h) AS cache_write_1h,"
+            " SUM(CASE WHEN cache_creation > 0 THEN 1 ELSE 0 END)"
+            "   AS writing_turns,"
+            " (cache_write_5m IS NOT NULL AND cache_write_1h IS NOT NULL)"
+            "   AS split"
+            " FROM turns WHERE ts >= ?"
+            " AND COALESCE(provider, 'claude') = 'claude'"
+            f" AND session_id IN ({marks})"
+            " GROUP BY session_id, day, model, split",
+            (since, *batch),
+        ):
+            counted = ((row["input_tokens"] or 0) + (row["output_tokens"] or 0)
+                       + (row["cache_read"] or 0) + (row["cache_creation"] or 0))
+            cost = self._price_row(pricing, row) if counted > 0 else None
+            yield {
+                "session_id": row["session_id"], "day": row["day"],
+                "provider": "claude", "cost": cost,
+                "unpriced": 0 if cost is not None else (row["turns"] or 0),
+                "split_unknown": 0 if row["split"] else (row["writing_turns"] or 0),
+                "reported": None,
+            }
+        for row in self._query(
+            "SELECT session_id, day, model, provider, input_tokens,"
+            " output_tokens, cache_read, cache_creation, cost_usd"
+            " FROM turns WHERE ts >= ? AND provider IN ('grok', 'codex')"
+            f" AND session_id IN ({marks})",
+            (since, *batch),
+        ):
+            provider = row["provider"]
+            cost = self._token_turn_cost(pricing, row)
+            yield {
+                "session_id": row["session_id"], "day": row["day"],
+                "provider": provider, "cost": cost,
+                "unpriced": 0 if cost is not None else 1,
+                "split_unknown": 0,
+                "reported": (float(row["cost_usd"])
+                             if provider == "grok" and row["cost_usd"] is not None
+                             else None),
+            }
+
+    @staticmethod
+    def _token_turn_cost(pricing, row) -> Optional[float]:
+        """One Grok or Codex turn at its publisher's per-token price, or None.
+
+        Both count the cache read (and Codex its cache write) *inside*
+        `input_tokens`, so the uncached input is the difference; a cached part
+        larger than the input it belongs to is unpriced, not a negative bill.
+
+        **A Grok turn is not one request.** Grok's usage record sums every
+        model call of a user turn — `input_tokens` on this Mac routinely runs
+        to millions, far past the 500k prompt a single call may carry — so
+        the long tier, which xAI applies per request whose prompt reaches
+        200,000, cannot be chosen from the turn. A turn under the cutoff is
+        exact (every call in it was under too); a turn at or over it is
+        unpriced rather than billed at a tier nobody can see. A Codex
+        `token_count` is one request's usage, so its tier is exact."""
+        model = row["model"]
+        provider = row["provider"]
+        input_tokens = row["input_tokens"] or 0
+        output_tokens = row["output_tokens"] or 0
+        cache_read = row["cache_read"] or 0
+        cache_write = row["cache_creation"] or 0
+        if input_tokens + output_tokens + cache_read + cache_write <= 0:
+            return None
+        rate = pricing.resolve_rate(model, provider)
+        if rate is None:
+            return None
+        if (provider == "grok" and rate.long_from is not None
+                and input_tokens >= rate.long_from):
+            return None
+        return pricing.cost_usd(
+            model, input_tokens=input_tokens, output_tokens=output_tokens,
+            cache_read=cache_read, cache_write_5m=cache_write,
+            day=row["day"], cached_subset=True, provider=provider)
 
     def other_daily(self, days: Optional[int] = None, exclude=()) -> list[dict]:
         """Per local day, the turns whose session is not a named card.
@@ -1331,7 +1556,8 @@ class HistoryStore:
         `cost_usd` and folds every non-Grok provider into Claude. This
         query prices with the same `_cost_of_turn_group` rules and then
         keeps Claude and Grok apart. A provider that is neither is not
-        folded into Claude. Codex is not in this table.
+        folded into Claude: a Codex turn adds to no measured, estimated or
+        unpriced key here, only to the token side below.
 
         `exclude` is the named cards' session ids. Empty means every turn
         in the window is other. The exclude set is applied in Python, so
@@ -1346,6 +1572,19 @@ class HistoryStore:
         are those two splits added, never a Codex turn folded into Claude.
         `unpriced_sessions` counts sessions, not turns. A measured or
         estimated dollar is never stored as 0 to mean unknown.
+
+        The token side rides beside those keys and never in them:
+        `claude_token_cost_usd`, `grok_token_cost_usd` and
+        `codex_token_cost_usd` (Codex turns are in this table now, and only
+        ever on their own key), with `<provider>_token_unpriced_sessions` for
+        the sessions some of whose turns that day had no rate or no counted
+        tokens, and `<provider>_token_unpriced_session_ids` naming them, so a
+        reader over several days counts each session once. The reported dollar is `claude_reported_cost_usd` (a leftover
+        session's statusline total, whole, on the latest day it has a turn in
+        the window) and `grok_reported_cost_usd` (that day's ticks); each is
+        present only where something was reported, and a stored 0 is present.
+        `cache_split_unknown_turns` counts Claude writes priced at the
+        5-minute rate for want of a recorded split.
         """
         from . import pricing
 
@@ -1386,29 +1625,22 @@ class HistoryStore:
             " GROUP BY day, session_id, model, provider"
         )
         rows = []
+        token_parts = []
+        claude_reported: dict = {}
         for batch in batches:
             marks = ",".join("?" * len(batch))
             rows += self._query(
                 grouped.format(marks=marks),
                 (since, *batch),
             )
+            token_parts += list(self._token_parts(
+                pricing, since, marks, tuple(batch)))
+            claude_reported.update(self._claude_reported(marks, tuple(batch)))
         folded: dict[str, dict] = {}
         for row in rows:
-            day = folded.setdefault(row["day"], {
-                "day": row["day"],
-                "claude_measured_cost_usd": 0.0,
-                "grok_measured_cost_usd": 0.0,
-                "claude_estimated_cost_usd": 0.0,
-                "grok_estimated_cost_usd": 0.0,
-                "estimated_cost_usd": 0.0,
-                "unpriced_sessions": 0,
-                "claude_unpriced_sessions": 0,
-                "grok_unpriced_sessions": 0,
-                "claude_output_tokens": 0,
-                "grok_output_tokens": 0,
-                "_unpriced_claude": set(),
-                "_unpriced_grok": set(),
-            })
+            day = folded.get(row["day"])
+            if day is None:
+                day = folded[row["day"]] = self._other_day(row["day"])
             provider = row["provider"] or ""
             out_tokens = row["output_tokens"] or 0
             if provider == "claude":
@@ -1431,9 +1663,40 @@ class HistoryStore:
                 day["grok_measured_cost_usd"] += cost
             elif provider == "claude":
                 day["claude_measured_cost_usd"] += cost
+        latest_claude_day: dict = {}
+        for part in token_parts:
+            day = folded.get(part["day"])
+            if day is None:
+                day = folded[part["day"]] = self._other_day(part["day"])
+            provider = part["provider"]
+            if part["cost"] is not None:
+                day[f"{provider}_token_cost_usd"] += part["cost"]
+            if part["unpriced"]:
+                day[f"_token_unpriced_{provider}"].add(part["session_id"])
+            day["cache_split_unknown_turns"] += part["split_unknown"]
+            if part["reported"] is not None:
+                day["grok_reported_cost_usd"] = (
+                    day.get("grok_reported_cost_usd", 0.0) + part["reported"])
+            if provider == "claude":
+                sid = part["session_id"]
+                if part["day"] > latest_claude_day.get(sid, ""):
+                    latest_claude_day[sid] = part["day"]
+        for sid, cost in claude_reported.items():
+            key = latest_claude_day.get(sid)
+            if key is None:
+                continue
+            day = folded[key]
+            day["claude_reported_cost_usd"] = (
+                day.get("claude_reported_cost_usd", 0.0) + cost)
         out = []
         for day in sorted(folded):
             row = folded[day]
+            for provider in ("claude", "grok", "codex"):
+                unpriced_ids = row.pop(f"_token_unpriced_{provider}")
+                row[f"{provider}_token_unpriced_sessions"] = len(unpriced_ids)
+                # The ids too, so a reader over several days counts a
+                # session once, not once per day it had a turn.
+                row[f"{provider}_token_unpriced_session_ids"] = sorted(unpriced_ids)
             claude_unpriced = row.pop("_unpriced_claude")
             grok_unpriced = row.pop("_unpriced_grok")
             row["claude_unpriced_sessions"] = len(claude_unpriced)
@@ -1443,6 +1706,33 @@ class HistoryStore:
                 row["claude_estimated_cost_usd"] + row["grok_estimated_cost_usd"])
             out.append(row)
         return out
+
+    @staticmethod
+    def _other_day(day: str) -> dict:
+        """One `other_daily` day before any turn lands on it. The leading
+        underscore keys are working sets, popped before the row is served."""
+        return {
+            "day": day,
+            "claude_measured_cost_usd": 0.0,
+            "grok_measured_cost_usd": 0.0,
+            "claude_estimated_cost_usd": 0.0,
+            "grok_estimated_cost_usd": 0.0,
+            "estimated_cost_usd": 0.0,
+            "unpriced_sessions": 0,
+            "claude_unpriced_sessions": 0,
+            "grok_unpriced_sessions": 0,
+            "claude_output_tokens": 0,
+            "grok_output_tokens": 0,
+            "_unpriced_claude": set(),
+            "_unpriced_grok": set(),
+            "claude_token_cost_usd": 0.0,
+            "grok_token_cost_usd": 0.0,
+            "codex_token_cost_usd": 0.0,
+            "cache_split_unknown_turns": 0,
+            "_token_unpriced_claude": set(),
+            "_token_unpriced_grok": set(),
+            "_token_unpriced_codex": set(),
+        }
 
     def waiting_summary(self, days: Optional[int] = None) -> dict:
         """How long agents sat blocked on a human — the metric this layer is for.
@@ -1533,7 +1823,7 @@ class HistoryStore:
             "          THEN output_tokens ELSE 0 END) AS claude_output_tokens,"
             " SUM(CASE WHEN provider = 'grok'"
             "          THEN output_tokens ELSE 0 END) AS grok_output_tokens"
-            " FROM turns WHERE ts >= ?",
+            f" FROM turns WHERE ts >= ? AND {_NOT_CODEX}",
             (since,),
         )
         # Cost is split by provenance rather than summed into one figure. The two
@@ -1655,7 +1945,7 @@ class HistoryStore:
             " SUM(input_tokens + output_tokens + cache_read + cache_creation)"
             "   AS tokens,"
             " COUNT(DISTINCT day) AS days"
-            " FROM turns WHERE ts >= ? GROUP BY hour",
+            f" FROM turns WHERE ts >= ? AND {_NOT_CODEX} GROUP BY hour",
             (self._since(days),),
         )
         by_hour = {row["hour"]: dict(row) for row in rows}
@@ -1844,7 +2134,7 @@ class HistoryStore:
         the tokens were real even when the price is not known."""
         from . import pricing
 
-        where, params = "ts >= ?", [since]
+        where, params = f"ts >= ? AND {_NOT_CODEX}", [since]
         if provider is not None:
             where += " AND COALESCE(provider, 'claude') = ?"
             params.append(provider)
@@ -1963,16 +2253,19 @@ class HistoryStore:
         for key, sql, params in (
             ("cache_miss",
              f"SELECT model, day, {totals} FROM turns"
-             " WHERE ts >= ? AND cache_creation >= ? GROUP BY model, day",
+             f" WHERE ts >= ? AND {_NOT_CODEX} AND cache_creation >= ?"
+             " GROUP BY model, day",
              (since, self.BIG_CACHE_WRITE)),
             ("long_context",
              f"SELECT model, day, {totals} FROM turns"
-             " WHERE ts >= ? AND (input_tokens + cache_read + cache_creation) >= ?"
+             f" WHERE ts >= ? AND {_NOT_CODEX}"
+             " AND (input_tokens + cache_read + cache_creation) >= ?"
              " GROUP BY model, day",
              (since, self.LONG_CONTEXT)),
             ("subagents",
              f"SELECT model, day, {totals} FROM turns"
-             " WHERE ts >= ? AND is_sidechain = 1 GROUP BY model, day",
+             f" WHERE ts >= ? AND {_NOT_CODEX} AND is_sidechain = 1"
+             " GROUP BY model, day",
              (since,)),
             # Concurrency is not a column, so it is derived: bucket the window
             # into five-minute slots, keep the slots in which four or more
@@ -1981,10 +2274,12 @@ class HistoryStore:
              "WITH slots AS ("
              "  SELECT CAST(ts / ? AS INTEGER) AS slot,"
              "         COUNT(DISTINCT session_id) AS sessions"
-             "  FROM turns WHERE ts >= ? GROUP BY slot HAVING sessions >= ?)"
+             f"  FROM turns WHERE ts >= ? AND {_NOT_CODEX}"
+             "  GROUP BY slot HAVING sessions >= ?)"
              f" SELECT t.model, t.day, {totals} FROM turns t"
              " JOIN slots ON CAST(t.ts / ? AS INTEGER) = slots.slot"
-             " WHERE t.ts >= ? GROUP BY t.model, t.day",
+             " WHERE t.ts >= ? AND COALESCE(t.provider, 'claude') != 'codex'"
+             " GROUP BY t.model, t.day",
              (self.PARALLEL_WINDOW, since, self.PARALLEL_SESSIONS,
               self.PARALLEL_WINDOW, since)),
             # Long sessions: the session's own span, from its first turn in the
@@ -1992,11 +2287,12 @@ class HistoryStore:
             # reconnect days later would stretch without a turn in between.
             ("long_sessions",
              "WITH spans AS ("
-             "  SELECT session_id FROM turns WHERE ts >= ?"
+             f"  SELECT session_id FROM turns WHERE ts >= ? AND {_NOT_CODEX}"
              "  GROUP BY session_id HAVING MAX(ts) - MIN(ts) >= ?)"
              f" SELECT t.model, t.day, {totals} FROM turns t"
              " JOIN spans ON spans.session_id = t.session_id"
-             " WHERE t.ts >= ? GROUP BY t.model, t.day",
+             " WHERE t.ts >= ? AND COALESCE(t.provider, 'claude') != 'codex'"
+             " GROUP BY t.model, t.day",
              (since, self.LONG_SESSION, since)),
         ):
             share = self._share_of(sql, params, total_cost)
@@ -2033,7 +2329,7 @@ class HistoryStore:
             " SUM(CASE WHEN cost_usd IS NOT NULL THEN 1 ELSE 0 END)"
             "   AS measured_turns,"
             " SUM(cost_usd) AS measured_cost"
-            " FROM turns WHERE ts >= ? GROUP BY model, day",
+            f" FROM turns WHERE ts >= ? AND {_NOT_CODEX} GROUP BY model, day",
             (since,),
         ):
             turns += row["turns"] or 0
@@ -2068,17 +2364,33 @@ class HistoryStore:
 
     @staticmethod
     def _price_row(pricing, row) -> Optional[float]:
-        """Price one grouped row. Cache writes are charged at the 5-minute rate —
-        the same conservative choice `daily_report` makes, for the same reason: the
-        turns table keeps only the total, and the 1-hour rate is the dearer of the
-        two."""
+        """Price one grouped row at Claude's list prices.
+
+        Claude's list only: a Grok or Codex id is None here, exactly as it was
+        before those publishers had rows, so `cost_usd` / `estimated_cost_usd`
+        and every report built on this keep their meaning. Their token price
+        is `_token_turn_cost`'s.
+
+        The cache write is charged by its recorded split when the grouped row
+        carries one (`cache_write_5m` and `cache_write_1h` both summed and not
+        NULL — a group of turns that all stated it). Otherwise the whole
+        `cache_creation` total is charged at the 5-minute rate, the
+        conservative choice, because the 1-hour rate is the dearer of the two
+        and an unknown split cannot be given a made-up hour share."""
+        keys = row.keys()
+        write_5m = row["cache_write_5m"] if "cache_write_5m" in keys else None
+        write_1h = row["cache_write_1h"] if "cache_write_1h" in keys else None
+        if write_5m is None or write_1h is None:
+            write_5m, write_1h = row["cache_creation"] or 0, 0
         return pricing.cost_usd(
             row["model"],
             input_tokens=row["input_tokens"] or 0,
             output_tokens=row["output_tokens"] or 0,
             cache_read=row["cache_read"] or 0,
-            cache_write_5m=row["cache_creation"] or 0,
+            cache_write_5m=write_5m or 0,
+            cache_write_1h=write_1h or 0,
             day=row["day"],
+            provider="claude",
         )
 
     # --- digests and themes (the panel's product tab) ---

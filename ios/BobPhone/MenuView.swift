@@ -6,7 +6,7 @@ import WebKit
 /// their own until the menu gathered them, so `bobphone://usage` (the
 /// widget's meter) and a draft stamped `comm` still name them.
 enum MenuSection: String, CaseIterable, Hashable, Identifiable {
-    case usage, comm, scouting, checks, plans, designSystem
+    case usage, history, comm, scouting, checks, plans, designSystem
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     var title: String {
         switch self {
         case .usage: return "Usage"
+        case .history: return "History"
         case .comm: return "Comm"
         case .scouting: return "Scouting"
         case .checks: return "Manual checks"
@@ -25,6 +26,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     var symbol: String {
         switch self {
         case .usage: return "chart.bar"
+        case .history: return "calendar"
         case .comm: return "text.bubble"
         case .scouting: return "binoculars"
         case .checks: return "checklist"
@@ -33,15 +35,15 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         }
     }
 
-    /// `built` is what a tile is against a Mac that says nothing. Scouting,
-    /// Manual checks and Plans have their screens, but each needs a Mac
-    /// that serves its list; against an older one the tile opens a page
-    /// that says so, never an empty list that looks like "none". They light
-    /// through `lit(scoutReports:manualChecks:plans:)`.
+    /// `built` is what a tile is against a Mac that says nothing. History,
+    /// Scouting, Manual checks and Plans have their screens, but each needs
+    /// a Mac that serves its read; against an older one the tile opens a
+    /// page that says so, never an empty screen that looks like "none". They
+    /// light through `lit(scoutReports:manualChecks:plans:historyWeek:)`.
     var built: Bool {
         switch self {
         case .usage, .comm, .designSystem: return true
-        case .scouting, .checks, .plans: return false
+        case .scouting, .checks, .plans, .history: return false
         }
     }
 
@@ -49,14 +51,16 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     /// Scouting once the Mac lists its scout reports
     /// (`Board.scoutReportsSupported`), Manual checks once it serves the
     /// Checks section (`Board.manualChecksSupported`), Plans once it lists
-    /// its projects' plans (`Board.plansSupported`), every other section as
+    /// its projects' plans (`Board.plansSupported`), History once it serves
+    /// the week (`Board.historyWeekSupported`), every other section as
     /// `built`.
     func lit(scoutReports: Bool, manualChecks: Bool = false,
-             plans: Bool = false) -> Bool {
+             plans: Bool = false, historyWeek: Bool = false) -> Bool {
         switch self {
         case .scouting: return scoutReports
         case .checks: return manualChecks
         case .plans: return plans
+        case .history: return historyWeek
         default: return built
         }
     }
@@ -113,7 +117,8 @@ struct MenuView: View {
         let lit = section.lit(
             scoutReports: client.snapshot.board.scoutReportsSupported,
             manualChecks: client.snapshot.board.manualChecksSupported,
-            plans: client.snapshot.board.plansSupported)
+            plans: client.snapshot.board.plansSupported,
+            historyWeek: client.snapshot.board.historyWeekSupported)
         return DecryptButton(action: { open = section }) {
             VStack(spacing: 8) {
                 Image(systemName: section.symbol)
@@ -173,6 +178,17 @@ struct MenuSectionScreen: View {
                 await client.refreshNow()
             }
             .navigationTitle("usage")
+        case .history:
+            // The week only against a Mac that serves it; an older Mac keeps
+            // the page that says so rather than an empty screen.
+            if client.snapshot.board.historyWeekSupported {
+                HistoryWeekView(client: client)
+                    .navigationTitle("history")
+            } else {
+                MenuNotYet(path: "~/history",
+                           sentence: "History opens here once the Mac's Dark Army serves the week.")
+                    .navigationTitle("history")
+            }
         case .comm:
             CommView(client: client, selected: selected)
                 .navigationTitle("comm")
