@@ -1268,6 +1268,10 @@ struct Board: Decodable {
     /// **false**: an older Mac 404s the kind, so the section is drawn
     /// **absent** rather than present and answering nothing.
     var lifecycleSupported = false
+    /// Whether this Mac serves the sealed `history_week` read. Absent means
+    /// **false**: an older Mac 404s the kind, so the Menu's History tile is
+    /// drawn dim with a sentence rather than lit and answering nothing.
+    var historyWeekSupported = false
     /// Whether this Mac stamps `run_figures` — cost so far, working minutes,
     /// live context, attempts — on every card that has had a run. Absent
     /// means **false**: an older Mac sends no key, and the figures line on
@@ -1408,6 +1412,7 @@ struct Board: Decodable {
         case areasSupported = "areas_supported"
         case agentReportSupported = "agent_report_supported"
         case lifecycleSupported = "lifecycle_supported"
+        case historyWeekSupported = "history_week_supported"
         case runFiguresSupported = "run_figures_supported"
         case dependenciesSupported = "dependencies_supported"
         case liveActivitySupported = "live_activity_supported"
@@ -1468,6 +1473,7 @@ struct Board: Decodable {
         areasSupported = c.value(.areasSupported, false)
         agentReportSupported = c.value(.agentReportSupported, false)
         lifecycleSupported = c.value(.lifecycleSupported, false)
+        historyWeekSupported = c.value(.historyWeekSupported, false)
         runFiguresSupported = c.value(.runFiguresSupported, false)
         dependenciesSupported = c.value(.dependenciesSupported, false)
         liveActivitySupported = c.value(.liveActivitySupported, false)

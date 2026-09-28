@@ -186,7 +186,10 @@ is its scope; its headline is the token cost of Claude, Grok and Codex
 dollar a provider reported sits beside it and is never added, and a missing
 price stays a dash, never $0.00; it is fetched on open and when the range or
 the project changes, not on the SSE loop; the lifecycle quantile report is
-not drawn here and `GET /api/lifecycle` stays; the phone has no History screen. The card window fetches one
+not drawn here and `GET /api/lifecycle` stays; the phone's History is the
+seven-day week alone (`docs/phone-contract.md`), folded by `LedgerWeek`, the
+money half of `LedgerFold`, byte-pinned from `enum LedgerWeek {` down
+(`test_ledger_week.py`). The card window fetches one
 session's record through `SessionRecord.swift`. Every rail section — Active, Recently
 finished, Abandoned — folds through the one `SectionHeader`
 (`RailWidgets.swift`; buckets and sections are `RailSections.swift`). The inbox is grouped under project

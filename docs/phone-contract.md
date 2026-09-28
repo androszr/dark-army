@@ -524,13 +524,38 @@ Pinned by `host/tests/test_phone_terminal.py` and
 ## The Menu tab gathers Usage, Comm, Scouting and Manual checks
 
 Four tabs: Needs you, Fleet, Board, **Menu** (`MenuView.swift`), a grid four
-across (two at accessibility sizes) of `MenuSection` tiles — Usage, Comm,
-Scouting, Manual checks, Plans — beside the bundled Design system, each
-pushed on the Menu's own stack with a back button. Manual checks, Scouting
-and Plans each say "not built yet" against a Mac that does not serve their
-list (below). `PhoneTab(stored:)` reads a section name as `.menu`, so an old `comm`
+across (two at accessibility sizes) of `MenuSection` tiles — Usage, History,
+Comm, Scouting, Manual checks, Plans — beside the bundled Design system,
+each pushed on the Menu's own stack with a back button. History, Manual checks, Scouting and Plans each say "not built yet"
+against a Mac that does not serve their read (below). `PhoneTab(stored:)` reads a section name as `.menu`, so an old `comm`
 draft and `bobphone://usage` still land. Pinned by
 `host/tests/test_phone_menu.py`.
+
+**The week's token cost opens from the Menu's History tile.** Against a Mac
+that publishes `history_week_supported` the tile is lit
+(`MenuSection.lit(…, historyWeek:)`) and pushes `HistoryWeekView`
+(`.navigationTitle("history")`); an older Mac leaves it dim and the page
+that says so. The screen draws four lines — the seven-day total (the token
+cost of Claude, Grok and Codex together, `.privacySensitive()`; "not
+priced", never $0.00, where no day had a price), `$X reported — not added
+in` beside it only where a provider reported one, `n not priced` where some
+work had no price, and the span — then seven columns, one per local day,
+each a bar stacked Claude / Grok / Codex (`Theme.phosphor`, `Theme.control`,
+`Theme.phosphorBright`; never amber or red) over the day's figure, its
+reported mark and its weekday, with a legend naming all three in words; at
+an accessibility size the columns become rows with a horizontal strip, and
+each day is one element spoken from what it draws. "some cards were left
+out" is drawn under the total when the Mac's page says `truncated`. The
+arithmetic is `LedgerWeek`, the fold the Mac's History calls, byte-pinned
+from `enum LedgerWeek {` down (`test_ledger_week.py`), so the numbers are
+the Mac's; the day keys are the phone's own local days, so a phone in
+another time zone can place a figure on a neighbouring day while the week's
+total is unchanged. The week is the sealed `history_week` read
+(`docs/transport-contract.md`), relay first when away, asked **on appear
+and on pull only** — never the poll, `backgroundRefresh` or the widget —
+and held for the life of the screen, never on disk; while it loads Dark
+Army talks (`AgentChatterView`), and a Mac out of reach is one sentence and
+a Retry. Read-only. Pinned by `host/tests/test_phone_history_week.py`.
 
 **Manual checks open from the Menu's Manual checks tile.** Against a Mac
 that publishes `manual_checks_supported` the tile is lit

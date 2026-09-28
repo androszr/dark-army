@@ -35,15 +35,26 @@ enum LedgerWeekLayout {
         guard scale > 0 else { return [] }
         let values: [(LedgerInk, Double)]
         if lens == .spent {
-            values = [(.claude, column.claudeToken),
-                      (.grok, column.grokToken),
-                      (.codex, column.codexToken)]
+            // The order is `LedgerWeek.segments`', the phone's own.
+            values = LedgerWeek.segments(claude: column.claudeToken,
+                                         grok: column.grokToken,
+                                         codex: column.codexToken).map {
+                (ink(provider: $0.provider), $0.value)
+            }
         } else {
             values = [(.claude, column.magnitude)]
         }
         return values.compactMap { ink, value in
             guard value > 0 else { return nil }
             return Segment(ink: ink, height: max(segmentMin, value / scale * segmentMax))
+        }
+    }
+
+    private static func ink(provider: String) -> LedgerInk {
+        switch provider {
+        case "grok": return .grok
+        case "codex": return .codex
+        default: return .claude
         }
     }
 

@@ -3662,6 +3662,28 @@ extension PhoneClient {
         return try? JSONDecoder().decode(PlanIndex.self, from: answer.body)
     }
 
+    /// The Mac's last seven days for the History screen — `plansIndex`'
+    /// shape and rule: a **read** on the sealed home/away route (relay first
+    /// when away), asked only when the History screen appears or is pulled,
+    /// never on the poll, the background refresh or the widget. No body: the
+    /// week is fixed on the Mac.
+    func historyWeek() async -> HistoryWeekReport? {
+        guard let record, !backgroundRun else { return nil }
+        let body: [String: Any] = [:]
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "history_week", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(kind: "history_week", body: body,
+                                        host: record.host, port: record.port,
+                                        timeout: 10)
+        } else { return nil }
+        guard record.token == self.record?.token, let answer,
+              answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return try? JSONDecoder().decode(HistoryWeekReport.self, from: answer.body)
+    }
+
     /// One plan's text, fetched when it is opened and at no other time.
     /// The path rides the sealed JSON body, never a query string, and the
     /// Mac re-checks it against the set it lists.

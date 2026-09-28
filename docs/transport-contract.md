@@ -915,18 +915,11 @@ Mac's Dark Army is too old"**, never as "no record".
 
 ## `lifecycle` is a sealed read
 
-**`lifecycle` is a sealed read**, `outcomes`' sibling and `log`'s rule:
-`_lifecycle_report_for(query)` is one body behind loopback
-`GET /api/lifecycle` and the sealed kind on both doors, **above** the
-`action` branch, so neither action tuple grew, **no lease is checked** and
-no `remote_activity` is written. The kind is on `_lan_home`'s allowlist
-**and** in `_sealed_run`; a kind handled only in `_sealed_run` still 404s
-at home. Query forms are `root` (project) or `card` (retained timeline),
-mutually exclusive, with the same frozen `[from,to)` UTC period (default
-last 30 days, at most 366) and `as_of`. Default page 25, allowed 1..100;
-UTF-8 JSON is capped at 300 KB before sealing. `lifecycle_supported` on
-`_pipeline_writable()` is the version marker. Full measurement contract:
-`docs/lifecycle-timing.md`. Pinned by `test_lifecycle_api.py`.
+**`lifecycle` is a sealed read**, `outcomes`' sibling and `log`'s rule: `_lifecycle_report_for(query)` is one body behind loopback `GET /api/lifecycle` and the sealed kind on both doors, **above** the `action` branch, so neither action tuple grew, **no lease is checked** and no `remote_activity` is written. The kind is on `_lan_home`'s allowlist **and** in `_sealed_run`; a kind handled only in `_sealed_run` still 404s at home. Query forms are `root` (project) or `card` (retained timeline), mutually exclusive, with the same frozen `[from,to)` UTC period (default last 30 days, at most 366) and `as_of`. Default page 25, allowed 1..100; UTF-8 JSON is capped at 300 KB before sealing. `lifecycle_supported` on `_pipeline_writable()` is the version marker. Full measurement contract: `docs/lifecycle-timing.md`. Pinned by `test_lifecycle_api.py`.
+
+## `history_week` is a sealed read
+
+**`history_week` is a sealed read**, `log`'s sibling and `log`'s rule: the phone's History screen, the Mac's last seven days across every project. `_history_week_for` sits **above** the `action` branch, on `_lan_home`'s allowlist **and** in `_sealed_run`, so neither `LAN_ACTIONS` nor `REMOTE_ACTIONS` grew, **no lease is checked** and no `remote_activity` is written. It takes **no query**: the body is ignored and the week is fixed — the same `agent_efficiency_report(7, "")` the Mac's `/api/history?range=7d` makes with no project. The answer is a **closed projection**, rebuilt row by row from `HISTORY_WEEK_CARD_KEYS` (`card_id`, `sessions`), `HISTORY_WEEK_SESSION_KEYS` (the session id, provider, phase, `bound_at`, `known`, the token cost and its provider split, `token_unpriced_turns`, `reported_cost_usd`) and `HISTORY_WEEK_DAY_KEYS` (the leftover day's provider token costs, reported dollars and token-unpriced counts and ids); the body adds `available`, `range_days`, `from`, `to`, `generated_at`, `partial` (the join was capped) and `codex_history_partial`. No title, person, project root, model or turn count rides it. A null or absent value is **absent**, never 0 (a 0 would price a day at $0.00); a stored 0 stays 0. Nothing is priced here: the phone folds it with `LedgerWeek`, the fold the Mac's History calls (`docs/phone-contract.md`). The page is bound at 300 KB of plaintext before sealing by halving `cards` from the tail, with `truncated: true` stated, since a cut lowers the week's total. Loopback `GET /api/history-week` is token-gated like `/api/knowledge` (`X-Bob-Token`, empty Origin allowed on GET, the Host check above the routing table). On the LAN door plaintext `GET /api/history-week` is 426 in `HOME_UPDATE_REFUSAL`'s words, recorded `plaintext`; `GET /api/history` is not a LAN route and stays 404 `not_found`. `history_week_supported` on `_pipeline_writable()` is the version marker. Pinned by `test_history_week_api.py` and `test_lan_door.py`.
 
 ## `knowledge` and `manual_checks` are sealed reads
 

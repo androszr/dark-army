@@ -227,36 +227,27 @@ enum LedgerFold {
         let placed = pin(works, ontoFirstOf: keys, range: range)
         let others = pinOther(report.otherDays, ontoFirstOf: keys, range: range)
         let mode = mode(for: range)
+        // The money — each column's token cost by provider, the reported
+        // dollar beside it, the not-priced marks and their sums — is
+        // `LedgerWeek`'s, the fold the phone runs byte for byte. This view
+        // adds tokens, time, people, projects and the dock around it.
+        let week = LedgerWeek.fold(works: placed.map(\.week),
+                                   others: otherOn ? others.map(weekOther) : [],
+                                   keys: keys, claude: claude, grok: grok,
+                                   calendar: calendar)
         var columns: [LedgerDayColumn] = []
-        var tokenCostSum = 0.0
-        var anyTokenCost = false
-        var reportedSum = 0.0
-        var anyReported = false
         var tokenSum = 0
         var anyTokens = false
         var timeSum = 0
         var anyTime = false
-        var unknownCards = 0
-        // Sessions with a turn not priced, by id: a leftover session with
-        // unpriced turns on three days is one session, not three.
-        var unpricedSessions: Set<String> = []
         var splitUnknown = 0
 
-        for key in keys {
+        for (index, key) in keys.enumerated() {
             let onDay = placed.filter { $0.day == key }.sorted { $0.bound < $1.bound }
             let other = otherOn ? others.first { $0.day == key } : nil
-            let column = column(day: key, works: onDay, other: other,
-                                lens: lens, claude: claude, grok: grok,
-                                calendar: calendar)
+            let column = column(money: week.days[index], works: onDay, other: other,
+                                lens: lens, claude: claude, grok: grok)
             columns.append(column)
-            if column.anyToken {
-                anyTokenCost = true
-                tokenCostSum += column.token
-            }
-            if let reported = column.reported {
-                anyReported = true
-                reportedSum += reported
-            }
             // Tokens and time are folded from the works, not from `daily`.
             for work in onDay where work.anyTokens {
                 anyTokens = true
@@ -274,13 +265,8 @@ enum LedgerFold {
                     anyTokens = true
                     tokenSum += extra
                 }
-                // Leftover sessions some of whose turns that day had no
-                // price: the day still shows what was priced.
-                unpricedSessions.formUnion(otherUnpricedIds(other, claude: claude, grok: grok))
                 if claude { splitUnknown += other.cacheSplitUnknownTurns }
             }
-            unknownCards += onDay.filter(\.unknown).count
-            for work in onDay { unpricedSessions.formUnion(work.unpricedSessions) }
         }
 
         var picture = LedgerPicture()
@@ -292,21 +278,22 @@ enum LedgerFold {
         picture.days = columns
         picture.focusDay = keys.contains(selectedDay) ? selectedDay : (keys.last ?? "")
         // The columns' token costs summed are the headline. Not `daily`, and
-        // no reported dollar is in it.
-        if anyTokenCost {
-            picture.spent = Format.usd(tokenCostSum)
-        } else if unknownCards + unpricedSessions.count > 0 {
+        // no reported dollar is in it. The phone says "not priced" where
+        // this says "cost unknown" or a real $0.00 for an empty range.
+        if week.anyTokenCost {
+            picture.spent = week.total
+        } else if week.unpriced > 0 {
             picture.spent = "cost unknown"
         } else {
             picture.spent = Format.usd(0)
         }
-        if anyReported {
-            picture.reported = Format.usd(reportedSum)
+        if let reportedSum = week.reportedSum {
+            picture.reported = LedgerWeek.usd(reportedSum)
         }
         picture.tokens = anyTokens ? Format.count(tokenSum) : dash
         picture.time = anyTime ? HistoryFormat.duration(ms: timeSum) : dash
-        picture.aside = aside(reported: picture.reported, unknown: unknownCards,
-                              partly: unpricedSessions.count,
+        picture.aside = aside(reported: picture.reported, unknown: week.unknownCards,
+                              partly: week.unpricedSessions,
                               codexPartial: report.effectiveness.codexHistoryPartial,
                               splitUnknown: splitUnknown, waiting: waiting)
         picture.masthead = masthead(keys: keys, report: report, projects: projects,
@@ -315,7 +302,7 @@ enum LedgerFold {
         picture.people = people(placed)
         picture.projects = projectRows(projects: projects, works: placed)
         if mode == .week, lens == .spent {
-            picture.usual = median(columns.map(\.token))
+            picture.usual = week.usual
         }
         picture.dock = dock(works: works, columns: columns, openCard: openCard,
                             selectedDay: selectedDay, range: range,
@@ -327,91 +314,54 @@ enum LedgerFold {
 
     private struct Work {
         var card: HistoryOutcomeCard
-        var provider: String
-        var day: String
-        var bound: Double
+        /// The card's money and placement, decided by `LedgerWeek.work`:
+        /// token cost split by the provider of the session that spent it (so
+        /// a Codex session is never inside Claude's share), the reported
+        /// dollar, the not-priced marks and the day.
+        var week: LedgerWeek.Work
         var clock: String
         var project: String
         var model: String
-        /// Token cost, split by the provider of the session that spent it,
-        /// so a Codex session is never inside Claude's share.
-        var claudeToken: Double
-        var grokToken: Double
-        var codexToken: Double
-        var anyToken: Bool
-        var reported: Double
-        var anyReported: Bool
-        /// No token cost at all: cost unknown.
-        var unknown: Bool
-        /// A token cost, but some of the card's work had no price.
-        var partlyUnpriced: Bool
-        /// The on sessions of a priced card that carried an unpriced turn.
-        var unpricedSessions: [String]
         var splitUnknown: Int
         var tokens: Int
         var anyTokens: Bool
         var timeMs: Int
         var anyTime: Bool
 
-        var token: Double { claudeToken + grokToken + codexToken }
+        var provider: String { week.provider }
+        var day: String { week.day }
+        var bound: Double { week.bound }
+        var anyToken: Bool { week.anyTokenCost }
+        var token: Double { week.tokenCost }
+        var reported: Double { week.reported ?? 0 }
+        var anyReported: Bool { week.reported != nil }
+        /// No token cost at all: cost unknown.
+        var unknown: Bool { week.unknown }
+        /// A token cost, but some of the card's work had no price.
+        var partlyUnpriced: Bool { week.partlyUnpriced }
     }
 
     /// The cards the picture draws, each cut to the provider shares that are
-    /// on. The filter is per share and per session, never per card: a
-    /// session's token cost is split by the provider of the turns priced
-    /// (`claude_` / `grok_` / `codex_token_cost_usd`), Claude and Grok follow
-    /// their toggles, Codex is always on. A session is on when one of its
-    /// priced shares is on — so a Codex-labelled run that was a Claude session
-    /// is off with Claude off, its statusline dollar included — and, with no
-    /// split to go by, when the provider it ran as is on. A card is drawn
-    /// while a share or a session of it is on; one whose on sessions carry no
-    /// price is drawn as cost unknown, never dropped.
+    /// on — `LedgerWeek.work`'s rule, the phone's own: per share and per
+    /// session, never per card; Claude and Grok follow their toggles, Codex
+    /// is always on; a card whose on sessions carry no price is drawn as
+    /// cost unknown, never dropped. Tokens and time are summed here over the
+    /// same on sessions (`LedgerWeek.sessionOn`).
     private static func included(report: HistoryReport, claude: Bool, grok: Bool,
                                  person: String, projects: [BoardProject],
                                  calendar: Calendar) -> [Work] {
         report.effectiveness.cards.compactMap { card in
             if !person.isEmpty, card.who != person { return nil }
-            guard let bound = earliest(card) else { return nil }
-            var claudeToken = 0.0
-            var grokToken = 0.0
-            var codexToken = 0.0
-            var onShares: Set<String> = []
-            var reported = 0.0
-            var anyReported = false
-            var unpricedSessions: [String] = []
-            var anySessionOn = false
+            guard let week = LedgerWeek.work(card: weekCard(card), claude: claude,
+                                             grok: grok, calendar: calendar)
+            else { return nil }
             var splitUnknown = 0
             var tokens = 0
             var anyTokens = false
             var timeMs = 0
             var anyTime = false
-            for session in card.sessions {
-                let shares = tokenShares(session)
-                if claude, let value = shares.claude {
-                    onShares.insert("claude")
-                    claudeToken += value
-                }
-                if grok, let value = shares.grok {
-                    onShares.insert("grok")
-                    grokToken += value
-                }
-                if let value = shares.codex {
-                    onShares.insert("codex")
-                    codexToken += value
-                }
-                guard sessionOn(session, shares: shares, claude: claude, grok: grok) else {
-                    continue
-                }
-                anySessionOn = true
-                if !session.known || (session.tokenUnpricedTurns ?? 0) > 0 {
-                    unpricedSessions.append(
-                        session.sessionId.isEmpty ? "\(card.cardId)#\(unpricedSessions.count)"
-                            : session.sessionId)
-                }
-                if let value = session.reportedCostUsd {
-                    anyReported = true
-                    reported += value
-                }
+            for session in card.sessions
+            where LedgerWeek.sessionOn(weekSession(session), claude: claude, grok: grok) {
                 if claude {
                     splitUnknown += session.cacheSplitUnknownTurns ?? 0
                 }
@@ -424,93 +374,53 @@ enum LedgerFold {
                     timeMs += session.durationMs ?? 0
                 }
             }
-            let anyToken = !onShares.isEmpty
-            guard anySessionOn || anyToken else { return nil }
-            // The ink follows the largest share that is on; a tie (a lone
-            // $0.00 share included) goes to the provider the card ran as
-            // when that one is among them, else to the first priced.
-            let lead: String
-            if anyToken {
-                let values = ["claude": claudeToken, "grok": grokToken, "codex": codexToken]
-                let top = onShares.map { values[$0] ?? 0 }.max() ?? 0
-                let tied = ["claude", "grok", "codex"].filter {
-                    onShares.contains($0) && values[$0] == top
-                }
-                let label = leadProvider(card)
-                lead = tied.contains(label) ? label : (tied.first ?? label)
-            } else {
-                lead = leadProvider(card)
-            }
             return Work(
-                card: card, provider: lead,
-                day: localDay(bound, calendar: calendar), bound: bound,
-                clock: clock(bound, calendar: calendar),
+                card: card, week: week,
+                clock: clock(week.bound, calendar: calendar),
                 project: projectName(card.root, projects: projects),
                 model: model(card),
-                claudeToken: claudeToken, grokToken: grokToken,
-                codexToken: codexToken, anyToken: anyToken,
-                reported: reported, anyReported: anyReported,
-                unknown: !anyToken,
-                partlyUnpriced: anyToken && !unpricedSessions.isEmpty,
-                unpricedSessions: anyToken ? unpricedSessions : [],
                 splitUnknown: splitUnknown,
                 tokens: tokens, anyTokens: anyTokens,
                 timeMs: timeMs, anyTime: anyTime)
         }
     }
 
-    /// Whether one session is on: by its priced shares when the daemon sent
-    /// a split, by the provider it ran as when it did not.
-    private static func sessionOn(_ session: HistoryOutcomeSession,
-                                  shares: (claude: Double?, grok: Double?, codex: Double?),
-                                  claude: Bool, grok: Bool) -> Bool {
-        if shares.claude == nil, shares.grok == nil, shares.codex == nil {
-            return providerOn(session.provider, claude: claude, grok: grok)
-        }
-        return (claude && shares.claude != nil) || (grok && shares.grok != nil)
-            || shares.codex != nil
+    // MARK: - The shared fold's input
+
+    /// A report card as the shared fold reads it: the id and the money
+    /// fields of its sessions, nothing a person reads.
+    private static func weekCard(_ card: HistoryOutcomeCard) -> LedgerWeek.Card {
+        LedgerWeek.Card(id: card.cardId, sessions: card.sessions.map(weekSession))
     }
 
-    /// One session's token cost by provider. The daemon's split when it sent
-    /// one; from an older daemon, the whole `tokenCostUsd` under the
-    /// session's own provider.
-    private static func tokenShares(_ session: HistoryOutcomeSession)
-        -> (claude: Double?, grok: Double?, codex: Double?) {
-        if session.claudeTokenCostUsd != nil || session.grokTokenCostUsd != nil
-            || session.codexTokenCostUsd != nil {
-            return (session.claudeTokenCostUsd, session.grokTokenCostUsd,
-                    session.codexTokenCostUsd)
-        }
-        guard let total = session.tokenCostUsd else { return (nil, nil, nil) }
-        switch session.provider {
-        case "grok": return (nil, total, nil)
-        case "codex": return (nil, nil, total)
-        default: return (total, nil, nil)
-        }
+    private static func weekSession(_ session: HistoryOutcomeSession) -> LedgerWeek.Session {
+        LedgerWeek.Session(
+            sessionId: session.sessionId, provider: session.provider,
+            phase: session.phase, boundAt: session.boundAt, known: session.known,
+            tokenCostUsd: session.tokenCostUsd,
+            claudeTokenCostUsd: session.claudeTokenCostUsd,
+            grokTokenCostUsd: session.grokTokenCostUsd,
+            codexTokenCostUsd: session.codexTokenCostUsd,
+            tokenUnpricedTurns: session.tokenUnpricedTurns,
+            reportedCostUsd: session.reportedCostUsd)
     }
 
-    private static func leadProvider(_ card: HistoryOutcomeCard) -> String {
-        if let session = card.sessions.first(where: {
-            $0.phase == "implementation" && !$0.provider.isEmpty
-        }) {
-            return session.provider
-        }
-        return card.sessions.first { !$0.provider.isEmpty }?.provider ?? ""
-    }
-
-    /// Codex is always on. Claude and Grok follow the toggles. Anything
-    /// else rides with Claude. Applied per session and per share, never to a
-    /// whole card.
-    private static func providerOn(_ provider: String, claude: Bool,
-                                   grok: Bool) -> Bool {
-        if provider == "codex" { return true }
-        if provider == "grok" { return grok }
-        return claude
-    }
-
-    private static func earliest(_ card: HistoryOutcomeCard) -> Double? {
-        let stamps = card.sessions.compactMap(\.boundAt).filter { $0 > 0 }
-        return stamps.min()
+    /// A leftover day's money for the shared fold. The unpriced counts are
+    /// the token-cost ones (`*_token_unpriced_sessions`), not the older
+    /// measured-dollar counts.
+    private static func weekOther(_ row: HistoryOtherDay) -> LedgerWeek.OtherDay {
+        LedgerWeek.OtherDay(
+            day: row.day,
+            claude: row.claudeTokenCostUsd, grok: row.grokTokenCostUsd,
+            codex: row.codexTokenCostUsd,
+            claudeReported: row.claudeReportedCostUsd,
+            grokReported: row.grokReportedCostUsd,
+            claudeUnpriced: row.claudeTokenUnpricedSessions,
+            grokUnpriced: row.grokTokenUnpricedSessions,
+            codexUnpriced: row.codexTokenUnpricedSessions,
+            claudeUnpricedIds: row.claudeTokenUnpricedSessionIds,
+            grokUnpricedIds: row.grokTokenUnpricedSessionIds,
+            codexUnpricedIds: row.codexTokenUnpricedSessionIds)
     }
 
     private static func model(_ card: HistoryOutcomeCard) -> String {
@@ -529,72 +439,29 @@ enum LedgerFold {
 
     // MARK: - Days
 
-    private static func column(day: String, works: [Work], other: HistoryOtherDay?,
-                               lens: LedgerLens, claude: Bool, grok: Bool,
-                               calendar: Calendar) -> LedgerDayColumn {
+    /// One day as the ledger draws it. `money` is `LedgerWeek.column`'s —
+    /// the token cost by provider, the reported mark, the not-priced dash
+    /// and the figure (a dash where nothing on the day could be priced,
+    /// nothing at all on a day nothing happened: an empty day is not $0.00)
+    /// — and this adds the lens, the leftover line and the cards.
+    private static func column(money: LedgerWeek.Column, works: [Work],
+                               other: HistoryOtherDay?, lens: LedgerLens,
+                               claude: Bool, grok: Bool) -> LedgerDayColumn {
         var column = LedgerDayColumn()
-        column.day = day
-        if let date = date(from: day, calendar: calendar) {
-            let weekday = calendar.component(.weekday, from: date)
-            column.weekday = calendar.shortWeekdaySymbols[weekday - 1]
-            column.dayNumber = String(calendar.component(.day, from: date))
-        }
-        var reported = 0.0
-        var anyReported = false
-        for work in works {
-            if work.anyToken {
-                column.anyToken = true
-                column.claudeToken += work.claudeToken
-                column.grokToken += work.grokToken
-                column.codexToken += work.codexToken
-            }
-            if work.anyReported {
-                anyReported = true
-                reported += work.reported
-            }
-        }
-        if let other {
-            let claudePart = claude ? other.claudeTokenCostUsd : 0
-            let grokPart = grok ? other.grokTokenCostUsd : 0
-            let codexPart = other.codexTokenCostUsd
-            if claudePart != 0 || grokPart != 0 || codexPart != 0 {
-                column.anyToken = true
-                column.claudeToken += claudePart
-                column.grokToken += grokPart
-                column.codexToken += codexPart
-            }
-            if claude, let value = other.claudeReportedCostUsd {
-                anyReported = true
-                reported += value
-            }
-            if grok, let value = other.grokReportedCostUsd {
-                anyReported = true
-                reported += value
-            }
-            if otherUnpriced(other, claude: claude, grok: grok) > 0 {
-                column.unknown = true
-            }
-        }
-        column.token = column.claudeToken + column.grokToken + column.codexToken
-        if anyReported {
-            column.reported = reported
-            column.reportedMark = reportedWords(reported)
-        }
-        if works.contains(where: { $0.unknown || $0.partlyUnpriced }) {
-            column.unknown = true
-        }
+        column.day = money.day
+        column.weekday = money.weekday
+        column.dayNumber = money.dayNumber
+        column.claudeToken = money.claude
+        column.grokToken = money.grok
+        column.codexToken = money.codex
+        column.token = money.tokenCost
+        column.anyToken = money.anyTokenCost
+        column.reported = money.reported
+        column.reportedMark = money.reportedMark
+        column.unknown = money.unknown
+        column.figure = money.figure
         column.noNamedCard = works.isEmpty
         column.emptyNote = works.isEmpty ? "No named card" : nil
-        // The token cost, a dash where nothing on the day could be priced,
-        // and nothing at all on a day nothing happened: an empty day is not
-        // $0.00, and a reported zero is the reported mark's to say.
-        if column.anyToken {
-            column.figure = Format.usd(column.token)
-        } else if column.unknown {
-            column.figure = dash
-        } else {
-            column.figure = ""
-        }
         let tokenTotal = works.reduce(0) { $0 + ($1.anyTokens ? $1.tokens : 0) }
             + (other.map { (claude ? $0.claudeOutputTokens : 0) + (grok ? $0.grokOutputTokens : 0) } ?? 0)
         let timeTotal = works.reduce(0) { $0 + ($1.anyTime ? $1.timeMs : 0) }
@@ -724,9 +591,8 @@ enum LedgerFold {
                             range: String) -> [Work] {
         guard range != "all", let first = keys.first else { return works }
         return works.map { work in
-            guard work.day < first else { return work }
             var pinned = work
-            pinned.day = first
+            pinned.week = LedgerWeek.pinned(work.week, onto: first)
             return pinned
         }
     }
@@ -774,42 +640,11 @@ enum LedgerFold {
     }
 
     private static func sum(_ lhs: Double?, _ rhs: Double?) -> Double? {
-        guard lhs != nil || rhs != nil else { return nil }
-        return (lhs ?? 0) + (rhs ?? 0)
-    }
-
-    /// Leftover sessions some of whose turns that day had no token price.
-    /// Codex is always on, so its sessions always count.
-    /// The same sessions by id. An older daemon sends counts only; its
-    /// sessions get a per-day stand-in id, which is the old per-day count.
-    private static func otherUnpricedIds(_ other: HistoryOtherDay, claude: Bool,
-                                         grok: Bool) -> Set<String> {
-        var ids: Set<String> = []
-        func add(_ named: [String], _ count: Int, _ provider: String) {
-            if named.isEmpty {
-                for n in 0..<count { ids.insert("\(other.day)#\(provider)#\(n)") }
-            } else {
-                ids.formUnion(named)
-            }
-        }
-        if claude { add(other.claudeTokenUnpricedSessionIds, other.claudeTokenUnpricedSessions, "claude") }
-        if grok { add(other.grokTokenUnpricedSessionIds, other.grokTokenUnpricedSessions, "grok") }
-        add(other.codexTokenUnpricedSessionIds, other.codexTokenUnpricedSessions, "codex")
-        return ids
-    }
-
-    private static func otherUnpriced(_ other: HistoryOtherDay, claude: Bool,
-                                      grok: Bool) -> Int {
-        (claude ? other.claudeTokenUnpricedSessions : 0)
-            + (grok ? other.grokTokenUnpricedSessions : 0)
-            + other.codexTokenUnpricedSessions
+        LedgerWeek.sum(lhs, rhs)
     }
 
     private static func recent(_ count: Int, now: Date, calendar: Calendar) -> [String] {
-        let today = calendar.startOfDay(for: now)
-        return (0..<count).reversed().compactMap { offset in
-            calendar.date(byAdding: .day, value: -offset, to: today)
-        }.map { dayKey($0, calendar: calendar) }
+        LedgerWeek.dayKeys(count: count, now: now, calendar: calendar)
     }
 
     private static func mode(for range: String) -> LedgerMode {
@@ -854,12 +689,7 @@ enum LedgerFold {
                                  projects: [BoardProject], claude: Bool, grok: Bool,
                                  person: String, acceptance: String,
                                  calendar: Calendar) -> String {
-        let span: String
-        if let first = keys.first, let last = keys.last, first != last {
-            span = "\(label(first, calendar: calendar)) – \(label(last, calendar: calendar))"
-        } else {
-            span = label(keys.first ?? "", calendar: calendar)
-        }
+        let span = LedgerWeek.span(keys, calendar: calendar)
         let root = report.effectiveness.root
         let place = root.isEmpty
             ? "the whole Mac"
@@ -1055,31 +885,15 @@ enum LedgerFold {
     /// A reported dollar in words, so it reads as a different kind of money
     /// from the token cost it sits beside. `$0.00 reported` is a real zero.
     static func reportedWords(_ value: Double) -> String {
-        "\(Format.usd(value)) reported"
-    }
-
-    private static func median(_ values: [Double]) -> Double {
-        let ordered = values.sorted()
-        guard !ordered.isEmpty else { return 0 }
-        let mid = ordered.count / 2
-        if ordered.count % 2 == 1 { return ordered[mid] }
-        return (ordered[mid - 1] + ordered[mid]) / 2
+        LedgerWeek.reportedWords(value)
     }
 
     private static func dayKey(_ date: Date, calendar: Calendar) -> String {
-        let parts = calendar.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d",
-                      parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+        LedgerWeek.dayKey(date, calendar: calendar)
     }
 
     private static func date(from key: String, calendar: Calendar) -> Date? {
-        let parts = key.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        var components = DateComponents()
-        components.year = parts[0]
-        components.month = parts[1]
-        components.day = parts[2]
-        return calendar.date(from: components)
+        LedgerWeek.date(from: key, calendar: calendar)
     }
 
     private static func clock(_ ts: Double, calendar: Calendar) -> String {
@@ -1089,11 +903,6 @@ enum LedgerFold {
     }
 
     private static func label(_ key: String, calendar: Calendar) -> String {
-        guard let date = date(from: key, calendar: calendar) else { return key }
-        let weekday = calendar.component(.weekday, from: date)
-        let name = calendar.shortWeekdaySymbols[weekday - 1]
-        let day = calendar.component(.day, from: date)
-        let month = calendar.shortMonthSymbols[calendar.component(.month, from: date) - 1]
-        return "\(name) \(day) \(month)"
+        LedgerWeek.label(key, calendar: calendar)
     }
 }

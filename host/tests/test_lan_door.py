@@ -361,6 +361,22 @@ async def test_a_loopback_arrival_is_admitted(server):
 
 
 @pytest.mark.asyncio
+async def test_the_week_is_sealed_only_and_the_history_page_stays_unknown(server):
+    """`/api/history-week` in plaintext is the 426 every sealed read's plain
+    address gives, recorded `plaintext`; `/api/history` was never a LAN route
+    and stays a 404 recorded `not_found`."""
+    _srv, _daemon, recorder, _loop, lan_port = server
+    status, _ = await _fetch("/api/history", port=lan_port)
+    assert status == 404
+    status, out = await _fetch("/api/history-week", port=lan_port)
+    assert status == 426
+    assert json.loads(out)["error"] == api_mod.HOME_UPDATE_REFUSAL
+    await _settle()
+    assert recorder.calls == [("lan", "127.0.0.1", "not_found", ""),
+                              ("lan", "127.0.0.1", "plaintext", "")]
+
+
+@pytest.mark.asyncio
 async def test_the_interface_reading_is_memoised_across_knocks(server, monkeypatch):
     srv, _daemon, _recorder, _loop, lan_port = server
     calls = []

@@ -1,8 +1,9 @@
 """Pins for the phone's Menu tab.
 
 Usage and Comm moved off the tab bar into a Menu grid, four across, beside
-Scouting, Manual checks, Plans and the bundled Design system (the three
-lists are built by `plans/2026-09-25-scout-reports-section.md`,
+History, Scouting, Manual checks, Plans and the bundled Design system (built
+by `plans/2026-09-25-phone-history-screen.md`,
+`plans/2026-09-25-scout-reports-section.md`,
 `plans/2026-09-25-manual-check-folder.md` and
 `plans/2026-09-25-phone-plans-library.md`). The old tab names stay
 reachable: a draft stamped `comm` or the widget's `bobphone://usage` lands on
@@ -39,9 +40,9 @@ def _enum(text: str, name: str) -> str:
 
 def test_the_grid_holds_sections_in_order():
     menu = _enum(_read(MENU), "MenuSection")
-    assert "case usage, comm, scouting, checks, plans, designSystem" in menu
-    for title in ('"Usage"', '"Comm"', '"Scouting"', '"Manual checks"', '"Plans"',
-                  '"Design system"'):
+    assert "case usage, history, comm, scouting, checks, plans, designSystem" in menu
+    for title in ('"Usage"', '"History"', '"Comm"', '"Scouting"', '"Manual checks"',
+                  '"Plans"', '"Design system"'):
         assert f"return {title}" in menu, title
 
 
@@ -71,7 +72,7 @@ def test_a_tile_pushes_onto_the_tab_stack_with_a_back_button():
 
 def test_the_unbuilt_sections_say_so():
     view = _read(MENU)
-    assert "case .scouting, .checks, .plans: return false" in view
+    assert "case .scouting, .checks, .plans, .history: return false" in view
     assert "MenuNotYet(" in view
     assert '"Not built yet"' in view
 
@@ -113,6 +114,8 @@ check(PhoneTab(stored: "nonsense") == nil, "nonsense")
 check(PhoneTab(stored: "") == nil, "empty")
 check(MenuSection(rawValue: "usage") == .usage, "section usage")
 check(MenuSection(rawValue: "plans") == .plans, "section plans")
+check(MenuSection(rawValue: "history") == .history, "section history")
+check(PhoneTab(stored: "history") == .menu, "history")
 check(PhoneTab(stored: "plans") == .menu, "plans")
 check(MenuSection(rawValue: "board") == nil, "section board")
 check(PhoneTab.allCases.count == 4, "four tabs")
