@@ -520,6 +520,27 @@ def test_a_matching_session_binds_and_moves_the_card(daemon):
     assert got["link_state"] == "live"
 
 
+def test_a_session_inside_the_cards_worktree_binds_too(daemon):
+    """The sibling for card isolation (`docs/card-worktrees.md`): the session
+    a Start opened in `<root>/.worktrees/card-<id8>` wears the project's own
+    label and a cwd under the root, and `_candidate_matches`' containment
+    rung binds it — the root stays the card's, the cwd is what moved."""
+    d, store = daemon
+    card = _make(store)
+    now = time.time()
+    store.update(card["id"], {"link_state": "dispatching", "dispatched_at": now})
+    d._dispatch_baseline[card["id"]] = set()
+    snapshot = {"running": [
+        {"session_id": "in-the-worktree", "provider": "claude",
+         "kind": "interactive", "project": "bob",
+         "cwd": "/tmp/.worktrees/card-abcd1234", "started_at": now + 1},
+    ]}
+    assert d._reconcile_board(snapshot) is True
+    got = store.get(card["id"])
+    assert got["session_id"] == "in-the-worktree"
+    assert got["link_state"] == "live"
+
+
 def test_a_session_in_another_project_is_not_bound(daemon):
     d, store = daemon
     card = _make(store)

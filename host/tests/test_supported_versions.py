@@ -127,6 +127,25 @@ def _floor_cell(document_text: str, component: str) -> str:
     raise AssertionError(f"no floor row for {component!r}")
 
 
+#: Capability gates a supported window may sit below, each named in the
+#: document with the reason. `NATIVE_REPLY_MIN_VERSION` is pinned to the
+#: current extension; `SUBFOLDER_SPAWN_MIN_VERSION` is the release a card's
+#: terminal can first open in the card's own worktree
+#: (`docs/card-worktrees.md`) — an older window is refused in words that
+#: name the reload and the per-project isolation switch, never started in
+#: the main checkout. It may sit above the floor, never above the current
+#: package; once the floor passes it, it is an ordinary baseline gate.
+OPTIONAL_GATES = ("NATIVE_REPLY_MIN_VERSION", "SUBFOLDER_SPAWN_MIN_VERSION")
+
+
+def _optional_gates_hold(gates: dict, current: tuple) -> None:
+    for name in OPTIONAL_GATES:
+        assert name in gates, f"{name} is no longer declared in vscode_reveal.py"
+        assert gates[name] <= current, (
+            f"{name} = {gates[name]} asks for an extension newer than the "
+            f"current package {current}")
+
+
 def check_extension_floor(manifest_path, document_text: str) -> str:
     """The seam the negative case drives: derive the floor from *this*
     manifest and hold *this* document to it. Returns the derived floor."""
@@ -143,8 +162,9 @@ def check_extension_floor(manifest_path, document_text: str) -> str:
     assert gates["NATIVE_REPLY_MIN_VERSION"] == current, (
         "optional native reply must require exactly the current extension"
     )
+    _optional_gates_hold(gates, current)
     baseline = {name: value for name, value in gates.items()
-                if name != "NATIVE_REPLY_MIN_VERSION"}
+                if name not in OPTIONAL_GATES}
     highest = max(baseline.items(), key=lambda kv: kv[1])
     assert highest[1] <= expected_tuple, (
         f"{highest[0]} = {highest[1]} sits above the floor {expected}: a "
@@ -165,7 +185,7 @@ def test_a_bumped_manifest_fails_the_floor_check(tmp_path):
     """The negative case: pretend the extension moved ahead. The document
     still names today's floor, so the check must refuse rather than pass."""
     manifest = tmp_path / "package.json"
-    manifest.write_text(json.dumps({"name": "dark-army-ide", "version": "0.1.22"}),
+    manifest.write_text(json.dumps({"name": "dark-army-ide", "version": "0.1.23"}),
                         encoding="utf-8")
     with pytest.raises(AssertionError, match="edit the document first"):
         check_extension_floor(manifest, _document())
@@ -182,8 +202,9 @@ def test_no_extension_gate_sits_above_the_floor():
     gates = _gates_in_source()
     current = tuple(int(p) for p in build_check.package_version(MANIFEST).reason.split("."))
     assert gates["NATIVE_REPLY_MIN_VERSION"] == current
+    _optional_gates_hold(gates, current)
     above = {name: value for name, value in gates.items()
-             if name != "NATIVE_REPLY_MIN_VERSION" and value > floor}
+             if name not in OPTIONAL_GATES and value > floor}
     assert not above, f"gates above the floor {floor}: {above}"
 
 

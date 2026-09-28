@@ -755,6 +755,12 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                 dict(prefs.get("board_parallel_by_root") or {})
                 if isinstance(prefs.get("board_parallel_by_root"), dict)
                 else {}),
+            # And the projects whose card isolation is switched off. Held
+            # raw; the daemon's setter keeps only real `False` entries.
+            "board_isolation_by_root": (
+                dict(prefs.get("board_isolation_by_root") or {})
+                if isinstance(prefs.get("board_isolation_by_root"), dict)
+                else {}),
             # Which model each agent and helper runs on, as stored: the
             # machine-wide table and the per-project override map. Held raw
             # here — the push resolves the global table and the daemon's
@@ -918,6 +924,10 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         # failing the lot.
         self._daemon.set_board_parallel_overrides(
             self._settings.get("board_parallel_by_root", {}))
+        # And the projects with card isolation switched off, through the
+        # daemon's own setter, so a switch survives a restart.
+        self._daemon.set_board_isolation_overrides(
+            self._settings.get("board_isolation_by_root", {}))
         # Which model each agent runs on: the stored tables, through the
         # daemon's own cleaning setters so a hand-edited name is dropped
         # here and never reaches an argv.
@@ -2425,6 +2435,38 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                 asyncio.run_coroutine_threadsafe(
                     self._daemon._publish_board(), self._loop)
 
+    def _set_board_isolation_root(self, value) -> None:
+        """One project's card-isolation switch, set from the board's In
+        progress heading: `{root, enabled}`.
+
+        `_set_board_parallel_root`'s shape exactly — store, save, daemon
+        setter, republish. Only *off* is stored (`{root: False}`); `enabled`
+        true removes the row, so the file never grows an entry meaning "the
+        same as the default". Rides the panel's stdin/stdout channel alone:
+        `preferences.json` is this process's to write. Touches no AppKit.
+        """
+        if not isinstance(value, dict):
+            logger.info("ignoring a card-isolation switch that is not a "
+                        "root/enabled pair")
+            return
+        root = str(value.get("root") or "").strip()
+        if not root:
+            logger.info("ignoring a card-isolation switch with no project")
+            return
+        enabled = value.get("enabled") is not False
+        current = dict(self._settings.get("board_isolation_by_root") or {})
+        if enabled:
+            current.pop(root, None)
+        else:
+            current[root] = False
+        self._settings["board_isolation_by_root"] = current
+        save_preferences(updates={"board_isolation_by_root": current})
+        if self._daemon:
+            self._daemon.set_board_isolation_override(root, enabled)
+            if self._loop:
+                asyncio.run_coroutine_threadsafe(
+                    self._daemon._publish_board(), self._loop)
+
     def _set_agent_model(self, value) -> None:
         """One chip on the Agent models page: `{provider, slot, model, root?}`.
 
@@ -3073,6 +3115,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         "set_board_autostart":        lambda app, v: app._set_board_autostart(bool(v)),
         "set_board_parallel":         lambda app, v: app._set_board_parallel(int(v)),
         "set_board_parallel_root":    lambda app, v: app._set_board_parallel_root(v),
+        "set_board_isolation_root":   lambda app, v: app._set_board_isolation_root(v),
         "set_agent_model":            lambda app, v: app._set_agent_model(v),
         "set_panel_scale":            lambda app, v: app._set_panel_scale(int(v)),
         "set_board_close_terminal":   lambda app, v: app._set_board_close_terminal(bool(v)),

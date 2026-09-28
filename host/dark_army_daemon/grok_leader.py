@@ -328,6 +328,24 @@ class LeaderClient:
         self._fail_at = 0.0
         self._list_methods: list[str] = []
         self._relist_task: Optional[asyncio.Task] = None
+        # True while the leader's list carries no resident flag: it cannot
+        # say who is live, so `seed_residents` may fill the set from Dark
+        # Army's own roster of running Grok tabs.
+        self.flagless = False
+
+    def seed_residents(self, ids) -> None:
+        """Take live Grok tabs from Dark Army's roster as the resident set.
+
+        Only while connected and the leader's list has no resident flag.
+        Without this the set started empty after every reconnect and stayed
+        empty until some Grok session opened or closed (the only thing that
+        fires `sessions/changed`), so every reply was refused as "not
+        attached". The roster drops a closed tab by its dead pid, so a
+        departed session leaves the set on the next roster pass.
+        """
+        if not self.connected or not self.flagless:
+            return
+        self._set_residents(frozenset(str(i) for i in ids if i))
 
     def _schedule_relist(self) -> None:
         """Re-list residents off the reader loop, one at a time.
@@ -362,6 +380,7 @@ class LeaderClient:
     def _mark_down(self) -> None:
         was = self.connected
         self.connected = False
+        self.flagless = False
         self._set_residents(frozenset())
         if was and self._on_down is not None:
             self._on_down()
@@ -472,9 +491,11 @@ class LeaderClient:
                 continue
             entries = sessions_from_payload(result)
             if list_has_resident_flag(entries):
+                self.flagless = False
                 self._set_residents(resident_ids(entries))
                 return True
             if entries:
+                self.flagless = True
                 self._log_honest_empty(
                     "Grok session list has no resident flag; "
                     "waiting for %s", SESSIONS_CHANGED)

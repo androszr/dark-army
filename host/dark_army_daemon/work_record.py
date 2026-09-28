@@ -11,11 +11,12 @@ than an effect: the git argv, the parsers, every bound, the verdict rule and
 the exact sentences both clients show verbatim. It runs no subprocess, opens
 no file and imports nothing from the daemon.
 
-**This is the only module in `host/` that names the `git` executable.** That
-is a grep criterion, not a style note: the daemon has never run git before
-(`workspace.py` states "No subprocess, no `git`" as a property of itself), and
-keeping every argv here is what makes the whole capability auditable in one
-read. Every call it builds is bounded by `GIT_TIMEOUT_SECONDS` and
+**The git argv live here and in `worktrees.py`, both pure; every call runs
+through `_run_git`.** That is a grep criterion, not a style note: no other
+daemon module names the `git` executable (`workspace.py` states "No
+subprocess, no `git`" as a property of itself), and keeping every argv in two
+pure modules — `worktrees.py` building on `_git` below — is what makes the
+whole capability auditable in two reads. Every call it builds is bounded by `GIT_TIMEOUT_SECONDS` and
 `MAX_GIT_OUTPUT_BYTES` at the caller, carries `--no-optional-locks` so Dark Army
 never takes the index lock out from under the person's own git, and runs under
 `git_env()` so a credential helper can never block the daemon on a prompt.

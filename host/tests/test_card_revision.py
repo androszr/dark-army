@@ -49,7 +49,7 @@ def test_the_create_and_alter_spellings_agree_on_revision():
     assert ("revision", "INTEGER NOT NULL DEFAULT 0") \
         in BoardStore._ADDED_COLUMNS["cards"]
     assert "revision INTEGER NOT NULL DEFAULT 0" in board_mod._SCHEMA
-    assert SCHEMA_VERSION == 29
+    assert SCHEMA_VERSION == 30
 
 
 def test_a_v15_shaped_file_gains_the_column_and_keeps_its_cards(tmp_path):
@@ -92,7 +92,7 @@ def test_a_v15_shaped_file_gains_the_column_and_keeps_its_cards(tmp_path):
         assert row["revision"] == 0
         meta = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(meta["value"]) == SCHEMA_VERSION == 29
+        assert int(meta["value"]) == SCHEMA_VERSION == 30
     finally:
         store.close()
 

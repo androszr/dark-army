@@ -44,6 +44,37 @@ enum BoardProjectControls {
     static func showsRunHeading(running: Int, queued: Int) -> Bool {
         running > 0 || queued > 0
     }
+
+    /// Card isolation for the project these cards belong to: the first
+    /// non-empty `isolation` a card carries — `"on"`, `"off"`, or `""` where
+    /// the project is not a git checkout (or the daemon predates the field),
+    /// which is what makes the switch absent rather than inert. The daemon's
+    /// answer, picked up and never computed.
+    static func isolationState(cards: [BoardCard]) -> String {
+        for card in cards where !card.isolation.isEmpty { return card.isolation }
+        return ""
+    }
+}
+
+/// `ISOLATE ON` / `ISOLATE OFF` on the In progress heading: whether a Start
+/// in this project works on its own branch in its own `.worktrees/` folder
+/// (`docs/card-worktrees.md`). `ProjectSwitchChip`'s shape; a press sends
+/// `set_board_isolation_root` on the panel's stdin/stdout channel —
+/// `preferences.json` is the menu-bar app's to write. Drawn only for a git
+/// project, so it is absent rather than inert everywhere else.
+struct IsolationSwitch: View {
+    let on: Bool
+    let onToggle: (Bool) -> Void
+
+    var body: some View {
+        ProjectSwitchChip(title: on ? "ISOLATE ON" : "ISOLATE OFF", on: on) {
+            onToggle(!on)
+        }
+        .fixedSize()
+        .accessibilityHint(on
+            ? "Each started card works on its own branch in its own folder; press to work in the main checkout instead"
+            : "Started cards work in the main checkout; press to give each its own branch and folder")
+    }
 }
 
 /// The `RUN n/m` heading as a picker: Default, then 1…4. Choosing a rung

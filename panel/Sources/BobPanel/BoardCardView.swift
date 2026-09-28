@@ -383,6 +383,22 @@ struct BoardCardView: View {
                                                          : Theme.phosphor)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if !card.worktreeBranch.isEmpty {
+                // The card's own branch (`docs/card-worktrees.md`), dim:
+                // where its work lands, for the person who will merge it.
+                Text("\u{2387} \(card.worktreeBranch)")
+                    .font(Theme.mono(10))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !card.worktreeNote.isEmpty {
+                // The daemon's own words about the folder — preparing, or
+                // kept because it holds unsaved work. Verbatim.
+                Text(card.worktreeNote)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if card.isQueued {
                 // Secondary ink, deliberately **not** the orange
                 // `dispatchError` style: queued is not an error, it is the

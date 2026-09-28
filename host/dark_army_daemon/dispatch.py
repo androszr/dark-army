@@ -54,7 +54,10 @@ Six properties, each with the specific thing it stops:
   root must be an exact member and an existing directory. `workspace.py` is this
   app's definition of a project and it is reused rather than re-derived. A card
   whose window has since closed is refused in words, recoverable by opening it,
-  which is also the only place the session could usefully appear.
+  which is also the only place the session could usefully appear. A card's
+  worktree (`<root>/.worktrees/card-<id8>`, `docs/card-worktrees.md`) is
+  derived from that root at the moment of spawn, never a root of its own:
+  the guard still tests the card's `root`, and only the terminal's `cwd` moves.
 
 * **argv only, and the prompt never touches a shell.** The executable comes from
   `_EXECUTABLES`, a fixed allowlist; the card contributes exactly one element,
@@ -444,9 +447,25 @@ COOLDOWN_REFUSAL = "that card was just started — give it a moment"
 MACHINE_BUSY_REFUSAL = (f"{MAX_CONCURRENT_DISPATCH} sessions are already"
                         " starting — wait for them to appear")
 PROJECT_BUSY_REFUSAL = "another card in this project is already starting"
+#: A second press on a card whose own branch and folder are still being
+#: prepared (`docs/card-worktrees.md`). Transient: the preparation finishes
+#: and starts the card itself, so a queued replay holds rather than being
+#: dequeued, and a person's press is told in words to wait.
+WORKTREE_PREPARING_REFUSAL = ("Dark Army is still preparing this card's own "
+                              "branch and folder — it starts by itself when "
+                              "that is done")
+#: The window that owns the project runs a Dark Army extension too old to
+#: open a terminal in a subfolder (`vscode_reveal.SUBFOLDER_SPAWN_MIN_VERSION`).
+#: A refusal and never a fallback: starting in the main checkout instead would
+#: switch isolation off without anybody choosing it. Not transient.
+WORKTREE_WINDOW_REFUSAL = ("this project's VS Code window has an older Dark "
+                           "Army extension that cannot open a terminal in the "
+                           "card's own folder — reload the window, or switch "
+                           "card isolation off for this project")
 
 _TRANSIENT_REFUSALS = frozenset(
-    {COOLDOWN_REFUSAL, MACHINE_BUSY_REFUSAL, PROJECT_BUSY_REFUSAL})
+    {COOLDOWN_REFUSAL, MACHINE_BUSY_REFUSAL, PROJECT_BUSY_REFUSAL,
+     WORKTREE_PREPARING_REFUSAL})
 
 
 def is_transient(detail: str) -> bool:
@@ -1112,7 +1131,8 @@ def consult_guard(card: dict, *, roots: Iterable[str], in_flight: Iterable[dict]
     return True, ""
 
 
-async def spawn(root: str, argv: list, name: str, *, stamp: str = "") -> tuple:
+async def spawn(root: str, argv: list, name: str, *, stamp: str = "",
+                cwd: str = "") -> tuple:
     """Ask the one VS Code window that owns `root` to open a terminal running
     `argv`. `(ok, detail, shell_pid_or_None)`.
 
@@ -1134,12 +1154,19 @@ async def spawn(root: str, argv: list, name: str, *, stamp: str = "") -> tuple:
     report it (`shellPid`); an older window omits the key, and absence is a
     *fallback* for the bind, never a spawn failure — `SPAWN_MIN_VERSION`
     deliberately stays where it is.
+
+    `cwd` is the folder the terminal opens in — a card's worktree under
+    `<root>/.worktrees/` (`docs/card-worktrees.md`) — and `root` when empty,
+    which sends exactly the request this function always sent. The window is
+    still the one that owns `root`: the worktree is derived from the root,
+    never a root of its own (property 4).
     """
     if not argv:
         return False, "nothing to start", None
+    extra = {"cwd": cwd} if cwd and cwd != root else {}
     reply = await vscode_reveal.spawn_agent(
         root, argv, name,
-        env_extra=({origin.ENV_VAR: stamp} if stamp else None))
+        env_extra=({origin.ENV_VAR: stamp} if stamp else None), **extra)
     if reply is None:
         return False, ("no VS Code window could start it — open the project, or "
                        "reload the window if its Dark Army extension is older than "
@@ -1156,7 +1183,7 @@ async def spawn(root: str, argv: list, name: str, *, stamp: str = "") -> tuple:
 
 
 async def spawn_local(root: str, argv: list, name: str, *,
-                      stamp: str = "") -> tuple:
+                      stamp: str = "", cwd: str = "") -> tuple:
     """`spawn`'s sibling: run `argv` on a terminal Dark Army itself owns
     (`ptyhost`), with `cwd=root`. The same `(ok, detail, pid)` triple, so
     the caller is shape-compatible — except that the third element is the
@@ -1177,16 +1204,20 @@ async def spawn_local(root: str, argv: list, name: str, *,
     `env` at all, so an unstamped local spawn is the call this function always
     made — which also keeps it working against a persistent broker too old to
     know the field.
+
+    `cwd` is `spawn`'s: the card's worktree, or `root` when empty — so an
+    isolation-off or non-git start is the call this function always made.
     """
     if not argv:
         return False, "nothing to start", None
     host = ptyhost.current()
     if host is None:
         return False, "Dark Army has no terminal host running", None
+    where = cwd or root
     if stamp:
-        return await host.start(root, argv, name,
+        return await host.start(where, argv, name,
                                 env=origin.env_with(os.environ, stamp))
-    return await host.start(root, argv, name)
+    return await host.start(where, argv, name)
 
 
 AREA_BLOCK_HEAD = "\n\nArea: "

@@ -378,7 +378,8 @@ Compare mode may supplement branch regression review; it cannot replace the
 all-changes check on this checkout. `partial`, `truncated`, unavailable and
 `UNKNOWN` results are unresolved: do not commit on any of them. Resolve the
 failure and rerun; report incomplete if a complete result cannot be obtained.
-Commit, push, install and release still require explicit authorization.
+Commit, push, install and release still require explicit authorization,
+but for the commits on a card worktree's own branch (Phase 7).
 
 ## Phase 7: handoff
 
@@ -411,6 +412,12 @@ or do (mirror the plan's `## What this does` register), then report:
 Discoveries go to the plan's report, a knowledge note (`dark_army_knowledge_write`)
 or the subject document; follow-ups are Prep cards. Installation and
 release remain separate explicit decisions.
+
+**On a card branch, commit before close-out.** When `HEAD` is a `card/` or
+`batch/` branch inside a `.worktrees/` folder (Phase 0 step 1), after the GitNexus change check below, run
+`git add -A` and `git commit` with a real message — what changed and why.
+In a batch, one commit per card, after that card's `## Work done`. Never
+push, merge or tag; the person merges the branch.
 
 Run `SCRATCH="$SCRATCH" bash .claude/skills/ship/close-out.sh` to free the
 baseline worktree; the terminal stays open.
@@ -533,13 +540,15 @@ in the terminal and not only in the transcript.
 Either tool may simply not exist — a session that was already open when Dark Army was
 upgraded keeps the tool list it was given at startup. Report the missing tool and leave the card alone.
 
-Closing a card is not authorization to commit, push or release. The rule below
-is unchanged.
+Closing a card is not authorization to push or release. The rule below is
+unchanged but for its one exception.
 
-**Never commit, never push.** Leave the working tree for the user to review.
-Pressing Start on a card authorises the *work* in that card's plan and nothing
-else — it is not authorization to commit, and it is not authorization to do
-anything the plan does not name. Ask separately.
+**Never commit on `main` or outside a card worktree; never push.** Outside a
+card worktree, leave the working tree for the user to review. Pressing Start
+on a card authorises the *work* in that card's plan and, inside the card
+worktree Dark Army made for it, the commits on its card branch (Phase 7) —
+nothing else: not a push, a merge, or anything the plan does not name. Ask
+separately.
 
 ## Phase 8: install and release (only when the user explicitly asks)
 
@@ -571,7 +580,8 @@ order, one at a time:
    k's work is pre-existing to card k+1's review), its own six-dispatch
    ledger, lane, panel and check file.
 2. Print that card's `## Work done` **first** — Dark Army records it as
-   that card's report when you move on — then close as Phase 7b says:
+   that card's report when you move on — commit that card's work on the
+   batch's branch (Phase 7), then close as Phase 7b says:
    `dark_army_needs_manual_check` where a check is left, **then**
    `dark_army_close_card`, then `dark_army_next_card`. Never flag after the
    next call: it would land on the next card.
@@ -585,5 +595,7 @@ order, one at a time:
 
 `dark_army_next_card` answers with the next card's title and plan, or says
 the batch is finished; refused right after the start, wait a few seconds and
-retry once. Never commit, push, install or release. End with one summary
+retry once. The batch shares one branch and one worktree, and each card
+commits on it; never commit anywhere else, and never push, install or
+release. End with one summary
 naming every card and the column it actually landed in.

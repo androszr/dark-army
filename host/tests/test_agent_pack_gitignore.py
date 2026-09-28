@@ -453,3 +453,13 @@ def test_a_linked_gitignore_is_never_followed(tmp_path, monkeypatch):
     row = pack_ledger.entry(folder)
     assert list(row.get("gitignore_offered") or []) == []
     assert row["last_result"].startswith("ok; ")
+
+
+def test_the_base_list_keeps_every_card_worktree_out():
+    """Card isolation (`docs/card-worktrees.md`): each started card's own
+    worktree lives under `<root>/.worktrees/`, a whole second checkout per
+    card. Anchored, last in the base list, offered once like every line."""
+    for profile in ("web", "ios"):
+        lines = pack_render.gitignore_lines(profile)
+        assert "/.worktrees/" in lines
+        assert lines.index("user-data/") < lines.index("/.worktrees/")

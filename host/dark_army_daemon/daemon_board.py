@@ -17,6 +17,7 @@ and a monkeypatch on `dark_army_daemon.daemon.<name>` must keep biting.
 exactly what the same bare name did when the code lived there.
 """
 import asyncio
+import ctypes
 import functools
 import hashlib
 import logging
@@ -57,8 +58,10 @@ from . import scout_index
 from . import scout_report
 from . import session_io
 from . import subprocess_env
+from . import trust_marks
 from . import work_record
 from . import workspace
+from . import worktrees
 
 #: How long one `depends_on` reference (a card id or an exact title) may be
 #: before it is clamped: `board.MAX_TITLE_CHARS`, so any stored title can be
@@ -139,6 +142,46 @@ def _find_own_checkout() -> str:
 
 #: The same logger object `daemon.py` writes to — one stream, one name.
 logger = logging.getLogger("dark-army")
+
+
+class _Statfs(ctypes.Structure):
+    """Darwin's 64-bit-inode `struct statfs` (`<sys/mount.h>`), the layout
+    `statfs` has on arm64 and `statfs$INODE64` on x86_64."""
+    _fields_ = [("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
+                ("f_blocks", ctypes.c_uint64), ("f_bfree", ctypes.c_uint64),
+                ("f_bavail", ctypes.c_uint64), ("f_files", ctypes.c_uint64),
+                ("f_ffree", ctypes.c_uint64), ("f_fsid", ctypes.c_int32 * 2),
+                ("f_owner", ctypes.c_uint32), ("f_type", ctypes.c_uint32),
+                ("f_flags", ctypes.c_uint32), ("f_fssubtype", ctypes.c_uint32),
+                ("f_fstypename", ctypes.c_char * 16),
+                ("f_mntonname", ctypes.c_char * 1024),
+                ("f_mntfromname", ctypes.c_char * 1024),
+                ("f_flags_ext", ctypes.c_uint32),
+                ("f_reserved", ctypes.c_uint32 * 7)]
+
+
+def setup_volume_type(path: str) -> str:
+    """The kind of disk `path` is on — `statfs(2)`'s `f_fstypename`
+    (`apfs`, `hfs`, `msdos`, `smbfs`, …) — or `""` when it cannot be read.
+    **Executor only** (a system call on a path). The setup script's gate
+    refuses anything but `apfs` (`worktrees.setup_volume_allows`), so `""`
+    fails closed. The one seam a test stubs to stand in for another disk."""
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        try:
+            call = libc["statfs$INODE64"]
+        except AttributeError:
+            call = libc["statfs"]
+        call.argtypes = [ctypes.c_char_p, ctypes.POINTER(_Statfs)]
+        call.restype = ctypes.c_int
+        buf = _Statfs()
+        if call(os.fsencode(str(path)), ctypes.byref(buf)) != 0:
+            return ""
+        return buf.f_fstypename.decode("ascii", "replace")
+    except (OSError, AttributeError, TypeError, ValueError):
+        logger.debug("could not read the disk kind of %s", path,
+                     exc_info=True)
+        return ""
 
 
 class _DaemonModule:
@@ -424,6 +467,11 @@ class BoardVerbsMixin:
                     # tick-state alone — never a denominator: what a project
                     # actually runs on arrives per card.
                     "parallel_overrides": dict(self.board_parallel_overrides),
+                    # The projects whose card isolation is switched off, for
+                    # the switch's tick-state; what a card's own project is on
+                    # rides per card as `isolation`.
+                    "isolation_overrides": dict(
+                        getattr(self, "board_isolation_overrides", None) or {}),
                     "available": False,
                     "tools": list(dispatch._EXECUTABLES),
                     "installed": dispatch.installed_tools(), "projects": [],
@@ -571,6 +619,8 @@ class BoardVerbsMixin:
                                                    self.board_parallel_limit),
                                                "parallel_overrides": dict(
                                                    self.board_parallel_overrides),
+                                               "isolation_overrides": dict(
+                                                   getattr(self, "board_isolation_overrides", None) or {}),
                                                "available": False, "tools": [],
                                                "installed": dispatch.installed_tools(),
                                                "models": {},
@@ -615,6 +665,11 @@ class BoardVerbsMixin:
             # per card as `parallel_limit`, already resolved; this map is
             # never a denominator.
             "parallel_overrides": dict(self.board_parallel_overrides),
+            # Which projects have switched card isolation off
+            # (`docs/card-worktrees.md`), for the switch's tick-state alone:
+            # each card publishes its own project's resolved `isolation`.
+            "isolation_overrides": dict(
+                getattr(self, "board_isolation_overrides", None) or {}),
             "available": True,
             "outcomes_supported": True,
             "lifecycle_available": not getattr(self, "_lifecycle_unavailable", False),
@@ -923,7 +978,8 @@ class BoardVerbsMixin:
                                     dep_by_id: Optional[dict] = None,
                                     dependents: Optional[dict] = None,
                                     batch_sizes: Optional[dict] = None,
-                                    dep_running_ids=_RUNNING_FROM_FRAME
+                                    dep_running_ids=_RUNNING_FROM_FRAME,
+                                    worktree_cards=None
                                     ) -> dict:
         """Derived fields the board draws: nickname, closer, queue words.
 
@@ -990,6 +1046,18 @@ class BoardVerbsMixin:
         # canonicaliser and the floor, and three copies of a rule is three
         # chances to draw a denominator the gate does not obey.
         out["parallel_limit"] = self._parallel_limit_for(out.get("root"))
+        # Card isolation (`docs/card-worktrees.md`): whether a Start in this
+        # card's project works in its own worktree — `"on"` / `"off"` for a
+        # git project, `""` where there is no checkout to isolate — resolved
+        # here for `parallel_limit`'s reason. And one line in the daemon's
+        # words while its folder is being prepared, or where a finished
+        # card's folder was kept because it held unsaved work; absent
+        # otherwise.
+        out["isolation"] = self._isolation_state(out.get("root"))
+        wt_note = self._worktree_note(
+            out, by_id, cards=worktree_cards)
+        if wt_note:
+            out["worktree_note"] = wt_note
         # Mission Control asked for this card to be started. Published only
         # while the ask is fresh and the card could still take a Start —
         # a card already started, starting or finished shows no ask, so the
@@ -1277,6 +1345,11 @@ class BoardVerbsMixin:
         by_id = {c["id"]: c for c in rows if c.get("id")}
         dep_by_id, dependents = self._dependency_frame(rows)
         dep_running = self._dependency_running_ids(self._agents_snapshot_cache)
+        # The kept-folder note asks whether a card sharing the folder is
+        # still at work, and that card is never in this Done page: the
+        # whole board, read once, only when a row names a folder.
+        share_cards = (self._board.cards()
+                       if any(r.get("worktree_path") for r in rows) else None)
         cards = []
         for row in rows:
             card = self._decorate_card_for_snapshot(
@@ -1285,7 +1358,7 @@ class BoardVerbsMixin:
                 run_figures=figure_parts, ctx_by_session={},
                 run_counts=run_counts, run_ledger=run_ledger,
                 dep_by_id=dep_by_id, dependents=dependents,
-                dep_running_ids=dep_running)
+                dep_running_ids=dep_running, worktree_cards=share_cards)
             card["thread_count"] = int(
                 thread_counts.get(card.get("id") or "", 0))
             cards.append(card)
@@ -1997,6 +2070,16 @@ class BoardVerbsMixin:
                 and str(before.get("column_name") or "") != "done"):
             self._log_card_event(after, "card_done", closed_by="user")
         await self._wrap_up_for_done(before, after)
+        # A Done arrival whose session is already gone frees the card's own
+        # worktree now; one still live is released at the reconcile's
+        # `mark_ended` seam, once its shell has left the folder.
+        if (str(after.get("column_name") or "") == "done"
+                and str(before.get("column_name") or "") != "done"
+                and str(after.get("worktree_path") or "")
+                and str(after.get("link_state") or "") not in (
+                    "live", "dispatching")):
+            self._consider_worktree_release(after)
+            await self._kick_worktree_releases()
 
     async def _wrap_up_for_done(self, before: dict, after: dict) -> None:
         """A card arriving in Done closes the live session bound to it.
@@ -2072,7 +2155,7 @@ class BoardVerbsMixin:
                    for c in others)
 
     async def _close_for_deleted_card(
-            self, card: dict, shell_pid: Optional[int] = None) -> None:
+            self, card: dict, shell_pid: Optional[int] = None) -> bool:
         """Close the terminal of a session whose card was just deleted.
 
         Delete means the work is cancelled, so the terminal has no reason to
@@ -2088,7 +2171,11 @@ class BoardVerbsMixin:
 
         A still-dispatching card has no `session_id` yet; when Dark Army still
         holds the spawn-shell receipt, the terminal is closed by that pid.
+
+        Returns whether every close it attempted landed (True with nothing
+        to close) — what the worktree release reads as "the shell is gone".
         """
+        closed_all = True
         candidates = []
         if str(card.get("link_state") or "") == "live":
             sid = str(card.get("session_id") or "")
@@ -2118,6 +2205,7 @@ class BoardVerbsMixin:
                 logger.info("closed the terminal of %s for deleted card %s",
                             sid[:12], cid[:8])
             else:
+                closed_all = False
                 logger.info("deleted card %s: left %s alone (%s)",
                             cid[:8], sid[:12], detail)
         if (str(card.get("link_state") or "") == "dispatching"
@@ -2128,8 +2216,10 @@ class BoardVerbsMixin:
                 logger.info("closed the terminal of pid %s for deleted card %s",
                             shell_pid, cid[:8])
             else:
+                closed_all = False
                 logger.info("deleted card %s: left pid %s alone (%s)",
                             cid[:8], shell_pid, detail)
+        return closed_all
 
     async def _finish_card_for_closed_session(self, session_id: str) -> None:
         """A person closed this session's terminal, so the card it was
@@ -3180,7 +3270,20 @@ class BoardVerbsMixin:
         if ok:
             await self._publish_board()
             if before:
-                await self._close_for_deleted_card(before, shell_pid=shell_pid)
+                closed = await self._close_for_deleted_card(
+                    before, shell_pid=shell_pid)
+                # The card's own worktree, after the close and on the same
+                # rules as Done: never under a live session, never with
+                # unsaved work in it. A close that landed means the shell
+                # is gone; one that did not leaves the release deferred and
+                # judged by the live-session test alone. The branch stays.
+                # Queued, never awaited here: the reply does not wait on git.
+                gone = await self._deleted_card_worktree(before)
+                if gone is not None:
+                    if closed:
+                        gone["link_state"] = "ended"
+                    self._defer_worktree_release(gone, True)
+                    await self._kick_worktree_releases()
             if doomed:
                 remaining = await self._board_call("cards") or []
                 keep = attachments.referenced_folders(remaining)
@@ -3207,6 +3310,13 @@ class BoardVerbsMixin:
                 self._consults.pop(cid, None)
                 self._consult_attempts.pop(cid, None)
             await self._publish_board()
+            # Every cleared card's own worktree, on delete's rules: nothing
+            # removed under a live session or with unsaved work in it.
+            for doomed_card in doomed_cards:
+                gone = await self._deleted_card_worktree(doomed_card)
+                if gone is not None:
+                    self._defer_worktree_release(gone, True)
+            await self._kick_worktree_releases()
             if doomed:
                 remaining = await self._board_call("cards") or []
                 keep = attachments.referenced_folders(remaining)
@@ -3754,6 +3864,38 @@ class BoardVerbsMixin:
         if not executable:
             return False, dispatch.NOT_INSTALLED_REFUSAL.format(tool=card['tool'])
 
+        # Card isolation (`docs/card-worktrees.md`): where the terminal
+        # opens. Every gate above has passed, on the card's own `root` —
+        # property 4 is untouched, the worktree is derived from the root and
+        # never a root. A git project with isolation on works in the head
+        # card's worktree: reused where it is recorded and still a worktree
+        # git knows, otherwise **prepared first** in a task — the fetch, the
+        # `worktree add` and the setup script can take minutes and the
+        # panel's POST times out in five seconds — which re-enters this very
+        # verb, every gate again, once the folder is ready. Nothing is
+        # written to the card here: a preparing card is not `dispatching`.
+        cwd = str(card.get("root") or "")
+        head = batch[0] if batch else card
+        wants = await loop.run_in_executor(None, self._wants_worktree, cwd)
+        if wants:
+            reuse = await self._reusable_worktree(head)
+            if reuse:
+                cwd = reuse
+            elif str(head.get("id") or "") in (
+                    getattr(self, "_worktree_preparing", None) or {}):
+                return False, dispatch.WORKTREE_PREPARING_REFUSAL
+            else:
+                self._start_worktree_prepare(head, cwd, {
+                    "card_id": str(card_id),
+                    "allow_unplanned": bool(allow_unplanned),
+                    "queued_replay": bool(queued_replay),
+                    "own_terminal": own_terminal,
+                    "batch_ids": ([str(c.get("id") or "") for c in batch]
+                                  if batch is not None else None),
+                })
+                await self._publish_board()
+                return True, worktrees.PREPARING_NOTE
+
         # The attachment block is Dark Army's addition, appended after the plan
         # gate and `guard` have judged the person's own text — a leading-`-`
         # check must not see it first, and appending at the end cannot create
@@ -3823,10 +3965,20 @@ class BoardVerbsMixin:
         declared = board.parse_stages(card.get("workflow"))
         already = set(board.parse_stages(card.get("agent_trail")))
         next_stage = next((s for s in declared if s not in already), "")
+        # `cwd` only where it differs from the root, so a start in the main
+        # checkout is the call the spawners always received.
+        where = {"cwd": cwd} if cwd and cwd != card["root"] else {}
         spawned, spawn_detail, shell_pid = await spawner(
             card["root"], argv, name,
-            stamp=origin.stamp("card-start", card["id"], next_stage))
+            stamp=origin.stamp("card-start", card["id"], next_stage),
+            **where)
         if not spawned:
+            if spawn_detail == dispatch.WORKTREE_WINDOW_REFUSAL:
+                # Not transient: the window stays too old until somebody
+                # reloads it, so a queued replay is dequeued with the words
+                # rather than retried on every pass.
+                return await self._queue_hard_refusal(card, spawn_detail,
+                                                      queued_replay)
             return False, spawn_detail
         # The press has been spent. A queued card never reaches here, so
         # the drain can still read the set; a later ordinary Start on a
@@ -3836,6 +3988,7 @@ class BoardVerbsMixin:
         now = time.time()
         self._dispatch_attempts[card["id"]] = now
         self._dispatch_baseline[card["id"]] = baseline
+        self._forget_worktree_state(str(card["id"]))
         # The terminal receipt, when the window reported one. A stale entry
         # from an earlier press must not outlive it, so absence pops. A pty
         # spawn's third element is the child's own pid, and it goes in the
@@ -3890,10 +4043,13 @@ class BoardVerbsMixin:
         # git must not hold the terminal that has already opened. A run whose
         # baseline never lands is still recorded at the end — it simply says
         # it had no starting point.
-        self._schedule_work_baseline(card["id"], str(card.get("root") or ""),
-                                     now)
+        # Taken in the folder the terminal opened in: a card working in its
+        # own worktree is measured against its own branch, so `card_runs`'
+        # root and baseline are the worktree's.
+        self._schedule_work_baseline(card["id"],
+                                     cwd or str(card.get("root") or ""), now)
         logger.info("dispatched card %s (%s) into %s",
-                    card["id"][:8], card["tool"], card["root"])
+                    card["id"][:8], card["tool"], cwd or card["root"])
         self._log_card_event(card, "card_dispatched",
                              tool=str(card.get("tool") or ""),
                              root=str(card.get("root") or ""))
@@ -4849,6 +5005,12 @@ class BoardVerbsMixin:
         if not ok:
             return False, _skip_lines(detail, skips)
         token = str(getattr(self, "_last_batch_token", "") or "")
+        if not token and detail == worktrees.PREPARING_NOTE:
+            # The batch's one worktree is being prepared: nothing has
+            # spawned and nothing is marked. The prepare task re-enters
+            # `start_cards` with these same cards once the folder is ready,
+            # and every rung above runs again at that instant.
+            return True, _skip_lines(detail, skips)
         waiting = 0
         for rank, card in enumerate(survivors[1:], start=2):
             if not token:
@@ -5036,8 +5198,23 @@ class BoardVerbsMixin:
                 None, functools.partial(
                     self._record_outcome_binding, bound, session_id,
                     "implementation", late=False))
-            self._schedule_work_baseline(
-                str(member["id"]), str(member.get("root") or ""), now)
+            # The batch shares one folder and one branch — the head's
+            # (`docs/card-worktrees.md`): carried onto this card as it is
+            # bound, so its record, its release and its baseline are the
+            # worktree's, not the main checkout's.
+            shared = next((m for m in sorted(members, key=_batch_rank)
+                           if str(m.get("worktree_path") or "")
+                           and str(m.get("worktree_branch") or "")), None)
+            folder = str(member.get("root") or "")
+            if shared is not None:
+                carried, _why = await self._board_call(
+                    "record_worktree", member["id"],
+                    str(shared["worktree_path"]),
+                    str(shared["worktree_branch"])) or (None, "")
+                if carried is not None:
+                    bound = carried
+                    folder = str(shared["worktree_path"])
+            self._schedule_work_baseline(str(member["id"]), folder, now)
             await self._publish_board()
             rank = _batch_rank(bound or member)
             logger.info("batch session %s moved on to card %s (%d of %d)",
@@ -5398,6 +5575,20 @@ class BoardVerbsMixin:
             in_flight.append({
                 "id": f"adhoc:{lid}",
                 "project": entry.get("project") or "",
+            })
+        # The fourth kind: a card whose own branch and folder Dark Army is
+        # still preparing (`docs/card-worktrees.md`). It is not `dispatching`
+        # yet — nothing has spawned — but the terminal it will open is this
+        # project's next launch, so another card of the project waits in
+        # `PROJECT_BUSY_REFUSAL`'s transient words (and queues) meanwhile.
+        # Keyed on the card's own id, so `guard` never refuses the card
+        # itself. The map is replaced, never mutated, on the loop, and the
+        # prepare task's `finally` always pops its entry: this is the sweep.
+        for cid, entry in list(
+                (getattr(self, "_worktree_preparing", None) or {}).items()):
+            in_flight.append({
+                "id": str(cid),
+                "project": str((entry or {}).get("project") or ""),
             })
         return in_flight
 
@@ -6312,6 +6503,14 @@ class BoardVerbsMixin:
             except Exception:
                 logger.debug("priority consideration failed for %s", cid,
                              exc_info=True)
+            # A Done card still naming a folder whose link is not live — after
+            # a restart, or with its folder removed by hand — is looked at
+            # once per process (`docs/card-worktrees.md`, *Release at Done*).
+            try:
+                self._consider_standing_worktree(card)
+            except Exception:
+                logger.debug("worktree consideration failed for %s", cid,
+                             exc_info=True)
             # The refinement's own reconcile, before the dispatch's and never
             # instead of it: a refining card has no session link (its guard
             # refused one), so the two blocks cannot fight over one card, and
@@ -6399,6 +6598,10 @@ class BoardVerbsMixin:
                 # And the run's final health reading, off the same row, so
                 # the card keeps its line once the tombstone has gone.
                 self._freeze_run_health(card, snapshot)
+                # And a Done card's own worktree, now that nothing runs in
+                # it: queued here, decided again and removed on the loop
+                # (`_flush_worktree_releases`), after its record is read.
+                self._consider_worktree_release(card)
                 changed = True
         # `list(...)` first: this runs on the executor while the dispatch path
         # pops both dicts on the loop, and a live iteration would raise
@@ -8534,7 +8737,8 @@ class BoardVerbsMixin:
                                baseline)
 
     async def _run_git(self, argv: list, root: str, *,
-                       truncate: bool = False) -> tuple:
+                       truncate: bool = False,
+                       timeout: Optional[float] = None) -> tuple:
         """`(ok, output, reason)` for one bounded git call. Never raises.
 
         ``truncate`` decides what an over-long reading means. For the two
@@ -8558,16 +8762,36 @@ class BoardVerbsMixin:
         executor hop is what every blocking thing in this file already does
         (`_board_call`'s argument), it keeps the loop free exactly the same
         way, and `subprocess.run(timeout=…)` is the same bound.
+
+        ``timeout`` widens the bound for the two worktree calls that write a
+        tree or talk to a remote (`worktrees.WORKTREE_ADD_TIMEOUT_SECONDS`,
+        `FETCH_TIMEOUT_SECONDS`); absent is `GIT_TIMEOUT_SECONDS`, as always.
         """
         loop = asyncio.get_running_loop()
-        limit = work_record.MAX_GIT_OUTPUT_BYTES
+        return await loop.run_in_executor(None, functools.partial(
+            self._git_blocking, argv, root, truncate=truncate,
+            timeout=timeout))
+
+    def _git_blocking(self, argv: list, root: str, *, truncate: bool = False,
+                      timeout: Optional[float] = None,
+                      limit: Optional[int] = None) -> tuple:
+        """`_run_git`'s runner: the same bounded call, for code that is
+        already on the executor (the setup script's last look, which runs
+        immediately before the script). Every git call still goes through
+        this one body. Blocking; never on the loop.
+
+        ``limit`` widens the output cap for the one listing that needs it
+        (`worktrees.MAX_INDEX_DOTFILES_BYTES`); absent is
+        `work_record.MAX_GIT_OUTPUT_BYTES`."""
+        limit = int(limit or work_record.MAX_GIT_OUTPUT_BYTES)
+        bound = float(timeout or work_record.GIT_TIMEOUT_SECONDS)
 
         def call() -> tuple:
             try:
                 done = subprocess.run(
                     list(argv), cwd=str(root), stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL, env=work_record.git_env(),
-                    timeout=work_record.GIT_TIMEOUT_SECONDS)
+                    timeout=bound)
             except subprocess.TimeoutExpired:
                 logger.debug("git %s timed out in %s", argv[-2:], root)
                 return False, b"", work_record.GIT_TIMEOUT_REASON
@@ -8588,7 +8812,7 @@ class BoardVerbsMixin:
                 return False, out, work_record.GIT_FAILED_REASON
             return True, out, ""
 
-        return await loop.run_in_executor(None, call)
+        return call()
 
     @staticmethod
     def _snapshot_row_in(snapshot: dict, session_id: str):
@@ -8622,7 +8846,9 @@ class BoardVerbsMixin:
         card = card if isinstance(card, dict) else {}
         cid = str(card.get("id") or "")
         sid = str(card.get("session_id") or "")
-        root = str(card.get("root") or "")
+        # The run's folder: the card's own worktree where it worked in one
+        # (`docs/card-worktrees.md`), the project root otherwise.
+        root = str(card.get("worktree_path") or card.get("root") or "")
         if not cid or not sid or not root:
             return
         try:
@@ -8678,7 +8904,18 @@ class BoardVerbsMixin:
         the agents-push path, it costs two subprocesses, and a board of
         thirty ended cards must drain one per snapshot cycle rather than
         fork sixty git processes at once.
+
+        The worktree releases the reconcile queued are started first, as one
+        detached task (`_kick_worktree_releases` only schedules it) — the
+        release itself is never awaited here, since a `git worktree remove`
+        may take a minute. Each release waits for its
+        own card's record, so it never removes a folder a collection is
+        about to read.
         """
+        try:
+            await self._kick_worktree_releases()
+        except Exception:
+            logger.warning("worktree release failed to start", exc_info=True)
         if not self._work_record_queue:
             return
         if self._work_record_task is not None \
@@ -8775,6 +9012,847 @@ class BoardVerbsMixin:
             removed=int(record.get("lines_removed") or 0),
             delegations=int(record.get("shunt_delegations") or 0))
         await self._publish_board()
+
+    # --- Card worktrees (docs/card-worktrees.md) ---
+    #
+    # The prepare task and the release are the only places the daemon writes
+    # a tree. Every git call runs through `_run_git` on argv `worktrees.py`
+    # builds; the setup script and the trust copies run on the executor.
+
+    def _wants_worktree(self, root) -> bool:
+        """Whether a Start in `root` works in its own worktree: isolation on
+        for the project and the root a git checkout. Blocking; executor."""
+        return bool(root) and self._isolation_for(root) \
+            and self._git_checkout(root)
+
+    async def _reusable_worktree(self, head: dict) -> str:
+        """The worktree recorded on `head`, when it is still one: under the
+        root's `.worktrees/`, a directory, and named by `git worktree list`.
+        `""` otherwise — a reset or a second Start reuses the folder and its
+        branch, and a folder removed by hand is prepared afresh."""
+        path = str((head or {}).get("worktree_path") or "")
+        root = dispatch.normalise_root(str((head or {}).get("root") or ""))
+        if not path or not root:
+            return ""
+        loop = asyncio.get_running_loop()
+        usable = await loop.run_in_executor(
+            None, lambda: worktrees.inside(root, path) and os.path.isdir(path))
+        if not usable:
+            return ""
+        ok, out, _why = await self._run_git(
+            worktrees.argv_worktree_list(root), root)
+        if not ok:
+            return ""
+        listed = worktrees.parse_worktree_list(out.decode("utf-8", "replace"))
+        return path if os.path.realpath(path) in listed else ""
+
+    def _start_worktree_prepare(self, head: dict, root: str,
+                                replay: dict) -> None:
+        """Mark `head` as preparing and start the task. Loop only."""
+        cid = str(head.get("id") or "")
+        preparing = dict(getattr(self, "_worktree_preparing", None) or {})
+        # The token is the entry's own: a task pops only the entry it made,
+        # never one a later preparation of the same card put there.
+        token = secrets.token_hex(8)
+        preparing[cid] = {"project": str(head.get("project") or ""),
+                          "root": str(root), "since": time.time(),
+                          "token": token}
+        self._worktree_preparing = preparing
+        tasks = getattr(self, "_worktree_tasks", None)
+        if tasks is None:
+            tasks = set()
+            self._worktree_tasks = tasks
+        task = asyncio.ensure_future(
+            self._prepare_worktree_then_dispatch(dict(head), str(root),
+                                                 dict(replay), token=token))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    def _pop_preparing(self, card_id: str, token: str = "") -> None:
+        """Replace, never mutate: the executor may be reading the map. With a
+        `token`, only the entry carrying it goes."""
+        current = getattr(self, "_worktree_preparing", None) or {}
+        entry = current.get(card_id)
+        if token and (entry or {}).get("token") != token:
+            return
+        if card_id in current:
+            self._worktree_preparing = {
+                k: v for k, v in current.items() if k != card_id}
+
+    async def _fail_prepare(self, card_id: str, error: str,
+                            replay: dict) -> None:
+        """Put a failed preparation's words on the card. A queued card is
+        **dequeued in the same write** — `_queue_hard_refusal`'s rule: the
+        drain would otherwise re-prepare it, and re-run the setup script,
+        on every pass for ever."""
+        fields: dict = {"dispatch_error": error}
+        if replay.get("queued_replay"):
+            fields.update({"queue_state": "", "queued_at": None})
+        await self._board_call("update", card_id, fields, bump=False)
+        card = await self._board_call("get", card_id)
+        if card is not None:
+            self._log_card_event(card, "card_dispatch_failed", error=error)
+
+    async def _discard_worktree(self, root: str, path: str) -> None:
+        """Remove a worktree nobody recorded (its card was deleted while it
+        was being prepared) and take back its trust copies. **Never
+        `--force`**: a refusal keeps the folder and is one log line. Only a
+        directory under the root's own `.worktrees/`, which is not a link —
+        the error branch may hand over a path that was never made."""
+        loop = asyncio.get_running_loop()
+
+        def ours() -> bool:
+            folder = os.path.join(root, worktrees.WORKTREES_DIR)
+            return (not os.path.islink(folder) and os.path.isdir(path)
+                    and worktrees.inside(root, path))
+
+        if not await loop.run_in_executor(None, ours):
+            return
+        removed, _o, why = await self._run_git(
+            worktrees.argv_worktree_remove(root, path), root,
+            timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
+        await loop.run_in_executor(None, trust_marks.unmark, path)
+        logger.info("discarded the unrecorded worktree %s: %s", path,
+                    "removed" if removed else f"kept ({why})")
+
+    async def _prepare_worktree_then_dispatch(self, head: dict, root: str,
+                                              replay: dict, *,
+                                              token: str = "") -> None:
+        """Prepare the head card's worktree, record it, then finish the
+        person's press. Loop; never raises.
+
+        The re-entry is `dispatch_card` (or `start_cards` for a batch) with
+        the press's own arguments — `_auto_start_after_refine`'s precedent:
+        the completion of a press already made, running every gate again at
+        this instant, never a new capability. The card is popped from
+        `_worktree_preparing` **before** the re-entry, so the re-entry is
+        not refused by its own preparation; a failure anywhere is one log
+        line and the words on the card's `dispatch_error` (dequeuing a
+        queued card, `_fail_prepare`), and `finally` always pops.
+        """
+        cid = str(head.get("id") or "")
+        try:
+            path, branch, error = await self._prepare_worktree(head, root)
+            if error:
+                logger.info("card %s: worktree not ready: %s", cid[:8], error)
+                if await self._board_call("get", cid) is None:
+                    # Deleted while this ran: nobody will record or release
+                    # the folder, so it goes now (the refused-remove case
+                    # keeps it, never `--force`).
+                    await self._discard_worktree(
+                        dispatch.normalise_root(root), path)
+                    return
+                await self._fail_prepare(cid, error, replay)
+                return
+            recorded, why = await self._board_call(
+                "record_worktree", cid, path, branch) or (None, "")
+            if recorded is None:
+                logger.info("card %s: worktree ready but not recorded (%s)",
+                            cid[:8], why)
+                if await self._board_call("get", cid) is None:
+                    await self._discard_worktree(
+                        dispatch.normalise_root(root), path)
+                return
+            logger.info("card %s: worktree %s on %s is ready", cid[:8], path,
+                        branch)
+            self._pop_preparing(cid, token)
+            batch_ids = replay.get("batch_ids")
+            if batch_ids:
+                ok, detail = await self.start_cards(list(batch_ids))
+                target = cid
+            else:
+                target = str(replay.get("card_id") or cid)
+                ok, detail = await self.dispatch_card(
+                    target,
+                    allow_unplanned=bool(replay.get("allow_unplanned")),
+                    queued_replay=bool(replay.get("queued_replay")),
+                    own_terminal=replay.get("own_terminal"))
+            if ok:
+                return
+            card = await self._board_call("get", target)
+            if card is None or str(card.get("queue_state") or "") == "queued":
+                # Queued (a full project) or gone: the queue's own words, or
+                # nothing to say.
+                return
+            await self._board_call("update", target,
+                                   {"dispatch_error": detail}, bump=False)
+            self._log_card_event(card, "card_dispatch_failed", error=detail)
+        except Exception:
+            logger.warning("preparing the worktree for card %s failed",
+                           cid[:8], exc_info=True)
+            try:
+                await self._fail_prepare(cid, worktrees.ADD_FAILED_REFUSAL,
+                                         replay)
+            except Exception:
+                logger.debug("could not note the failure on card %s",
+                             cid[:8], exc_info=True)
+        finally:
+            self._pop_preparing(cid, token)
+            try:
+                await self._publish_board()
+            except Exception:
+                logger.debug("board publish after preparing failed",
+                             exc_info=True)
+
+    async def _worktree_base(self, root: str) -> str:
+        """Where a new card branch starts. `origin/HEAD` after the fetch —
+        unless local `main` already contains it (`merge-base
+        --is-ancestor`), in which case `main`, so the person's unpushed
+        work is on the base. No remote: `main`, else `HEAD`."""
+        origin = ""
+        got, out, _w = await self._run_git(worktrees.argv_base_ref(root), root)
+        if got:
+            origin = worktrees.base_from(out.decode("utf-8", "replace"))
+        has_main, _o, _w = await self._run_git(
+            worktrees.argv_branch_exists(root, "main"), root)
+        if origin and has_main:
+            behind, _o, _w = await self._run_git(
+                worktrees.argv_is_ancestor(root, origin, "main"), root)
+            return "main" if behind else origin
+        if origin:
+            return origin
+        return "main" if has_main else "HEAD"
+
+    async def _setup_script_refusal(self, root: str, tool: str) -> str:
+        """The gate on the person's setup script, checked **before** any
+        folder is made. `""` where there is no script or it may run; the
+        words otherwise — never a silent skip.
+
+        It runs only when the project already carries the person's trust
+        decision for the assistant being started (`trust_marks.root_trusted`),
+        and only when it is a regular file, untracked by git (a tracked
+        script is whatever the last pull made it), owned by the person Dark
+        Army runs as and writable by nobody else. The file rules are
+        `_setup_script_file_check`, git's are `_setup_script_git_refusal`;
+        both are taken again at the moment the script runs.
+        """
+        loop = asyncio.get_running_loop()
+        verdict = await loop.run_in_executor(
+            None, self._setup_script_file_check, root)
+        if verdict is None:
+            return ""
+        if verdict:
+            return verdict
+        trusted = await loop.run_in_executor(
+            None, trust_marks.root_trusted, root, tool)
+        if not trusted:
+            return worktrees.SETUP_UNTRUSTED_REFUSAL
+        return await loop.run_in_executor(
+            None, self._setup_script_git_refusal, root)
+
+    def _setup_script_git_refusal(self, root: str) -> str:
+        """The git half of the setup script's gate, **executor only**, taken
+        at the Start and again immediately before the script runs (a pull in
+        the gap is judged afresh). `""` when git says the script is nobody's
+        but the person's; the refusal words otherwise. Fails closed: any git
+        call that errs or times out refuses.
+
+        Two looks, because spelling cannot be trusted on this disk:
+
+        - `git status` must say **positively** that the script is untracked
+          or ignored (`worktrees.setup_status_allows`); a tracked script, an
+          ASCII case variant under `core.ignorecase`, or a submodule prints
+          nothing, and nothing is refused.
+        - Then the index is compared with the disk **by inode**: every index
+          entry that could be the script under another spelling
+          (`worktrees.index_script_candidates` — a first component that
+          NFKC-casefolds to `.dark-army`, e.g. `.darK-army` with U+212A
+          KELVIN SIGN, which git's ASCII-only `core.ignorecase` does not
+          fold, or any spelling with `core.ignorecase` off) is `lstat`'d, and
+          one that is the script's own file (`st_dev`, `st_ino`) is tracked
+          whatever git's status said (`worktrees.tracked_as_script`).
+          That listing has its own cap, `worktrees.MAX_INDEX_DOTFILES_BYTES`
+          (a Yarn cache alone passes the shared one), and over it the words
+          say so (`worktrees.SETUP_TOO_MANY_HIDDEN_REFUSAL`).
+        """
+        script = worktrees.setup_script_path(root)
+        refusal = worktrees.SETUP_UNSAFE_REFUSAL.format(script)
+        ok, out, _w = self._git_blocking(
+            worktrees.argv_setup_status(root, worktrees.SETUP_SCRIPT), root)
+        if not ok or not worktrees.setup_status_allows(out):
+            return refusal
+        ok, out, why = self._git_blocking(
+            worktrees.argv_index_dotfiles(root), root,
+            limit=worktrees.MAX_INDEX_DOTFILES_BYTES)
+        if not ok:
+            if why == work_record.TOO_MUCH_REASON:
+                return worktrees.SETUP_TOO_MANY_HIDDEN_REFUSAL.format(script)
+            return refusal
+        try:
+            mine = os.lstat(script)
+        except OSError:
+            return refusal
+        ids = []
+        for entry in worktrees.index_script_candidates(out):
+            try:
+                info = os.lstat(os.path.join(root, entry))
+            except OSError:
+                continue
+            ids.append((info.st_dev, info.st_ino))
+        if worktrees.tracked_as_script((mine.st_dev, mine.st_ino), ids):
+            return refusal
+        return ""
+
+    @staticmethod
+    def _setup_script_file_check(root: str):
+        """The file half of the setup script's gate, **executor only**, and
+        re-made at the moment it runs. `None`: no script. `""`: it may run.
+        The refusal words otherwise.
+
+        The `.dark-army` folder must be a real directory (never a link — a
+        repository can commit `.dark-army` as a link to a tracked folder, and
+        `lstat` of the script alone sees only its last part), owned by the
+        person, writable by nobody else and not itself a repository (no
+        `.git` entry of any kind inside it); the script a regular file with
+        the same ownership rule; and its realpath exactly the realpath'd
+        root's own `.dark-army/worktree-setup.sh`. Before all of those, the
+        project and the folder must be on an APFS disk
+        (`setup_volume_type`, `worktrees.SETUP_VOLUME_REFUSAL`).
+        """
+        script = worktrees.setup_script_path(root)
+        try:
+            info = os.lstat(script)
+        except OSError:
+            return None
+        # APFS alone, for both the project and the script's folder, and a
+        # disk whose kind cannot be read is refused: on Mac OS Extended a
+        # tracked `.dar\u200ck-army/…` is stored as `.dark-army/…`, so the
+        # index checks below could not see it (`docs/card-worktrees.md`).
+        for where in (root, os.path.dirname(script)):
+            if not worktrees.setup_volume_allows(setup_volume_type(where)):
+                return worktrees.SETUP_VOLUME_REFUSAL.format(script)
+        refusal = worktrees.SETUP_UNSAFE_REFUSAL.format(script)
+        uid = os.getuid()
+        try:
+            folder = os.lstat(os.path.dirname(script))
+        except OSError:
+            return refusal
+        if not worktrees.setup_folder_safe(folder.st_mode, folder.st_uid, uid):
+            return refusal
+        # `.dark-army` must not itself be a repository — a `.git` file (a
+        # submodule's gitlink, left behind when the upstream dropped the
+        # submodule and ignored the folder) or a `.git` folder (a nested
+        # clone). Git never looks inside a nested repository, so its
+        # `!! .dark-army/` would vouch for a script somebody else wrote.
+        if os.path.lexists(os.path.join(os.path.dirname(script), ".git")):
+            return refusal
+        if not stat_mod.S_ISREG(info.st_mode) \
+                or not worktrees.setup_script_safe(info.st_uid, info.st_mode,
+                                                   uid):
+            return refusal
+        if os.path.realpath(script) != worktrees.setup_script_where(
+                os.path.realpath(root)):
+            return refusal
+        return ""
+
+    async def _prepare_worktree(self, head: dict, root: str) -> tuple:
+        """`(path, branch, error)` — the head card's worktree made ready, or
+        the words saying why not. Loop; the git calls hop to the executor
+        through `_run_git`, the file work through `_finish_worktree`."""
+        cid = str(head.get("id") or "")
+        root = dispatch.normalise_root(root)
+        path = worktrees.worktree_dir(root, cid)
+        branch = str(head.get("worktree_branch") or "") \
+            or worktrees.branch_name(head)
+        loop = asyncio.get_running_loop()
+        folder = os.path.join(root, worktrees.WORKTREES_DIR)
+        if await loop.run_in_executor(None, os.path.islink, folder):
+            return path, branch, worktrees.WORKTREES_SYMLINK_REFUSAL.format(
+                folder)
+        refusal = await self._setup_script_refusal(
+            root, str(head.get("tool") or ""))
+        if refusal:
+            return path, branch, refusal
+        ok, out, _why = await self._run_git(
+            worktrees.argv_worktree_list(root), root)
+        listed = worktrees.parse_worktree_list(
+            out.decode("utf-8", "replace")) if ok else set()
+        registered = os.path.realpath(path) in listed
+        present = registered and await loop.run_in_executor(
+            None, os.path.isdir, path)
+        if not present:
+            if registered:
+                # Registered but gone from disk (removed by hand): git would
+                # refuse the add, and a recorded path that is not a folder is
+                # never reused — prepare-record-refuse would loop for ever.
+                await self._run_git(worktrees.argv_worktree_prune(root), root)
+            # A failed fetch is one log line: the base is then what is local.
+            has_remote, _o, _w = await self._run_git(
+                worktrees.argv_remote_url(root), root)
+            if has_remote:
+                fetched, _o, why = await self._run_git(
+                    worktrees.argv_fetch(root), root,
+                    timeout=worktrees.FETCH_TIMEOUT_SECONDS)
+                if not fetched:
+                    logger.info("card %s: fetch failed in %s (%s); starting "
+                                "from what is local", cid[:8], root, why)
+            base = await self._worktree_base(root)
+            existing, _o, _w = await self._run_git(
+                worktrees.argv_branch_exists(root, branch), root)
+            added, _o, why = await self._run_git(
+                worktrees.argv_worktree_add(root, path, branch, base,
+                                            existing=existing),
+                root, timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
+            if not added:
+                logger.info("card %s: git worktree add refused in %s (%s)",
+                            cid[:8], root, why)
+                return path, branch, worktrees.ADD_FAILED_REFUSAL
+        got, out, _w = await self._run_git(
+            worktrees.argv_exclude_path(root), root)
+        exclude = out.decode("utf-8", "replace").strip() if got else ""
+        if exclude and not os.path.isabs(exclude):
+            exclude = os.path.join(root, exclude)
+        error = await loop.run_in_executor(
+            None, functools.partial(self._finish_worktree, root, path, cid,
+                                    branch, exclude))
+        return path, branch, error
+
+    def _finish_worktree(self, root: str, path: str, card_id: str,
+                         branch: str, exclude: str) -> str:
+        """The worktree's file work, **executor only**: the exclude line,
+        the trust copies, the person's setup script (already judged by
+        `_setup_script_refusal`). `""` when ready, else the words."""
+        if exclude:
+            try:
+                existing = ""
+                if os.path.exists(exclude):
+                    with open(exclude, encoding="utf-8") as handle:
+                        existing = handle.read()
+                text = worktrees.exclude_text(existing)
+                if text is not None:
+                    os.makedirs(os.path.dirname(exclude), exist_ok=True)
+                    with open(exclude, "w", encoding="utf-8") as handle:
+                        handle.write(text)
+            except (OSError, UnicodeError):
+                logger.info("could not add %s to %s", worktrees.EXCLUDE_LINE,
+                            exclude, exc_info=True)
+        trust_marks.mark(root, path)
+        return self._run_worktree_setup(root, path, card_id, branch)
+
+    #: How the setup log is opened at both write sites: never through a
+    #: symbolic link planted at its name, private to the person.
+    _SETUP_LOG_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+
+    def _run_worktree_setup(self, root: str, path: str, card_id: str,
+                            branch: str) -> str:
+        """Run `<root>/.dark-army/worktree-setup.sh` in the new worktree, if
+        the person wrote one. `""` on success or when there is none; the
+        refusal words otherwise. Executor only.
+
+        Re-checked as a regular file (a symlink is refused, never followed),
+        run as `/bin/bash <script>` with the argv alone. Its own session, so
+        a timeout kills the whole group (`npm install` included). Output
+        goes to `worktrees.setup_log_path`, opened `O_NOFOLLOW` at 0600 and
+        cut to its last `MAX_SETUP_LOG_BYTES`.
+        """
+        script = worktrees.setup_script_path(root)
+        verdict = self._setup_script_file_check(root)
+        if verdict is None:
+            return ""
+        if verdict:
+            return verdict
+        # And git's half again, immediately before it runs: a pull between
+        # the Start and now is judged afresh.
+        verdict = self._setup_script_git_refusal(root)
+        if verdict:
+            return verdict
+        log_path = worktrees.setup_log_path(root, card_id)
+        try:
+            fd = os.open(log_path, self._SETUP_LOG_FLAGS, 0o600)
+        except OSError:
+            logger.info("could not open the setup log %s", log_path,
+                        exc_info=True)
+            return worktrees.SETUP_FAILED_REFUSAL.format(
+                "could not write its log", log_path)
+        code = "timed out"
+        returncode = None
+        try:
+            with os.fdopen(fd, "wb") as log:
+                proc = subprocess.Popen(
+                    ["/bin/bash", script], cwd=path,
+                    env=worktrees.setup_env(None, root, path, card_id, branch),
+                    stdin=subprocess.DEVNULL, stdout=log,
+                    stderr=subprocess.STDOUT, start_new_session=True)
+                try:
+                    returncode = proc.wait(
+                        timeout=worktrees.SETUP_TIMEOUT_SECONDS)
+                    code = f"exit {returncode}"
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(proc.pid, 9)
+                    except OSError:
+                        proc.kill()
+                    proc.wait()
+        except OSError:
+            logger.info("could not run the worktree setup script in %s", path,
+                        exc_info=True)
+            return worktrees.SETUP_FAILED_REFUSAL.format("could not run",
+                                                         log_path)
+        try:
+            size = os.path.getsize(log_path)
+            if size > worktrees.MAX_SETUP_LOG_BYTES:
+                rfd = os.open(log_path, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(rfd, "rb") as handle:
+                    handle.seek(size - worktrees.MAX_SETUP_LOG_BYTES)
+                    tail = handle.read()
+                wfd = os.open(log_path, self._SETUP_LOG_FLAGS, 0o600)
+                with os.fdopen(wfd, "wb") as handle:
+                    handle.write(tail)
+        except OSError:
+            logger.debug("could not trim %s", log_path, exc_info=True)
+        if returncode == 0:
+            logger.info("card %s: worktree setup script ran in %s",
+                        card_id[:8], path)
+            return ""
+        logger.info("card %s: worktree setup script failed (%s)",
+                    card_id[:8], code)
+        return worktrees.SETUP_FAILED_REFUSAL.format(code, log_path)
+
+    def _session_inside(self, path: str) -> bool:
+        """Whether a live session in the cached agents snapshot works in
+        `path` or below it. Blocking (realpaths); executor. The release's
+        own reading of "nothing runs here" — `link_state` alone misses a
+        card whose bind window ran out or that was dragged out of In
+        progress with its terminal still open in the folder."""
+        snapshot = getattr(self, "_agents_snapshot_cache", None) or {}
+        if not path or not isinstance(snapshot, dict):
+            return False
+        live = self._board_live_ids(snapshot)
+        base = os.path.realpath(str(path)).rstrip(os.sep)
+        for group in snapshot.values():
+            if not isinstance(group, list):
+                continue
+            for row in group:
+                if not isinstance(row, dict) or row.get("session_id") not in live:
+                    continue
+                cwd = str(row.get("cwd") or "")
+                if not cwd:
+                    continue
+                where = os.path.realpath(cwd)
+                if where == base or where.startswith(base + os.sep):
+                    return True
+        return False
+
+    @staticmethod
+    def _worktree_shared(card: dict, cards) -> tuple:
+        """`(still_open, finished)` over the other cards sharing `card`'s
+        folder — the same `worktree_path`, or the same `batch_id`. Pure.
+        `still_open` when any of them is not in Done or has a live or
+        dispatching link: the folder is theirs too and must stay.
+        `finished` is the rest, cleared with the card on a release."""
+        card = card or {}
+        cid = str(card.get("id") or "")
+        path = str(card.get("worktree_path") or "")
+        bid = str(card.get("batch_id") or "")
+        finished = []
+        for other in cards or ():
+            if str(other.get("id") or "") == cid:
+                continue
+            same = (path and str(other.get("worktree_path") or "") == path) \
+                or (bid and str(other.get("batch_id") or "") == bid)
+            if not same:
+                continue
+            if str(other.get("column_name") or "") != "done" \
+                    or str(other.get("link_state") or "") in (
+                        "live", "dispatching"):
+                return True, []
+            finished.append(other)
+        return False, finished
+
+    def _worktree_note(self, card: dict, by_id: Optional[dict] = None, *,
+                       cards=None) -> str:
+        """The line a card draws about its folder, or `""`. Executor.
+
+        Derived, never remembered, so it survives a restart and goes the
+        moment its reason does: preparing while the task runs; **kept** only
+        on a Done card whose link is not live, whose folder is still there,
+        with no live session inside it and no release already on its way —
+        the state a refused `git worktree remove` leaves. A reset, a new
+        run, or a folder removed by hand all make it false by themselves.
+        """
+        cid = str((card or {}).get("id") or "")
+        if not cid:
+            return ""
+        if cid in (getattr(self, "_worktree_preparing", None) or {}):
+            return worktrees.PREPARING_NOTE
+        path = str(card.get("worktree_path") or "")
+        if not path or str(card.get("column_name") or "") != "done":
+            return ""
+        if str(card.get("link_state") or "") in ("live", "dispatching"):
+            return ""
+        if cid in (getattr(self, "_worktree_release_queue", None) or []) \
+                or cid in (getattr(self, "_worktree_releasing", None) or set()):
+            return ""
+        # Kept because a card sharing the folder is still at work is not
+        # "unsaved changes": no note.
+        others = cards if cards is not None else (by_id or {}).values()
+        if self._worktree_shared(card, others)[0]:
+            return ""
+        if not os.path.isdir(path) or self._session_inside(path):
+            return ""
+        return worktrees.KEPT_NOTE.format(path)
+
+    def _consider_worktree_release(self, card: dict) -> None:
+        """Queue a Done card for its folder's release. **Executor, no
+        I/O** — `_consider_work_record`'s seam; the decision is re-made on
+        the loop against the card as it is then."""
+        card = card if isinstance(card, dict) else {}
+        cid = str(card.get("id") or "")
+        if not cid or not str(card.get("worktree_path") or ""):
+            return
+        if str(card.get("column_name") or "") != "done":
+            return
+        queue = getattr(self, "_worktree_release_queue", None)
+        if queue is None:
+            queue = []
+            self._worktree_release_queue = queue
+        if cid not in queue:
+            queue.append(cid)
+
+    def _consider_standing_worktree(self, card: dict) -> None:
+        """Once per process per (card, folder): a Done card that still names
+        a folder and whose link is not live is looked at again — the release
+        after a restart, the clear of a folder removed by hand. Executor, no
+        I/O; the set is this process's memory only."""
+        card = card if isinstance(card, dict) else {}
+        cid = str(card.get("id") or "")
+        path = str(card.get("worktree_path") or "")
+        if not cid or not path or str(card.get("column_name") or "") != "done":
+            return
+        if str(card.get("link_state") or "") in ("live", "dispatching"):
+            return
+        seen = getattr(self, "_worktree_considered", None)
+        if seen is None:
+            seen = set()
+            self._worktree_considered = seen
+        if (cid, path) in seen:
+            return
+        seen.add((cid, path))
+        self._consider_worktree_release(card)
+
+    def _forget_worktree_state(self, card_id: str) -> None:
+        """A new run of this card: its old consideration is stale. Replaced,
+        never mutated."""
+        seen = getattr(self, "_worktree_considered", None) or set()
+        self._worktree_considered = {k for k in seen if k[0] != card_id}
+
+    def _defer_worktree_release(self, card: dict, deleting: bool) -> None:
+        """Try again on a later pass. A deleted card is remembered whole
+        (`_worktree_orphans`) — there is no row to re-read."""
+        cid = str(card.get("id") or "")
+        if deleting:
+            orphans = dict(getattr(self, "_worktree_orphans", None) or {})
+            orphans[cid] = dict(card, link_state="ended")
+            self._worktree_orphans = orphans
+            return
+        queue = getattr(self, "_worktree_release_queue", None)
+        if queue is None:
+            queue = []
+            self._worktree_release_queue = queue
+        if cid not in queue:
+            queue.append(cid)
+
+    async def _kick_worktree_releases(self) -> None:
+        """Start the queued releases as **one detached task**, one in flight
+        — `_work_record_task`'s pattern. Nothing on the agents-push path, a
+        Done write, a delete or Clear Done ever awaits a `git worktree
+        remove`. Async only so it runs on the loop (`_flush_*`'s placement
+        rule); it awaits nothing. A pass while one runs starts nothing (the
+        queue waits for the next)."""
+        if not (getattr(self, "_worktree_release_queue", None)
+                or getattr(self, "_worktree_orphans", None)):
+            return
+        task = getattr(self, "_worktree_release_task", None)
+        if task is not None and not task.done():
+            return
+        try:
+            self._worktree_release_task = asyncio.ensure_future(
+                self._flush_worktree_releases())
+        except RuntimeError:
+            return
+
+    async def _deleted_card_worktree(self, card: dict) -> Optional[dict]:
+        """The card as its folder's release should see it, or None. Its
+        recorded folder — or, where none was recorded (a setup script failed
+        and the next press never came), the folder its id names under the
+        root's `.worktrees/`, when that is a directory."""
+        card = dict(card or {})
+        cid = str(card.get("id") or "")
+        # Still being prepared: `worktree add` or the setup script may be
+        # running in it. The prepare task discards it itself once it finds
+        # the card gone.
+        if cid in (getattr(self, "_worktree_preparing", None) or {}):
+            return None
+        if str(card.get("worktree_path") or ""):
+            return card
+        root = dispatch.normalise_root(str(card.get("root") or ""))
+        if not cid or not root:
+            return None
+        derived = worktrees.worktree_dir(root, cid)
+        loop = asyncio.get_running_loop()
+        if not await loop.run_in_executor(None, os.path.isdir, derived):
+            return None
+        card["worktree_path"] = derived
+        return card
+
+    async def _flush_worktree_releases(self) -> None:
+        """Release what the reconcile queued, and retry the deleted cards'
+        folders that were still in use. Loop (as its own task); never
+        raises."""
+        # Re-checked before it exits, so a release queued while this one ran
+        # is not left for the next push. Each round takes only what this
+        # task has not handled yet: a release it deferred stays queued for
+        # a later pass, so the loop is bounded by what arrives meanwhile.
+        handled: set = set()
+        while True:
+            queue = list(getattr(self, "_worktree_release_queue", None) or [])
+            orphans = dict(getattr(self, "_worktree_orphans", None) or {})
+            fresh = [c for c in queue if ("card", c) not in handled]
+            fresh_orphans = {k: v for k, v in orphans.items()
+                             if ("orphan", k) not in handled}
+            if not fresh and not fresh_orphans:
+                return
+            self._worktree_release_queue = [c for c in queue
+                                            if ("card", c) in handled]
+            self._worktree_orphans = {k: v for k, v in orphans.items()
+                                      if ("orphan", k) in handled}
+            handled |= {("card", c) for c in fresh}
+            handled |= {("orphan", k) for k in fresh_orphans}
+            self._worktree_releasing = set(fresh)
+            try:
+                await self._release_batch(fresh, fresh_orphans)
+            finally:
+                self._worktree_releasing = set()
+
+    async def _release_batch(self, queue: list, orphans: dict) -> None:
+        for cid in queue:
+            try:
+                await self._maybe_release_worktree({"id": cid})
+            except Exception:
+                logger.warning("releasing the worktree of card %s failed",
+                               cid[:8], exc_info=True)
+        for cid, card in orphans.items():
+            try:
+                await self._maybe_release_worktree(card, deleting=True)
+            except Exception:
+                logger.warning("releasing the worktree of deleted card %s "
+                               "failed", cid[:8], exc_info=True)
+
+    async def _release_still_safe(self, cid: str, path: str,
+                                  deleting: bool) -> str:
+        """The release's last look, taken immediately before `git worktree
+        remove`. `"ok"`; `"wait"` (a live session or a held receipt — try
+        again later); or why the folder is someone's again. A deleted card
+        must still be gone; a kept one must still be in Done, still name this
+        folder, with its link neither live nor dispatching, and not being
+        prepared."""
+        card = await self._board_call("get", cid)
+        if deleting:
+            if card is not None:
+                return "the card exists again"
+        else:
+            if card is None:
+                return "the card is gone"
+            if str(card.get("column_name") or "") != "done":
+                return "the card left Done"
+            if str(card.get("worktree_path") or "") != path:
+                return "the card names another folder"
+            if str(card.get("link_state") or "") in ("live", "dispatching"):
+                return "the card is running"
+        if cid in (getattr(self, "_worktree_preparing", None) or {}):
+            return "the card is being prepared"
+        if cid in (getattr(self, "_spawn_shell_pids", None) or {}) \
+                or cid in (getattr(self, "_spawn_pty_pids", None) or {}):
+            return "wait"
+        loop = asyncio.get_running_loop()
+        if await loop.run_in_executor(None, self._session_inside, path):
+            return "wait"
+        return "ok"
+
+    async def _maybe_release_worktree(self, card: dict, *,
+                                      deleting: bool = False) -> bool:
+        """Remove a finished card's worktree when nothing runs in it and
+        nothing unsaved is in it. Loop. False when the release was deferred
+        to a later pass.
+
+        Only a card in Done (or deleted) whose link is neither `live` nor
+        `dispatching`, whose folder holds **no live session's cwd** and no
+        spawn receipt Dark Army still holds for it — a folder is never
+        removed from under a live shell — and, for a batch, once no other
+        card sharing the folder is still open or running. A deleted card
+        whose link was still live is deferred and judged by the live-session
+        test alone, since no row is left to watch. `git worktree remove`
+        **without `--force`**: git refuses a tree with modified or untracked
+        files, and that refusal keeps the folder; the card then says so
+        (`_worktree_note`, derived). The branch is never deleted here.
+        """
+        cid = str((card or {}).get("id") or "")
+        if not cid:
+            return True
+        current = dict(card) if deleting else await self._board_call("get", cid)
+        if not current:
+            return True
+        path = str(current.get("worktree_path") or "")
+        if not path:
+            return True
+        if not deleting and str(current.get("column_name") or "") != "done":
+            return True
+        if str(current.get("link_state") or "") in ("live", "dispatching"):
+            if deleting:
+                self._defer_worktree_release(current, deleting)
+                return False
+            return True
+        root = dispatch.normalise_root(str(current.get("root") or ""))
+        loop = asyncio.get_running_loop()
+        if not await loop.run_in_executor(None, worktrees.inside, root, path):
+            logger.info("card %s: %s is not under %s; not removing it",
+                        cid[:8], path, root)
+            return True
+        held = cid in (getattr(self, "_spawn_shell_pids", None) or {}) \
+            or cid in (getattr(self, "_spawn_pty_pids", None) or {})
+        if held or await loop.run_in_executor(None, self._session_inside, path):
+            logger.info("card %s: a session is still in %s; its release waits",
+                        cid[:8], path)
+            self._defer_worktree_release(current, deleting)
+            return False
+        cards = await self._board_call("cards") or []
+        still_open, sharing = self._worktree_shared(current, cards)
+        if still_open:
+            return True
+        if any(item[0] == cid for item in self._work_record_queue):
+            await self._collect_work_record_now(cid)
+        running = getattr(self, "_work_record_task", None)
+        if running is not None and not running.done():
+            self._defer_worktree_release(current, deleting)
+            return False
+        # The destructive verb re-checks at the moment it fires: every await
+        # above was a gap in which the card could have been dragged out of
+        # Done and started again in this very folder.
+        verdict = await self._release_still_safe(cid, path, deleting)
+        if verdict == "wait":
+            self._defer_worktree_release(current, deleting)
+            return False
+        if verdict != "ok":
+            logger.info("card %s: %s is in use again (%s); not removing it",
+                        cid[:8], path, verdict)
+            return True
+        if await loop.run_in_executor(None, os.path.isdir, path):
+            removed, _o, why = await self._run_git(
+                worktrees.argv_worktree_remove(root, path), root,
+                timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
+            if not removed:
+                logger.info("card %s: kept %s — it holds work that was not "
+                            "committed (%s)", cid[:8], path, why)
+                await self._publish_board()
+                return True
+        for done in [current] + sharing:
+            await self._board_call("clear_worktree",
+                                   str(done.get("id") or ""))
+        await loop.run_in_executor(None, trust_marks.unmark, path)
+        logger.info("card %s: removed its worktree %s; branch %s kept",
+                    cid[:8], path, str(current.get("worktree_branch") or ""))
+        await self._publish_board()
+        return True
 
     # --- The per-project parallel dial ---
 
@@ -8879,6 +9957,80 @@ class BoardVerbsMixin:
             if override is not None:
                 return max(_D.BOARD_PARALLEL_MIN, int(override))
         return max(_D.BOARD_PARALLEL_MIN, int(self.board_parallel_limit or 0))
+
+    # --- Card isolation, per project (docs/card-worktrees.md) ---
+
+    def set_board_isolation_override(self, root: str, enabled) -> None:
+        """One project's isolation switch. Thread-safe by replacement,
+        `set_board_parallel_override`'s shape: `False` stores the key (the
+        map holds only the projects that switched it off), `True` or `None`
+        pops it — back to the default, which is on."""
+        key = dispatch.normalise_root(str(root or ""))
+        if not key:
+            logger.info("ignoring a per-project isolation switch with no project")
+            return
+        current = dict(getattr(self, "board_isolation_overrides", None) or {})
+        if enabled is False:
+            current[key] = False
+        else:
+            current.pop(key, None)
+        self.board_isolation_overrides = current
+        logger.info("Card isolation for %s is %s", key,
+                    "off" if enabled is False else "on")
+
+    def set_board_isolation_overrides(self, mapping) -> None:
+        """The whole stored map at once — the startup feed. Only a real
+        `False` is an entry; anything else is dropped rather than failing
+        the lot. One assignment."""
+        built: dict = {}
+        if isinstance(mapping, dict):
+            for root, value in mapping.items():
+                key = dispatch.normalise_root(str(root or ""))
+                if key and value is False:
+                    built[key] = False
+        self.board_isolation_overrides = built
+        if built:
+            logger.info("Card isolation is off for %d project(s)", len(built))
+
+    def _isolation_for(self, root) -> bool:
+        """Whether a Start in this project works in its own worktree. On
+        unless the project's override says `False`. The one resolution
+        seam; the git test is separate (`_git_checkout`)."""
+        key = dispatch.normalise_root(str(root or ""))
+        overrides = getattr(self, "board_isolation_overrides", None) or {}
+        return overrides.get(key) is not False
+
+    @staticmethod
+    def _git_checkout(root) -> bool:
+        """Whether `root` is the top of a git checkout: `.git` exists, as a
+        folder **or a file** (the project is itself a linked worktree).
+        Blocking — one `stat`; executor."""
+        text = str(root or "")
+        return bool(text) and os.path.exists(os.path.join(text, ".git"))
+
+    #: How long the decoration trusts one `_git_checkout` answer per root.
+    GIT_ROOT_MEMO_SECONDS = 30.0
+
+    def _isolation_state(self, root) -> str:
+        """`"on"` / `"off"` for a git project, `""` for anything else — what
+        a card publishes as `isolation`. Executor; the `.git` test is
+        memoised per root for `GIT_ROOT_MEMO_SECONDS`, so a frame of five
+        hundred cards is a handful of stats, not five hundred."""
+        key = dispatch.normalise_root(str(root or ""))
+        if not key:
+            return ""
+        memo = getattr(self, "_git_root_memo", None)
+        if memo is None:
+            memo = {}
+            self._git_root_memo = memo
+        now = time.time()
+        hit = memo.get(key)
+        if hit is None or now - hit[0] > self.GIT_ROOT_MEMO_SECONDS:
+            hit = (now, self._git_checkout(key))
+            memo[key] = hit
+        if not hit[1]:
+            return ""
+        return "on" if self._isolation_for(key) else "off"
 
     # --- Which model each agent and helper runs on ---
 

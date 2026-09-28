@@ -2,7 +2,7 @@
 # comparison/assert. Style rules are deliberately not enabled — this is a
 # gate that must pass, not a backlog. Run: `ruff check .`
 target-version = "py311"
-extend-exclude = ["host/.venv", "host/build", "host/dist", ".gitnexus", "assets", "host/dark_army_menubar/agent_pack"]
+extend-exclude = ["host/.venv", "host/build", "host/dist", ".gitnexus", "assets", "host/dark_army_menubar/agent_pack", ".worktrees"]
 
 [lint]
 select = ["E9", "F63", "F7", "F82"]

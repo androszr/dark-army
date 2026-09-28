@@ -431,6 +431,16 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// — decodes `""`, and an empty verdict draws nothing.
     var reportVerdict = ""
     var reportRecommendation = ""
+    /// Card isolation for this card's project, as the daemon resolved it:
+    /// `"on"` / `"off"` for a git project, `""` where there is no checkout
+    /// to isolate — or a daemon older than the field.
+    var isolation = ""
+    /// The branch this card works on in its own worktree (`card/…`), `""`
+    /// where it works in the main checkout.
+    var worktreeBranch = ""
+    /// The daemon's one line about the card's folder — being prepared, or
+    /// kept because it holds unsaved work. Drawn verbatim; `""` for none.
+    var worktreeNote = ""
     var isScout: Bool { kind == "scout" }
     /// The number `cardOrder` sorts on. `""` and `"0"` fold together here
     /// exactly as `CAST(priority AS INTEGER)` folds them in
@@ -775,6 +785,9 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case reportPath = "report_path"
         case reportVerdict = "report_verdict"
         case reportRecommendation = "report_recommendation"
+        case isolation
+        case worktreeBranch = "worktree_branch"
+        case worktreeNote = "worktree_note"
         case revision
         case refineState = "refine_state"
         case refineSessionId = "refine_session_id"
@@ -860,6 +873,11 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         // An absent key — a daemon older than the column — decodes "".
         reportVerdict = c.value(.reportVerdict, "")
         reportRecommendation = c.value(.reportRecommendation, "")
+        // Card isolation (`docs/card-worktrees.md`). Absent keys — an older
+        // daemon, or a card with nothing to say — decode "".
+        isolation = c.value(.isolation, "")
+        worktreeBranch = c.value(.worktreeBranch, "")
+        worktreeNote = c.value(.worktreeNote, "")
         revision = c.value(.revision, 0)
         refineState = c.value(.refineState, "")
         refineSessionId = c.value(.refineSessionId, "")
@@ -1171,6 +1189,10 @@ struct Board: Decodable, Equatable {
     /// actually runs on arrives already resolved on each card, and this map
     /// is never a denominator. `[:]` on a daemon that predates the field.
     var parallelOverrides: [String: Int] = [:]
+    /// The projects whose card isolation is switched off: canonical root →
+    /// `false`. **Tick-state only** — each card carries its own project's
+    /// resolved `isolation`. `[:]` on a daemon that predates the field.
+    var isolationOverrides: [String: Bool] = [:]
 
     /// Only the published flag determines membership. Newest finishes first.
     func needsYouCards() -> [BoardCard] {
@@ -1308,6 +1330,7 @@ struct Board: Decodable, Equatable {
         case autostartEnabled = "autostart_enabled"
         case parallelLimit = "parallel_limit"
         case parallelOverrides = "parallel_overrides"
+        case isolationOverrides = "isolation_overrides"
         case cardsDelta = "cards_delta"
         case cardOrder = "card_order"
     }
@@ -1329,6 +1352,7 @@ struct Board: Decodable, Equatable {
         // zero is a denominator no readout may draw.
         parallelLimit = max(1, c.value(.parallelLimit, 1))
         parallelOverrides = c.value(.parallelOverrides, [:])
+        isolationOverrides = c.value(.isolationOverrides, [:])
         available = c.value(.available, false)
         tools = c.value(.tools, [])
         installed = c.value(.installed, [:])

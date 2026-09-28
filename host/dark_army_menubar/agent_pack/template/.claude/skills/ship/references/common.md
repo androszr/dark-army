@@ -70,6 +70,11 @@ Use the callable tool schema, not Claude tool names or guessed wrappers:
 1. `git rev-parse --abbrev-ref HEAD`. If it is the default branch: **this user
    works directly on it.** Note it in one sentence and continue — do not block,
    and do not create a branch for them. Ask only if the change is unusually risky.
+   If `HEAD` is a `card/` or `batch/` branch and `git rev-parse
+   --show-toplevel` sits inside a `.worktrees/` folder, Dark Army made this
+   worktree for the card: this run owns that branch — commit to it as you go
+   (after the project's own pre-commit checks, Phase 7), never to `main`, and never push. Its baseline is clean by
+   construction.
 2. **Snapshot the tree as a baseline patch, not as a path list.** Trees here are
    habitually dirty. Do not ask whether to proceed. Run, before anything is
    written (`$SCRATCH` is any scratch directory outside the repo):

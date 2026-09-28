@@ -119,6 +119,9 @@ struct BoardView: View {
     /// The `RUN n/m` picker on the In progress heading: `(root, rung)`, 0 for
     /// back to the machine default. Same single-project rule.
     var onSetLimit: ((String, Int) -> Void)? = nil
+    /// The card-isolation switch on the In progress heading: `(root, on)`.
+    /// Same single-project rule; drawn only for a git project.
+    var onSetIsolation: ((String, Bool) -> Void)? = nil
     /// The sequence number of the last card-focus request applied. The router
     /// does not consume its request (three things deliver it), so the applied
     /// mark lives here — `PanelView.appliedFocus`' shape.
@@ -159,7 +162,8 @@ struct BoardView: View {
     init(client: DaemonClient, state: BoardState,
          cardFocus: CardFocusRouter? = nil,
          onStartProject: ((String) -> Void)? = nil,
-         onSetLimit: ((String, Int) -> Void)? = nil) {
+         onSetLimit: ((String, Int) -> Void)? = nil,
+         onSetIsolation: ((String, Bool) -> Void)? = nil) {
         self.client = client
         _feed = ObservedObject(wrappedValue: client.boardFeed)
         _doneArchive = ObservedObject(wrappedValue: client.doneArchive)
@@ -167,6 +171,7 @@ struct BoardView: View {
         _cardFocus = ObservedObject(wrappedValue: cardFocus ?? CardFocusRouter())
         self.onStartProject = onStartProject
         self.onSetLimit = onSetLimit
+        self.onSetIsolation = onSetIsolation
     }
 
     private var board: Board { feed.board }
@@ -864,16 +869,34 @@ struct BoardView: View {
                 let queued = board.queued(in: project)
                 let cards = running + queued + board.backlog(in: project)
                 let root = BoardProjectControls.projectRoot(cards: cards)
-                if let onSetLimit, !root.isEmpty,
-                   BoardProjectControls.showsRunHeading(running: running.count,
-                                                        queued: queued.count) {
-                    RunLimitPicker(
-                        count: running.count,
-                        limit: BoardProjectControls.resolvedLimit(
-                            cards: cards, fallback: board.parallelLimit),
-                        defaultLimit: board.parallelLimit,
-                        overridden: board.parallelOverrides[root] != nil,
-                        onSetLimit: { onSetLimit(root, $0) })
+                let showsRun = onSetLimit != nil && !root.isEmpty
+                    && BoardProjectControls.showsRunHeading(running: running.count,
+                                                            queued: queued.count)
+                // The isolation switch is independent of the RUN heading: a
+                // project with nothing running still decides where its next
+                // Start works. Its state is the daemon's, off the cards.
+                let isoCards = board.cards.filter { $0.project == project }
+                let isoRoot = BoardProjectControls.projectRoot(cards: isoCards)
+                let isolation = BoardProjectControls.isolationState(cards: isoCards)
+                let showsIsolation = onSetIsolation != nil && !isoRoot.isEmpty
+                    && !isolation.isEmpty
+                if showsRun || showsIsolation {
+                    HStack(spacing: 8) {
+                        if showsRun, let onSetLimit {
+                            RunLimitPicker(
+                                count: running.count,
+                                limit: BoardProjectControls.resolvedLimit(
+                                    cards: cards, fallback: board.parallelLimit),
+                                defaultLimit: board.parallelLimit,
+                                overridden: board.parallelOverrides[root] != nil,
+                                onSetLimit: { onSetLimit(root, $0) })
+                        }
+                        if showsIsolation, let onSetIsolation {
+                            IsolationSwitch(on: isolation == "on") {
+                                onSetIsolation(isoRoot, $0)
+                            }
+                        }
+                    }
                     .padding(.top, 2)
                 }
             case .prep, .done:
@@ -1450,6 +1473,7 @@ extension BoardView: Equatable {
                 && lhs.cardFocus === rhs.cardFocus
                 && (lhs.onStartProject == nil) == (rhs.onStartProject == nil)
                 && (lhs.onSetLimit == nil) == (rhs.onSetLimit == nil)
+                && (lhs.onSetIsolation == nil) == (rhs.onSetIsolation == nil)
         }
     }
 }

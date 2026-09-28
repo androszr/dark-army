@@ -2464,6 +2464,70 @@ def test_a_stored_dial_is_what_the_startup_feed_hands_the_daemon(monkeypatch):
     assert fed == [{"/x": 2}]
 
 
+class _IsolationDaemon:
+    def __init__(self):
+        self.overrides = []
+        self.fed = []
+
+    def set_board_isolation_override(self, root, enabled):
+        self.overrides.append((root, enabled))
+
+    def set_board_isolation_overrides(self, mapping):
+        self.fed.append(dict(mapping))
+
+
+def test_switching_isolation_off_stores_saves_and_tells_the_daemon(monkeypatch):
+    """Card isolation (`docs/card-worktrees.md`), `_set_board_parallel_root`'s
+    shape through the panel's own action table: only *off* is stored."""
+    from dark_army_menubar import app as A
+    saved = []
+    monkeypatch.setattr(A, "save_preferences", lambda updates: saved.append(updates))
+    daemon = _IsolationDaemon()
+    instance = _action_app(_daemon=daemon, _loop=None)
+
+    _dispatch(instance, "set_board_isolation_root",
+              {"root": "/x", "enabled": False})
+    assert instance._settings["board_isolation_by_root"] == {"/x": False}
+    assert saved == [{"board_isolation_by_root": {"/x": False}}]
+    assert daemon.overrides == [("/x", False)]
+
+    _dispatch(instance, "set_board_isolation_root",
+              {"root": "/x", "enabled": True})
+    assert instance._settings["board_isolation_by_root"] == {}
+    assert saved[-1] == {"board_isolation_by_root": {}}
+    assert daemon.overrides[-1] == ("/x", True)
+
+
+def test_an_unusable_isolation_switch_writes_nothing(monkeypatch):
+    from dark_army_menubar import app as A
+    saved = []
+    monkeypatch.setattr(A, "save_preferences", lambda updates: saved.append(updates))
+    daemon = _IsolationDaemon()
+    instance = _action_app(_daemon=daemon, _loop=None)
+    for value in ("/x", {"enabled": False}, {"root": "  "}):
+        instance._set_board_isolation_root(value)
+    assert saved == [] and daemon.overrides == []
+
+
+def test_a_stored_isolation_switch_is_what_the_startup_feed_hands_over(
+        monkeypatch):
+    """The restart-survival property: the app stores, and its launch re-feeds
+    what it stored — through the daemon's own setter, beside the parallel
+    dials."""
+    import inspect
+    from dark_army_menubar import app as A
+    monkeypatch.setattr(A, "save_preferences", lambda updates: None)
+    daemon = _IsolationDaemon()
+    instance = _action_app(_daemon=daemon, _loop=None)
+    instance._set_board_isolation_root({"root": "/x", "enabled": False})
+    daemon.set_board_isolation_overrides(
+        instance._settings.get("board_isolation_by_root", {}))
+    assert daemon.fed == [{"/x": False}]
+    feed = inspect.getsource(A.BobCompanionApp._start_daemon_thread)
+    assert "set_board_isolation_overrides(" in feed
+    assert 'self._settings.get("board_isolation_by_root", {})' in feed
+
+
 def test_an_unknown_preference_key_is_ignored_with_no_write(monkeypatch):
     from dark_army_menubar import app as A
     saved = []

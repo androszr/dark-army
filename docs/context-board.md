@@ -344,7 +344,7 @@ real columns and to what the prompt builders send.
   `check_same_thread=False` behind a `threading.Lock`, WAL capped at
   `WAL_SIZE_LIMIT_BYTES` (8 MiB, `journal_size_limit`, so the coalesce
   `VACUUM` leaves no 177 MB `-wal` behind), `busy_timeout=5000`, an idempotent `_SCHEMA`, `_ADDED_COLUMNS` and a
-  forward-only `SCHEMA_VERSION` (29; the retired `initiatives` columns
+  forward-only `SCHEMA_VERSION` (30; the retired `initiatives` columns
   are emptied, never dropped — **there is no folder concept on the board
   now**). Four columns:
   `prep` / `backlog` / `in_progress` / `done` (the SQL column is
@@ -505,7 +505,7 @@ real columns and to what the prompt builders send.
   shape is **refused**; `run_headlines` selects `length(report)`, never
   `report`. The decision half is `work_record.py` — every bound, both
   parsers, the verdict rule, the sentences both clients draw verbatim, and
-  **the only `git` argv in `host/`**. The daemon reaches the table only
+  **the git argv, in `work_record.py` and `worktrees.py`**. The daemon reaches the table only
   through the store's verbs: `_schedule_work_baseline` at the end of
   `_dispatch_card_locked` (never awaited), `_consider_work_record` at
   `_reconcile_board`'s one `mark_ended` seam, `_flush_work_records` /
@@ -781,6 +781,13 @@ real columns and to what the prompt builders send.
   which Codex 0.156 shows before any session exists in a folder it has not
   seen, whatever the approval mode. Dark Army neither answers nor pre-empts
   it; the person answers it in the terminal and presses Start or Refine again.
+
+  **A started card works in its own worktree** (v30): on a git project with
+  isolation on, Start prepares `card/<id8>-<slug>` in
+  `<root>/.worktrees/card-<id8>/` (`worktrees.py`, `trust_marks.py`), records
+  `worktree_path` / `worktree_branch` (`record_worktree`'s ring) and opens
+  the terminal there; the release at Done never uses `--force`. The switch is
+  `board_isolation_by_root`. In full: `docs/card-worktrees.md`.
 
   Deliberately **not** passed: `--no-session-persistence`,
   `--setting-sources ""`, `--strict-mcp-config`, and

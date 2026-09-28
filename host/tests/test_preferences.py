@@ -241,3 +241,19 @@ def test_agent_model_tables_survive_a_save_of_an_unrelated_key(prefs_file):
     assert result["agent_models_by_root"] == {"/tmp/p": {"grok": {"main": "grok-4.5"}}}
     loaded = _read_back(prefs_file)
     assert loaded["agent_models"] == {"claude": {"planner": "sonnet"}}
+
+
+def test_the_card_isolation_map_defaults_empty_and_an_older_file_loads(prefs_file):
+    """Card isolation is on for every git project; only a project switched
+    **off** is stored. A file written before the key existed loads with the
+    empty map, and the map round-trips beside its siblings."""
+    assert DEFAULTS["board_isolation_by_root"] == {}
+    prefs_file.write_text(json.dumps({"board_parallel": 2}))
+    assert load_preferences(prefs_file)["board_isolation_by_root"] == {}
+    save_preferences(updates={"board_isolation_by_root": {"/a/proj": False}},
+                     path=prefs_file)
+    stored = json.loads(prefs_file.read_text())
+    assert stored["board_isolation_by_root"] == {"/a/proj": False}
+    assert stored["board_parallel"] == 2
+    assert load_preferences(prefs_file)["board_isolation_by_root"] == {
+        "/a/proj": False}

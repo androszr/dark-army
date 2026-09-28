@@ -363,3 +363,96 @@ async def test_leader_subprocess_is_spawned_with_a_wide_stream_limit(monkeypatch
     client = grok_leader.LeaderClient()
     assert await client.connect() is False
     assert captured.get("limit", 0) >= 8 * 1024 * 1024
+
+
+def _flagless_client(seen):
+    client = grok_leader.LeaderClient(on_residents=seen.append)
+    client.connected = True
+    client._list_methods = [grok_leader.SESSION_LIST]
+
+    async def fake_request(method, params, timeout=5.0):
+        # Disk history and live tabs alike, none carrying `resident`.
+        return {"sessions": [{"sessionId": "live-tab"}, {"sessionId": "old"}]}
+
+    client._request = fake_request
+    return client
+
+
+@pytest.mark.asyncio
+async def test_a_flagless_list_lets_the_live_roster_seed_residents():
+    """After a reconnect the set was empty until a Grok tab opened or
+    closed, so every reply was refused as "not attached" (26 Sep)."""
+    seen = []
+    client = _flagless_client(seen)
+    assert await client._relist_residents() is True
+    assert client.flagless is True
+    assert client.residents == frozenset()
+    client.seed_residents({"live-tab": object()})
+    assert client.residents == frozenset({"live-tab"})
+    assert seen[-1] == frozenset({"live-tab"})
+    client.seed_residents({})
+    assert client.residents == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_list_ignores_the_roster_seed():
+    seen = []
+    client = grok_leader.LeaderClient(on_residents=seen.append)
+    client.connected = True
+    client._list_methods = [grok_leader.SESSION_LIST]
+
+    async def fake_request(method, params, timeout=5.0):
+        return {"sessions": [{"sessionId": "a", "resident": True},
+                             {"sessionId": "b", "resident": False}]}
+
+    client._request = fake_request
+    assert await client._relist_residents() is True
+    assert client.flagless is False
+    client.seed_residents({"b": object()})
+    assert client.residents == frozenset({"a"})
+
+
+def test_seed_is_ignored_while_disconnected():
+    client = grok_leader.LeaderClient()
+    client.flagless = True
+    client.seed_residents({"x": object()})
+    assert client.residents == frozenset()
+
+
+def test_going_down_clears_the_flagless_mode():
+    client = grok_leader.LeaderClient()
+    client.connected = True
+    client.flagless = True
+    client._mark_down()
+    assert client.flagless is False
+
+
+@pytest.mark.asyncio
+async def test_daemon_reply_reaches_a_live_tab_after_a_flagless_reconnect():
+    """The 26 Sep refusal: restart, the leader's list has no resident flag,
+    and a reply to a running Grok tab said "not attached". The live roster
+    now seeds the set, so the reply goes to the leader."""
+    from dark_army_daemon.daemon import BobDaemon
+
+    d = BobDaemon()
+    client = _flagless_client([])
+    client._on_residents = d._on_grok_residents
+    sent = []
+
+    async def fake_prompt(sid, text):
+        sent.append((sid, text))
+        return True, ""
+
+    client.prompt = fake_prompt
+    d._leader = client
+    d._grok_leader_up = True
+    d._session_provider = lambda sid: "grok"
+    await client._relist_residents()
+    d._grok_records = {"live-tab": object()}
+    d._seed_grok_residents()
+    assert d._grok_resident == frozenset({"live-tab"})
+    ok, detail = await d.reply_to_session("live-tab", "keep going")
+    assert (ok, detail) == (True, "")
+    assert sent == [("live-tab", "keep going")]
+    ok, detail = await d.reply_to_session("old", "hello")
+    assert ok is False and "not attached" in detail

@@ -35,10 +35,11 @@ build/
 .build/
 DerivedData/
 
-# Dark Army's enrolment key folder, what the crew writes, and the person's private user-data folder
+# Dark Army's enrolment key folder, what the crew writes, the person's private user-data folder, and each started card's own worktree
 .dark-army/
 plans/
 docs/research/
 /scout/
 /manual-check/
 user-data/
+/.worktrees/

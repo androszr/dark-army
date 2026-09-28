@@ -6,6 +6,8 @@
       "Bash(git log:*)",
       "Bash(git ls-files:*)",
       "Bash(git rev-parse:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
       "Bash(grep:*)",
       "Bash(awk:*)",
       "Bash(bash .claude/skills/ship/preflight.sh:*)",

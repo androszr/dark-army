@@ -5,6 +5,8 @@
   "permissions": {
     "allow": [
       "Bash(.venv/bin/pytest:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
       "Bash(swift build:*)",
       "Bash(swift test:*)",
       "Bash(npm run build:*)",

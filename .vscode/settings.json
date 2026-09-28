@@ -8,6 +8,12 @@
     "**/host/dist/**": true,
     "**/host/build/**": true,
     "**/panel/.build/**": true,
-    "**/.gitnexus/**": true
+    "**/.gitnexus/**": true,
+    // Each started card's own checkout folder (card isolation): a whole
+    // second tree per card, never watched or searched twice.
+    "**/.worktrees/**": true
+  },
+  "search.exclude": {
+    "**/.worktrees/**": true
   }
 }

@@ -639,6 +639,7 @@ EXPECTED_PREFERENCE_KEYS = {
     "board_autostart",
     "board_parallel",
     "board_parallel_by_root",
+    "board_isolation_by_root",
     "agent_models",
     "agent_models_by_root",
     "panel_scale",

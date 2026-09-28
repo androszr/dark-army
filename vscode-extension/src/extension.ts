@@ -29,7 +29,7 @@ import * as path from 'path';
 import { execFile } from 'child_process';
 import { randomUUID } from 'crypto';
 
-const EXT_VERSION = '0.1.21';
+const EXT_VERSION = '0.1.22';
 const EXTENSION_ID = 'dark-army.dark-army-ide';
 
 // Workspace Trust. The manifest declares `untrustedWorkspaces: limited`, so
@@ -573,8 +573,19 @@ async function spawnAgent(msg: any): Promise<{
   // realpath'd root; comparing that against the raw `uri.fsPath` refused every
   // project reached through a symlink — the daemon addressed the right window
   // and the window then said no, on a project the board itself offered.
-  const target = realOrSelf(cwd);
-  if (!folderPaths().map(realOrSelf).includes(target)) {
+  //
+  // Equal to **or contained in** a folder of this window (0.1.22): a card's
+  // own worktree is `<root>/.worktrees/card-<id8>`, inside the project's
+  // folder and never equal to it. Containment is component-aware — the
+  // folder plus a separator — so `/a/proj` never admits `/a/project2`, and
+  // anything outside every folder is refused in the same words as before.
+  // A cwd that does not exist is refused: a name that resolves to nothing
+  // cannot be proved to lie inside the folder, and the terminal would open
+  // somewhere else.
+  const target = realOrSelf(path.resolve(cwd));
+  if (!fs.existsSync(target)
+      || !folderPaths().map((f) => realOrSelf(path.resolve(f)))
+        .some((f) => folderContains(f, target))) {
     return { spawned: false, error: 'cwd is not a folder of this window' };
   }
   const shellArgs = Array.isArray(msg.shellArgs)
@@ -622,6 +633,16 @@ function realOrSelf(p: string): string {
   } catch {
     return p;
   }
+}
+
+// Whether `target` is `folder` or lies inside it, by path components. Both
+// sides go through `path.resolve`, so a `..` segment cannot climb out.
+function folderContains(folder: string, target: string): boolean {
+  const base = path.resolve(folder);
+  const inner = path.resolve(target);
+  if (inner === base) return true;
+  const prefix = base.endsWith(path.sep) ? base : base + path.sep;
+  return inner.startsWith(prefix);
 }
 
 function folderPaths(): string[] {

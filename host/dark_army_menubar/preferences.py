@@ -137,6 +137,14 @@ DEFAULTS = {
     # not two that can drift). Additive and downgrade-safe: an older build
     # never reads the key and `save_preferences`' read-modify-write keeps it.
     "board_parallel_by_root": {},
+    # Card isolation, per project (`docs/card-worktrees.md`): `{canonical
+    # project root: false}`. On by default for every git project — a Start
+    # works on its own branch in its own `.worktrees/` folder — so only the
+    # projects that switched it **off** are stored, and switching it back on
+    # removes the row. Additive and downgrade-safe: an older build never
+    # reads the key and `save_preferences`' read-modify-write keeps it.
+    # **Never renamed.**
+    "board_isolation_by_root": {},
     # Which model each agent and helper runs on, per assistant:
     # `{provider: {slot: model}}` over `agent_models.PROVIDERS` × `SLOTS`
     # (`main` plus the seven roles). An absent provider or slot means the

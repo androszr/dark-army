@@ -96,8 +96,13 @@ after a confirmed press per project.
   replaced on resync by the owned-rows rule. The pack also owns narrow allow
   rows for the test runner, Swift
   builds/tests, npm build, Ruff and the two board MCP names (`mcp__dark-army`,
-  `mcp__bob`). It never allows `Edit`, `Write`, git writes, deletion or
-  `defaultMode`. **What the pack does not
+  `mcp__bob`), and two git write rows, `Bash(git add:*)` and
+  `Bash(git commit:*)`: a `/ship` run inside a card worktree commits its
+  work to its own card branch at Phase 7 (`docs/card-worktrees.md`), and a
+  prompt per commit would stop an unattended run. It never allows `Edit`,
+  `Write`, any other git write (push is never allowed and asks each time;
+  reset and checkout are denied),
+  deletion or `defaultMode`. **What the pack does not
   write:** no `hooks` key — the guard is machine-wide through
   `~/.claude/settings.json`, `~/.grok/hooks/` and `~/.codex/hooks.json`
   like every Dark Army hook, and arms itself per project on the skill file's
@@ -156,7 +161,10 @@ after a confirmed press per project.
   this repository's own template tree; `test_agent_pack_contract.py` pins
   both); its last group is Dark Army's key folder, `plans/`,
   `docs/research/`, `/scout/`, `/manual-check/` and the person's private
-  `user-data/` (added 24 Sep 2026, the *starter gitignore user-data* plan); a
+  `user-data/` (added 24 Sep 2026, the *starter gitignore user-data* plan),
+  then `/.worktrees/`, where each started card's own worktree lives
+  (28 Sep 2026, `docs/card-worktrees.md`; existing projects receive it on
+  their next resync); a
   profile folder may add its own `gitignore.txt` (web: `.next/`, `out/`,
   `.vercel`, `coverage/`; iOS: `xcuserdata/` and friends), read by
   `pack_render.gitignore_lines`, which `_overlay_profile` never sees.

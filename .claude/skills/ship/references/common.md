@@ -134,6 +134,11 @@ Pass the same rule to every helper you spawn, in the packet.
 1. `git rev-parse --abbrev-ref HEAD`. If `main`: **this user works directly on
    `main`.** Note it in one sentence and continue — do not block, and do not
    create a branch for them. Ask only if the change is unusually risky.
+   If `HEAD` is a `card/` or `batch/` branch and `git rev-parse
+   --show-toplevel` sits inside a `.worktrees/` folder, Dark Army made this
+   worktree for the card: this run owns that branch — commit to it as you go
+   (after the GitNexus change check, Phase 7), never to `main`, and never push. Its baseline is clean by
+   construction.
 2. **Snapshot the tree as a baseline patch, not as a path list.** This tree is
    habitually dirty — 79 entries at the time of writing, including `daemon.py`,
    `app.py` and `Models.swift`, which are the centre of gravity of almost any

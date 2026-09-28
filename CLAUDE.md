@@ -138,7 +138,7 @@ current there.
 
 | Subject | Document | Long-form contracts it points at |
 |---|---|---|
-| The board: two write paths, `start_when_planned`, the parallel limit and the queue, claims, Done, `board.py`'s writer rings, `dispatch.py`'s six properties, `workspace.py` | `docs/context-board.md` | `docs/card-crew.md`, `docs/delivery-leads.md`, `docs/lifecycle-timing.md`, `docs/card-dependencies.md` |
+| The board: two write paths, `start_when_planned`, the parallel limit and the queue, claims, Done, `board.py`'s writer rings, `dispatch.py`'s six properties, `workspace.py` | `docs/context-board.md` | `docs/card-crew.md`, `docs/delivery-leads.md`, `docs/lifecycle-timing.md`, `docs/card-dependencies.md`, `docs/card-worktrees.md` |
 | The Mac panel: workspace pane and rail, the process table, detail tabs and the hosted terminal, the inbox, the window, the board's drawing, the card window, drafts, markdown, areas, chatter, the API layer's three rules | `docs/context-panel.md` | `docs/panel-window-contract.md`, `docs/phone-contract.md`, `docs/agent-chatter.md` |
 | The Python half: Codex observation, the hook handler, the daemon and its modules, the loopback API and the two sealed doors, enrolment, `paths.py`, titles, the menu-bar app, the session state model | `docs/context-host.md` | `docs/session-state-contract.md`, `docs/transport-contract.md`, `docs/codex-contract.md`, `docs/channel-tools.md`, `docs/knowledge-notes.md`, `docs/pty-broker-contract.md`, `docs/menubar-strip-contract.md`, `docs/kill-switch.md`, `docs/agent-pack.md`, `docs/first-run-checklist.md` |
 | Building, testing, the asset pipelines, `/review` | `docs/context-development.md` | `docs/agents.md`, `docs/ship-efficiency.md`, `docs/codex-ship.md` |
@@ -224,8 +224,10 @@ stated in full, with its reasons, in the subject document named.
   (`docs/session-state-contract.md`).
 - **Never commit, push, tag, install or release from an agent run** unless
   the person asked for exactly that; releases go through
-  `.claude/skills/releasing/SKILL.md`. Never kill the pty broker
-  (`docs/pty-broker-contract.md`).
+  `.claude/skills/releasing/SKILL.md`. The one exception: a run inside a
+  card worktree commits to its own card branch, and still never pushes,
+  merges, tags, installs or releases (`docs/card-worktrees.md`). Never kill
+  the pty broker (`docs/pty-broker-contract.md`).
 
 ## What to read
 

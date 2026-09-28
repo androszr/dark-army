@@ -2130,6 +2130,25 @@ class BobDaemon(BoardVerbsMixin):
         # thread by **replacing** the dict rather than mutating it, so the
         # executor never reads one mid-write.
         self.board_parallel_overrides: dict = {}
+        # Card isolation, per project (`docs/card-worktrees.md`). The map
+        # holds only the projects that switched it **off** — `{canonical
+        # root: False}`, the `board_isolation_by_root` preference — read by
+        # `_isolation_for` on the executor and replaced, never mutated, by
+        # the panel reader thread, `board_parallel_overrides`' rule.
+        self.board_isolation_overrides: dict = {}
+        # Head card id → `{"project", "root", "since"}` while Dark Army is
+        # preparing that card's worktree (the fetch, the add, the setup
+        # script). Created and popped on the loop, **replaced, never
+        # mutated**, so `_launch_inflight` and the decoration on the
+        # executor may read it; the prepare task's `finally` always pops.
+        self._worktree_preparing: dict = {}
+        # `(card id, worktree path)` pairs the reconcile has already queued
+        # once for a release look in this process — a Done card still naming
+        # a folder after a restart, or one removed by hand. Memory only and
+        # replaced, never mutated; a new run of the card drops its pair. The
+        # "kept" line a card draws is derived from the card and the disk
+        # (`_worktree_note`), never remembered here.
+        self._worktree_considered: set = set()
         # Which model each agent and helper runs on: the machine-wide table
         # (`agent_models`, `{provider: {slot: model}}`) and the per-project
         # override map (`agent_models_by_root`, keyed on the canonical root),
@@ -7718,6 +7737,7 @@ class BobDaemon(BoardVerbsMixin):
             ok = await leader.connect()
             self._grok_leader_up = ok
             if ok:
+                self._seed_grok_residents()
                 self._grok_resident = leader.residents
                 self._schedule_agents_push()
         elif not present and (leader.connected or self._grok_leader_up):
@@ -7785,6 +7805,20 @@ class BobDaemon(BoardVerbsMixin):
         for sid, state in self._session_states.items():
             if state.get("provider") == "grok" or sid in live:
                 self._sync_grok_subagents(sid, state)
+        self._seed_grok_residents()
+
+    def _seed_grok_residents(self) -> None:
+        """Hand the live Grok roster to the leader client as residents.
+
+        A no-op unless the leader is connected and its session list cannot
+        say who is live (`LeaderClient.flagless`); then the tabs Dark Army
+        sees running are the reachable ones, instead of none until a Grok
+        session happens to open or close.
+        """
+        leader = getattr(self, "_leader", None)
+        if leader is None or not getattr(leader, "flagless", False):
+            return
+        leader.seed_residents(getattr(self, "_grok_records", {}) or {})
 
     def _grok_hook_state_stays(
         self, state: dict, now: float, sid: str,

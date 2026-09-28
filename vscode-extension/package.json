@@ -2,7 +2,7 @@
   "name": "dark-army-ide",
   "displayName": "Dark Army IDE Bridge",
   "description": "Lets Dark Army focus the integrated terminal tab of a Claude Code session in this window.",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "publisher": "dark-army",
   "license": "MIT",
   "engines": {

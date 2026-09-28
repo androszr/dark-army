@@ -849,6 +849,20 @@ def _lock_can_spawn(lock: dict) -> bool:
     return _parse_ext_version(lock.get("extensionVersion")) >= SPAWN_MIN_VERSION
 
 
+# A terminal in a **subfolder** of the owning window's folder is 0.1.22: the
+# extension's `spawnAgent` refused every cwd that was not exactly a workspace
+# folder before it, and a card's worktree (`<root>/.worktrees/card-<id8>`) is
+# inside the folder, never equal to it. Its own floor rather than a raised
+# `SPAWN_MIN_VERSION`, because a start in the main checkout still works on
+# every 0.1.8+ window.
+SUBFOLDER_SPAWN_MIN_VERSION = (0, 1, 22)
+
+
+def _lock_can_spawn_subfolder(lock: dict) -> bool:
+    return (_parse_ext_version(lock.get("extensionVersion"))
+            >= SUBFOLDER_SPAWN_MIN_VERSION)
+
+
 def _spawn_capable_locks() -> list:
     return [l for l in _bob_ext_locks() if _lock_can_spawn(l)]
 
@@ -873,7 +887,8 @@ def _lock_owns(lock: dict, root: str) -> bool:
 
 
 async def spawn_agent(root: str, argv: list, name: str, *,
-                      env_extra: Optional[dict] = None) -> Optional[dict]:
+                      env_extra: Optional[dict] = None,
+                      cwd: str = "") -> Optional[dict]:
     """Open a terminal in the window owning `root`, running `argv`. Reply or None.
 
     `env_extra` is merged into the `env` payload **after**
@@ -899,12 +914,24 @@ async def spawn_agent(root: str, argv: list, name: str, *,
     words: VS Code does not reload an extension under a running window, so a
     machine that has been upgraded still has older windows open and "nothing
     happened" is indistinguishable from a broken button.
+
+    `cwd` is where the terminal opens — a card's worktree inside `root` — and
+    `root` when empty, which sends `"cwd": root` byte for byte as before. The
+    window is still the one owning `root`. When `cwd` differs and that
+    window's extension is older than `SUBFOLDER_SPAWN_MIN_VERSION`, the answer
+    is a *reply* carrying `dispatch.WORKTREE_WINDOW_REFUSAL`, so the words
+    land on the card — never a quiet start in the main checkout.
     """
     if not root or not argv:
         return None
     locks = [l for l in _spawn_capable_locks() if _lock_owns(l, root)]
     if not locks:
         return None
+    where = str(cwd or root)
+    if where != root and not _lock_can_spawn_subfolder(locks[0]):
+        # Imported here: `dispatch` imports this module at load time.
+        from . import dispatch
+        return {"spawned": False, "error": dispatch.WORKTREE_WINDOW_REFUSAL}
     # The deletions first, the additions second. `extension.ts` copies every
     # key of this object into `createTerminal({env})` verbatim — a JSON null
     # deletes, a string sets — so no extension version moves for a new key.
@@ -914,7 +941,7 @@ async def spawn_agent(root: str, argv: list, name: str, *,
             env[key] = value
     body = {
         "op": "spawn_agent",
-        "cwd": root,
+        "cwd": where,
         "shellPath": str(argv[0]),
         # Every element a string, exactly as built. Nothing here joins them.
         "shellArgs": [str(a) for a in argv[1:]],
@@ -1159,7 +1186,9 @@ REFINEMENT_CLOSE_MIN_VERSION = (0, 1, 12)
 # answer and never as a timeout that may have acted; and it must stay under
 # the daemon's `REFINEMENT_CLOSE_TIMEOUT` (8 s) around both callers.
 NATIVE_TERMINAL_POST_TIMEOUT = 6.0
-NATIVE_REPLY_MIN_VERSION = (0, 1, 21)
+# Pinned to the current extension (`docs/2026-09-06-supported-versions.md`,
+# `test_supported_versions.py`): it moves with every `package.json` bump.
+NATIVE_REPLY_MIN_VERSION = (0, 1, 22)
 
 
 def native_reply_text(text) -> Optional[str]:

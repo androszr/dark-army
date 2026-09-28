@@ -98,7 +98,11 @@ logger = logging.getLogger("dark-army.board")
 #: suddenly holding a card nobody linked. It also adds one column,
 #: `manual_session_id`: the session whose `flag_manual` wrote the steps, so a
 #: dependency reads as finished only while that run is the one bound.
-SCHEMA_VERSION = 29
+#: v30 adds two `cards` columns, `worktree_path` and `worktree_branch`,
+#: through the ADD COLUMN list: the folder and branch a started card works in
+#: (`docs/card-worktrees.md`), `''` on every card that works in the main
+#: checkout. Written by `record_worktree` / `clear_worktree` alone.
+SCHEMA_VERSION = 30
 
 #: Ceiling for board.db-wal, applied per connection in `connect()`. SQLite
 #: reuses a WAL file from its start after a checkpoint but never shrinks
@@ -494,6 +498,16 @@ CREATE TABLE IF NOT EXISTS cards (
     -- and these win for the face. `''` where the report had no block.
     report_verdict TEXT NOT NULL DEFAULT '',
     report_recommendation TEXT NOT NULL DEFAULT '',
+    -- The card's own worktree, at v30: the folder under
+    -- `<root>/.worktrees/` its terminal opens in and the branch checked out
+    -- there (`docs/card-worktrees.md`). Daemon bookkeeping, written by
+    -- `record_worktree` and emptied by `clear_worktree` alone — never
+    -- `_WRITABLE`, never an API field, never counted by `revision`. `''`
+    -- where the card works in the main checkout. Deliberately
+    -- single-spaced so the CREATE and ALTER spellings can be pinned
+    -- against each other by a grep.
+    worktree_path TEXT NOT NULL DEFAULT '',
+    worktree_branch TEXT NOT NULL DEFAULT '',
     -- Retired at v22 as unused '' text. Kept so an older build's INSERT
     -- and SELECT still work. This build never reads or writes them.
     initiative_id   TEXT NOT NULL DEFAULT '',
@@ -839,6 +853,12 @@ SINGLE_WRITER = {
     "queue_rank": "move_queued",
     "plan_approved": "approve_plan",
     "plan_approved_at": "approve_plan",
+    # The card's own worktree (v30): set by `record_worktree`, emptied by
+    # `clear_worktree` — `manual_steps`' set/clear pair. A surface that
+    # could write the path could aim the release's `git worktree remove`
+    # at a folder Dark Army never made.
+    "worktree_path": "record_worktree",
+    "worktree_branch": "record_worktree",
 }
 
 #: Which columns the card's `revision` counts.
@@ -1223,6 +1243,13 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         # report_recommendation TEXT NOT NULL DEFAULT ''.
         ("report_verdict", "TEXT NOT NULL DEFAULT ''"),
         ("report_recommendation", "TEXT NOT NULL DEFAULT ''"),
+        # The card's own worktree, at v30. Same DEFAULT rule: a schema-29
+        # build goes on INSERTing without either, never reads them and never
+        # removes a worktree. Spelled identically to the CREATE path above,
+        # reading worktree_path TEXT NOT NULL DEFAULT '' and
+        # worktree_branch TEXT NOT NULL DEFAULT ''.
+        ("worktree_path", "TEXT NOT NULL DEFAULT ''"),
+        ("worktree_branch", "TEXT NOT NULL DEFAULT ''"),
     ),
         # `card_runs` gains columns the same way (v24), keyed on its own
         # table: `_add_missing_columns` is PRAGMA-driven per table, so an
@@ -2728,6 +2755,57 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
                 "SELECT * FROM cards WHERE manual_check_path = ?"
                 + CARD_ORDER_SQL, (text,)).fetchall()
         return [self._row(r) for r in rows]
+
+    #: A stored worktree path or branch longer than this is refused: both
+    #: are composed by `worktrees.py` from the root and an eight-character
+    #: id, so anything longer was not.
+    MAX_WORKTREE_FIELD_CHARS = 1024
+
+    def record_worktree(self, card_id: str, path: str, branch: str) -> tuple:
+        """The folder and branch a started card works in. `(card_or_None,
+        detail)`.
+
+        Daemon bookkeeping and the one writer of the pair (`SINGLE_WRITER`),
+        `declare_done`'s shape: one UPDATE, the guard in its own WHERE,
+        `rowcount == 0` meaning the card is gone. No `revision` step — what
+        folder a run works in is Dark Army's record, not a person's edit,
+        and a change number that moved here would refuse the save of
+        whoever had the card open. Both values must be non-empty: the
+        emptying is `clear_worktree`'s, never a record of `''`.
+        """
+        path = str(path or "")
+        branch = str(branch or "")
+        if not path or not branch:
+            return None, "a worktree needs a folder and a branch"
+        if len(path) > self.MAX_WORKTREE_FIELD_CHARS \
+                or len(branch) > self.MAX_WORKTREE_FIELD_CHARS:
+            return None, "that worktree name is too long"
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE cards SET worktree_path = ?, worktree_branch = ?,"
+                " updated_at = ? WHERE id = ?",
+                (path, branch, time.time(), str(card_id)))
+            self._conn.commit()
+            changed = cur.rowcount
+        if not changed:
+            return None, "that card is gone"
+        return self.get(card_id), "recorded"
+
+    def clear_worktree(self, card_id: str) -> tuple:
+        """`record_worktree`'s other half: the folder has been removed.
+        `(card_or_None, detail)`. The branch is never deleted by Dark Army;
+        only the card's note of the folder goes. A card with nothing
+        recorded is `rowcount == 0` — nothing to clear."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE cards SET worktree_path = '', worktree_branch = '',"
+                " updated_at = ? WHERE id = ? AND worktree_path != ''",
+                (time.time(), str(card_id)))
+            self._conn.commit()
+            changed = cur.rowcount
+        if not changed:
+            return None, "that card has no worktree recorded"
+        return self.get(card_id), "cleared"
 
     def clear_manual(self, card_id: str,
                      expected_manual_steps: Optional[str] = None) -> tuple:

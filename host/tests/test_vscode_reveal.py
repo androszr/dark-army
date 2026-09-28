@@ -882,6 +882,61 @@ async def test_spawn_agent_ignores_a_dead_window_owning_the_same_folder(tmp_path
     assert asked == [64894]
 
 
+def _one_window(tmp_path, monkeypatch, version):
+    monkeypatch.setattr(vr, "_BOB_IDE_DIR", tmp_path)
+    root = str(tmp_path)
+    (tmp_path / "64894.lock").write_text(json.dumps({
+        "port": 64894, "authToken": "tok", "extHostPid": os.getpid(),
+        "extensionVersion": version, "workspaceFolders": [root]}))
+    bodies = []
+
+    async def fake_post(port, token, body, timeout=3.0, **kw):
+        bodies.append(body)
+        return {"spawned": True, "terminalName": "agent"}
+
+    monkeypatch.setattr(vr, "_post_json", fake_post)
+    return root, bodies
+
+
+@pytest.mark.asyncio
+async def test_a_card_worktree_reaches_a_022_window_owning_the_root(
+        tmp_path, monkeypatch):
+    """Card isolation (`docs/card-worktrees.md`): the window is still the
+    one owning the root; only the terminal's cwd is the worktree."""
+    assert vr.SUBFOLDER_SPAWN_MIN_VERSION == (0, 1, 22)
+    root, bodies = _one_window(tmp_path, monkeypatch, "0.1.22")
+    worktree = os.path.join(root, ".worktrees", "card-abcd1234")
+    reply = await vr.spawn_agent(root, ["claude", "go"], "agent", cwd=worktree)
+    assert reply == {"spawned": True, "terminalName": "agent"}
+    assert bodies[0]["cwd"] == worktree
+
+
+@pytest.mark.asyncio
+async def test_an_older_window_answers_the_refusal_words_for_a_subfolder(
+        tmp_path, monkeypatch):
+    from dark_army_daemon import dispatch
+    root, bodies = _one_window(tmp_path, monkeypatch, "0.1.21")
+    worktree = os.path.join(root, ".worktrees", "card-abcd1234")
+    reply = await vr.spawn_agent(root, ["claude", "go"], "agent", cwd=worktree)
+    assert reply == {"spawned": False,
+                     "error": dispatch.WORKTREE_WINDOW_REFUSAL}
+    assert bodies == [], "an older window is never asked"
+    ok, detail, pid = await dispatch.spawn(root, ["claude", "go"], "agent",
+                                           cwd=worktree)
+    assert (ok, detail, pid) == (False, dispatch.WORKTREE_WINDOW_REFUSAL, None)
+
+
+@pytest.mark.asyncio
+async def test_no_cwd_sends_the_root_byte_for_byte(tmp_path, monkeypatch):
+    root, bodies = _one_window(tmp_path, monkeypatch, "0.1.21")
+    await vr.spawn_agent(root, ["claude", "go"], "agent")
+    await vr.spawn_agent(root, ["claude", "go"], "agent", cwd=root)
+    assert bodies[0] == bodies[1]
+    assert bodies[0]["cwd"] == root
+    assert list(bodies[0]) == ["op", "cwd", "shellPath", "shellArgs", "name",
+                               "env"]
+
+
 def test_in_vscode_asks_ps_once_per_process_life(tmp_path, monkeypatch):
     """The daemon's steadiest spawn: every push re-forked `ps -E` for every
     session once `_CAN_SEND_TTL` lapsed. A yes is fixed for the life of the
@@ -927,3 +982,63 @@ def test_in_vscode_keeps_re_asking_a_no_and_an_unreadable_process(tmp_path, monk
     vr._in_vscode(7)
     vr._in_vscode(8)
     assert asked == [7, 8, 7, 8]
+
+
+def _extension_source() -> str:
+    import pathlib
+    return (pathlib.Path(__file__).resolve().parents[2] / "vscode-extension"
+            / "src" / "extension.ts").read_text(encoding="utf-8")
+
+
+def test_spawn_agent_refuses_a_cwd_that_does_not_exist():
+    """0.1.22's containment (`docs/card-worktrees.md`): both sides resolved,
+    and a cwd that resolves to nothing is refused before the containment
+    test, in the words a folder outside the window already gets."""
+    text = _extension_source()
+    body = text[text.index("async function spawnAgent("):
+                text.index("function realOrSelf(")]
+    assert "realOrSelf(path.resolve(cwd))" in body
+    assert "!fs.existsSync(target)" in body
+    assert body.index("!fs.existsSync(target)") < body.index("folderContains(")
+    assert "'cwd is not a folder of this window'" in body
+
+
+def test_folder_contains_is_component_aware_and_resolves_dot_dot(tmp_path):
+    """The extension's own function, run under node after the local esbuild
+    strips its types — never a Python re-statement of it."""
+    import shutil
+    import subprocess
+    import pathlib
+    ext = pathlib.Path(__file__).resolve().parents[2] / "vscode-extension"
+    esbuild = ext / "node_modules" / ".bin" / "esbuild"
+    node = shutil.which("node")
+    if node is None or not esbuild.exists():
+        pytest.skip("node or the extension's esbuild is not installed")
+    text = _extension_source()
+    start = text.index("function folderContains(")
+    end = text.index("\n}\n", start) + 3
+    src = ("import * as path from 'path';\n" + text[start:end] + "\n"
+           "const cases: [string, string, boolean][] = [\n"
+           "  ['/a/proj', '/a/proj', true],\n"
+           "  ['/a/proj/', '/a/proj', true],\n"
+           "  ['/a/proj', '/a/proj/.worktrees/card-1', true],\n"
+           "  ['/a/proj', '/a/project2', false],\n"
+           "  ['/a/proj', '/a/proj/../project2', false],\n"
+           "  ['/a/proj', '/a/proj/.worktrees/../../x', false],\n"
+           "  ['/', '/anything', true],\n"
+           "];\n"
+           "for (const [f, t, want] of cases) {\n"
+           "  if (folderContains(f, t) !== want) {\n"
+           "    console.log('FAIL ' + f + ' ' + t); process.exit(1);\n"
+           "  }\n"
+           "}\n"
+           "console.log('ok');\n")
+    ts = tmp_path / "contains.ts"
+    ts.write_text(src)
+    js = tmp_path / "contains.js"
+    built = subprocess.run([str(esbuild), str(ts), "--platform=node",
+                            "--format=cjs", "--bundle", f"--outfile={js}"],
+                           capture_output=True, text=True)
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([node, str(js)], capture_output=True, text=True)
+    assert ran.stdout.strip() == "ok", ran.stdout + ran.stderr

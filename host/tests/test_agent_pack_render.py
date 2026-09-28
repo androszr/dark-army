@@ -545,16 +545,23 @@ def test_the_three_shunt_allow_rows_are_owned():
 
 
 def test_the_pipeline_allow_rows_are_owned_and_never_blanket():
+    # The two git write rows are the card branch's commits (the person's
+    # decision of 28 Sep 2026, `docs/card-worktrees.md`); no other git write.
     required = {"Bash(.venv/bin/pytest:*)", "Bash(swift build:*)",
                 "Bash(swift test:*)", "Bash(npm run build:*)",
-                "Bash(ruff check:*)", "mcp__dark-army", "mcp__bob"}
+                "Bash(ruff check:*)", "mcp__dark-army", "mcp__bob",
+                "Bash(git add:*)", "Bash(git commit:*)"}
+    git_writes = {"Bash(git add:*)", "Bash(git commit:*)"}
     for raw in (_mapping("web")[pack_render.SETTINGS_KEY],
                 (_REPO / ".claude/settings.json").read_bytes()):
         settings = json.loads(raw)
         allow = set(settings["permissions"]["allow"])
         assert required <= allow
-        assert not any(row.startswith(("Edit", "Write", "Bash(git commit",
-                                       "Bash(git push", "Bash(rm")) for row in allow)
+        assert not any(row.startswith(("Edit", "Write", "Bash(git push",
+                                       "Bash(git reset", "Bash(git checkout",
+                                       "Bash(rm")) for row in allow)
+        assert {row for row in allow if row.startswith(
+            ("Bash(git add", "Bash(git commit"))} == git_writes
         assert "defaultMode" not in settings["permissions"]
 
 

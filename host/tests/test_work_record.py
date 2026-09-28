@@ -480,6 +480,11 @@ async def test_a_dispatched_run_ends_with_a_record_of_what_it_changed(
 
     monkeypatch.setattr(dispatch, "spawn", accept)
     monkeypatch.setattr(enrollment, "root_enrolled", lambda cwd: str(root))
+    # This is the main-checkout record, end to end: card isolation (on by
+    # default for a git project, `docs/card-worktrees.md`) is switched off
+    # for this root, so the run works — and is measured — in the root itself.
+    # `test_dispatch_worktree.py` drives the isolated path.
+    daemon.set_board_isolation_override(str(root.resolve()), False)
     try:
         card, _ = store.create({"title": "the work", "project": "proj",
                                 "root": str(root), "tool": "claude",

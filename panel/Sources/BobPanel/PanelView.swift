@@ -1070,6 +1070,10 @@ struct PanelView: View {
                       onSetLimit: { root, rung in
                           Panel.send(action: "set_board_parallel_root",
                                      value: ["root": root, "limit": rung])
+                      },
+                      onSetIsolation: { root, on in
+                          Panel.send(action: "set_board_isolation_root",
+                                     value: ["root": root, "enabled": on])
                       })
                 // Compared by identity, so a client frame that rebuilds this
                 // view does not re-run the board (`BoardView`'s `==`).
