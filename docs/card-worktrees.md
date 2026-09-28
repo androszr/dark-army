@@ -286,6 +286,14 @@ and no other card sharing the folder still open or running
 (`_worktree_shared`, the release's own sharing test, handed the whole
 board — the Done archive included) — a folder kept for a working batch
 sibling is not "unsaved changes".
+The crew's own output is the exception to "ignored ones do not count":
+`scout/`, `plans/`, `manual-check/` and `docs/research/` are git-ignored, so
+git would delete a report, plan or check without refusing. Before the remove
+the release asks git about those four folders (`worktrees.argv_crew_output`)
+and keeps the folder, with the same note, when anything is there or git
+cannot say. A check file flagged from inside a card folder is copied to the
+main checkout's `manual-check/` at the flag (`_manual_check_side_folder`),
+and that copy is the one the card and the Checks list hold.
 So it survives a restart, is absent during a new run after a reset, and
 goes when the folder is removed by hand. The person removes a kept folder
 by hand. On

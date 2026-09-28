@@ -2787,6 +2787,9 @@ class BoardVerbsMixin:
             os.path.expanduser(candidate))
         base = BoardVerbsMixin._canonical_path(base)
         home = BoardVerbsMixin._manual_check_home(resolved)
+        hoisted = ""
+        if not home:
+            hoisted, home = BoardVerbsMixin._manual_check_side_folder(resolved)
         if not home or not (base == home or base.startswith(home + os.sep)):
             return "", board.MANUAL_CHECK_PLACE_REFUSAL
         try:
@@ -2800,7 +2803,65 @@ class BoardVerbsMixin:
                         + manual_check.brief(problems)
                         + " (run python3 .claude/skills/ship/manual_check.py"
                         " on it)")
+        if hoisted:
+            detail = BoardVerbsMixin._manual_check_hoist(resolved, hoisted)
+            if detail:
+                return "", detail
+            resolved = hoisted
         return resolved, ""
+
+    @staticmethod
+    def _manual_check_side_folder(resolved: str) -> tuple:
+        """`(main-checkout path, enrolled root)` for a check an isolated run
+        wrote inside its card's side folder —
+        `<root>/.worktrees/<card>/manual-check/<folder>/check.md` — else
+        `("", "")`. "The project root" inside a card worktree is the
+        worktree itself, so every instruction lands the file there; the
+        folder is git-ignored and goes when the card's folder is removed, so
+        the check is kept at the main checkout's own place instead."""
+        text = str(resolved or "")
+        for root in enrollment.enrolled_roots():
+            base = dispatch.normalise_root(root)
+            if base:
+                base = BoardVerbsMixin._canonical_path(base)
+            if not base or not text.startswith(base + os.sep):
+                continue
+            rest = text[len(base) + len(os.sep):].split(os.sep)
+            if (len(rest) == 5 and rest[0] == worktrees.WORKTREES_DIR
+                    and rest[1] and rest[2] == manual_check.FOLDER
+                    and rest[3] and rest[4] == manual_check.CHECK_NAME):
+                return (os.path.join(base, manual_check.FOLDER, rest[3],
+                                     manual_check.CHECK_NAME), base)
+        return "", ""
+
+    @staticmethod
+    def _manual_check_hoist(source: str, target: str) -> str:
+        """Copy a side folder's check to the main checkout's place. `""` on
+        success, else the refusal. Blocking — executor only. The same bytes
+        already there is success; a different check already there is refused
+        rather than overwritten."""
+        text = manual_check.read_text(source)
+        if not text:
+            return "there is no file at that path"
+        try:
+            with open(target, encoding="utf-8") as handle:
+                present = handle.read()
+        except FileNotFoundError:
+            present = None
+        except OSError:
+            return board.MANUAL_CHECK_PLACE_REFUSAL
+        if present is not None:
+            return "" if present == text else (
+                "a different check already sits at " + target)
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            spare = target + ".tmp"
+            with open(spare, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            os.replace(spare, target)
+        except OSError:
+            return board.MANUAL_CHECK_PLACE_REFUSAL
+        return ""
 
     async def _seed_from_plan(self, card: dict, resolved: str) -> dict:
         """Fill the area and objective a just-attached plan names, where
@@ -9875,6 +9936,16 @@ class BoardVerbsMixin:
                         cid[:8], path, verdict)
             return True
         if await loop.run_in_executor(None, os.path.isdir, path):
+            # A scout report, a plan or a check file is git-ignored, and git
+            # removes ignored files without refusing: keep the folder when
+            # the crew left anything there, or when git cannot say.
+            read, listing, _why = await self._run_git(
+                worktrees.argv_crew_output(path), path)
+            if not read or worktrees.holds_crew_output(listing):
+                logger.info("card %s: kept %s — it holds crew output git "
+                            "ignores (a report, plan or check)", cid[:8], path)
+                await self._publish_board()
+                return True
             removed, _o, why = await self._run_git(
                 worktrees.argv_worktree_remove(root, path), root,
                 timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
