@@ -111,26 +111,11 @@ Claude Code hooks (SessionStart/PreToolUse/PreCompact/Stop/StopFailure/
                CAST(priority AS INTEGER) DESC, then position, then created_at
 ```
 
-**A card with a run also carries `run_health`** — the daemon's own reading
-of how the run is going (`run_health.py`: size class against the project's
-frozen runs, asks, refusals, context, attempts, returns, fix rounds,
-`attention`), quantised so a live run does not redraw the board per turn,
-frozen to `run-health.json` when the run ends; both clients draw
-`run_health` verbatim. In full: `docs/context-board.md`, under `board.py`.
-
-**A card that has had a run carries `run_figures`** — cost so far, working
-minutes, live context percent and attempts — composed per frame
-(`run_figures.py`, `BoardStore.run_figures`) from the two retained ledgers
-alone: `outcome_runs` for cost (both phases, measured USD only, "cost
-unknown" in words, never $0; graded for the card from `late` /
-`cost_conflict`, not the report's child-inclusion grade) and
-`lifecycle_spans` execution for time (implementation only, minute
-granularity, `null` with no span at all, pruned at 366 days). Absent where
-there is no run; `attempts` is the distinct implementation sessions in
-`outcome_runs`; the daemon buys the frame (`_run_figures_drifted`, keyed at
-the minute, the dime and five points of context) and no client ages the
-figure. `RunFigures.swift` is byte-pinned Mac/phone. In full:
-`docs/context-board.md`, *Cost and time on the card*.
+**A card with a run carries `run_health`** (the daemon's quantised reading
+of the run, `run_health.py`) **and `run_figures`** (cost, working minutes,
+context and attempts from the two retained ledgers, `run_figures.py`); both
+clients draw them verbatim and never age them. In full:
+`docs/context-board.md`, under `board.py` and *Cost and time on the card*.
 
 **Where each subject's contract lives.** The table is the map; the documents
 are the territory, relocated verbatim from this file on 20 Sep 2026 and kept
