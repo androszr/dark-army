@@ -121,7 +121,16 @@ struct PhoneCardDetailView: View {
     }
     private var draftTouched: Bool {
         get { retained.draftTouched }
-        nonmutating set { retained.draftTouched = newValue }
+        nonmutating set {
+            // The first keystroke pins the revision the text was typed
+            // against; a restored draft arrives with it already pinned
+            // (`PhonePlace.CardDraft.baseRevision`). Untouched, nothing is.
+            if newValue, !retained.draftTouched, retained.editRevision == nil {
+                retained.editRevision = seedRevision
+            }
+            if !newValue { retained.editRevision = nil }
+            retained.draftTouched = newValue
+        }
     }
     private var editing: Bool {
         get { retained.editing }
@@ -2007,7 +2016,17 @@ struct PhoneCardDetailView: View {
     /// revision-4 words would be silently overwritten by an edit made on
     /// top of revision 3. That is the exact overwrite this whole guard
     /// exists to prevent, so the number follows the text, never the frame.
+    ///
+    /// Typed text keeps the number it was typed against (`editRevision`) —
+    /// also across a lock, when the restored rung fetches the card afresh
+    /// and the fetched row would otherwise vouch for text it never showed.
     private var shownRevision: Int {
+        if draftTouched, let base = retained.editRevision { return base }
+        return seedRevision
+    }
+
+    /// The revision of the copy the editors were seeded from.
+    private var seedRevision: Int {
         // **Both** branches, which is what the paragraph above already
         // claims. The fetched row seeds the drafts once, while nobody has
         // typed; a card edited on the Mac after that read landed moves the
@@ -2575,6 +2594,8 @@ struct PhoneCardDetailView: View {
                 draftPrompt = current.prompt
                 draftPriority = current.priority
                 draftArea = current.area
+                // The editors now hold the Mac's copy, at its number.
+                retained.editRevision = current.revision
                 conflict = nil
                 note = ""
             }

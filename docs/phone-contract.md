@@ -55,7 +55,9 @@ editor and reply text, including the
 card's dirty/conflict and revision context, while its view is away. Returning
 does not reseed those drafts. Armed controls, dictation and terminal watches
 still end with the departing view. These objects are memory only, bounded by
-the trail and discarded on pop, replacement or Close. A resolved notification
+the trail and discarded on pop, replacement or Close, except that a rung
+restored from the saved place starts with the draft text and agent page it
+was saved with (*The phone comes back where you left it*). A resolved notification
 page is retained only after the original receipt checks succeed; Back may read
 it after consumption, but never after a lock, pairing change or new receipt.
 A card screen draws its WAITS ON section and the Add picker under EDIT CARD
@@ -891,6 +893,55 @@ picture you left, the AWAY badge still up (`status` stays `.live`),
 possibly a brief `StaleBanner` until the check-in lands — never the
 offline line or a fresh relay round trip. Pinned by
 `test_phone_background_grace.py` and `BackgroundGraceTests.swift`.
+
+## The phone comes back where you left it
+
+Every lock tears the hierarchy down, so the app keeps a small note of where
+the person was (26 Sep 2026): the tab, the Menu section, the profile push,
+the sheet trail and, per rung, the agent page and the text typed into it —
+an agent reply, a card's touched editors with the revision they were typed
+against (`draftTouched` stops the reseed and `editRevision` is what Save
+quotes, so a card changed since is refused with the Mac's copy, never
+overwritten; touched text with no revision is not restored, and an editor
+reopens only with its own text), its message
+box. The card's status note is the Mac's words, not the person's, and is
+not kept; nor is an open conflict, which the next Save raises again.
+`PhonePlaceStore`
+(`ios/BobPhone/PhonePlace.swift`, Foundation only) holds it under
+`Application Support/place.json`, written `[.atomic, .completeFileProtection]`
+by `flushNow()` on the line after `outbox.flushDraftNow()` in both
+`.inactive` and `.background`, before `lock.lock()` — `ContentView` hands
+the store a `compose` closure reading the live hierarchy — and debounced on
+every tab, section, trail or profile change. A crash between those loses
+only text typed since the last one. The file carries the SHA-256 hex of the
+pairing token, never the token; the unlock gate reads it after
+`client.notificationLog.load()` (a protected-read failure retries at the
+next unlock, `PhoneRouter.restore`'s rule), `adopt`s the pairing right after
+`PhoneRouter.shared.pair(token:)` — another Mac's place is deleted, file and
+all — and only then `arm`s it; a pairing made while unlocked is adopted in
+the record's change handler, and `forgetPairing()` (the deliberate un-pair
+and the 403 alike) and an unpaired gate delete it. **Applied once per
+unlock, after Face ID**: `ContentView`'s one arrival runs `applyPlace()`,
+then the draft's tab, then the router's slot. The tab and section land at
+once; the trail waits for a picture (`generatedAt != 0`, the held one or the
+first live one) — or is dropped, its text kept, the moment the person
+moves off the restored tab or section first — and is cut by
+`PhonePlaceRules.cut`: from the bottom, an
+agent by session over all five buckets, a card by id, Catch up only whole,
+stopping at the first rung the picture no longer lists — a decision, a
+changed file, a notification or a Catch up group is never restored, and
+nothing is fetched to resolve one. The rungs are rebuilt in one assignment
+(`PhoneSheetRouter.restore`), each with its own entry state. **A tap, a
+widget link or a banked composer draft wins** (`PhonePlaceRules.wins`): the
+place is set aside and only its typed text is kept, memory only, handed to
+the next fresh open of that same agent or card (`takeOrphanDraft`, on Main);
+a tap arriving after a restore still wins. **The Terminal page comes back
+as Details**: the cover is a live socket claiming the pty's width and is
+never re-attached by an unlock. A fresh open still lands on Main; the rung
+remembers its page for Back and for the place, which is the one exception
+to the Mac's "every open lands" rule. Scroll positions are not kept. The
+widget and `BackgroundRefresh` never name the store. Pinned by
+`test_phone_place.py` and `PhonePlaceTests.swift`.
 
 ## Keys typed from away are batched
 

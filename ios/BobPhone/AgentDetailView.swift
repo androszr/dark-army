@@ -148,7 +148,10 @@ struct AgentDetailView: View {
     /// Which tab a hosted row is showing. Not persisted and not remembered
     /// per session: `DetailTab.defaultTab` is where every open lands.
     @State private var hostedTab: DetailTab = DetailTab.defaultTab
-    /// Which screen the phone's own container is showing. Not persisted.
+    /// Which screen the phone's own container is showing. A fresh open is
+    /// Main; the sheet rung remembers the page for Back and for the saved
+    /// place (`docs/phone-contract.md`, *The phone comes back where you left
+    /// it*).
     @State private var screen: AgentScreen = AgentScreen.defaultScreen
     /// Whether the strip above the live terminal is unfolded. Starts folded
     /// so the screen is the terminal; see `terminalScreen`.
@@ -348,7 +351,9 @@ struct AgentDetailView: View {
         }
         .onAppear {
             syncWatch()
-            screen = AgentScreen.defaultScreen(
+            // The rung's own page: Main on a fresh open, the page it was on
+            // after Back or a restore (`PhoneSheetEntryState.agentScreen`).
+            screen = sheetEntry?.agentScreen ?? AgentScreen.defaultScreen(
                 supported: client.snapshot.board.conversationSupported)
             hostedTab = AgentScreen.detailTab(screen)
             // A refusal that landed while this screen was not up is still
@@ -356,10 +361,17 @@ struct AgentDetailView: View {
             takeNote(client.queueNote(for: agent.sessionId))
         }
         .onChange(of: client.snapshot.board.conversationSupported) { _, supported in
-            screen = AgentScreen.defaultScreen(supported: supported)
+            // The first live picture after a cold launch flips this; a page
+            // chosen or restored is not put back on Main by it.
+            if screen == AgentScreen.defaultScreen {
+                screen = AgentScreen.defaultScreen(supported: supported)
+            }
         }
         .onChange(of: screen) { _, next in
             hostedTab = AgentScreen.detailTab(next)
+            // Terminal is remembered as Details: coming back must not
+            // re-attach the live socket by itself.
+            sheetEntry?.agentScreen = next == .terminal ? .details : next
         }
         .onChange(of: agent.ownTerminal) { _, _ in
             syncWatch()
