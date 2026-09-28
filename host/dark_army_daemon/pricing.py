@@ -198,6 +198,27 @@ FAMILY_RATES: dict[str, Rate] = {
 _overrides_loaded = False
 
 
+def _override_provider(model: str, spec: dict) -> dict:
+    """The provider fields for an override naming an id with no built-in
+    row: `provider` from the file when it is one of the three, else
+    `grok` for a `grok` id, `codex` for any other foreign prefix, else
+    Claude. A Grok row prints no cache-write price, so it has none."""
+    stated = str(spec.get("provider") or "").strip().lower()
+    name = str(model or "").strip().lower()
+    if stated in ("claude", "grok", "codex"):
+        provider = stated
+    elif name.startswith("grok"):
+        provider = "grok"
+    elif name.startswith(_FOREIGN_PREFIXES):
+        provider = "codex"
+    else:
+        provider = "claude"
+    out: dict = {"provider": provider}
+    if provider == "grok":
+        out["cache_write_multiplier"] = None
+    return out
+
+
 def _load_overrides() -> None:
     """Merge ~/.dark-army/pricing.json over the built-in table, once.
 
@@ -244,6 +265,11 @@ def _load_overrides() -> None:
             if spec.get("cache_read_multiplier") is not None:
                 fields["cache_read_multiplier"] = float(spec["cache_read_multiplier"])
             builtin = RATES.get(model)
+            if builtin is None:
+                # A new id's provider: stated, or read off its prefix. The
+                # default "claude" filed a new Grok or Codex price under
+                # Claude, where the token cost never looks for it.
+                fields.update(_override_provider(model, spec))
             RATES[model] = (dataclasses.replace(builtin, **fields)
                             if builtin is not None else Rate(**fields))
         except (TypeError, ValueError):

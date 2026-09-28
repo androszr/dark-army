@@ -457,6 +457,51 @@ async def test_a_dirty_folder_is_kept_and_the_card_says_so(
 
 
 @pytest.mark.asyncio
+async def test_a_folder_whose_check_was_copied_to_the_main_checkout_is_removed(
+        daemon, repo, monkeypatch):
+    """A check flagged inside a side folder is copied to the main checkout
+    and its original stays: a byte-identical duplicate is not crew output
+    that exists nowhere else, so Done removes the folder. A copy that
+    differs keeps it."""
+    d, store = daemon
+    card = await _prepared(d, store, repo, monkeypatch)
+    with open(os.path.join(repo, ".git", "info", "exclude"), "a") as fh:
+        fh.write("/manual-check/\n")
+    rel = os.path.join("manual-check", "2026-09-28-x", "check.md")
+    side = os.path.join(card["worktree_path"], rel)
+    main = os.path.join(repo, rel)
+    for target in (side, main):
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w") as fh:
+            fh.write("1. Open it.\n")
+    store.update(card["id"], {"session_id": "s1", "link_state": "live",
+                              "column_name": "done"}, bump=False)
+    _end(d, store, card["id"], "s1")
+    await d._flush_work_records()
+    await _released(d)
+    assert not os.path.isdir(card["worktree_path"])
+    assert os.path.isfile(main)
+    assert store.get(card["id"])["worktree_path"] == ""
+
+
+def test_crew_output_is_copied_only_when_every_file_matches(tmp_path):
+    side, home = tmp_path / "side", tmp_path / "home"
+    for root, text in ((side, "a"), (home, "a")):
+        (root / "scout" / "r").mkdir(parents=True)
+        (root / "scout" / "r" / "report.md").write_text(text)
+    listing = b"!! scout/\0"
+    assert daemon_board._crew_output_is_copied(listing, str(side), str(home))
+    (home / "scout" / "r" / "report.md").write_text("b")
+    assert not daemon_board._crew_output_is_copied(listing, str(side), str(home))
+    (home / "scout" / "r" / "report.md").unlink()
+    assert not daemon_board._crew_output_is_copied(listing, str(side), str(home))
+    assert not daemon_board._crew_output_is_copied(b"", str(side), str(home))
+    assert not daemon_board._crew_output_is_copied(listing, str(side), str(side))
+    assert not daemon_board._crew_output_is_copied(b"!! ../x\0", str(side),
+                                               str(home))
+
+
+@pytest.mark.asyncio
 async def test_a_folder_holding_an_ignored_scout_report_is_kept(
         daemon, repo, monkeypatch):
     """Git removes ignored files without refusing, and a scout report, a

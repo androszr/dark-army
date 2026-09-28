@@ -399,16 +399,23 @@ enum LedgerWeek {
         return works.map { pinned($0, onto: first) }
     }
 
-    /// Leftover rows from before the first column join that column; their
-    /// sessions are on no named card, so dropping the row would drop the
-    /// dollars entirely.
+    /// Leftover rows from before the first column join that column, and
+    /// rows after the last join the last; their sessions are on no named
+    /// card, so dropping the row would drop the dollars entirely. A later
+    /// row is the Mac's today seen from a phone in a time zone behind it.
     static func pinOther(_ rows: [OtherDay], ontoFirstOf keys: [String]) -> [OtherDay] {
-        guard let first = keys.first else { return rows }
-        let early = rows.filter { $0.day < first }
-        guard !early.isEmpty else { return rows }
-        var merged = rows.first { $0.day == first } ?? OtherDay()
-        merged.day = first
-        for row in early {
+        guard let first = keys.first, let last = keys.last else { return rows }
+        let early = merge(rows, where: { $0 < first }, onto: first)
+        return merge(early, where: { $0 > last }, onto: last)
+    }
+
+    static func merge(_ rows: [OtherDay], where outside: (String) -> Bool,
+                      onto key: String) -> [OtherDay] {
+        let stray = rows.filter { outside($0.day) }
+        guard !stray.isEmpty else { return rows }
+        var merged = rows.first { $0.day == key } ?? OtherDay()
+        merged.day = key
+        for row in stray {
             merged.claude += row.claude
             merged.grok += row.grok
             merged.codex += row.codex
@@ -422,7 +429,7 @@ enum LedgerWeek {
             merged.claudeReported = sum(merged.claudeReported, row.claudeReported)
             merged.grokReported = sum(merged.grokReported, row.grokReported)
         }
-        var rest = rows.filter { $0.day > first }
+        var rest = rows.filter { !outside($0.day) && $0.day != key }
         rest.append(merged)
         return rest
     }

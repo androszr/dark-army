@@ -147,6 +147,56 @@ def _find_own_checkout() -> str:
         return ""
     return str(root) if root else ""
 
+#: More crew files than this in one folder and the copy test gives up and
+#: keeps the folder: it is a bound on the walk, not a verdict.
+_CREW_COPY_LIMIT = 2000
+
+
+def _crew_output_is_copied(output: bytes, path: str, root: str) -> bool:
+    """Whether every file `argv_crew_output` names inside `path` already
+    exists byte-identical at the same place in `root`, the main checkout.
+    **Executor only** (it reads files). A check flagged from a side folder
+    is copied to the main checkout and the original stays behind; without
+    this the folder was kept on every Done, for good, over a duplicate.
+    Anything unreadable, a link, an entry outside the folder or more than
+    `_CREW_COPY_LIMIT` files answers False — keep, as before."""
+    base = os.path.realpath(str(path or ""))
+    home = os.path.realpath(str(root or ""))
+    if not base or not home or base == home:
+        return False
+    files: list = []
+    for entry in bytes(output or b"").split(b"\0"):
+        rel = os.fsdecode(entry[3:]).rstrip("/") if len(entry) > 3 else ""
+        if not rel:
+            continue
+        full = os.path.realpath(os.path.join(base, rel))
+        if not full.startswith(base + os.sep):
+            return False
+        if os.path.isdir(full):
+            for dirpath, dirnames, filenames in os.walk(full):
+                if any(os.path.islink(os.path.join(dirpath, d))
+                       for d in dirnames):
+                    return False
+                files.extend(os.path.join(dirpath, f) for f in filenames)
+                if len(files) > _CREW_COPY_LIMIT:
+                    return False
+        else:
+            files.append(full)
+    if not files:
+        return False
+    for full in files:
+        if os.path.islink(full):
+            return False
+        twin = os.path.join(home, os.path.relpath(full, base))
+        try:
+            with open(full, "rb") as a, open(twin, "rb") as b:
+                if a.read() != b.read():
+                    return False
+        except OSError:
+            return False
+    return True
+
+
 def _mission_folder_is_stale(root: str) -> bool:
     """True when a live Mission Control terminal runs in a folder that is not
     Dark Army's own checkout as `_find_own_checkout` reads it now. **Executor
@@ -9943,10 +9993,15 @@ class BoardVerbsMixin:
         if await loop.run_in_executor(None, os.path.isdir, path):
             # A scout report, a plan or a check file is git-ignored, and git
             # removes ignored files without refusing: keep the folder when
-            # the crew left anything there, or when git cannot say.
+            # the crew left anything there, or when git cannot say — unless
+            # every such file is already in the main checkout, byte for byte
+            # (a flagged check is copied there and its original stays).
             read, listing, _why = await self._run_git(
                 worktrees.argv_crew_output(path), path)
-            if not read or worktrees.holds_crew_output(listing):
+            if not read or (worktrees.holds_crew_output(listing)
+                            and not await loop.run_in_executor(
+                                None, _crew_output_is_copied,
+                                listing, path, root)):
                 logger.info("card %s: kept %s — it holds crew output git "
                             "ignores (a report, plan or check)", cid[:8], path)
                 await self._publish_board()

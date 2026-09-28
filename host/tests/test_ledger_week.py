@@ -136,6 +136,11 @@ out["early"] = picture(LedgerWeek.picture(cards: [
     LedgerWeek.OtherDay(day: "2025-09-01", claude: 0.5, claudeReported: 0.25),
     LedgerWeek.OtherDay(day: keys[0], codex: 0.25),
 ], now: now, calendar: utc))
+out["late"] = picture(LedgerWeek.picture(cards: [], others: [
+    LedgerWeek.OtherDay(day: "2025-09-17", claude: 0.5, claudeReported: 0.25),
+    LedgerWeek.OtherDay(day: keys[6], codex: 0.25),
+    LedgerWeek.OtherDay(day: keys[3], grok: 1.0),
+], now: now, calendar: utc))
 out["segments"] = LedgerWeek.segments(claude: 1, grok: 2, codex: 3).map(\.provider)
 out["segments_zero"] = LedgerWeek.segments(claude: 1, grok: 0, codex: 2).map(\.provider)
 out["median"] = LedgerWeek.picture(cards: (0..<7).map {
@@ -215,6 +220,18 @@ def test_work_before_the_first_column_lands_on_it(week):
     assert first["figure"] == "$3.75"
     assert first["reportedMark"] == "$0.25 reported"
     assert early["total"] == "$3.75"
+
+
+def test_a_leftover_day_after_the_last_column_lands_on_it(week):
+    """The Mac dates a leftover row by its own clock; a phone in a time zone
+    behind it sees the Mac's today as tomorrow. It joins the last column
+    rather than falling out of the week."""
+    late = week["late"]
+    last = late["columns"][-1]
+    assert last["tokenCost"] == pytest.approx(0.75)
+    assert last["reportedMark"] == "$0.25 reported"
+    assert late["columns"][3]["tokenCost"] == pytest.approx(1.0)
+    assert late["total"] == "$1.75"
 
 
 def test_segments_are_claude_grok_codex_and_omit_zeros(week):

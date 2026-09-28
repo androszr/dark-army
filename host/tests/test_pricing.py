@@ -466,3 +466,21 @@ def test_an_override_of_a_grok_row_keeps_its_provider_and_tiers():
     rate = resolve_rate("grok-4.6")
     assert (rate.input, rate.output, rate.provider) == (3.0, 9.0, "grok")
     assert rate.long_from == 200_000 and rate.cache_write_multiplier is None
+
+
+def test_an_override_for_a_new_grok_or_codex_id_is_filed_under_its_provider():
+    """A price file naming a model Dark Army does not know yet must price it
+    where the token cost looks: a new Grok or Codex id defaulting to Claude
+    was listed as not priced and billed as Claude by the old estimate."""
+    pricing.PRICING_OVERRIDE_PATH.write_text(json.dumps({
+        "grok-4.8": {"input": 2.0, "output": 6.0},
+        "gpt-6.1": {"input": 1.0, "output": 5.0},
+        "claude-next": {"input": 3.0, "output": 15.0},
+        "odd-model": {"input": 1.0, "output": 2.0, "provider": "codex"},
+    }))
+    assert resolve_rate("grok-4.8", "grok").provider == "grok"
+    assert resolve_rate("grok-4.8").cache_write_multiplier is None
+    assert resolve_rate("grok-4.8", "claude") is None
+    assert resolve_rate("gpt-6.1", "codex").input == 1.0
+    assert resolve_rate("claude-next", "claude").output == 15.0
+    assert resolve_rate("odd-model", "codex") is not None
