@@ -127,20 +127,14 @@ def test_the_ladder_gives_up_the_todo_count_last():
     are the pin now: a reordered or renamed field fails `_fields` below, and a
     reordered rung fails the concession sequence."""
     from dark_army_menubar.app import STRIP_LADDER, StripRung
-    assert StripRung._fields == ("suffix", "usage_claude", "usage_grok",
-                                 "usage_codex", "todo")
-    assert len(STRIP_LADDER) == 6
-    assert [rung.todo for rung in STRIP_LADDER] == [True] * 5 + [False]
+    assert StripRung._fields == ("suffix", "usage", "todo")
+    assert len(STRIP_LADDER) == 4
+    assert [rung.todo for rung in STRIP_LADDER] == [True, True, True, False]
     # The first step down takes *exactly* the subagent suffix and nothing else.
     assert STRIP_LADDER[0].suffix is True and STRIP_LADDER[1].suffix is False
     assert STRIP_LADDER[0]._replace(suffix=False) == STRIP_LADDER[1]
-    # The three usage columns, given up Codex first and Claude last.
-    assert [rung.usage_claude for rung in STRIP_LADDER] == [True, True, True,
-                                                           True, False, False]
-    assert [rung.usage_grok for rung in STRIP_LADDER] == [True, True, True,
-                                                          False, False, False]
-    assert [rung.usage_codex for rung in STRIP_LADDER] == [True, True, False,
-                                                           False, False, False]
+    # The usage stack goes whole, after the footnote and before the to-do card.
+    assert [rung.usage for rung in STRIP_LADDER] == [True, True, False, False]
 
 
 def _bare_app():
@@ -259,13 +253,13 @@ def test_every_rung_only_ever_takes_away():
         kept = [getattr(rung, field) for rung in STRIP_LADDER]
         assert kept == sorted(kept, reverse=True), (field, kept)
     assert STRIP_LADDER[0] == (True,) * len(STRIP_LADDER[0])
-    assert STRIP_LADDER[-1].usage_brands() == frozenset(), (
-        "the last rung must give up all three usage clusters")
+    assert STRIP_LADDER[-1].usage is False, (
+        "the last rung must give up the usage stack")
 
 
-# --- the usage clusters are given up one provider at a time -------------------
-# A third provider's cluster tipped the full strip past its budget, and the
-# single all-or-nothing usage column threw away all three percentages at once.
+# --- the usage stack is given up whole -----------------------------------------
+# Its rows share one track width, so dropping a provider buys height and no
+# width; the ladder gives the whole stack up in one rung.
 
 
 def _three_limits(instance):
@@ -282,7 +276,7 @@ def _strip_instance():
 
     instance = object.__new__(A.BobCompanionApp)
     for attr, value in (("_usage_cache", {}), ("_frame_cache", {}),
-                        ("_divider_cache", {}), ("_fonts", None),
+                        ("_todo_cache", {}), ("_fonts", None),
                         ("_strip_sig", None), ("_strip_width", None),
                         ("_anim_i", 0), ("_limits", None),
                         ("_grok_limits", {}), ("_codex_limits", {}),
@@ -294,27 +288,8 @@ def _strip_instance():
     return instance, button
 
 
-def test_the_ladder_sheds_codex_then_grok_then_claude():
-    """Least actionable first: Codex, then Grok, then your own five-hour window,
-    which is the budget you actually act on and so goes last."""
-    from dark_army_menubar.app import ALL_USAGE_BRANDS, STRIP_LADDER, StripRung
-
-    assert [rung.usage_brands() for rung in STRIP_LADDER] == [
-        frozenset({"claude", "grok", "codex"}),
-        frozenset({"claude", "grok", "codex"}),
-        frozenset({"claude", "grok"}),
-        frozenset({"claude"}),
-        frozenset(),
-        frozenset(),
-    ]
-    assert ALL_USAGE_BRANDS == frozenset({"claude", "grok", "codex"})
-    # A reordered or renamed NamedTuple would make every named pin above lie.
-    assert StripRung._fields == ("suffix", "usage_claude", "usage_grok",
-                                "usage_codex", "todo")
-
-
-def test_animate_icon_passes_the_rungs_brand_set():
-    """The rung's own brands reach the render, at the rung it settled on.
+def test_animate_icon_passes_the_rungs_usage_flag():
+    """The rung's own usage flag reaches the render, at the rung it settled on.
 
     The rung is read back off the ladder rather than written into the test as a
     number: pinning a level by hand is what tied these assertions to a column
@@ -348,75 +323,113 @@ def test_animate_icon_passes_the_rungs_brand_set():
 
     settled = STRIP_LADDER[app._strip_level]
     kwargs = app._render_strip.call_args.kwargs
-    assert kwargs["usage_brands"] == settled.usage_brands()
-    assert kwargs["usage_brands"] == frozenset({"claude", "grok"})
+    assert kwargs["show_usage"] is settled.usage is False
     assert kwargs["show_todo"] is settled.todo is True
 
 
-def test_a_three_digit_todo_count_keeps_all_three_usage_clusters():
-    """The widest everyday reading fits at the top rung. Measured, not assumed:
-    at 300pt a hundred cards came to 300.2pt and the ladder dropped Codex for a
-    fifth of a point, because the third digit is 8pt wide."""
-    from dark_army_menubar.app import STRIP_BUDGET_PT
-
+def test_the_full_reading_fits_with_room_to_spare():
+    """The success criterion. Two faces with counts and a footnote, 132 cards to
+    do and three providers: ~303pt as three usage clusters and a card-stack
+    mark, about 190 as one stack and a number printed on a card. Measured on a
+    real attributed string, not assumed."""
     instance, _button = _strip_instance()
-    instance._todo_cache = {}
     _three_limits(instance)
-    instance._todo_count = 100
-    width = instance._render_strip([("work", "2", ""), ("attn", "1", "")],
+    instance._todo_count = 132
+    width = instance._render_strip([("work", "2", "+1"), ("attn", "1", "")],
                                    measure=True)
-    assert width <= STRIP_BUDGET_PT
+    assert width <= 205.0, width
 
 
-def test_a_suppressed_brand_draws_no_divider():
-    """One leading gap, hairlines only *between* survivors, and never one
-    dangling at either end. Counted rather than judged, because the brand loop
-    is the only thing that knows — suppression is an empty label and nothing
-    else."""
-    def dividers(brands):
-        instance, _button = _strip_instance()
-        _three_limits(instance)
-        calls = []
-        real = instance._divider_image
-
-        def counting(dark):
-            calls.append(dark)
-            return real(dark)
-
-        instance._divider_image = counting
-        instance._render_strip([("work", "2", "")],
-                               usage_brands=frozenset(brands), measure=True)
-        return len(calls)
-
-    assert dividers({"claude", "grok", "codex"}) == 2
-    assert dividers({"claude", "codex"}) == 1
-    assert dividers({"grok", "codex"}) == 1      # the *first* cluster suppressed
-    assert dividers({"claude"}) == 0
-    assert dividers({"codex"}) == 0
-    assert dividers(()) == 0
-
-
-def test_shedding_a_brand_narrows_the_strip():
-    """Suppression has to reach the rendered run, not just the flags."""
-    def width(brands):
+def test_shedding_the_usage_stack_narrows_the_strip():
+    """The usage rung has to reach the rendered run, not just the flag."""
+    def width(show_usage):
         instance, button = _strip_instance()
         _three_limits(instance)
-        instance._render_strip([("work", "2", "")],
-                               usage_brands=frozenset(brands), measure=True)
+        instance._render_strip([("work", "2", "")], show_usage=show_usage,
+                               measure=True)
         return button.setAttributedTitle_.call_args[0][0].size().width
 
-    three = width({"claude", "grok", "codex"})
-    two = width({"claude", "grok"})
-    one = width({"claude"})
-    none = width(())
-    assert three > two > one > none, (three, two, one, none)
+    assert width(True) > width(False) + 30.0
+
+
+def test_the_strip_speaks_its_readings():
+    """The stack has no digits, so the words are where the percentages are
+    read — on the tooltip and on the accessibility label, which replaces the
+    title for VoiceOver and so carries the counts too. Set once per change:
+    a tooltip written every tick dirties the button five times a second."""
+    instance, button = _strip_instance()
+    _three_limits(instance)
+    instance._todo_count = 132
+    groups = [("work", "2", "+1"), ("attn", "1", "")]
+    instance._render_strip(groups, measure=True)
+    assert button.setToolTip_.call_count == 1
+    assert button.setAccessibilityLabel_.call_count == 1
+    for call in (button.setToolTip_.call_args, button.setAccessibilityLabel_.call_args):
+        words = call[0][0]
+        assert "Claude 9% · Grok 47% · Codex 29%" in words, words
+        assert "132 cards to do" in words, words
+        assert "2 working" in words and "1 needs you" in words, words
+
+    instance._render_strip(groups, measure=True)          # same inputs
+    instance._strip_sig = None                            # even on a repaint
+    instance._render_strip(groups, measure=True)
+    assert button.setToolTip_.call_count == 1
+    assert button.setAccessibilityLabel_.call_count == 1
+
+    instance._grok_limits = {"percent": 47.0, "stale": True}
+    instance._render_strip(groups, measure=True)
+    assert button.setToolTip_.call_count == 2
+    assert "Grok: window reset" in button.setToolTip_.call_args[0][0]
+    assert "Grok: window reset" in button.setAccessibilityLabel_.call_args[0][0]
+
+
+def test_the_strip_words_drop_what_the_strip_drops():
+    """To-do 0 draws no card and says nothing about cards; offline draws no
+    stack and no card and says only that it is offline."""
+    instance, button = _strip_instance()
+    _three_limits(instance)
+    instance._todo_count = 0
+    instance._render_strip([("work", "2", "")], measure=True)
+    assert "to do" not in button.setToolTip_.call_args[0][0]
+
+    instance, button = _strip_instance()
+    _three_limits(instance)
+    instance._todo_count = 5
+    stacks, cards = [], []
+    instance._usage_stack_image = lambda rows, dark: stacks.append(rows)
+    instance._todo_image = lambda count, dark: cards.append(count)
+    instance._render_strip([("off", "", "")], measure=True)
+    assert stacks == [] and cards == []
+    assert button.setToolTip_.call_args[0][0] == "Dark Army is offline"
+
+
+def test_the_stack_rows_follow_the_labels_in_a_fixed_order():
+    """Claude, Grok, Codex top to bottom; a stale Grok between two fresh rows
+    is a None row; a Codex with no reading draws no row."""
+    from dark_army_menubar import app as A
+
+    instance, _button = _strip_instance()
+    _three_limits(instance)
+    instance._grok_limits = {"percent": 47.0, "stale": True}
+    instance._codex_limits = {}
+    seen = []
+    real = instance._usage_stack_image
+
+    def spy(rows, dark):
+        seen.append(rows)
+        return real(rows, dark)
+
+    instance._usage_stack_image = spy
+    instance._render_strip([("work", "2", "")], measure=True)
+    assert seen == [(("claude", 9.0), ("grok", None))]
+    assert A.GAP_USAGE == 14.0 and A.GAP_TODO == 12.0
 
 
 def test_the_floor_is_faces_counts_and_nothing_else():
     """The last rung did not silently gain a column."""
     from dark_army_menubar.app import STRIP_LADDER
 
-    assert STRIP_LADDER[-1].usage_brands() == frozenset()
+    assert STRIP_LADDER[-1].usage is False
     assert STRIP_LADDER[-1].todo is False
 
 
@@ -717,25 +730,40 @@ def _usage_app():
     from dark_army_menubar.app import BobCompanionApp
     app = BobCompanionApp.__new__(BobCompanionApp)
     app._usage_cache = {}
+    app._todo_cache = {}
+    app._fonts = None
     return app
 
 
-def _usage_bar_color(percent: float, dark: bool = False):
-    """The colour of the usage meter's fill at `percent`, sampled from the drawing.
+def _pixel(img, x_pt: float, y_from_top_pt: float):
+    """The colour at a point of a drawn image, as (r, g, b, a).
+
+    Bitmap reps are top-left origin and, on a Retina machine, backed at 2x — so
+    sample in device pixels, converted from the point geometry it is drawn in."""
+    from AppKit import NSBitmapImageRep
+
+    rep = NSBitmapImageRep.imageRepWithData_(img.TIFFRepresentation())
+    scale = rep.pixelsHigh() / img.size().height
+    color = rep.colorAtX_y_(int(x_pt * scale), int(y_from_top_pt * scale))
+    return (color.redComponent(), color.greenComponent(), color.blueComponent(),
+            color.alphaComponent())
+
+
+def _fill_start_x():
+    """A point a little inside the start of a row's meter."""
+    from dark_army_menubar.app import USAGE_STACK_MARK_PT, USAGE_STACK_MARK_GAP
+    return USAGE_STACK_MARK_PT + USAGE_STACK_MARK_GAP + 2.0
+
+
+def _usage_bar_color(percent, dark: bool = False):
+    """The colour of a one-row stack's fill at `percent`, sampled from the
+    drawing.
 
     Rendered rather than asserted on a constant: the thresholds matter only if
     they reach the pixels, and the colour is chosen inside the draw."""
-    from AppKit import NSBitmapImageRep
-
-    img, _ = _usage_app()._usage_image(f"{round(percent)}%", dark, percent)
-    rep = NSBitmapImageRep.imageRepWithData_(img.TIFFRepresentation())
-    # Bitmap reps are top-left origin and, on a Retina machine, backed at 2x — so
-    # sample in device pixels, converted from the point geometry it is drawn in.
-    # The meter is the bottom 2pt; we take a point a little in from the left,
-    # well inside the fill at any percentage that has one.
-    scale = rep.pixelsHigh() / img.size().height
-    color = rep.colorAtX_y_(int(2 * scale), int((img.size().height - 1.0) * scale))
-    return color.redComponent(), color.greenComponent(), color.blueComponent()
+    img, _ = _usage_app()._usage_stack_image((("claude", percent),), dark)
+    r, g, b, _a = _pixel(img, _fill_start_x(), img.size().height / 2.0)
+    return r, g, b
 
 
 def test_a_healthy_budget_is_monochrome():
@@ -759,72 +787,145 @@ def test_the_meter_turns_red_at_the_critical_mark():
     assert r > 0.8 and g < 0.4 and r > g, (r, g, b)
 
 
-def test_the_usage_cluster_fits_the_menu_bar():
-    """22pt is all there is; a taller image is scaled down or clipped."""
-    img, _ = _usage_app()._usage_image("100%", False, 100.0)
+def test_a_full_window_fills_the_track_in_red():
+    """100%: the fill reaches the end of the track, and it is red there."""
+    from dark_army_menubar.app import (
+        USAGE_STACK_MARK_PT, USAGE_STACK_MARK_GAP, USAGE_STACK_TRACK_PT)
+    img, _ = _usage_app()._usage_stack_image((("claude", 100.0),), False)
+    end = USAGE_STACK_MARK_PT + USAGE_STACK_MARK_GAP + USAGE_STACK_TRACK_PT - 1.5
+    r, g, b, _a = _pixel(img, end, img.size().height / 2.0)
+    assert r > 0.8 and g < 0.4, (r, g, b)
+
+
+def test_the_usage_stack_fits_the_menu_bar():
+    """22pt is all there is; a taller image is scaled down or clipped. Three 6pt
+    rows with the mockup's 2.5pt gaps came to 23pt — the row gap is 1pt."""
+    img, _ = _usage_app()._usage_stack_image(
+        (("claude", 7.0), ("grok", 70.0), ("codex", 95.0)), False)
     assert img.size().height <= 20.0
+    assert 36.0 <= img.size().width <= 38.0
 
 
-def test_the_meter_is_no_wider_than_the_cluster_above_it():
-    """A meter matched to the width of the content above it is the one thing here
-    that can't be expressed as a text attribute — it is why this is still an
-    image at all. It is also why dropping the meter is not a rung of the collapse
-    ladder: it costs height, not width.
-
-    "The content above it" is the provider mark plus the digits now, not the
-    digits alone."""
-    from AppKit import NSFont, NSAttributedString, NSFontAttributeName
-    from dark_army_menubar.app import USAGE_PT, USAGE_MARK_PT, USAGE_MARK_GAP
-
-    img, _ = _usage_app()._usage_image("62%", False, 62.0)
-    digits = NSAttributedString.alloc().initWithString_attributes_("62%", {
-        NSFontAttributeName: NSFont.monospacedDigitSystemFontOfSize_weight_(USAGE_PT, 0.23),
-    }).size()
-    cluster = digits.width + USAGE_MARK_PT + USAGE_MARK_GAP
-    assert img.size().width <= cluster + 1.0
-
-
-def test_the_two_providers_draw_different_marks():
-    """The mark is what replaced the leading "G", so it has to actually
-    distinguish them — two clusters reading `51%` `6%` with identical glyphs
-    would be worse than the letter was."""
+def test_a_missing_provider_shrinks_the_stack():
+    """A provider with no reading takes its row away: the stack gets shorter,
+    never narrower — every row shares one track width."""
     app_ = _usage_app()
-    claude, _ = app_._usage_image("51%", False, 51.0, "claude")
-    grok, _ = app_._usage_image("51%", False, 51.0, "grok")
-    assert claude.TIFFRepresentation() != grok.TIFFRepresentation()
+    three, _ = app_._usage_stack_image(
+        (("claude", 7.0), ("grok", 70.0), ("codex", 95.0)), False)
+    two, _ = app_._usage_stack_image((("claude", 7.0), ("grok", 70.0)), False)
+    assert two.size().height < three.size().height
+    assert two.size().width == three.size().width
 
 
-def test_the_mark_is_cached_per_provider():
-    """Same text, same percent, different brand — a cache keyed without the
-    brand would hand Grok's cluster back for Claude's."""
+def test_a_stale_row_draws_its_mark_and_an_empty_track():
+    """A reset window holds its row and promises nothing: the mark over an
+    empty track, as the bare dash did before. No fill, so no tier hue."""
     app_ = _usage_app()
-    first, _ = app_._usage_image("51%", False, 51.0, "claude")
-    second, _ = app_._usage_image("51%", False, 51.0, "grok")
-    third, _ = app_._usage_image("51%", False, 51.0, "claude")
-    assert first.TIFFRepresentation() == third.TIFFRepresentation()
-    assert first.TIFFRepresentation() != second.TIFFRepresentation()
+    stale, _ = app_._usage_stack_image((("grok", None),), False)
+    fresh, _ = app_._usage_stack_image((("grok", 51.0),), False)
+    assert stale.size().height == fresh.size().height
+    r, g, b, a = _pixel(stale, _fill_start_x(), stale.size().height / 2.0)
+    assert abs(r - g) < 0.02 and abs(g - b) < 0.02, (r, g, b)
+    fr, fg, fb, fa = _pixel(fresh, _fill_start_x(), fresh.size().height / 2.0)
+    assert 0 < a < fa, (a, fa)                    # the track, lighter than a fill
+    # The mark is still drawn.
+    blank, _ = app_._usage_stack_image((("grok", 0.0),), False)
+    assert stale.TIFFRepresentation() != blank.TIFFRepresentation()
 
 
-def test_the_stale_dash_draws_no_meter():
-    """It holds the slot and promises nothing: a meter would be a reading."""
-    dash, _ = _usage_app()._usage_image("–", False, None)
-    reading, _ = _usage_app()._usage_image("8%", False, 8.0)
-    assert dash.size().height < reading.size().height
+def test_the_three_marks_differ():
+    """Each row is led by its provider's mark, and at six points the three
+    marks still have to tell the rows apart."""
+    app_ = _usage_app()
+    tiffs = [app_._usage_stack_image(((brand, 51.0),), False)[0].TIFFRepresentation()
+             for brand in ("claude", "grok", "codex")]
+    assert tiffs[0] != tiffs[1] != tiffs[2] and tiffs[0] != tiffs[2]
 
 
-def test_the_usage_baseline_is_returned_for_alignment():
-    """_render_strip sits the image on the counts' own baseline rather than
-    centring it, so the strip has one vertical register instead of three."""
-    img, baseline = _usage_app()._usage_image("8%", False, 8.0)
-    assert 0 < baseline < img.size().height
-
-
-def test_the_usage_cluster_is_cached_per_reading():
+def test_the_stack_is_cached_per_rows_and_appearance():
     app = _usage_app()
-    first = app._usage_image("8%", False, 8.0)
-    assert app._usage_image("8%", False, 8.0) is first
-    assert app._usage_image("8%", True, 8.0) is not first     # appearance
-    assert app._usage_image("9%", False, 9.0) is not first    # reading
+    rows = (("claude", 8.0), ("grok", 30.0))
+    first = app._usage_stack_image(rows, False)
+    assert app._usage_stack_image(rows, False) is first
+    assert app._usage_stack_image(rows, True) is not first                 # appearance
+    assert app._usage_stack_image((("claude", 9.0), ("grok", 30.0)),
+                                  False) is not first                      # a percent
+    assert app._usage_stack_image(tuple(reversed(rows)), False) is not first  # order
+
+
+def test_the_stack_cache_stays_bounded():
+    """The key is three readings together, so a long-running app meets new
+    keys forever; the cache must not grow with them."""
+    from dark_army_menubar.app import USAGE_STACK_CACHE_MAX
+    app = _usage_app()
+    for pct in range(0, 101):
+        app._usage_stack_image((("claude", float(pct)), ("grok", 100.0 - pct)), False)
+        assert len(app._usage_cache) <= USAGE_STACK_CACHE_MAX
+
+
+def test_crossing_a_tier_inside_one_rounded_percent_redraws():
+    """74.6% and 75.2% both round to 75, but one is plain and one amber;
+    89.6% and 90.2% both round to 90, but one is amber and one red. The
+    cached image must follow the tier, not the rounded figure."""
+    app = _usage_app()
+    below, _ = app._usage_stack_image((("claude", 74.6),), False)
+    above, _ = app._usage_stack_image((("claude", 75.2),), False)
+    assert below is not above
+    r, g, b, _a = _pixel(above, _fill_start_x(), above.size().height / 2.0)
+    assert r > 0.8 and b < 0.3 and g > b, (r, g, b)            # amber
+
+    app._usage_stack_image((("claude", 89.6),), False)
+    red, _ = app._usage_stack_image((("claude", 90.2),), False)
+    r, g, b, _a = _pixel(red, _fill_start_x(), red.size().height / 2.0)
+    assert r > 0.8 and g < 0.4 and r > g, (r, g, b)            # red
+
+
+def test_the_stack_baseline_centres_on_the_cap_height():
+    """_render_strip sets the attachment at -baseline, so the stack's centre
+    lands on the counts' cap-height centre, as the faces do."""
+    img, baseline = _usage_app()._usage_stack_image(
+        (("claude", 8.0), ("grok", 30.0), ("codex", 50.0)), False)
+    assert 0 <= baseline < img.size().height
+
+
+def test_the_todo_card_is_narrower_than_the_old_stack():
+    img, baseline = _usage_app()._todo_image(132, False)
+    assert img.size().width <= 26.0, img.size().width
+    assert img.size().height <= 20.0
+    assert 0 <= baseline < img.size().height
+
+
+def test_the_todo_card_prints_the_number():
+    app_ = _usage_app()
+    one, _ = app_._todo_image(1, False)
+    many, _ = app_._todo_image(132, False)
+    many_dark, _ = app_._todo_image(132, True)
+    assert one.TIFFRepresentation() != many.TIFFRepresentation()
+    assert many.TIFFRepresentation() != many_dark.TIFFRepresentation()
+
+
+def test_the_todo_card_front_is_not_washed():
+    """The back card is filled even-odd with the front card cut out, so the
+    front card's interior stays clear where the two overlap — a 45% wash there
+    turns the number grey on a translucent bar. Sampled just under the front
+    card's right outline at mid-height, beside the digit and inside the back
+    card's rect."""
+    from dark_army_menubar.app import TODO_CARD_OFFSET, TODO_CARD_STROKE
+    img, _ = _usage_app()._todo_image(1, False)
+    inset = 0.6                                  # the back card's inset
+    card_w = img.size().width - TODO_CARD_OFFSET + inset
+    card_h = img.size().height - TODO_CARD_OFFSET + inset
+    x = card_w - TODO_CARD_STROKE - 1.0
+    y_from_top = (TODO_CARD_OFFSET - inset) + card_h / 2.0
+    assert x > TODO_CARD_OFFSET + inset          # inside the back card's rect
+    assert _pixel(img, x, y_from_top)[3] < 0.05
+    # And where the front card does not overlap the back one: filling the two
+    # cards together even-odd inks exactly this strip.
+    left = TODO_CARD_STROKE + 0.8
+    assert left < TODO_CARD_OFFSET + inset       # outside the back card's rect
+    assert _pixel(img, left, y_from_top)[3] < 0.05
+    # ...and the back card's crescent is inked where it peeks out.
+    assert _pixel(img, img.size().width - 1.5, 1.0)[3] > 0.2
 
 
 def test_grok_usage_text_is_bare_digits_like_claudes():
@@ -856,6 +957,34 @@ def test_codex_usage_text_uses_the_worst_live_window():
 #
 # The debounce used to be "take the callback off the menu item". With no menu it
 # is a flag, which the panel reads to grey its own row.
+
+def test_strip_words_spells_every_reading():
+    from dark_army_menubar import menu_format as mf
+    words = mf.strip_words(
+        [("work", "3", "+2"), ("cast:relay:attn", "1", "")], 132,
+        [("claude", "7%"), ("grok", "70%"), ("codex", "95%")])
+    assert words == ("3 working (+2 helpers) · 1 needs you · 132 cards to do · "
+                     "Claude 7% · Grok 70% · Codex 95%")
+    assert mf.strip_words([("attn", "2", "")], 1, []) == "2 need you · 1 card to do"
+    assert mf.strip_words(
+        [("work", "1", "")], 0,
+        [("claude", "7%"), ("grok", mf.USAGE_UNKNOWN)]) == (
+        "1 working · Claude 7% · Grok: window reset, no reading")
+
+
+def test_strip_words_offline_says_only_offline():
+    from dark_army_menubar import menu_format as mf
+    assert mf.strip_words([("off", "", "")], 132,
+                          [("claude", "7%")]) == "Dark Army is offline"
+
+
+def test_strip_words_idle():
+    from dark_army_menubar import menu_format as mf
+    assert mf.strip_words([("idle", "", "")], 0, []) == "nothing working"
+    assert mf.strip_words([("idle", "", "")], 4, [("codex", "12%")]) == (
+        "nothing working · 4 cards to do · Codex 12%")
+    assert [name for _brand, name in mf.PROVIDER_NAMES] == ["Claude", "Grok", "Codex"]
+
 
 def _vscode_app():
     from dark_army_menubar.app import BobCompanionApp
@@ -1067,7 +1196,6 @@ def test_a_gap_after_an_icon_actually_widens_the_strip():
         instance = object.__new__(A.BobCompanionApp)
         instance._usage_cache = {}
         instance._frame_cache = {}
-        instance._divider_cache = {}
         instance._fonts = None
         instance._strip_sig = None
         instance._strip_width = None
@@ -1082,7 +1210,7 @@ def test_a_gap_after_an_icon_actually_widens_the_strip():
             A.GAP_GROUP = gap
             instance._render_strip(
                 [("work", "", ""), ("idle", "", "")],
-                usage_brands=frozenset(), measure=True)
+                show_usage=False, measure=True)
         finally:
             A.GAP_GROUP = original
         return button.setAttributedTitle_.call_args[0][0].size().width
@@ -1262,7 +1390,7 @@ def test_the_footnote_renders_without_a_count():
     def width(groups):
         instance = object.__new__(A.BobCompanionApp)
         for attr, value in (("_usage_cache", {}), ("_frame_cache", {}),
-                            ("_divider_cache", {}), ("_fonts", None),
+                            ("_fonts", None),
                             ("_strip_sig", None), ("_strip_width", None),
                             ("_anim_i", 0), ("_limits", None),
                             ("_grok_limits", {})):
@@ -1270,7 +1398,7 @@ def test_the_footnote_renders_without_a_count():
         button = MagicMock()
         button.image.return_value = None
         instance._status_button = lambda: button
-        instance._render_strip(groups, usage_brands=frozenset(), measure=True)
+        instance._render_strip(groups, show_usage=False, measure=True)
         return button.setAttributedTitle_.call_args[0][0].size().width
 
     bare = width([("cast:relay:work", "", "")])

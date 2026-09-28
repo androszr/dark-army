@@ -358,7 +358,7 @@ def cmd_strip(args) -> None:
 
     app = object.__new__(app_module.BobCompanionApp)
     for attr, value in (("_usage_cache", {}), ("_frame_cache", {}),
-                        ("_divider_cache", {}), ("_todo_cache", {}), ("_fonts", None),
+                        ("_todo_cache", {}), ("_fonts", None),
                         ("_strip_sig", None), ("_strip_width", None),
                         ("_strip_key", None), ("_strip_level", 0),
                         ("_anim_i", -1), ("_daemon_thread", _Alive())):

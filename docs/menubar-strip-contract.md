@@ -1,7 +1,7 @@
 # Menu-bar strip contract
 
 This is the full statement of how the menu-bar status item is composed,
-typeset, measured and collapsed, and of the usage cluster that ends it.
+typeset, measured and collapsed, and of the usage stack that ends it.
 `CLAUDE.md` restates the invariants and names the tests; the argument and the
 detail live here.
 
@@ -52,14 +52,20 @@ on the next run-loop pass.
 
 Counts are 12pt Medium **monospaced-digit** (`COUNT_PT`); there is **no
 separator glyph** — every group opens with a sprite. Gaps are kerning
-(`GAP_FROG` 3pt, `GAP_GROUP` 9pt, `GAP_USAGE` 14pt) on each run's *last
-character only*, or a 9pt gap between the run's own digits. The subagent count
+(`GAP_FROG` 5pt, `GAP_GROUP` 12pt, `GAP_TODO` 12pt before the to-do card,
+`GAP_USAGE` 14pt before the usage stack) on each run's *last character only*,
+or a 9pt gap between the run's own digits. The subagent count
 is a superscript footnote (`SUFFIX_PT`/`SUFFIX_RISE`); the attention count is
 the strip's only coloured number — systemRed, Semibold, drawn only when
 non-zero beside a frog with a red alert dot.
 
-**Counts stay real text** in `labelColor`. Only the usage cluster is an image,
-and everything in an image resolves its own ink (see `ICON_DISCONNECTED`).
+**Counts stay real text** in `labelColor`. Only the usage stack and the to-do
+card are images, and everything in an image resolves its own ink
+(`_strip_inks`; see `ICON_DISCONNECTED`). The to-do card (`_todo_image`) is
+9pt Semibold digits printed inside an outlined front card with no fill, a
+second card peeking out up and to the right, its back filled only outside the
+front card (a clip, so no wash sits under the number); it is drawn only when
+the strip is online and at least one card waits.
 
 **Kerning after an attachment is discarded by AppKit** — a gap after an icon
 must be a real spacer character (`_render_strip`).
@@ -68,10 +74,12 @@ must be a real spacer character (`_render_strip`).
 
 `STRIP_LADDER`, `STRIP_BUDGET_PT` = 310pt. `_animate_icon` renders a rung,
 measures what `_render_strip` returns, and steps down until it fits — the
-subagent footnote, then the usage clusters **one provider at a time** (Codex
-first, Claude last), then the to-do count; the floor is the two live figures
-and their counts. The search runs when the numbers change (`_strip_key` /
-`_strip_level`). Dropping the under-meter is deliberately **not** a rung.
+subagent footnote, then the usage stack as a whole, then the to-do count; the
+floor is the two live figures and their counts. The search runs when the
+numbers change (`_strip_key` / `_strip_level`). The usage stack is **one**
+rung: its rows share one track width, so dropping a provider's row buys height
+and no width. The full reading (two faces with counts, a to-do count of 132,
+three providers) measures about 177pt, well inside the budget.
 
 The rungs are named `StripRung` fields, not positional booleans. The strip
 measures itself and steps down because macOS never says when neighbours crowd
@@ -95,22 +103,34 @@ plain state on the app (`self._settings`), persisted to
 `~/.dark-army/preferences.json` with read-modify-write. Hooks auto-update
 on startup when the installed version is outdated.
 
-## The usage cluster ends the strip
+## The usage stack ends the strip
 
 **Rate-limit windows** are on both surfaces, from one reading.
 `_refresh_limits` (a 30s timer) computes `limits.snapshot()` **off the main
 thread** over the statusline metrics in the agents snapshot; polled, not
-pushed. The strip ends with the **usage cluster** (`_usage_image`): bare digits
-over an under-meter exactly as wide as they are, unframed, still an `NSImage`
-resolving every ink by hand from the appearance, matched to `labelColor`'s
-alpha, aligned by **baseline**. **Colour is an exception signal**: neutral ink
-to `menu_format.USAGE_WARN_PERCENT` (75%), amber to `USAGE_CRIT_PERCENT`
-(90%), red above; nothing is colour-alone. A `stale` bar shows a bare `–` and
-no meter. The same reading feeds the panel's footer chips.
+pushed. The strip ends with the **usage stack** (`_usage_stack_image`): one
+`NSImage` of up to three 2pt meters, Claude, Grok and Codex top to bottom,
+each led by its 6pt provider mark (`_draw_brand_mark`) over one shared 28pt
+track, 1pt between rows so three rows stay under 20pt. Only providers with a
+reading get a row, so a missing one shortens the stack; a stale reading (a
+window that has reset) is its mark over an empty track. The rows are built
+from the labels `sig` and `_strip_key` already carry. **Colour is an
+exception signal**: neutral ink to `menu_format.USAGE_WARN_PERCENT` (75%),
+amber to `USAGE_CRIT_PERCENT` (90%), red above, the mark red too at red;
+nothing is colour-alone. The same reading feeds the panel's footer chips.
 
-`menu_format.py` is pure label formatting for the **strip's usage cluster**
-and nothing else: `limit_percent`, `usage_text`, `usage_tier`,
-`grok_usage_text`. The panel formats its own rows in Swift.
+**The usage stack has no digits; the percentages are spoken.**
+`menu_format.strip_words` spells the whole strip in words — "3 working · 1
+needs you · 132 cards to do · Claude 7% · Grok 70% · Codex 95%" — and
+`_render_strip` sets them on the button's tooltip and accessibility label,
+**only when the sentence changes** (`_strip_words`), so hovering reads every
+number. The counts are in the words as well as the percentages because an
+accessibility label replaces the title VoiceOver would read; offline says
+only "Dark Army is offline".
+
+`menu_format.py` formats the strip's usage stack and its words and nothing
+else: `limit_percent`, `usage_text`, `usage_tier`, `grok_usage_text`,
+`codex_usage_text`, `strip_words`. The panel formats its own rows in Swift.
 
 ## The art the strip draws
 

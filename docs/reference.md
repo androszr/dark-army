@@ -113,12 +113,13 @@ sends.
 Both mouse buttons open the window; there is no dropdown. The strip shows a face
 and a count for the agents working (with a small footnote for their helpers),
 a red count for the agents waiting on you, the cards still to do (Prep and
-Backlog), then the Claude, Grok and Codex usage percentages over their meters,
-amber past 75% and red past 90%. Resting sessions are not drawn; when nothing
-is working and nobody needs you, one resting face holds the place. When the
-menu bar is crowded the strip measures itself and drops detail in order: the
-helper footnote, then the usage meters one assistant at a time (Codex, Grok,
-Claude), then the to-do count. The contract is
+Backlog) printed on a small card, then three stacked meters for Claude, Grok
+and Codex, amber past 75% and red past 90% — hover the strip to read the
+percentages (and every other number) in words. Resting sessions are not
+drawn; when nothing is working and nobody needs you, one resting face holds
+the place. When the menu bar is crowded the strip measures itself and drops
+detail in order: the helper footnote, then the usage meters together, then
+the to-do count. The contract is
 [docs/menubar-strip-contract.md](menubar-strip-contract.md).
 
 ## The window

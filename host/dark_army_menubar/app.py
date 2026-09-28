@@ -389,45 +389,49 @@ GAP_FROG = 5.0           # face → its own count. 3pt is the textbook figure an
                          # was a point too tight here: the working face's laptop
                          # reaches the sprite's right edge and touched the digit.
 GAP_GROUP = 12.0          # a count → the next category's face
-GAP_USAGE = 20.0         # the last count → the usage cluster (which is not a
-                         # session number, and says so by standing apart)
-USAGE_MARK_PT = 8.0      # provider mark beside each usage percentage
-USAGE_MARK_GAP = 3.5     # mark → digits. Tight: they are one object, not two.
-GAP_GROK_USAGE = 10.0    # each usage cluster → the rule between them. Applied on
-                         # both sides, so the clusters sit 23pt apart. Still less
-                         # than GAP_USAGE: the two are one block of the same kind
-                         # of reading, and the boundary into that block from the
-                         # counts is the larger of the two.
-USAGE_RULE_PT = 9.0      # height of that rule; matched to the digits' cap height
-USAGE_RULE_ALPHA = 0.22  # a rule, not a glyph — see _divider_image
+GAP_TODO = 12.0          # the last count → the to-do card. The count's own
+                         # category gap: the card is a count of work too.
+GAP_USAGE = 14.0         # the to-do card (or last count) → the usage stack. One
+                         # object now, not three clusters with rules between,
+                         # but still the largest gap on the strip: the stack is
+                         # not a session number, and says so by standing apart.
 
-# The five-hour usage cluster at the right-hand end.
-USAGE_PT = 11.0          # a rank below the counts: an ambient account fact
-USAGE_BAR_PT = 2.0       # the under-meter's height
-USAGE_BAR_GAP = 2.0      # ...and its distance from the digits' descenders
-USAGE_BAR_MIN_PT = 12.0  # a meter narrower than this can't show a percentage
+# The usage stack at the right-hand end: up to three thin meters stacked
+# vertically, one per provider, each led by its mark. No digits — the
+# percentages are spoken on the tooltip and the accessibility label instead.
+USAGE_STACK_MARK_PT = 6.0   # a row's provider mark; also the row's height. Six
+                            # points is the smallest the burst, slash and
+                            # blossom stay three different silhouettes.
+USAGE_STACK_MARK_GAP = 2.5  # mark → its meter. Tight: they are one row.
+USAGE_STACK_TRACK_PT = 28.0 # every meter's track, the same for all rows so the
+                            # three lengths compare at a glance
+USAGE_STACK_ROW_GAP = 1.0   # between rows. Three 6pt rows must clear 20pt; the
+                            # mockup's 2.5pt came to 23pt, which AppKit clips.
+USAGE_BAR_PT = 2.0          # a meter's height
+USAGE_STACK_CACHE_MAX = 16  # drawn stacks kept; the cache is cleared past this
 
-# Cards sitting in the board's Backlog column (to-do): a stack of cards and the
-# digits, drawn at the counts' own size rather than the budget clusters' — it is
-# a count of work, not an ambient account reading, even though it is drawn
-# rather than typed.
-TODO_PT = 12.0
-TODO_MARK_PT = 11.0      # the stacked-card mark beside the digits
-TODO_MARK_GAP = 3.5      # ...and its distance from them, matched to USAGE_MARK_GAP
+# Cards sitting in the board's Prep and Backlog columns (to-do): the digits
+# printed inside an outlined card, a second card peeking out behind it up and to
+# the right. Smaller and lighter than the counts — the card outline carries the
+# "this is a count of cards" that the full-size digits and a mark used to.
+TODO_PT = 9.0
+TODO_CARD_STROKE = 1.0   # the front card's outline
+TODO_CARD_RADIUS = 2.5
+TODO_CARD_PAD_X = 3.0    # digits → the card's side edges
+TODO_CARD_PAD_Y = 2.0    # cap height → the card's top and bottom edges
+TODO_CARD_OFFSET = 2.0   # the back card, up and to the right
 
 # macOS gives a status item no signal that its neighbours are crowding it, so the
 # strip measures itself against a fixed budget and steps down this ladder until
 # it fits. Each rung drops the least actionable thing still on screen: the
-# subagent footnote, then the usage clusters one
-# provider at a time — Codex, then Grok, then Claude. The
+# subagent footnote, then the usage stack as a whole, then the to-do card. The
 # to-do count is last — two faces plus their numbers were not enough to keep it
 # on screen while it was the first concession, and the narrower strip exists so
-# the backlog stays visible. The floor is faces, counts, and (until that last
-# rung) the to-do stack.
+# the backlog stays visible. The floor is faces and counts.
 #
-# The under-meter is *not* a rung, though dropping it looks like an obvious first
-# concession: it is exactly as wide as the digits above it, so removing it buys
-# nothing horizontally. It costs height, and height is not what runs out.
+# The usage stack goes in one rung, not one provider at a time: its rows share a
+# single track width, so dropping a row buys height and no width at all, and
+# height is not what runs out.
 # Raised from 170 when the strip gained a face per agent and honest margins, and
 # from 280 when a third provider's cluster (Codex) tipped today's full reading —
 # two faces, two counts, the to-do count and three usage clusters, ~290pt — past
@@ -442,50 +446,38 @@ TODO_MARK_GAP = 3.5      # ...and its distance from them, matched to USAGE_MARK_
 # the same full reading measures 300.2pt — the third digit is 8pt — and the
 # ladder dropped the Codex cluster for a fifth of a point. 310 restores the
 # ~10pt of headroom over the widest everyday reading (three-digit to-do count).
+# Since the usage stack and the to-do card, that reading is ~177pt; the budget
+# was left where it was, so the ladder now fires only on a genuinely crowded bar.
 STRIP_BUDGET_PT = 310.0
-
-# The usage clusters this strip can draw.
-ALL_USAGE_BRANDS = frozenset({"claude", "grok", "codex"})
 
 
 class StripRung(NamedTuple):
     """One rung of the collapse ladder: what is still on the strip.
 
     Named fields, not bare positional booleans. The index discipline was already
-    load-bearing enough to need its own comment and its own test, and widening
-    the single usage column into three shifts the to-do flag from index 3 to
-    index 5 — exactly the silent swap that comment warned about. Every field here
-    is something the ladder can actually give up: a placeholder column kept only
-    so positional tests stay numbered is how the retired idle flag survived its
-    own deletion, and the replacement is a named-field pin, not another bool."""
+    load-bearing enough to need its own comment and its own test, and a column
+    added or removed shifts every flag after it — exactly the silent swap that
+    comment warned about. Every field here is something the ladder can actually
+    give up: a placeholder column kept only so positional tests stay numbered is
+    how the retired idle flag survived its own deletion, and the replacement is
+    a named-field pin, not another bool."""
 
     suffix: bool          # the subagent footnote
-    usage_claude: bool
-    usage_grok: bool
-    usage_codex: bool
-    todo: bool
-
-    def usage_brands(self) -> frozenset:
-        """The usage clusters this rung still draws."""
-        return frozenset(b for b in ALL_USAGE_BRANDS
-                         if getattr(self, f"usage_{b}"))
+    usage: bool           # the usage stack, all of its rows at once
+    todo: bool            # the to-do card
 
 
 STRIP_LADDER = (
     # Every column is monotonically non-increasing: no rung re-enables anything,
     # or the width search would oscillate rather than settle.
     #
-    # The usage clusters go one provider at a time, least actionable first: Codex,
-    # then Grok, then Claude. Your own five-hour window is the budget you actually
-    # act on, so it is the last one given up. To-do is the *last* thing of all: a
-    # face each had been crowding it off, and the point of capping faces is that
-    # the backlog stays on the bar.
-    StripRung(True,  True,  True,  True,  True),    # everything
-    StripRung(False, True,  True,  True,  True),    # - subagent suffix
-    StripRung(False, True,  True,  False, True),    # - Codex usage
-    StripRung(False, True,  False, False, True),    # - Grok usage
-    StripRung(False, False, False, False, True),    # - Claude usage
-    StripRung(False, False, False, False, False),   # - to-do (the floor)
+    # The usage stack goes whole (see the comment above STRIP_BUDGET_PT). To-do
+    # is the *last* thing of all: a face each had been crowding it off, and the
+    # point of capping faces is that the backlog stays on the bar.
+    StripRung(True,  True,  True),     # everything
+    StripRung(False, True,  True),     # - subagent suffix
+    StripRung(False, False, True),     # - the usage stack
+    StripRung(False, False, False),    # - to-do (the floor)
 )
 
 # What the emergency menu's Restart row says once it has been clicked. The
@@ -658,7 +650,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         # Constructing a rumps.Timer allocates no NSTimer; `main()` starts it.
         self._strip_timer = rumps.Timer(self._animate_icon, ICON_TICK)
         self._frame_cache: dict = {}                 # name -> NSImage
-        self._usage_cache: dict = {}                 # usage cluster -> (NSImage, baseline)
+        self._usage_cache: dict = {}                 # usage stack rows -> (NSImage, baseline)
         self._todo_cache: dict = {}                   # (count, dark) -> (NSImage, baseline)
         # Which rung of STRIP_LADDER the strip settled on, and the reading it was
         # measured against. Remembered so the width search runs when the numbers
@@ -1369,8 +1361,8 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         working group.
 
         `level` indexes STRIP_LADDER, whose rungs are `StripRung`s with named
-        fields — `suffix`, `usage_claude`, `usage_grok`, `usage_codex`,
-        `todo`. This reads the first of them by name."""
+        fields — `suffix`, `usage`, `todo`. This reads the first of them by
+        name."""
         keep_suffix = STRIP_LADDER[min(level, len(STRIP_LADDER) - 1)].suffix
         faces = faces or {}
         groups = []
@@ -1479,7 +1471,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                         self._working_count, self._idle_count,
                         self._attention_count, self._subagent_count, level, faces,
                     ),
-                    usage_brands=STRIP_LADDER[level].usage_brands(),
+                    show_usage=STRIP_LADDER[level].usage,
                     show_todo=STRIP_LADDER[level].todo,
                     measure=False,
                 )
@@ -1493,7 +1485,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                 )
                 width = self._render_strip(
                     groups,
-                    usage_brands=STRIP_LADDER[level].usage_brands(),
+                    show_usage=STRIP_LADDER[level].usage,
                     show_todo=STRIP_LADDER[level].todo)
                 if (width is None or width <= STRIP_BUDGET_PT
                         or level + 1 >= len(STRIP_LADDER)):
@@ -1613,12 +1605,20 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             self._frame_cache[name] = img
         return img
 
-    def _render_strip(self, groups, usage_brands: frozenset = ALL_USAGE_BRANDS,
+    def _render_strip(self, groups, show_usage: bool = True,
                       show_todo: bool = True, measure: bool = True):
         """Compose the animated multi-face strip as the status button's attributed
         title: an image attachment (current animation frame) + count per category,
-        then the five-hour usage cluster. Returns the composed width in points (or
-        None if there is no button yet) so the caller can walk the collapse ladder.
+        then the to-do card and the usage stack. Returns the composed width in
+        points (or None if there is no button yet) so the caller can walk the
+        collapse ladder.
+
+        The same readings are also spelled out in words
+        (`menu_format.strip_words`) on the button's tooltip and accessibility
+        label, set only when the sentence changes. The stack carries no digits,
+        so the words are where the percentages are read; and an accessibility
+        label *replaces* the title for VoiceOver, so the words carry the counts
+        too, not only the percentages.
 
         Counts stay real text in `labelColor` rather than pixels in an image, and
         that is worth more than it looks: AppKit tracks the appearance for us and
@@ -1645,19 +1645,16 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         count_font, attn_font, suffix_font = self._strip_fonts()
         dark = _appearance_is_dark(button)
 
-        # Suppression is a brand's *label* going empty, and nothing else: the
-        # brand loop below already skips an empty label (the path a machine with
-        # no Grok account exercises), so the one leading gap, the rules only
-        # between survivors and the never-trailing rule all come for free. A
-        # second skip inside that loop would be the two-counts mistake.
-        usage = (menu_format.usage_text(self._limits)
-                 if "claude" in usage_brands else "")
+        # A provider's row is its *label* being non-empty, and nothing else: a
+        # machine with no Grok account has an empty Grok label and so no Grok
+        # row. The ladder's usage rung empties all three at once.
+        usage = menu_format.usage_text(self._limits) if show_usage else ""
         grok_limits = getattr(self, "_grok_limits", {}) or {}
         grok_usage = (menu_format.grok_usage_text(grok_limits)
-                      if "grok" in usage_brands else "")
+                      if show_usage else "")
         codex_limits = getattr(self, "_codex_limits", {}) or {}
         codex_usage = (menu_format.codex_usage_text(codex_limits)
-                       if "codex" in usage_brands else "")
+                       if show_usage else "")
 
         # Resolve this tick's frames up front so the signature below names the
         # actual pixels rather than the animation counter — the offline glyph has
@@ -1687,7 +1684,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
 
         # Runs are collected before they are assembled, because every gap on the
         # strip is kerning applied to the run *before* it — and whether a run is
-        # the last one isn't known until the usage cluster has had its say.
+        # the last one isn't known until the usage stack has had its say.
         runs: list[list] = []
 
         def push(payload, attrs):
@@ -1744,66 +1741,44 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                         and key.rsplit(":", 1)[-1] == nxt.rsplit(":", 1)[-1])
                 gap(GAP_FACE if same else GAP_GROUP)
 
-        # The five-hour budget at the right-hand end, unframed. It used to be
-        # boxed, and a rounded border in a menu bar reads as a button — an
-        # affordance on the one element of the strip that isn't individually
-        # clickable. Distance says "different kind of thing" just as well and
-        # costs less width than the frame did.
-        # Cards waiting to be started, before the budget clusters. Pushed through
+        # Cards waiting to be started, then the usage stack. Pushed through
         # `push`/`gap` like everything else, so the attachment-spacer fix in the
         # assembly loop below applies without being restated here.
         #
-        # An image rather than a text run, unlike the category counts: it needs a
-        # card-stack mark beside the digits, and a drawn mark matched to the
-        # digits' own cap height is not expressible as a text attribute. The cost
-        # is that it does not invert when the item is clicked — the same property
-        # the usage clusters already have, and the same class of thing: not a
-        # session number.
-        if groups and groups[0][0] != "off" and todo > 0:
+        # Both are images rather than text runs, unlike the category counts: a
+        # number printed inside a drawn card, and meters stacked under one
+        # another, are not expressible as text attributes. The cost is that
+        # neither inverts when the item is clicked — acceptable for two things
+        # that are not session numbers.
+        online = bool(groups) and groups[0][0] != "off"
+        if online and todo > 0:
             img, baseline = self._todo_image(todo, dark)
+            sz = img.size()
+            att = NSTextAttachment.alloc().init()
+            att.setImage_(img)
+            att.setBounds_(NSMakeRect(0, -baseline, sz.width, sz.height))
+            gap(GAP_TODO)
+            push(att, {})
+
+        # One stack, Claude on top, then Grok, then Codex, only the providers
+        # with a label. Built from the labels, which `sig` and `_strip_key`
+        # both carry — rows from anything else would freeze a stale stack.
+        # A stale label is a row whose percent is None: its mark over an
+        # empty track, where the bare dash used to be.
+        rows = tuple(
+            (brand, None if label == menu_format.USAGE_UNKNOWN else pct)
+            for brand, label, pct in (("claude", usage, percent),
+                                      ("grok", grok_usage, grok_percent),
+                                      ("codex", codex_usage, codex_percent))
+            if label)
+        if online and rows:
+            img, baseline = self._usage_stack_image(rows, dark)
             sz = img.size()
             att = NSTextAttachment.alloc().init()
             att.setImage_(img)
             att.setBounds_(NSMakeRect(0, -baseline, sz.width, sz.height))
             gap(GAP_USAGE)
             push(att, {})
-
-        if groups and groups[0][0] != "off":
-            # Two clusters, two accounts. Claude's five-hour window first (the
-            # unlabeled one, same as before), then Grok's weekly window marked
-            # with a G so the two percentages cannot be read as one reading.
-            first_usage = True
-            for brand, label, pct in (("claude", usage, percent),
-                                      ("grok", grok_usage, grok_percent),
-                                      ("codex", codex_usage, codex_percent)):
-                if not label:
-                    continue
-                if not first_usage:
-                    # A hairline between the two clusters. The old pipe glyph
-                    # between the *category groups* was removed for good reasons —
-                    # it was set at the counts' own size and colour, so the
-                    # divider weighed as much as the data, and every group
-                    # already opened with a sprite that delimited it. Neither
-                    # objection survives here: this is a rule at a fifth of the
-                    # ink, and the two clusters carry under-meters that run into
-                    # one continuous bar without it, so `12%` and `51%` read as
-                    # a single measurement cut in half. That is worse than a
-                    # divider costing a point of width.
-                    rule, rule_base = self._divider_image(dark)
-                    rsz = rule.size()
-                    ratt = NSTextAttachment.alloc().init()
-                    ratt.setImage_(rule)
-                    ratt.setBounds_(NSMakeRect(0, -rule_base, rsz.width, rsz.height))
-                    gap(GAP_GROK_USAGE)
-                    push(ratt, {})
-                img, baseline = self._usage_image(label, dark, pct, brand)
-                sz = img.size()
-                att = NSTextAttachment.alloc().init()
-                att.setImage_(img)
-                att.setBounds_(NSMakeRect(0, -baseline, sz.width, sz.height))
-                gap(GAP_USAGE if first_usage else GAP_GROK_USAGE)
-                first_usage = False
-                push(att, {})
 
         strip = NSMutableAttributedString.alloc().init()
         # Measured on first use only: most renders never need it, and asking for
@@ -1855,28 +1830,80 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             button.setImage_(None)
         button.setAttributedTitle_(strip)
         self._strip_sig = sig
+        self._speak_strip(button, groups, todo, (("claude", usage),
+                                                  ("grok", grok_usage),
+                                                  ("codex", codex_usage)))
         # Only the ladder consults the width, and only while it is searching.
         self._strip_width = strip.size().width if measure else None
         return self._strip_width
 
+    def _speak_strip(self, button, groups, todo: int, readings) -> None:
+        """Put the strip's readings in words on the button's tooltip and its
+        accessibility label. Main thread, called by `_render_strip` only.
+
+        Set only when the sentence changes (`_strip_words`): writing either on
+        every tick would dirty the button five times a second while work
+        animates. `getattr` on the setters because a missing or stand-in button
+        must not make a repaint a crash."""
+        words = menu_format.strip_words(
+            groups, todo, [(brand, label) for brand, label in readings if label])
+        if words == getattr(self, "_strip_words", None):
+            return
+        set_tip = getattr(button, "setToolTip_", None)
+        set_label = getattr(button, "setAccessibilityLabel_", None)
+        if set_tip is not None:
+            set_tip(words or None)
+        if set_label is not None:
+            set_label(words or None)
+        self._strip_words = words
+
+    @staticmethod
+    def _strip_inks(dark: bool) -> dict:
+        """Every ink the strip's two drawn objects use, resolved by hand from
+        `dark`. A dynamic colour resolves against the *drawing* context, and an
+        offscreen NSImage has no menu-bar appearance to resolve against — so
+        `labelColor` would come out black on black exactly when the bar is dark.
+        This file has been caught by that four times (`ICON_DISCONNECTED`, the
+        usage cluster, the brand marks, the to-do stack)."""
+        from AppKit import NSColor
+
+        base = NSColor.whiteColor() if dark else NSColor.blackColor()
+        # systemOrange / systemRed, pinned to their sRGB values per appearance
+        # rather than taken from the dynamic colours, for the reason above.
+        if dark:
+            warn = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.624, 0.039, 1.0)
+            crit = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.271, 0.227, 1.0)
+        else:
+            warn = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.584, 0.0, 1.0)
+            crit = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.231, 0.188, 1.0)
+        return {
+            "base": base,
+            # ink-2 one rank below labelColor's own ~85% weight.
+            "ink2": base.colorWithAlphaComponent_(0.55),
+            "ink3": base.colorWithAlphaComponent_(0.30 if dark else 0.28),
+            "track": base.colorWithAlphaComponent_(0.14 if dark else 0.12),
+            "fill": base.colorWithAlphaComponent_(0.40 if dark else 0.35),
+            "warn": warn,
+            "crit": crit,
+        }
+
     def _todo_image(self, count: int, dark: bool):
-        """The board's Backlog count — work written down and not started: a stack
-        of three rounded cards and the digits.
-        `(NSImage, baseline)`, the same shape `_usage_image` returns so
-        `_render_strip` can sit it on the strip's one vertical register.
+        """The board's to-do count — work written down and not started: the
+        digits printed inside an outlined card, with a second card peeking out
+        behind it up and to the right. `(NSImage, baseline)`, the same shape
+        `_usage_stack_image` returns, so `_render_strip` sits both on the
+        strip's one vertical register.
 
-        **Every ink is resolved by hand from `dark`,** and that is not
-        boilerplate: a dynamic colour resolves against the *drawing* context, and
-        an offscreen NSImage has no menu-bar appearance to resolve against — so
-        `labelColor` here would come out black on black exactly when the bar is
-        dark. This file has been caught by that twice (`ICON_DISCONNECTED`, then
-        the usage cluster).
+        The front card is an outline with **no fill**: the menu bar shows
+        through it, so the number reads as printed on a card rather than as a
+        button. The back card is filled, but only its peeking crescent — it is
+        filled under a clip of "the image minus the front card" (the image rect
+        and the front card, even-odd), so no wash ever sits under the digits.
 
-        Deliberately monochrome and deliberately quiet. The strip has exactly one
-        coloured number and it is the attention count; a to-do count is not an
-        exception, and spending colour on it is how the genuinely urgent number
-        loses its own. Never colour-alone in any case: the digits state the
-        number and the glyph says what they are counting.
+        **Every ink is resolved by hand from `dark`** (`_strip_inks`).
+        Deliberately monochrome: the strip's one coloured number is the
+        attention count. Never colour-alone: the digits state the number and
+        the card says what they are counting.
 
         Cached per (count, appearance): the strip repaints five times a second
         and this changes when somebody writes a card.
@@ -1887,221 +1914,165 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             return hit
 
         from AppKit import (
-            NSImage, NSBezierPath, NSColor, NSAttributedString, NSFont,
-            NSMakeRect, NSFontAttributeName, NSForegroundColorAttributeName,
-            NSFontWeightMedium,
+            NSImage, NSBezierPath, NSAttributedString, NSFont, NSMakeRect,
+            NSFontAttributeName, NSForegroundColorAttributeName,
+            NSFontWeightSemibold, NSEvenOddWindingRule, NSGraphicsContext,
         )
         from Foundation import NSMakeSize, NSMakePoint
 
-        base = NSColor.whiteColor() if dark else NSColor.blackColor()
+        base = self._strip_inks(dark)["base"]
         # Matched to what `labelColor` actually weighs on a menu bar, so the
-        # digits read as a peer of the counts rather than heavier than them.
+        # card reads as a peer of the counts rather than heavier than them.
         ink = base.colorWithAlphaComponent_(0.85)
 
         font = NSFont.monospacedDigitSystemFontOfSize_weight_(
-            TODO_PT, NSFontWeightMedium)
+            TODO_PT, NSFontWeightSemibold)
         text = NSAttributedString.alloc().initWithString_attributes_(
             str(int(count)), {NSFontAttributeName: font,
                               NSForegroundColorAttributeName: ink})
-        tsz = text.size()
-        tw = math.ceil(tsz.width)
+        tw = text.size().width
 
-        # Three rounded cards, back to front. Front at the origin of the mark,
-        # back highest and to the right. Geometry rather than a system symbol,
-        # because a symbol image would resolve its own tint against a context
-        # that is not the menu bar — the same trap as the colour above.
-        card_w, card_h = 8.0, 5.5
-        layer_dx, layer_dy = 1.4, 1.6
-        radius = 1.4
-        n_layers = 3
-        stack_w = card_w + (n_layers - 1) * layer_dx
-        stack_h = card_h + (n_layers - 1) * layer_dy
-        mark_w = stack_w + TODO_MARK_GAP
-        w = float(tw + mark_w)
-        h = math.ceil(tsz.height)
+        card_w = tw + 2.0 * TODO_CARD_PAD_X
+        card_h = font.capHeight() + 2.0 * TODO_CARD_PAD_Y
+        # The back card is inset, so the image is the union of the two cards:
+        # the front at the origin, the back offset up-right and 0.6pt smaller
+        # on every side. Not rounded up to whole points — a whole point of
+        # empty margin per axis is width the strip exists to save.
+        inset = 0.6
+        w = card_w + TODO_CARD_OFFSET - inset
+        h = card_h + TODO_CARD_OFFSET - inset
+        # The outline is stroked centred on its path, so the front card is
+        # inset by half a stroke to keep its outer edge inside the image.
+        half = TODO_CARD_STROKE / 2.0
+        front_rect = NSMakeRect(half, half, card_w - TODO_CARD_STROKE,
+                                card_h - TODO_CARD_STROKE)
+        back_rect = NSMakeRect(TODO_CARD_OFFSET + inset, TODO_CARD_OFFSET + inset,
+                               card_w - 2.0 * inset, card_h - 2.0 * inset)
 
         img = NSImage.alloc().initWithSize_(NSMakeSize(w, h))
         img.lockFocus()
-        mark_y = (font.capHeight() - TODO_MARK_PT) / 2.0
-        origin_y = mark_y + (TODO_MARK_PT - stack_h) / 2.0
-        # Fill alphas of glyph_ink (base at 0.55): back 0.28, mid 0.40, front 0.55.
-        fill_alpha = (0.55, 0.40, 0.28)
-        for i in range(n_layers - 1, -1, -1):
-            rect = NSMakeRect(i * layer_dx, origin_y + i * layer_dy,
-                              card_w, card_h)
-            path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                rect, radius, radius)
-            base.colorWithAlphaComponent_(fill_alpha[i]).setFill()
-            path.fill()
-            if i == 0:
-                base.colorWithAlphaComponent_(0.70).setStroke()
-                path.setLineWidth_(0.5)
-                path.stroke()
-        text.drawAtPoint_(NSMakePoint(mark_w, 0))
+        # Back card first, with the whole front card cut out of it: clip to
+        # "the image minus the front card" (the image rect and the front card
+        # filled even-odd leave exactly the outside), then fill the back card.
+        # Filling the back card and the front card together even-odd would
+        # ink their *difference both ways* — the front card's own interior
+        # outside the overlap included.
+        NSGraphicsContext.saveGraphicsState()
+        outside = NSBezierPath.bezierPathWithRect_(NSMakeRect(0, 0, w, h))
+        outside.appendBezierPath_(NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            NSMakeRect(0, 0, card_w, card_h), TODO_CARD_RADIUS, TODO_CARD_RADIUS))
+        outside.setWindingRule_(NSEvenOddWindingRule)
+        outside.addClip()
+        base.colorWithAlphaComponent_(0.45).setFill()
+        NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            back_rect, TODO_CARD_RADIUS, TODO_CARD_RADIUS).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        front = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            front_rect, TODO_CARD_RADIUS, TODO_CARD_RADIUS)
+        front.setLineWidth_(TODO_CARD_STROKE)
+        ink.setStroke()
+        front.stroke()
+        # drawAtPoint_ puts the line's bottom edge at y, and the baseline sits
+        # -descender above that; place the baseline TODO_CARD_PAD_Y above the
+        # card's bottom so the cap height is centred in the card.
+        text.drawAtPoint_(NSMakePoint(
+            TODO_CARD_PAD_X,
+            (card_h - font.capHeight()) / 2.0 + font.descender()))
         img.unlockFocus()
 
-        # drawAtPoint_ puts the line's bottom edge at 0 in this unflipped
-        # context and the descender hangs below the baseline (negative), so the
-        # baseline is -descender.
-        result = (img, -font.descender())
+        # Centred on the counts' cap height, as the faces are.
+        count_font = self._strip_fonts()[0]
+        result = (img, (h - count_font.capHeight()) / 2.0)
         self._todo_cache[key] = result
         return result
 
-    def _usage_image(self, label: str, dark: bool, percent,
-                     brand: str = "claude"):
-        """The five-hour cluster: the digits over an under-meter exactly as wide as
-        they are. Returns `(NSImage, baseline)` — the baseline being the distance
-        from the image's bottom edge to the digits' own baseline, which is what
-        lets `_render_strip` sit it on the same line as the counts.
+    def _usage_stack_image(self, rows, dark: bool):
+        """The usage stack: one meter per provider, stacked top to bottom in the
+        order given (the caller fixes Claude, Grok, Codex), each led by its
+        provider's mark. `rows` is a tuple of `(brand, percent_or_None)`; None
+        is a stale reading — its mark over an empty track, where a bare dash
+        used to hold the slot. Returns `(NSImage, baseline)`.
 
-        Drawn rather than composed from attributes because a meter matched to the
-        width of the text above it is not expressible as a text attribute. That is
-        the only reason left: the border it used to carry is gone.
+        No digits. The percentages are spoken instead, on the tooltip and the
+        accessibility label (`_speak_strip`), so no reading is colour- or
+        length-alone.
 
-        Colour is an *exception* signal here, not decoration. The fill is neutral
-        ink up to `USAGE_WARN_PERCENT`, amber to `USAGE_CRIT_PERCENT`, red above —
-        and at red the digits change weight and colour too, because a 2pt bar is
-        not where you put the news. A menu bar that is green whenever things are
-        fine has nothing left to say when they aren't. The steps are abrupt on
-        purpose: the reason to look is to learn which side of a line you are on,
-        and a gradient makes that unreadable.
+        Colour is an *exception* signal, not decoration. The fill is neutral
+        ink up to `USAGE_WARN_PERCENT`, amber to `USAGE_CRIT_PERCENT`, red above,
+        and at red the mark turns red too. A menu bar that is green whenever
+        things are fine has nothing left to say when they aren't; the steps are
+        abrupt on purpose.
 
-        Nothing here is colour-alone — the digits always state the number and the
-        fill's length always encodes it. That matters twice over, because
-        systemOrange manages only 2.14:1 against a light menu bar.
+        Every meter shares one track width, so the three lengths compare at a
+        glance — and so a missing provider shortens the stack but never narrows
+        it, which is why the ladder gives the stack up whole.
 
-        Every ink is resolved by hand from `dark`. A dynamic colour resolves
-        against the *drawing* context, and an offscreen NSImage has no menu-bar
-        appearance to resolve against — so a dynamic label colour would come out
-        black on black exactly when the bar is dark, which is the bug the offline
-        glyph already had (see ICON_DISCONNECTED).
+        Every ink is resolved by hand from `dark` (`_strip_inks`), and the marks
+        take their ink as an argument (`_draw_brand_mark`).
 
-        Each cluster opens with its provider's mark, because two bare
-        percentages side by side read as one reading split in half. A drawn glyph
-        rather than the letter "G" it replaces: the letter cost the same width,
-        sat in the digits' own font, and told you nothing until you had worked out
-        what it stood for. Both marks are geometry, not brand artwork — at nine
-        points nothing survives but a silhouette, so they aim only to be
-        *distinguishable from each other* and to resolve their ink by hand like
-        everything else drawn into an offscreen image.
-
-        Cached per (text, appearance, whole percent, brand): the strip repaints
-        five times a second and the reading changes at most twice a minute."""
-        stale = not isinstance(percent, (int, float))
-        pct = 0.0 if stale else max(0.0, min(100.0, float(percent)))
-        tier = menu_format.usage_tier(None if stale else pct)
-        key = (label, dark, -1 if stale else round(pct), brand)
+        Cached per (rows at whole percent, appearance): the strip repaints five
+        times a second and the readings change at most twice a minute."""
+        norm = []
+        for brand, percent in rows:
+            stale = not isinstance(percent, (int, float))
+            pct = None if stale else max(0.0, min(100.0, float(percent)))
+            norm.append((brand, pct))
+        # The tier sits beside the rounded percent: 74.6% rounds to 75 but is
+        # still plain, and 75.2% rounds to 75 too but is amber, so a key on
+        # the rounded figure alone would hand back the wrong colour.
+        key = (tuple((brand, -1 if pct is None else round(pct),
+                      menu_format.usage_tier(pct))
+                     for brand, pct in norm), bool(dark))
         hit = self._usage_cache.get(key)
         if hit is not None:
             return hit
 
-        from AppKit import (
-            NSImage, NSBezierPath, NSColor, NSAttributedString, NSFont, NSMakeRect,
-            NSFontAttributeName, NSForegroundColorAttributeName,
-            NSFontWeightMedium, NSFontWeightSemibold,
-        )
-        from Foundation import NSMakeSize, NSMakePoint
-
-        base = NSColor.whiteColor() if dark else NSColor.blackColor()
-        # ink-2 matches labelColor's own ~85% weight one rank down, so the digits
-        # read as secondary to the counts instead of heavier than them — which is
-        # what pure black/white next to labelColor actually looked like.
-        ink2 = base.colorWithAlphaComponent_(0.55)
-        ink3 = base.colorWithAlphaComponent_(0.30 if dark else 0.28)
-        track_ink = base.colorWithAlphaComponent_(0.14 if dark else 0.12)
-        fill_ink = base.colorWithAlphaComponent_(0.40 if dark else 0.35)
-        # systemOrange / systemRed, pinned to their sRGB values per appearance
-        # rather than taken from the dynamic colours, for the reason above.
-        if dark:
-            warn_ink = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.624, 0.039, 1.0)
-            crit_ink = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.271, 0.227, 1.0)
-        else:
-            warn_ink = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.584, 0.0, 1.0)
-            crit_ink = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.231, 0.188, 1.0)
-
-        weight = NSFontWeightSemibold if tier == "crit" else NSFontWeightMedium
-        font = NSFont.monospacedDigitSystemFontOfSize_weight_(USAGE_PT, weight)
-        ink = ink3 if stale else (crit_ink if tier == "crit" else ink2)
-        text = NSAttributedString.alloc().initWithString_attributes_(label, {
-            NSFontAttributeName: font,
-            NSForegroundColorAttributeName: ink,
-        })
-        tsz = text.size()
-        tw = math.ceil(tsz.width)
-
-        mark_w = USAGE_MARK_PT + USAGE_MARK_GAP
-        draw_meter = not stale
-        bar_w = max(USAGE_BAR_MIN_PT, float(tw + mark_w)) if draw_meter else 0.0
-        w = max(float(tw + mark_w), bar_w)
-        y0 = (USAGE_BAR_PT + USAGE_BAR_GAP) if draw_meter else 0.0
-        h = math.ceil(tsz.height) + y0
-
-        img = NSImage.alloc().initWithSize_(NSMakeSize(w, h))
-        img.lockFocus()
-        if draw_meter:
-            radius = USAGE_BAR_PT / 2.0
-            # Without the track, a short fill and a missing one look alike.
-            track_ink.setFill()
-            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                NSMakeRect(0, 0, bar_w, USAGE_BAR_PT), radius, radius).fill()
-            # Never rounded away to nothing: at 1% the fill is a dot, but "some"
-            # and "none" must not render identically.
-            fill_w = max(USAGE_BAR_PT, bar_w * pct / 100.0) if pct > 0 else 0.0
-            if fill_w:
-                (crit_ink if tier == "crit"
-                 else warn_ink if tier == "warn" else fill_ink).setFill()
-                NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                    NSMakeRect(0, 0, fill_w, USAGE_BAR_PT), radius, radius).fill()
-
-        # The mark sits on the digits' own optical centre, not the line box's:
-        # the digits have no descenders, so centring on the box would float it.
-        mark_y = y0 + (font.capHeight() - USAGE_MARK_PT) / 2.0
-        self._draw_brand_mark(brand, NSMakeRect(0, mark_y,
-                                                USAGE_MARK_PT, USAGE_MARK_PT), ink)
-        text.drawAtPoint_(NSMakePoint(mark_w, y0))
-        img.unlockFocus()
-
-        # drawAtPoint_ puts the line's bottom edge at y0 in this unflipped
-        # context, and the descender hangs below the baseline (negative), so the
-        # baseline itself is y0 - descender.
-        result = (img, y0 - font.descender())
-        self._usage_cache[key] = result
-        return result
-
-    def _divider_image(self, dark: bool):
-        """The hairline between the two usage clusters. `(NSImage, baseline)`.
-
-        Drawn rather than typed for the same reason the clusters are: it has to
-        sit on the digits' baseline and stop at their cap height, and a text
-        divider would inherit the run's own metrics instead. Ink is resolved by
-        hand from `dark`, like everything else drawn offscreen.
-
-        It is deliberately faint. The job is to interrupt the two under-meters so
-        they stop reading as one bar — not to be seen.
-        """
-        cached = getattr(self, "_divider_cache", None)
-        if cached is None:
-            cached = {}
-            self._divider_cache = cached
-        if dark in cached:
-            return cached[dark]
-
-        from AppKit import NSImage, NSBezierPath, NSColor, NSMakeRect, NSFont
+        from AppKit import NSImage, NSBezierPath, NSMakeRect
         from Foundation import NSMakeSize
 
-        base = NSColor.whiteColor() if dark else NSColor.blackColor()
-        font = NSFont.monospacedDigitSystemFontOfSize_weight_(USAGE_PT, 0.23)
-        # Sit on the same baseline as the digits and rise to their cap height,
-        # so the rule is bounded by the text rather than by the meter below it.
-        y0 = (USAGE_BAR_PT + USAGE_BAR_GAP)
-        height = USAGE_RULE_PT + y0
-        img = NSImage.alloc().initWithSize_(NSMakeSize(1.0, height))
+        inks = self._strip_inks(dark)
+        n = len(norm)
+        row_h = USAGE_STACK_MARK_PT
+        w = USAGE_STACK_MARK_PT + USAGE_STACK_MARK_GAP + USAGE_STACK_TRACK_PT
+        h = row_h * n + USAGE_STACK_ROW_GAP * max(0, n - 1)
+        track_x = USAGE_STACK_MARK_PT + USAGE_STACK_MARK_GAP
+        radius = USAGE_BAR_PT / 2.0
+
+        img = NSImage.alloc().initWithSize_(NSMakeSize(w, max(h, 1.0)))
         img.lockFocus()
-        base.colorWithAlphaComponent_(USAGE_RULE_ALPHA).setFill()
-        NSBezierPath.fillRect_(NSMakeRect(0.0, y0, 1.0, USAGE_RULE_PT))
+        for i, (brand, pct) in enumerate(norm):
+            # Top to bottom in an unflipped context: row 0 is the highest.
+            y = h - (i + 1) * row_h - i * USAGE_STACK_ROW_GAP
+            tier = menu_format.usage_tier(pct)
+            bar_y = y + (row_h - USAGE_BAR_PT) / 2.0
+            # Without the track, a short fill and a missing one look alike.
+            inks["track"].setFill()
+            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                NSMakeRect(track_x, bar_y, USAGE_STACK_TRACK_PT, USAGE_BAR_PT),
+                radius, radius).fill()
+            # Never rounded away to nothing: at 1% the fill is a dot, but
+            # "some" and "none" must not render identically.
+            fill_w = (max(USAGE_BAR_PT, USAGE_STACK_TRACK_PT * pct / 100.0)
+                      if pct else 0.0)
+            if fill_w:
+                (inks["crit"] if tier == "crit"
+                 else inks["warn"] if tier == "warn" else inks["fill"]).setFill()
+                NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    NSMakeRect(track_x, bar_y, fill_w, USAGE_BAR_PT),
+                    radius, radius).fill()
+            mark_ink = (inks["ink3"] if pct is None
+                        else inks["crit"] if tier == "crit" else inks["ink2"])
+            self._draw_brand_mark(brand, NSMakeRect(0, y, row_h, row_h), mark_ink)
         img.unlockFocus()
-        result = (img, y0 - font.descender())
-        cached[dark] = result
+
+        # Centred on the counts' cap height, as the faces are.
+        count_font = self._strip_fonts()[0]
+        result = (img, (h - count_font.capHeight()) / 2.0)
+        # Keyed by three readings together, so over a long life the distinct
+        # keys never stop coming; only the current one is ever drawn again.
+        if len(self._usage_cache) >= USAGE_STACK_CACHE_MAX:
+            self._usage_cache.clear()
+        self._usage_cache[key] = result
         return result
 
     @staticmethod
@@ -2113,7 +2084,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         without `setStroke_` uses black — so the first version came out invisible
         on a dark menu bar while the digits beside it were correctly light. That
         is the third time this file has been caught by ink not resolving itself
-        (see ICON_DISCONNECTED and `_usage_image`), and it will not be the last
+        (see ICON_DISCONNECTED and the old usage cluster), and it will not be the last
         unless every drawn thing takes its colour as an argument.
 
         Claude is the radiating burst its own mark is built from; Grok is the

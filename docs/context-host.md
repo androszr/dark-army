@@ -538,13 +538,15 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   one frame through `_held`/`STILL_FRAMES`, aggregate and cast alike (last slot
   for the sleeping Zzz, first for the waiting red), which is what stops the
   repaint on a quiet Mac; counts stay **real text** in `labelColor` and only
-  the usage cluster (`_usage_image`) is an `NSImage`, resolving its own ink;
+  the usage stack (`_usage_stack_image`) and the to-do card are `NSImage`s,
+  resolving their own ink;
   the collapse ladder (`STRIP_LADDER`, `STRIP_BUDGET_PT` = 310pt, rungs named
   on `StripRung`) is a **measured** search whose floor is the two live figures
-  and their counts, and dropping the under-meter is **not** a rung; colour is
+  and their counts, and the usage stack is one rung, given up whole; colour is
   an exception signal alone (`menu_format.USAGE_WARN_PERCENT` 75%,
-  `USAGE_CRIT_PERCENT` 90%); `menu_format.py` formats the usage cluster and
-  nothing else; **there is no dropdown** — both mouse buttons open the panel
+  `USAGE_CRIT_PERCENT` 90%), and the percentages are spoken on the tooltip and
+  accessibility label (contract, *The usage stack ends the strip*);
+  `menu_format.py` formats the usage stack and its words and nothing else; **there is no dropdown** — both mouse buttons open the panel
   (`_StatusClickHandler`), `self.menu` is empty, preferences are the app's own
   state (`self._settings`) in `~/.dark-army/preferences.json`, and
   `_install_emergency_menu_if_needed()` restores kill / log / restart / quit
@@ -580,7 +582,7 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   - **Rate-limit windows** are on both surfaces, from one reading:
     `_refresh_limits` (a 30s timer) computes `limits.snapshot()` **off the
     main thread** over the statusline metrics in the agents snapshot — polled,
-    not pushed — and the same reading feeds the strip's usage cluster and the
+    not pushed — and the same reading feeds the strip's usage stack and the
     panel's footer chips (`docs/menubar-strip-contract.md`).
   - **`notifier.py`** — the last mile of the alert path:
     `UNUserNotificationCenter`. **It lives here, not in the panel**:

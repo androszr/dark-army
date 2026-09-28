@@ -1,7 +1,10 @@
-"""Formatting helpers for the menu-bar strip's usage cluster.
+"""Formatting helpers for the menu-bar strip's usage stack *and the strip's
+spoken words*.
 
 Pure string formatting kept out of the AppKit/rumps layer so it can be unit
-tested.
+tested: the usage stack's rows (`usage_text`, `grok_usage_text`,
+`codex_usage_text`, their percents and tiers) and `strip_words`, the sentence
+the strip's tooltip and accessibility label carry.
 
 It used to format the dropdown's agent rows too — model names, durations,
 per-session detail lines, the Usage submenu. Those went with the dropdown: the
@@ -122,3 +125,59 @@ def codex_limit_percent(snapshot: dict):
 def codex_usage_text(snapshot: dict) -> str:
     percent = codex_limit_percent(snapshot)
     return f"{round(percent)}%" if percent is not None else ""
+
+
+# The providers the usage stack draws, top to bottom, with the name a person
+# reads in the strip's words.
+PROVIDER_NAMES = (("claude", "Claude"), ("grok", "Grok"), ("codex", "Codex"))
+
+
+def strip_words(groups, todo: int, readings) -> str:
+    """The whole strip in words, for its tooltip and accessibility label.
+
+    ``groups`` are `_compose_strip`'s ``(key, count, suffix)`` tuples; ``todo``
+    is the to-do count the strip drew (0 when it drew none); ``readings`` is
+    ``[(brand, label)]`` in strip order, only the providers with a label.
+
+    The usage stack has no digits, so this is where its percentages are read.
+    An accessibility label *replaces* the title VoiceOver would read, so the
+    counts are here too — words carrying only the percentages would take the
+    counts away from the one reader this exists for. Offline says only that.
+    """
+    groups = list(groups or [])
+    if groups and groups[0][0] == "off":
+        return "Dark Army is offline"
+    names = dict(PROVIDER_NAMES)
+    parts = []
+    working = 0
+    helpers = ""
+    attention = 0
+    live = False
+    for key, count, suffix in groups:
+        n = int(count) if str(count).isdigit() else 0
+        if key.endswith("work"):
+            live = True
+            working += n if n else 1
+            helpers = helpers or suffix
+        elif key.endswith("attn"):
+            live = True
+            attention += n if n else 1
+    if working:
+        part = f"{working} working"
+        extra = helpers.lstrip("+")
+        if extra.isdigit():
+            part += f" (+{extra} {'helper' if extra == '1' else 'helpers'})"
+        parts.append(part)
+    if attention:
+        parts.append(f"{attention} {'needs' if attention == 1 else 'need'} you")
+    if not live:
+        parts.append("nothing working")
+    if todo and todo > 0:
+        parts.append(f"{todo} {'card' if todo == 1 else 'cards'} to do")
+    for brand, label in readings or []:
+        name = names.get(brand, brand.capitalize())
+        if label == USAGE_UNKNOWN:
+            parts.append(f"{name}: window reset, no reading")
+        elif label:
+            parts.append(f"{name} {label}")
+    return " · ".join(parts)
