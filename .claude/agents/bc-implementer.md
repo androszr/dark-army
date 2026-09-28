@@ -1,6 +1,6 @@
 ---
 name: bc-implementer
-model: claude-opus-5-5
+model: claude-sonnet-5-5
 description: Builds an approved plan, then runs the tests and the lint.
   Runs when somebody presses Start. Changes code; never commits or pushes.
 tools: Read, Write, Edit, Glob, Grep, Bash

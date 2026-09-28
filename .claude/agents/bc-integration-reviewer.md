@@ -1,6 +1,6 @@
 ---
 name: bc-integration-reviewer
-model: sonnet
+model: claude-sonnet-5-5
 description: Asks whether the change still works once it is installed as a
   real app, not only in the test suite. Runs last, before release. Reads only.
 tools: Read, Glob, Grep, Bash

@@ -1,6 +1,6 @@
 ---
 name: bc-card-preparer
-model: haiku
+model: claude-sonnet-5-5
 description: Drafts a board card — title, summary, goal and instructions — from
   a sentence you type. Runs when somebody presses Prepare. Reads only, and never
   does the work it describes.
