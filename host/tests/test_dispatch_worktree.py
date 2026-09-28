@@ -457,6 +457,42 @@ async def test_a_dirty_folder_is_kept_and_the_card_says_so(
 
 
 @pytest.mark.asyncio
+async def test_a_folder_holding_an_ignored_scout_report_is_kept(
+        daemon, repo, monkeypatch):
+    """Git removes ignored files without refusing, and a scout report, a
+    plan or a check file is git-ignored: the folder stays, with the note."""
+    d, store = daemon
+    card = await _prepared(d, store, repo, monkeypatch)
+    with open(os.path.join(repo, ".git", "info", "exclude"), "a") as fh:
+        fh.write("/scout/\n")
+    report = os.path.join(card["worktree_path"], "scout", "r", "report.md")
+    os.makedirs(os.path.dirname(report))
+    with open(report, "w") as fh:
+        fh.write("# findings\n")
+    assert _git(card["worktree_path"], "status", "--porcelain") == ""
+    store.update(card["id"], {"session_id": "s1", "link_state": "live",
+                              "column_name": "done"}, bump=False)
+    _end(d, store, card["id"], "s1")
+    await d._flush_work_records()
+    await _released(d)
+    assert os.path.isfile(report)
+    got = store.get(card["id"])
+    assert got["worktree_path"] == card["worktree_path"]
+    decorated = d._decorate_card_for_snapshot(got, {got["id"]: got},
+                                              active=set())
+    assert decorated["worktree_note"] == worktrees.KEPT_NOTE.format(
+        card["worktree_path"])
+
+
+def test_crew_output_is_any_entry_git_names():
+    assert not worktrees.holds_crew_output(b"")
+    assert worktrees.holds_crew_output(b"!! scout/\0")
+    assert worktrees.holds_crew_output(b"?? plans/p.md\0")
+    assert worktrees.argv_crew_output("/p")[-5:] == [
+        "--", "scout", "plans", "manual-check", "docs/research"]
+
+
+@pytest.mark.asyncio
 async def test_a_done_arrival_after_the_session_ended_releases_at_once(
         daemon, repo, monkeypatch):
     d, store = daemon
@@ -1765,3 +1801,4 @@ def test_a_listing_over_its_own_cap_says_there_are_too_many_hidden_files(
     script = _script(repo, "exit 0\n")
     assert d._setup_script_git_refusal(repo) == \
         worktrees.SETUP_TOO_MANY_HIDDEN_REFUSAL.format(script)
+

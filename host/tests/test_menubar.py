@@ -403,6 +403,21 @@ def test_the_strip_words_drop_what_the_strip_drops():
     assert button.setToolTip_.call_args[0][0] == "Dark Army is offline"
 
 
+def test_a_collapsed_strip_still_speaks_every_usage_reading():
+    """The ladder's usage rung drops the stack from the strip, not from the
+    words: they are the only place the percentages are read, and a tooltip
+    is not width-bound."""
+    instance, button = _strip_instance()
+    _three_limits(instance)
+    stacks = []
+    instance._usage_stack_image = lambda rows, dark: stacks.append(rows)
+    instance._render_strip([("work", "2", "")], show_usage=False, measure=True)
+    assert stacks == []
+    words = button.setAccessibilityLabel_.call_args[0][0]
+    assert "Claude" in words and "Grok" in words and "Codex" in words
+    assert words == button.setToolTip_.call_args[0][0]
+
+
 def test_the_stack_rows_follow_the_labels_in_a_fixed_order():
     """Claude, Grok, Codex top to bottom; a stale Grok between two fresh rows
     is a None row; a Codex with no reading draws no row."""

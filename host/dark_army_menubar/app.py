@@ -684,7 +684,8 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         if self._repo_root is not None:
             try:
                 from dark_army_daemon import enrollment as _enrollment
-                self._pack_self_root = _enrollment.normalise(str(self._repo_root))
+                self._pack_self_root = _enrollment.normalise(
+                    str(dev_build.main_checkout(self._repo_root)))
             except Exception:
                 self._pack_self_root = str(self._repo_root)
 
@@ -1647,14 +1648,16 @@ class BobCompanionApp(rumps.App, DaemonObserver):
 
         # A provider's row is its *label* being non-empty, and nothing else: a
         # machine with no Grok account has an empty Grok label and so no Grok
-        # row. The ladder's usage rung empties all three at once.
-        usage = menu_format.usage_text(self._limits) if show_usage else ""
+        # row. The ladder's usage rung empties all three at once — on the
+        # strip only: the words (`_speak_strip`) are not width-bound, so they
+        # keep every reading even when the stack is dropped.
         grok_limits = getattr(self, "_grok_limits", {}) or {}
-        grok_usage = (menu_format.grok_usage_text(grok_limits)
-                      if show_usage else "")
         codex_limits = getattr(self, "_codex_limits", {}) or {}
-        codex_usage = (menu_format.codex_usage_text(codex_limits)
-                       if show_usage else "")
+        spoken = (("claude", menu_format.usage_text(self._limits)),
+                  ("grok", menu_format.grok_usage_text(grok_limits)),
+                  ("codex", menu_format.codex_usage_text(codex_limits)))
+        usage, grok_usage, codex_usage = (
+            label if show_usage else "" for _brand, label in spoken)
 
         # Resolve this tick's frames up front so the signature below names the
         # actual pixels rather than the animation counter — the offline glyph has
@@ -1830,9 +1833,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             button.setImage_(None)
         button.setAttributedTitle_(strip)
         self._strip_sig = sig
-        self._speak_strip(button, groups, todo, (("claude", usage),
-                                                  ("grok", grok_usage),
-                                                  ("codex", codex_usage)))
+        self._speak_strip(button, groups, todo, spoken)
         # Only the ladder consults the width, and only while it is searching.
         self._strip_width = strip.size().width if measure else None
         return self._strip_width

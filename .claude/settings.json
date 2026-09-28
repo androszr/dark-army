@@ -34,7 +34,8 @@
       "Bash(cat ~/.dark-army/relay.json*)",
       "Bash(cat ~/.dark-army/devices.json*)",
       "Bash(cat ~/.dark-army/grok-bot*)",
-      "Bash(cat .dark-army/key*)"
+      "Bash(cat .dark-army/key*)",
+      "Edit(**/.dark-army/worktree-setup.sh)"
     ]
   }
 }

@@ -324,6 +324,27 @@ def argv_worktree_remove(root: str, path: str) -> list:
     return work_record._git(root) + ["worktree", "remove", str(path)]
 
 
+#: The crew's own output folders. Every one is git-ignored, so `git worktree
+#: remove` would delete a scout report, a plan or a check file written inside
+#: a card's folder without a word — ignored files do not stop it.
+CREW_OUTPUT = ("scout", "plans", "manual-check", "docs/research")
+
+
+def argv_crew_output(path: str) -> list:
+    """What git says about the crew's output folders inside one worktree,
+    ignored entries included, NUL-separated (`holds_crew_output`)."""
+    return work_record._git(path) + [
+        "status", "--porcelain", "-z", "--ignored=matching", "--",
+        *CREW_OUTPUT]
+
+
+def holds_crew_output(output: bytes) -> bool:
+    """Whether `argv_crew_output`'s answer names any file at all. Untracked
+    and modified files already make git refuse the removal; the ignored
+    `!!` entries are the ones this exists to catch."""
+    return any(entry.strip() for entry in bytes(output or b"").split(b"\0"))
+
+
 def argv_exclude_path(root: str) -> list:
     """Where this repository's `info/exclude` is — correct when `.git` is a
     file (the project is itself a linked worktree)."""

@@ -133,6 +133,8 @@ GUARD_ROWS = (
     "Bash(cat ~/.dark-army/devices.json*)",
     "Bash(cat ~/.dark-army/grok-bot*)",
     "Bash(cat .dark-army/key*)",
+    # The script Dark Army runs, unsandboxed, when a card worktree is made.
+    "Edit(**/.dark-army/worktree-setup.sh)",
 )
 
 

@@ -297,6 +297,44 @@ async def test_path_is_stored_as_its_realpath(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_check_in_a_card_side_folder_is_kept_at_the_main_checkout(
+        tmp_path, monkeypatch):
+    """Inside a card worktree "the project root" is the worktree, so the
+    file lands there; the flag copies it to the main checkout's place,
+    which outlives the folder, and stores that path."""
+    import os
+    daemon, store = _board_daemon(tmp_path)
+    try:
+        _bind(daemon, store)
+        root = tmp_path / "proj"
+        side = root / ".worktrees" / "card-1234" / "manual-check" / "2026-09-25-strip"
+        side.mkdir(parents=True)
+        (side / "check.md").write_text(_CHECK)
+        root = os.path.realpath(root)
+        _enrolled(monkeypatch, root)
+        card, _ = store.create({"title": "mine", "project": "bob",
+                                "root": root})
+        store.bind_session(card["id"], "s1")
+        reply = await _flag(daemon, str(side / "check.md"))
+        assert reply["ok"] is True, reply
+        kept = os.path.join(root, "manual-check", "2026-09-25-strip", "check.md")
+        assert store.get(card["id"])["manual_check_path"] == kept
+        with open(kept) as fh:
+            assert fh.read() == _CHECK
+        # A different check already at that place is refused, never replaced.
+        (side / "check.md").write_text(_CHECK.replace("Open the menu bar",
+                                                      "Open the panel"))
+        reply = await _flag(daemon, str(side / "check.md"))
+        assert reply["ok"] is False
+        assert "different check" in daemon._manual_check_hoist(
+            str(side / "check.md"), kept)
+        with open(kept) as fh:
+            assert fh.read() == _CHECK
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_a_check_outside_the_folder_is_refused_in_words(
         tmp_path, monkeypatch):
     from dark_army_daemon import board
