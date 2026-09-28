@@ -197,6 +197,14 @@ def parse_turns(lines) -> list[dict]:
         write_5m = _int(cache_creation.get("ephemeral_5m_input_tokens"))
         write_1h = _int(cache_creation.get("ephemeral_1h_input_tokens"))
         total_write = _int(usage.get("cache_creation_input_tokens"))
+        # Whether the record *stated* the split. A typed block naming either
+        # TTL is a statement, zeros included — unless it says 0 and 0 beside
+        # a nonzero total, which is no split at all. Only a stated split is
+        # stored; the rest is NULL in `turns`, never a guessed share.
+        split_known = (
+            ("ephemeral_5m_input_tokens" in cache_creation
+             or "ephemeral_1h_input_tokens" in cache_creation)
+            and bool(write_5m or write_1h or not total_write))
         if not (write_5m or write_1h):
             # Older transcripts report only the total. Attribute it to the
             # 5-minute TTL — the cheaper of the two, so an unknown split cannot
@@ -214,6 +222,7 @@ def parse_turns(lines) -> list[dict]:
             "cache_creation": total_write or (write_5m + write_1h),
             "cache_write_5m": write_5m,
             "cache_write_1h": write_1h,
+            "cache_split_known": split_known,
             "tool_name": _first_tool_name(message.get("content")),
             "is_sidechain": bool(obj.get("isSidechain")),
             "agent_id": obj.get("agentId") or "",
@@ -329,8 +338,14 @@ def _scan_file(store: HistoryStore, path: Path,
     sessions: set = set()
     for turn in parse_turns(tail):
         cwd = turn.get("cwd") or cwd
-        fields = {k: v for k, v in turn.items() if k not in ("session_id", "ts")}
+        fields = {k: v for k, v in turn.items()
+                  if k not in ("session_id", "ts", "cache_split_known")}
         fields.setdefault("provider", "claude")
+        if not turn.get("cache_split_known"):
+            # A total-only record: `turns` keeps the split NULL so a reader
+            # can say it was not recorded, not a 5-minute share it invented.
+            fields["cache_write_5m"] = None
+            fields["cache_write_1h"] = None
         if store.add_turn(turn["session_id"], turn["ts"], **fields):
             added += 1
             sessions.add(turn["session_id"])

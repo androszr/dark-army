@@ -14,8 +14,8 @@ enum LedgerWeekLayout {
     /// The full-scale height of a segment; the rest of `barHeight` is room
     /// for the usual line's word.
     static let segmentMax: Double = 64
-    /// A drawn segment is never shorter than this, so a small measured day
-    /// does not vanish. A drawing rule, not a figure.
+    /// A drawn segment is never shorter than this, so a small day does not
+    /// vanish. A drawing rule, not a figure.
     static let segmentMin: Double = 4
     /// The gap between the picture and the dock beneath it.
     static let dockGap: Double = 4
@@ -25,18 +25,19 @@ enum LedgerWeekLayout {
         var height: Double
     }
 
-    /// The bar's segments, **top to bottom**: Claude, then Grok, then the
-    /// estimate at the foot. The tokens and time lenses draw one segment of
-    /// the lens's magnitude. A zero value is omitted; a day with no body
+    /// The bar's segments, **top to bottom**: Claude's token cost, then
+    /// Grok's, then Codex's. Every segment is inside the total; a reported
+    /// dollar is not a segment. The tokens and time lenses draw one segment
+    /// of the lens's magnitude. A zero value is omitted; a day with no body
     /// has no segments, and the view draws its hairline instead.
     static func segments(_ column: LedgerDayColumn, lens: LedgerLens,
                          scale: Double) -> [Segment] {
         guard scale > 0 else { return [] }
         let values: [(LedgerInk, Double)]
         if lens == .spent {
-            values = [(.claude, column.claudeMeasured),
-                      (.grok, column.grokMeasured),
-                      (.estimated, column.estimated)]
+            values = [(.claude, column.claudeToken),
+                      (.grok, column.grokToken),
+                      (.codex, column.codexToken)]
         } else {
             values = [(.claude, column.magnitude)]
         }
@@ -58,13 +59,18 @@ enum LedgerWeekLayout {
         var ink: LedgerInk
     }
 
-    /// The day's figure on one line: the figure, then the amber estimate
-    /// when there is one, then the not-priced dash when part of the day is
-    /// unknown and the figure is not already that dash.
+    /// The day's figure on one line: the token cost, then the reported
+    /// dollar when one exists (`$0.00 reported` included), then the
+    /// not-priced dash when part of the day is unknown and the figure is not
+    /// already that dash. An empty figure (a day nothing happened) is left
+    /// out rather than drawn as $0.00.
     static func figureLine(_ column: LedgerDayColumn) -> [FigurePart] {
-        var parts = [FigurePart(text: column.figure, ink: .claude)]
-        if let mark = column.estimatedMark {
-            parts.append(FigurePart(text: mark, ink: .estimated))
+        var parts: [FigurePart] = []
+        if !column.figure.isEmpty {
+            parts.append(FigurePart(text: column.figure, ink: .claude))
+        }
+        if let mark = column.reportedMark {
+            parts.append(FigurePart(text: mark, ink: .reported))
         }
         if column.unknown, column.figure != LedgerFold.dash {
             parts.append(FigurePart(text: LedgerFold.dash, ink: .unknown))

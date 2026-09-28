@@ -181,9 +181,12 @@ Escape closes an open report, then leaves
 the tab (`closeReport`, `leaveReports`); `docs/transport-contract.md` holds
 the two reads. History is the desk-only
 wide ledger in the board's place (`RailLayout.LeftPane.history`); the rail
-is its scope; it is fetched on open and when the range or the project
-changes, not on the SSE loop; the lifecycle quantile report is not drawn
-here and `GET /api/lifecycle` stays; the phone has no History screen. The card window fetches one
+is its scope; its headline is the token cost of Claude, Grok and Codex
+(counted tokens at each publisher's per-token price, `token_cost_usd`), a
+dollar a provider reported sits beside it and is never added, and a missing
+price stays a dash, never $0.00; it is fetched on open and when the range or
+the project changes, not on the SSE loop; the lifecycle quantile report is
+not drawn here and `GET /api/lifecycle` stays; the phone has no History screen. The card window fetches one
 session's record through `SessionRecord.swift`. Every rail section — Active, Recently
 finished, Abandoned — folds through the one `SectionHeader`
 (`RailWidgets.swift`; buckets and sections are `RailSections.swift`). The inbox is grouped under project

@@ -304,11 +304,17 @@ def test_an_unpriceable_session_gets_no_cost(store, projects):
     assert not rows or rows[0]["cost_usd"] is None
 
 
-def test_promotional_rate_applies_by_the_turn_s_own_day(store, projects):
+def test_promotional_rate_applies_by_the_turn_s_own_day(store, projects, monkeypatch):
+    # Sonnet 5's own window was dropped when its page stopped printing an end
+    # date; a promo row stands in for the next launch price.
+    from dark_army_daemon import pricing
+    monkeypatch.setitem(pricing.RATES, "claude-test-promo", pricing.Rate(
+        3.00, 15.00, intro_input=2.00, intro_output=10.00,
+        intro_until="2026-08-31"))
     _write(projects, "s1", [
-        _assistant(message_id="m1", model="claude-sonnet-5",
+        _assistant(message_id="m1", model="claude-test-promo",
                    ts="2026-07-26T12:00:00Z", input_tokens=1_000_000),
-        _assistant(message_id="m2", model="claude-sonnet-5",
+        _assistant(message_id="m2", model="claude-test-promo",
                    ts="2026-09-05T12:00:00Z", input_tokens=1_000_000),
     ])
     scan(store, projects)
@@ -677,3 +683,68 @@ def test_a_titleless_transcript_is_not_restreamed_every_pass(
     assert summary["titles_filled"] == 1
     assert store._query("SELECT title FROM sessions")[0]["title"] == \
         "Named at last"
+
+
+# --- the cache-write split reaches the database -------------------------------
+
+
+def _split_record(message_id="m1", five=100, hour=200, total=300):
+    return json.dumps({
+        "type": "assistant", "sessionId": "s1", "timestamp": "2026-07-26T12:00:00Z",
+        "message": {"id": message_id, "model": "claude-opus-4-8", "usage": {
+            "output_tokens": 5,
+            "cache_creation_input_tokens": total,
+            "cache_creation": {"ephemeral_5m_input_tokens": five,
+                               "ephemeral_1h_input_tokens": hour},
+        }},
+    })
+
+
+def _split_of(store, message_id="m1"):
+    row = store._query("SELECT cache_write_5m, cache_write_1h FROM turns"
+                       " WHERE message_id = ?", (message_id,))[0]
+    return row["cache_write_5m"], row["cache_write_1h"]
+
+
+def test_a_record_with_both_ttl_counts_stores_both_columns(store, projects):
+    _write(projects, "s1", [_split_record()])
+    scan(store, projects)
+    assert _split_of(store) == (100, 200)
+
+
+def test_a_stated_zero_split_is_stored_as_zero(store, projects):
+    _write(projects, "s1", [_split_record(five=0, hour=0, total=0)])
+    scan(store, projects)
+    assert _split_of(store) == (0, 0)
+
+
+def test_a_total_only_record_leaves_the_split_null(store, projects):
+    """NULL is "the record did not say"; a 5-minute share would be invented."""
+    _write(projects, "s1", [_assistant(message_id="m1", output_tokens=5,
+                                       cache_creation=500)])
+    scan(store, projects)
+    assert _split_of(store) == (None, None)
+    row = store._query("SELECT cache_creation FROM turns")[0]
+    assert row["cache_creation"] == 500
+
+
+def test_rescanning_the_same_message_fills_the_split_and_keeps_its_cost(store, projects):
+    """What the v7 upgrade relies on: an older build stored the turn without
+    the split, the forgotten position makes the scanner read it again, and
+    only the two columns change."""
+    store.add_turn("s1", time.time(), message_id="m1", model="claude-opus-4-8",
+                   output_tokens=5, cache_creation=300, cost_usd=0.42,
+                   provider="claude")
+    assert _split_of(store) == (None, None)
+    path = _write(projects, "s1", [_split_record()])
+    first = scan(store, projects)
+    assert first["turns_added"] == 0
+    assert _split_of(store) == (100, 200)
+    row = store._query("SELECT cost_usd, cache_creation FROM turns")[0]
+    assert row["cost_usd"] == pytest.approx(0.42)
+    assert row["cache_creation"] == 300
+    assert store._scalar("SELECT COUNT(*) FROM turns") == 1
+    # And a re-read with the position forgotten again is still one row.
+    store.set_scan_position(str(path), 0.0, 0)
+    scan(store, projects)
+    assert store._scalar("SELECT COUNT(*) FROM turns") == 1

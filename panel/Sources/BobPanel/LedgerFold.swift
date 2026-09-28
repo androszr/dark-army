@@ -9,8 +9,12 @@ enum LedgerMode: Equatable {
     case today, week, thin
 }
 
+/// What a mark on the ledger is. `claude`, `grok` and `codex` are each
+/// provider's token cost; `reported` is a dollar a provider reported, drawn
+/// beside the token cost and never in amber (amber is "your turn");
+/// `unknown` is the not-priced dash.
 enum LedgerInk: Equatable {
-    case claude, grok, estimated, unknown
+    case claude, grok, codex, reported, unknown
 }
 
 /// One card the way the ledger draws it. The arithmetic lives in
@@ -37,18 +41,25 @@ struct LedgerDayColumn: Equatable {
     var day = ""
     var weekday = ""
     var dayNumber = ""
-    var measured: Double = 0
-    var estimated: Double = 0
-    var claudeMeasured: Double = 0
-    var grokMeasured: Double = 0
-    /// The lens's magnitude, for the column's bar. Spent is measured plus
-    /// the estimate; tokens and time are their own sums. Not a dollar when
-    /// the lens is not spent.
+    /// The day's token cost: counted tokens at each publisher's price, for
+    /// the assistants that are on. This is the day's total.
+    var token: Double = 0
+    var claudeToken: Double = 0
+    var grokToken: Double = 0
+    var codexToken: Double = 0
+    /// The dollars providers reported that day, beside the total and never
+    /// in it. Nil where nothing was reported; a reported 0 is 0.
+    var reported: Double?
+    /// The lens's magnitude, for the column's bar. Spent is the token cost
+    /// alone; tokens and time are their own sums. Not a dollar when the lens
+    /// is not spent.
     var magnitude: Double = 0
-    var anyMeasured = false
+    var anyToken = false
     var unknown = false
     var figure = ""
-    var estimatedMark: String?
+    /// The reported dollar as its own mark, `$0.00` included when a report
+    /// exists and is zero; nil when nothing was reported.
+    var reportedMark: String?
     var noNamedCard = false
     var emptyNote: String?
     var otherLine: String?
@@ -73,6 +84,8 @@ struct LedgerRun: Equatable {
     var spent = ""
     var tokens = ""
     var time = ""
+    /// What the providers reported for this card's sessions, when any did.
+    var reported: String?
     var verdict = ""
     var rework = ""
     var phases: [String] = []
@@ -82,15 +95,18 @@ struct LedgerRun: Equatable {
 
 enum LedgerDock: Equatable {
     case rest(heading: String, acceptance: String, honesty: String)
-    case day(title: String, measured: String, estimated: String?,
+    case day(title: String, spent: String, reported: String?,
              unknown: Bool, titles: [String], other: String?)
     case run(LedgerRun)
 }
 
 struct LedgerPicture: Equatable {
     var masthead = ""
+    /// The headline: the token cost of Claude, Grok and Codex together.
     var spent = ""
-    var estimated: String?
+    /// The reported dollars, formatted, when any provider reported one.
+    /// Beside the headline, never added to it.
+    var reported: String?
     var tokens = ""
     var time = ""
     var waiting = ""
@@ -104,7 +120,7 @@ struct LedgerPicture: Equatable {
     var people: [LedgerPersonRow] = []
     var projects: [LedgerProjectRow] = []
     var dock: LedgerDock = .rest(heading: "", acceptance: "", honesty: "")
-    /// Median of the seven days' measured totals. Spend lens and the
+    /// Median of the seven days' token-cost totals. Spend lens and the
     /// seven-column picture only; nil everywhere else.
     var usual: Double?
 }
@@ -144,7 +160,7 @@ enum LedgerColumnLayout {
 /// plus the lenses, and the picture comes back already decided.
 enum LedgerFold {
     static let dash = "—"
-    static let honesty = "An estimate wears a tilde and stays out of the total. Cost unknown adds nothing. A day with money and no card is other sessions on this Mac."
+    static let honesty = "The total is counted tokens at each provider's published price, for Claude, Grok and Codex. A dollar a provider reported sits beside it and is not added in. A dash is not priced, and it adds nothing. A day with money and no card is other sessions on this Mac."
 
     static func localDay(_ ts: Double, calendar: Calendar = .current) -> String {
         dayKey(Date(timeIntervalSince1970: ts), calendar: calendar)
@@ -212,14 +228,19 @@ enum LedgerFold {
         let others = pinOther(report.otherDays, ontoFirstOf: keys, range: range)
         let mode = mode(for: range)
         var columns: [LedgerDayColumn] = []
-        var measuredSum = 0.0
-        var anyMeasured = false
-        var estimatedSum = 0.0
+        var tokenCostSum = 0.0
+        var anyTokenCost = false
+        var reportedSum = 0.0
+        var anyReported = false
         var tokenSum = 0
         var anyTokens = false
         var timeSum = 0
         var anyTime = false
         var unknownCards = 0
+        // Sessions with a turn not priced, by id: a leftover session with
+        // unpriced turns on three days is one session, not three.
+        var unpricedSessions: Set<String> = []
+        var splitUnknown = 0
 
         for key in keys {
             let onDay = placed.filter { $0.day == key }.sorted { $0.bound < $1.bound }
@@ -228,13 +249,14 @@ enum LedgerFold {
                                 lens: lens, claude: claude, grok: grok,
                                 calendar: calendar)
             columns.append(column)
-            if column.anyMeasured {
-                anyMeasured = true
-                measuredSum += column.measured
-            } else if column.measured != 0 {
-                measuredSum += column.measured
+            if column.anyToken {
+                anyTokenCost = true
+                tokenCostSum += column.token
             }
-            estimatedSum += column.estimated
+            if let reported = column.reported {
+                anyReported = true
+                reportedSum += reported
+            }
             // Tokens and time are folded from the works, not from `daily`.
             for work in onDay where work.anyTokens {
                 anyTokens = true
@@ -244,6 +266,7 @@ enum LedgerFold {
                 anyTime = true
                 timeSum += work.timeMs
             }
+            splitUnknown += onDay.reduce(0) { $0 + $1.splitUnknown }
             if let other, otherOn {
                 let extra = (claude ? other.claudeOutputTokens : 0)
                     + (grok ? other.grokOutputTokens : 0)
@@ -251,21 +274,13 @@ enum LedgerFold {
                     anyTokens = true
                     tokenSum += extra
                 }
-                let unpriced = otherUnpriced(other, claude: claude, grok: grok)
-                if unpriced > 0 {
-                    unknownCards += unpriced
-                }
+                // Leftover sessions some of whose turns that day had no
+                // price: the day still shows what was priced.
+                unpricedSessions.formUnion(otherUnpricedIds(other, claude: claude, grok: grok))
+                if claude { splitUnknown += other.cacheSplitUnknownTurns }
             }
             unknownCards += onDay.filter(\.unknown).count
-        }
-
-        // A day column's measured already includes other dollars. Summing
-        // the columns is the headline, and it is not `daily.costUsd`.
-        if !anyMeasured {
-            anyMeasured = columns.contains { $0.anyMeasured }
-            if anyMeasured {
-                measuredSum = columns.reduce(0) { $0 + $1.measured }
-            }
+            for work in onDay { unpricedSessions.formUnion(work.unpricedSessions) }
         }
 
         var picture = LedgerPicture()
@@ -276,27 +291,31 @@ enum LedgerFold {
         picture.showProject = report.effectiveness.root.isEmpty
         picture.days = columns
         picture.focusDay = keys.contains(selectedDay) ? selectedDay : (keys.last ?? "")
-        if anyMeasured {
-            picture.spent = Format.usd(measuredSum)
-        } else if unknownCards > 0 {
+        // The columns' token costs summed are the headline. Not `daily`, and
+        // no reported dollar is in it.
+        if anyTokenCost {
+            picture.spent = Format.usd(tokenCostSum)
+        } else if unknownCards + unpricedSessions.count > 0 {
             picture.spent = "cost unknown"
         } else {
             picture.spent = Format.usd(0)
         }
-        if estimatedSum > 0 {
-            picture.estimated = tilde(estimatedSum)
+        if anyReported {
+            picture.reported = Format.usd(reportedSum)
         }
         picture.tokens = anyTokens ? Format.count(tokenSum) : dash
         picture.time = anyTime ? HistoryFormat.duration(ms: timeSum) : dash
-        picture.aside = aside(estimated: picture.estimated,
-                              unknown: unknownCards, waiting: waiting)
+        picture.aside = aside(reported: picture.reported, unknown: unknownCards,
+                              partly: unpricedSessions.count,
+                              codexPartial: report.effectiveness.codexHistoryPartial,
+                              splitUnknown: splitUnknown, waiting: waiting)
         picture.masthead = masthead(keys: keys, report: report, projects: projects,
                                     claude: claude, grok: grok, person: person,
                                     acceptance: acceptance, calendar: calendar)
         picture.people = people(placed)
         picture.projects = projectRows(projects: projects, works: placed)
         if mode == .week, lens == .spent {
-            picture.usual = median(columns.map(\.measured))
+            picture.usual = median(columns.map(\.token))
         }
         picture.dock = dock(works: works, columns: columns, openCard: openCard,
                             selectedDay: selectedDay, range: range,
@@ -314,41 +333,87 @@ enum LedgerFold {
         var clock: String
         var project: String
         var model: String
-        var measured: Double
-        var estimated: Double
-        var anyMeasured: Bool
-        var anyEstimated: Bool
+        /// Token cost, split by the provider of the session that spent it,
+        /// so a Codex session is never inside Claude's share.
+        var claudeToken: Double
+        var grokToken: Double
+        var codexToken: Double
+        var anyToken: Bool
+        var reported: Double
+        var anyReported: Bool
+        /// No token cost at all: cost unknown.
         var unknown: Bool
+        /// A token cost, but some of the card's work had no price.
+        var partlyUnpriced: Bool
+        /// The on sessions of a priced card that carried an unpriced turn.
+        var unpricedSessions: [String]
+        var splitUnknown: Int
         var tokens: Int
         var anyTokens: Bool
         var timeMs: Int
         var anyTime: Bool
+
+        var token: Double { claudeToken + grokToken + codexToken }
     }
 
+    /// The cards the picture draws, each cut to the provider shares that are
+    /// on. The filter is per share and per session, never per card: a
+    /// session's token cost is split by the provider of the turns priced
+    /// (`claude_` / `grok_` / `codex_token_cost_usd`), Claude and Grok follow
+    /// their toggles, Codex is always on. A session is on when one of its
+    /// priced shares is on — so a Codex-labelled run that was a Claude session
+    /// is off with Claude off, its statusline dollar included — and, with no
+    /// split to go by, when the provider it ran as is on. A card is drawn
+    /// while a share or a session of it is on; one whose on sessions carry no
+    /// price is drawn as cost unknown, never dropped.
     private static func included(report: HistoryReport, claude: Bool, grok: Bool,
                                  person: String, projects: [BoardProject],
                                  calendar: Calendar) -> [Work] {
         report.effectiveness.cards.compactMap { card in
-            let provider = leadProvider(card)
-            guard providerOn(provider, claude: claude, grok: grok) else { return nil }
             if !person.isEmpty, card.who != person { return nil }
             guard let bound = earliest(card) else { return nil }
-            var measured = 0.0
-            var estimated = 0.0
-            var anyMeasured = false
-            var anyEstimated = false
+            var claudeToken = 0.0
+            var grokToken = 0.0
+            var codexToken = 0.0
+            var onShares: Set<String> = []
+            var reported = 0.0
+            var anyReported = false
+            var unpricedSessions: [String] = []
+            var anySessionOn = false
+            var splitUnknown = 0
             var tokens = 0
             var anyTokens = false
             var timeMs = 0
             var anyTime = false
             for session in card.sessions {
-                if let value = session.measuredCostUsd {
-                    anyMeasured = true
-                    measured += value
+                let shares = tokenShares(session)
+                if claude, let value = shares.claude {
+                    onShares.insert("claude")
+                    claudeToken += value
                 }
-                if let value = session.estimatedCostUsd {
-                    anyEstimated = true
-                    estimated += value
+                if grok, let value = shares.grok {
+                    onShares.insert("grok")
+                    grokToken += value
+                }
+                if let value = shares.codex {
+                    onShares.insert("codex")
+                    codexToken += value
+                }
+                guard sessionOn(session, shares: shares, claude: claude, grok: grok) else {
+                    continue
+                }
+                anySessionOn = true
+                if !session.known || (session.tokenUnpricedTurns ?? 0) > 0 {
+                    unpricedSessions.append(
+                        session.sessionId.isEmpty ? "\(card.cardId)#\(unpricedSessions.count)"
+                            : session.sessionId)
+                }
+                if let value = session.reportedCostUsd {
+                    anyReported = true
+                    reported += value
+                }
+                if claude {
+                    splitUnknown += session.cacheSplitUnknownTurns ?? 0
                 }
                 if let value = session.outputTokens {
                     anyTokens = true
@@ -359,16 +424,68 @@ enum LedgerFold {
                     timeMs += session.durationMs ?? 0
                 }
             }
+            let anyToken = !onShares.isEmpty
+            guard anySessionOn || anyToken else { return nil }
+            // The ink follows the largest share that is on; a tie (a lone
+            // $0.00 share included) goes to the provider the card ran as
+            // when that one is among them, else to the first priced.
+            let lead: String
+            if anyToken {
+                let values = ["claude": claudeToken, "grok": grokToken, "codex": codexToken]
+                let top = onShares.map { values[$0] ?? 0 }.max() ?? 0
+                let tied = ["claude", "grok", "codex"].filter {
+                    onShares.contains($0) && values[$0] == top
+                }
+                let label = leadProvider(card)
+                lead = tied.contains(label) ? label : (tied.first ?? label)
+            } else {
+                lead = leadProvider(card)
+            }
             return Work(
-                card: card, provider: provider,
+                card: card, provider: lead,
                 day: localDay(bound, calendar: calendar), bound: bound,
                 clock: clock(bound, calendar: calendar),
                 project: projectName(card.root, projects: projects),
-                model: model(card), measured: measured, estimated: estimated,
-                anyMeasured: anyMeasured, anyEstimated: anyEstimated,
-                unknown: !anyMeasured && !anyEstimated,
+                model: model(card),
+                claudeToken: claudeToken, grokToken: grokToken,
+                codexToken: codexToken, anyToken: anyToken,
+                reported: reported, anyReported: anyReported,
+                unknown: !anyToken,
+                partlyUnpriced: anyToken && !unpricedSessions.isEmpty,
+                unpricedSessions: anyToken ? unpricedSessions : [],
+                splitUnknown: splitUnknown,
                 tokens: tokens, anyTokens: anyTokens,
                 timeMs: timeMs, anyTime: anyTime)
+        }
+    }
+
+    /// Whether one session is on: by its priced shares when the daemon sent
+    /// a split, by the provider it ran as when it did not.
+    private static func sessionOn(_ session: HistoryOutcomeSession,
+                                  shares: (claude: Double?, grok: Double?, codex: Double?),
+                                  claude: Bool, grok: Bool) -> Bool {
+        if shares.claude == nil, shares.grok == nil, shares.codex == nil {
+            return providerOn(session.provider, claude: claude, grok: grok)
+        }
+        return (claude && shares.claude != nil) || (grok && shares.grok != nil)
+            || shares.codex != nil
+    }
+
+    /// One session's token cost by provider. The daemon's split when it sent
+    /// one; from an older daemon, the whole `tokenCostUsd` under the
+    /// session's own provider.
+    private static func tokenShares(_ session: HistoryOutcomeSession)
+        -> (claude: Double?, grok: Double?, codex: Double?) {
+        if session.claudeTokenCostUsd != nil || session.grokTokenCostUsd != nil
+            || session.codexTokenCostUsd != nil {
+            return (session.claudeTokenCostUsd, session.grokTokenCostUsd,
+                    session.codexTokenCostUsd)
+        }
+        guard let total = session.tokenCostUsd else { return (nil, nil, nil) }
+        switch session.provider {
+        case "grok": return (nil, total, nil)
+        case "codex": return (nil, nil, total)
+        default: return (total, nil, nil)
         }
     }
 
@@ -382,7 +499,8 @@ enum LedgerFold {
     }
 
     /// Codex is always on. Claude and Grok follow the toggles. Anything
-    /// else rides with Claude, and one provider is the whole card.
+    /// else rides with Claude. Applied per session and per share, never to a
+    /// whole card.
     private static func providerOn(_ provider: String, claude: Bool,
                                    grok: Bool) -> Bool {
         if provider == "codex" { return true }
@@ -421,51 +539,61 @@ enum LedgerFold {
             column.weekday = calendar.shortWeekdaySymbols[weekday - 1]
             column.dayNumber = String(calendar.component(.day, from: date))
         }
-        var claudeMeasured = 0.0
-        var grokMeasured = 0.0
-        for work in works where work.anyMeasured {
-            column.anyMeasured = true
-            column.measured += work.measured
-            if work.provider == "grok" {
-                grokMeasured += work.measured
-            } else if work.provider == "claude" {
-                claudeMeasured += work.measured
+        var reported = 0.0
+        var anyReported = false
+        for work in works {
+            if work.anyToken {
+                column.anyToken = true
+                column.claudeToken += work.claudeToken
+                column.grokToken += work.grokToken
+                column.codexToken += work.codexToken
+            }
+            if work.anyReported {
+                anyReported = true
+                reported += work.reported
             }
         }
-        column.estimated = works.reduce(0) { $0 + ($1.anyEstimated ? $1.estimated : 0) }
         if let other {
-            let claudePart = claude ? other.claudeMeasuredCostUsd : 0
-            let grokPart = grok ? other.grokMeasuredCostUsd : 0
-            if claudePart != 0 || grokPart != 0 {
-                column.anyMeasured = true
-                column.measured += claudePart + grokPart
-                claudeMeasured += claudePart
-                grokMeasured += grokPart
+            let claudePart = claude ? other.claudeTokenCostUsd : 0
+            let grokPart = grok ? other.grokTokenCostUsd : 0
+            let codexPart = other.codexTokenCostUsd
+            if claudePart != 0 || grokPart != 0 || codexPart != 0 {
+                column.anyToken = true
+                column.claudeToken += claudePart
+                column.grokToken += grokPart
+                column.codexToken += codexPart
             }
-            let estimated = otherEstimated(other, claude: claude, grok: grok)
-            if estimated > 0 {
-                column.estimated += estimated
+            if claude, let value = other.claudeReportedCostUsd {
+                anyReported = true
+                reported += value
+            }
+            if grok, let value = other.grokReportedCostUsd {
+                anyReported = true
+                reported += value
             }
             if otherUnpriced(other, claude: claude, grok: grok) > 0 {
                 column.unknown = true
             }
         }
-        column.claudeMeasured = claudeMeasured
-        column.grokMeasured = grokMeasured
-        if works.contains(where: \.unknown) {
+        column.token = column.claudeToken + column.grokToken + column.codexToken
+        if anyReported {
+            column.reported = reported
+            column.reportedMark = reportedWords(reported)
+        }
+        if works.contains(where: { $0.unknown || $0.partlyUnpriced }) {
             column.unknown = true
         }
         column.noNamedCard = works.isEmpty
         column.emptyNote = works.isEmpty ? "No named card" : nil
-        if column.anyMeasured {
-            column.figure = Format.usd(column.measured)
+        // The token cost, a dash where nothing on the day could be priced,
+        // and nothing at all on a day nothing happened: an empty day is not
+        // $0.00, and a reported zero is the reported mark's to say.
+        if column.anyToken {
+            column.figure = Format.usd(column.token)
         } else if column.unknown {
             column.figure = dash
         } else {
-            column.figure = Format.usd(0)
-        }
-        if column.estimated > 0 {
-            column.estimatedMark = tilde(column.estimated)
+            column.figure = ""
         }
         let tokenTotal = works.reduce(0) { $0 + ($1.anyTokens ? $1.tokens : 0) }
             + (other.map { (claude ? $0.claudeOutputTokens : 0) + (grok ? $0.grokOutputTokens : 0) } ?? 0)
@@ -479,12 +607,12 @@ enum LedgerFold {
                 ? HistoryFormat.duration(ms: timeTotal) : dash
             column.magnitude = Double(timeTotal)
         } else {
-            column.magnitude = column.measured + column.estimated
+            column.magnitude = column.token
         }
         if let other {
             if lens == .spent {
-                let money = (claude ? other.claudeMeasuredCostUsd : 0)
-                    + (grok ? other.grokMeasuredCostUsd : 0)
+                let money = (claude ? other.claudeTokenCostUsd : 0)
+                    + (grok ? other.grokTokenCostUsd : 0) + other.codexTokenCostUsd
                 if money > 0 { column.otherLine = "other \(Format.usd(money))" }
             } else if lens == .tokens {
                 let tokens = (claude ? other.claudeOutputTokens : 0)
@@ -517,9 +645,7 @@ enum LedgerFold {
     private static func magnitude(_ work: Work, lens: LedgerLens) -> Double {
         switch lens {
         case .spent:
-            if work.anyMeasured { return work.measured }
-            if work.anyEstimated { return work.estimated }
-            return 0
+            return work.anyToken ? work.token : 0
         case .tokens:
             return work.anyTokens ? Double(work.tokens) : 0
         case .time:
@@ -530,12 +656,7 @@ enum LedgerFold {
     private static func figure(_ work: Work, lens: LedgerLens) -> String {
         switch lens {
         case .spent:
-            if work.anyMeasured, work.anyEstimated, work.estimated > 0 {
-                return "\(Format.usd(work.measured)) · \(tilde(work.estimated))"
-            }
-            if work.anyMeasured { return Format.usd(work.measured) }
-            if work.anyEstimated, work.estimated > 0 { return tilde(work.estimated) }
-            return dash
+            return spentWords(work)
         case .tokens:
             return work.anyTokens ? Format.count(work.tokens) : dash
         case .time:
@@ -543,10 +664,21 @@ enum LedgerFold {
         }
     }
 
+    /// A card's money: its token cost, then what was reported beside it.
+    /// "cost unknown" is never followed by a reported dollar pretending to
+    /// be the cost.
+    private static func spentWords(_ work: Work) -> String {
+        guard work.anyToken else {
+            return work.anyReported ? "\(dash) · \(reportedWords(work.reported))" : dash
+        }
+        let token = Format.usd(work.token)
+        return work.anyReported ? "\(token) · \(reportedWords(work.reported))" : token
+    }
+
     private static func ink(_ work: Work) -> LedgerInk {
         if work.unknown { return .unknown }
-        if !work.anyMeasured, work.anyEstimated { return .estimated }
         if work.provider == "grok" { return .grok }
+        if work.provider == "codex" { return .codex }
         return .claude
     }
 
@@ -620,22 +752,57 @@ enum LedgerFold {
             merged.grokUnpricedSessions += row.grokUnpricedSessions
             merged.claudeOutputTokens += row.claudeOutputTokens
             merged.grokOutputTokens += row.grokOutputTokens
+            merged.claudeTokenCostUsd += row.claudeTokenCostUsd
+            merged.grokTokenCostUsd += row.grokTokenCostUsd
+            merged.codexTokenCostUsd += row.codexTokenCostUsd
+            merged.claudeTokenUnpricedSessions += row.claudeTokenUnpricedSessions
+            merged.grokTokenUnpricedSessions += row.grokTokenUnpricedSessions
+            merged.codexTokenUnpricedSessions += row.codexTokenUnpricedSessions
+            merged.claudeTokenUnpricedSessionIds += row.claudeTokenUnpricedSessionIds
+            merged.grokTokenUnpricedSessionIds += row.grokTokenUnpricedSessionIds
+            merged.codexTokenUnpricedSessionIds += row.codexTokenUnpricedSessionIds
+            merged.cacheSplitUnknownTurns += row.cacheSplitUnknownTurns
+            // A report only where one existed: nil plus nil stays nil.
+            merged.claudeReportedCostUsd = sum(merged.claudeReportedCostUsd,
+                                               row.claudeReportedCostUsd)
+            merged.grokReportedCostUsd = sum(merged.grokReportedCostUsd,
+                                             row.grokReportedCostUsd)
         }
         var rest = rows.filter { $0.day > first }
         rest.append(merged)
         return rest
     }
 
-    private static func otherEstimated(_ other: HistoryOtherDay, claude: Bool,
-                                       grok: Bool) -> Double {
-        (claude ? other.claudeEstimatedCostUsd : 0)
-            + (grok ? other.grokEstimatedCostUsd : 0)
+    private static func sum(_ lhs: Double?, _ rhs: Double?) -> Double? {
+        guard lhs != nil || rhs != nil else { return nil }
+        return (lhs ?? 0) + (rhs ?? 0)
+    }
+
+    /// Leftover sessions some of whose turns that day had no token price.
+    /// Codex is always on, so its sessions always count.
+    /// The same sessions by id. An older daemon sends counts only; its
+    /// sessions get a per-day stand-in id, which is the old per-day count.
+    private static func otherUnpricedIds(_ other: HistoryOtherDay, claude: Bool,
+                                         grok: Bool) -> Set<String> {
+        var ids: Set<String> = []
+        func add(_ named: [String], _ count: Int, _ provider: String) {
+            if named.isEmpty {
+                for n in 0..<count { ids.insert("\(other.day)#\(provider)#\(n)") }
+            } else {
+                ids.formUnion(named)
+            }
+        }
+        if claude { add(other.claudeTokenUnpricedSessionIds, other.claudeTokenUnpricedSessions, "claude") }
+        if grok { add(other.grokTokenUnpricedSessionIds, other.grokTokenUnpricedSessions, "grok") }
+        add(other.codexTokenUnpricedSessionIds, other.codexTokenUnpricedSessions, "codex")
+        return ids
     }
 
     private static func otherUnpriced(_ other: HistoryOtherDay, claude: Bool,
                                       grok: Bool) -> Int {
-        (claude ? other.claudeUnpricedSessions : 0)
-            + (grok ? other.grokUnpricedSessions : 0)
+        (claude ? other.claudeTokenUnpricedSessions : 0)
+            + (grok ? other.grokTokenUnpricedSessions : 0)
+            + other.codexTokenUnpricedSessions
     }
 
     private static func recent(_ count: Int, now: Date, calendar: Calendar) -> [String] {
@@ -655,13 +822,29 @@ enum LedgerFold {
 
     // MARK: - Headlines
 
-    private static func aside(estimated: String?, unknown: Int, waiting: String) -> String {
+    /// The line under the headline: what was reported, and that it is a
+    /// different kind of money; what could not be priced; what is still
+    /// being read; then the wait. The token cost itself is the total and is
+    /// not qualified here.
+    private static func aside(reported: String?, unknown: Int, partly: Int,
+                              codexPartial: Bool,
+                              splitUnknown: Int, waiting: String) -> String {
         var bits: [String] = []
-        if let estimated {
-            bits.append("\(estimated) estimated, not in the total")
+        if let reported {
+            bits.append("\(reported) reported by the providers, beside the token cost and not added to it")
         }
         if unknown > 0 {
             bits.append("\(unknown) cost unknown")
+        }
+        if partly > 0 {
+            bits.append(partly == 1 ? "1 session with turns not priced"
+                        : "\(partly) sessions with turns not priced")
+        }
+        if codexPartial {
+            bits.append("Codex history is still being read")
+        }
+        if splitUnknown > 0 {
+            bits.append("some cache writes had no 5-minute or 1-hour split and were priced at the 5-minute rate")
         }
         bits.append("waiting \(waiting) on you, the whole Mac")
         return bits.joined(separator: " · ")
@@ -684,10 +867,12 @@ enum LedgerFold {
                 let name = projectName(root, projects: projects)
                 return name.isEmpty ? "this project" : name
             }()
+        // Codex has no toggle and is always on, so it is always named.
         let assistants: String
-        if claude && grok { assistants = "Claude and Grok" }
-        else if claude { assistants = "Claude" }
-        else { assistants = "Grok" }
+        if claude && grok { assistants = "Claude, Grok and Codex" }
+        else if claude { assistants = "Claude and Codex" }
+        else if grok { assistants = "Grok and Codex" }
+        else { assistants = "Codex" }
         var parts = [span, place, assistants]
         if !person.isEmpty { parts.append(person) }
         parts.append(acceptance)
@@ -696,11 +881,10 @@ enum LedgerFold {
 
     private static func people(_ works: [Work]) -> [LedgerPersonRow] {
         struct Acc {
-            var measured = 0.0
-            var anyMeasured = false
-            var estimated = 0.0
-            var anyEstimated = false
-            var unknown = false
+            var token = 0.0
+            var anyToken = false
+            var reported = 0.0
+            var anyReported = false
         }
         var byWho: [String: Acc] = [:]
         var order: [String] = []
@@ -709,35 +893,24 @@ enum LedgerFold {
             if who.isEmpty { continue }
             if byWho[who] == nil { order.append(who) }
             var acc = byWho[who] ?? Acc()
-            if work.anyMeasured {
-                acc.anyMeasured = true
-                acc.measured += work.measured
+            if work.anyToken {
+                acc.anyToken = true
+                acc.token += work.token
             }
-            if work.anyEstimated {
-                acc.anyEstimated = true
-                acc.estimated += work.estimated
+            if work.anyReported {
+                acc.anyReported = true
+                acc.reported += work.reported
             }
-            if work.unknown { acc.unknown = true }
             byWho[who] = acc
         }
         return order.map { who in
             let acc = byWho[who] ?? Acc()
-            let amount: String
-            if acc.unknown, !acc.anyMeasured, !acc.anyEstimated {
-                amount = "cost unknown"
-            } else if acc.anyEstimated, !acc.anyMeasured, acc.estimated > 0 {
-                amount = tilde(acc.estimated)
-            } else if acc.anyMeasured {
-                amount = acc.anyEstimated && acc.estimated > 0
-                    ? "\(Format.usd(acc.measured)) · \(tilde(acc.estimated))"
-                    : Format.usd(acc.measured)
-            } else {
-                amount = "cost unknown"
-            }
-            return LedgerPersonRow(who: who, amount: amount)
+            return LedgerPersonRow(who: who, amount: amountWords(
+                token: acc.anyToken ? acc.token : nil,
+                reported: acc.anyReported ? acc.reported : nil))
         }.sorted { lhs, rhs in
-            let left = byWho[lhs.who]?.measured ?? 0
-            let right = byWho[rhs.who]?.measured ?? 0
+            let left = byWho[lhs.who]?.token ?? 0
+            let right = byWho[rhs.who]?.token ?? 0
             if left != right { return left > right }
             return lhs.who < rhs.who
         }
@@ -751,20 +924,24 @@ enum LedgerFold {
             row.root = project.root
             if rows.isEmpty {
                 row.amount = nil
-            } else if rows.contains(where: \.anyMeasured) {
-                let measured = rows.reduce(0) { $0 + ($1.anyMeasured ? $1.measured : 0) }
-                let estimated = rows.reduce(0) { $0 + ($1.anyEstimated ? $1.estimated : 0) }
-                row.amount = estimated > 0
-                    ? "\(Format.usd(measured)) · \(tilde(estimated))"
-                    : Format.usd(measured)
-            } else if rows.contains(where: \.anyEstimated) {
-                let estimated = rows.reduce(0) { $0 + $1.estimated }
-                row.amount = estimated > 0 ? tilde(estimated) : "cost unknown"
             } else {
-                row.amount = "cost unknown"
+                let token: Double? = rows.contains(where: \.anyToken)
+                    ? rows.reduce(0) { $0 + ($1.anyToken ? $1.token : 0) } : nil
+                let reported: Double? = rows.contains(where: \.anyReported)
+                    ? rows.reduce(0) { $0 + ($1.anyReported ? $1.reported : 0) } : nil
+                row.amount = amountWords(token: token, reported: reported)
             }
             return row
         }
+    }
+
+    /// A person's or a project's money: the token cost first, a reported
+    /// dollar after it only when one exists, and "cost unknown" — never
+    /// $0.00 — where nothing was priced.
+    private static func amountWords(token: Double?, reported: Double?) -> String {
+        let lead = token.map { Format.usd($0) } ?? "cost unknown"
+        guard let reported else { return lead }
+        return "\(lead) · \(reportedWords(reported))"
     }
 
     // MARK: - Dock
@@ -776,9 +953,14 @@ enum LedgerFold {
             return .run(run(work))
         }
         if !selectedDay.isEmpty, let column = columns.first(where: { $0.day == selectedDay }) {
-            let measured = column.anyMeasured
-                ? Format.usd(column.measured)
-                : (column.unknown ? "cost unknown" : Format.usd(0))
+            let spent: String
+            if column.anyToken {
+                spent = Format.usd(column.token)
+            } else if column.unknown {
+                spent = "cost unknown"
+            } else {
+                spent = "nothing spent"
+            }
             let titles = column.cards.isEmpty
                 ? ["No named card"]
                 : column.cards.map(\.title)
@@ -787,7 +969,7 @@ enum LedgerFold {
                 other = "Other sessions on this Mac \(line.replacingOccurrences(of: "other ", with: ""))."
             }
             return .day(title: label(column.day, calendar: .current),
-                        measured: measured, estimated: column.estimatedMark,
+                        spent: spent, reported: column.reportedMark,
                         unknown: column.unknown, titles: titles, other: other)
         }
         return .rest(heading: heading(range), acceptance: acceptance, honesty: honesty)
@@ -798,24 +980,17 @@ enum LedgerFold {
         let card = work.card
         run.title = card.title.isEmpty ? dash : card.title
         let priced: String
-        if work.anyMeasured, work.anyEstimated, work.estimated > 0 {
-            priced = "measured"
-        } else if work.anyMeasured {
-            priced = "measured"
-        } else if work.anyEstimated {
-            priced = "estimated"
-        } else {
+        if work.unknown {
             priced = "not priced"
+        } else if work.partlyUnpriced {
+            priced = "token cost, some turns not priced"
+        } else {
+            priced = "token cost"
         }
         run.scope = [work.project, card.who, work.model, priced]
             .filter { !$0.isEmpty }.joined(separator: " · ")
-        if work.anyMeasured {
-            run.spent = Format.usd(work.measured)
-        } else if work.anyEstimated, work.estimated > 0 {
-            run.spent = tilde(work.estimated)
-        } else {
-            run.spent = "cost unknown"
-        }
+        run.spent = work.anyToken ? Format.usd(work.token) : "cost unknown"
+        run.reported = work.anyReported ? Format.usd(work.reported) : nil
         run.tokens = work.anyTokens ? Format.count(work.tokens) : dash
         run.time = work.anyTime ? HistoryFormat.duration(ms: work.timeMs) : dash
         if card.accepted == nil {
@@ -836,13 +1011,9 @@ enum LedgerFold {
             if session.phase == "refinement" { name = "refine" }
             else if session.phase == "implementation" { name = "build" }
             else { name = session.phase.isEmpty ? "session" : session.phase }
-            let cost: String
-            if let measured = session.measuredCostUsd {
-                cost = Format.usd(measured)
-            } else if let estimated = session.estimatedCostUsd, estimated > 0 {
-                cost = tilde(estimated)
-            } else {
-                cost = dash
+            var cost = session.tokenCostUsd.map { Format.usd($0) } ?? dash
+            if let reported = session.reportedCostUsd {
+                cost += " (\(reportedWords(reported)))"
             }
             let time = session.known
                 ? HistoryFormat.duration(ms: session.durationMs ?? 0) : dash
@@ -881,8 +1052,10 @@ enum LedgerFold {
 
     // MARK: - Words
 
-    private static func tilde(_ value: Double) -> String {
-        "~\(Format.usd(value))"
+    /// A reported dollar in words, so it reads as a different kind of money
+    /// from the token cost it sits beside. `$0.00 reported` is a real zero.
+    static func reportedWords(_ value: Double) -> String {
+        "\(Format.usd(value)) reported"
     }
 
     private static func median(_ values: [Double]) -> Double {

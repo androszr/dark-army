@@ -262,7 +262,7 @@ struct LedgerPane: View {
                     .foregroundStyle(Theme.faint)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(alignment: .firstTextBaseline, spacing: 26) {
-                    figureButton("Spent, measured", picture.spent, .spent, picture)
+                    figureButton("Token cost", picture.spent, .spent, picture)
                     figureButton("Tokens out", picture.tokens, .tokens, picture)
                     figureButton("On the cards", picture.time, .time, picture)
                     VStack(alignment: .leading, spacing: 1) {
@@ -310,12 +310,13 @@ struct LedgerPane: View {
                 Text(value)
                     .font(.system(size: 18, weight: .semibold).monospacedDigit())
                     .foregroundStyle(lens == next ? Theme.phosphor : Theme.dim)
-                if next == .spent, let estimated = picture.estimated {
-                    Text(estimated)
+                if next == .spent, let reported = picture.reported {
+                    // A different kind of money: named, not amber, no tilde.
+                    Text("\(reported) reported")
                         .font(.system(size: 10).monospacedDigit())
-                        .foregroundStyle(Theme.amber)
+                        .foregroundStyle(Theme.dim)
                 }
-                Text(label == "Spent, measured" ? "spent · measured" : label.lowercased())
+                Text(label.lowercased())
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.faint)
             }
@@ -326,11 +327,16 @@ struct LedgerPane: View {
         .accessibilityAddTraits(lens == next ? .isSelected : [])
     }
 
+    /// The spent bar's three providers, each named so the ink is not the only
+    /// signal, then what a reported dollar and a dash are.
     private var legend: some View {
         HStack(spacing: 12) {
-            swatch(.claude, "Claude, measured")
-            swatch(.grok, "Grok, measured")
-            swatch(.estimated, "estimated")
+            swatch(.claude, "Claude tokens")
+            swatch(.grok, "Grok tokens")
+            swatch(.codex, "Codex tokens")
+            Text("reported: beside, not added")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.dim)
             Text("— not priced")
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.faint)
@@ -339,11 +345,7 @@ struct LedgerPane: View {
 
     private func swatch(_ swatchInk: LedgerInk, _ name: String) -> some View {
         HStack(spacing: 4) {
-            if swatchInk == .estimated {
-                Hatch().frame(width: 8, height: 8)
-            } else {
-                Rectangle().fill(ink(swatchInk)).frame(width: 8, height: 8)
-            }
+            Rectangle().fill(ink(swatchInk)).frame(width: 8, height: 8)
             Text(name)
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.faint)
@@ -481,16 +483,20 @@ struct LedgerPane: View {
         }
     }
 
-    /// The day's figure, its amber estimate and the not-priced dash on one
-    /// baseline, in the order `LedgerWeekLayout.figureLine` gives.
+    /// The day's token cost, its reported dollar and the not-priced dash on
+    /// one baseline, in the order `LedgerWeekLayout.figureLine` gives. A day
+    /// nothing happened keeps the line's height with a blank, not $0.00.
     private func figureLine(_ column: LedgerDayColumn) -> some View {
         let parts = LedgerWeekLayout.figureLine(column)
         return HStack(alignment: .firstTextBaseline, spacing: 3) {
+            if parts.isEmpty {
+                Text(" ").font(.system(size: 11).monospacedDigit())
+            }
             ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
                 Text(part.text)
                     .font(.system(size: part.ink == .claude ? 11 : 10).monospacedDigit())
                     .foregroundStyle(part.ink == .claude ? Theme.phosphorBright
-                                     : part.ink == .estimated ? Theme.amber : Theme.faint)
+                                     : part.ink == .reported ? Theme.dim : Theme.faint)
             }
         }
     }
@@ -512,7 +518,7 @@ struct LedgerPane: View {
                         .frame(height: 2)
                 } else {
                     ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                        segmentView(segment, hot: hot)
+                        segmentView(segment)
                     }
                 }
             }
@@ -537,15 +543,16 @@ struct LedgerPane: View {
     }
 
     @ViewBuilder
-    private func segmentView(_ segment: LedgerWeekLayout.Segment, hot: Bool) -> some View {
+    private func segmentView(_ segment: LedgerWeekLayout.Segment) -> some View {
         let height = CGFloat(segment.height)
         switch segment.ink {
-        case .estimated:
-            Hatch().frame(maxWidth: .infinity).frame(height: height).clipped()
         case .claude:
-            Rectangle().fill(hot ? Theme.phosphorBright : Theme.phosphor)
+            // Claude keeps its own ink on the open column too: the bright
+            // text ink is Codex's. The open column is marked by its outline
+            // (week) or its lit day number (thin), never by a segment ink.
+            Rectangle().fill(Theme.phosphor)
                 .frame(maxWidth: .infinity).frame(height: height)
-        case .grok, .unknown:
+        case .grok, .codex, .reported, .unknown:
             Rectangle().fill(ink(segment.ink))
                 .frame(maxWidth: .infinity).frame(height: height)
         }
@@ -665,11 +672,14 @@ struct LedgerPane: View {
         .frame(height: 10)
     }
 
+    /// Codex is the bright text ink: not Claude's green, Grok's dim green,
+    /// amber (your turn) or the alarm red (needs you).
     private func ink(_ ink: LedgerInk) -> Color {
         switch ink {
         case .claude: return Theme.phosphor
         case .grok: return Theme.dim
-        case .estimated: return Theme.amber
+        case .codex: return Theme.phosphorBright
+        case .reported: return Theme.dim
         case .unknown: return Theme.faint
         }
     }
@@ -706,11 +716,11 @@ struct LedgerPane: View {
                 Text(honesty)
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.faint)
-            case .day(let title, let measured, let estimated, let unknown, let titles, let other):
+            case .day(let title, let spent, let reported, let unknown, let titles, let other):
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.phosphorBright)
-                Text(dayLine(measured: measured, estimated: estimated, unknown: unknown))
+                Text(dayLine(spent: spent, reported: reported, unknown: unknown))
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Theme.faint)
                 Text(titles.joined(separator: " · "))
@@ -729,7 +739,10 @@ struct LedgerPane: View {
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.faint)
                 HStack(spacing: 22) {
-                    dockFig(run.spent, "spent")
+                    dockFig(run.spent, "token cost")
+                    if let reported = run.reported {
+                        dockFig(reported, "reported, not added")
+                    }
                     dockFig(run.tokens, "tokens out")
                     dockFig(run.time, "on the card")
                     dockFig(run.verdict, run.rework)
@@ -766,10 +779,11 @@ struct LedgerPane: View {
         .overlay(Rectangle().strokeBorder(Theme.rule, lineWidth: 1))
     }
 
-    private func dayLine(measured: String, estimated: String?, unknown: Bool) -> String {
-        var parts = ["\(measured) measured"]
-        if let estimated { parts.append("\(estimated) estimated") }
-        if unknown { parts.append("cost unknown") }
+    private func dayLine(spent: String, reported: String?, unknown: Bool) -> String {
+        var parts = [spent == "cost unknown" || spent == "nothing spent"
+                     ? spent : "\(spent) token cost"]
+        if let reported { parts.append(reported) }
+        if unknown, spent != "cost unknown" { parts.append("some turns not priced") }
         return parts.joined(separator: " · ")
     }
 
@@ -798,29 +812,6 @@ private struct UsualDash: View {
             .stroke(Theme.faint, style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
         }
         .frame(height: 1)
-    }
-}
-
-/// The estimate: a faint amber ground and a diagonal stroke. `Canvas`
-/// clips to the segment, so a narrow column cannot paint into its neighbours.
-private struct Hatch: View {
-    var body: some View {
-        Canvas { context, size in
-            let rect = CGRect(origin: .zero, size: size)
-            context.clip(to: Path(rect))
-            context.fill(Path(rect), with: .color(Theme.amber.opacity(0.18)))
-            var lines = Path()
-            var x = -size.height
-            while x < size.width {
-                lines.move(to: CGPoint(x: x, y: size.height))
-                lines.addLine(to: CGPoint(x: x + size.height, y: 0))
-                x += 5
-            }
-            context.stroke(lines, with: .color(Theme.amber.opacity(0.9)), lineWidth: 1.5)
-            let inset = rect.insetBy(dx: 0.5, dy: 0.5)
-            context.stroke(Path(inset), with: .color(Theme.amber.opacity(0.45)), lineWidth: 1)
-        }
-        .clipped()
     }
 }
 

@@ -119,7 +119,7 @@ def test_icon_only_controls_keep_a_spoken_label():
     assert "accessibilityLabel(help)" in card
 
     history = _read("HistoryView.swift")
-    assert '"Spent, measured"' in history
+    assert '"Token cost"' in history
     assert '"Tokens out"' in history
     assert '"On the cards"' in history
     assert "accessibilityLabel(label)" in history

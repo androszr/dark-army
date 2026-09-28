@@ -630,6 +630,10 @@ struct HistoryEffectiveness: Decodable {
     var agents: [HistoryAgent] = []
     var cards: [HistoryOutcomeCard] = []
     var summary = HistoryEffectivenessSummary()
+    /// The Codex journals have not all been read yet, so Codex's token cost
+    /// is a floor. Absent (an older daemon) decodes as false: that daemon
+    /// read no Codex history at all and drew none.
+    var codexHistoryPartial = false
 
     enum CodingKeys: String, CodingKey {
         case supported, available, reason, cards, summary, root, agents
@@ -637,6 +641,7 @@ struct HistoryEffectiveness: Decodable {
         case outcomesReason = "outcomes_reason"
         case sessionsTruncated = "sessions_truncated"
         case agentScope = "agent_scope"
+        case codexHistoryPartial = "codex_history_partial"
     }
 
     init(from decoder: Decoder) throws {
@@ -652,6 +657,7 @@ struct HistoryEffectiveness: Decodable {
         agents = c.value(.agents, [])
         cards = c.value(.cards, [])
         summary = c.value(.summary, HistoryEffectivenessSummary())
+        codexHistoryPartial = c.value(.codexHistoryPartial, false)
     }
 
     init() {}
@@ -730,6 +736,24 @@ struct HistoryOutcomeSession: Decodable, Identifiable {
     var cacheRead: Int?
     var cacheHitRatio: Double?
     var durationMs: Int?
+    /// Counted tokens at the publisher's per-token price. Nil where no
+    /// counted token met a published rate — never 0.
+    var tokenCostUsd: Double?
+    /// The dollar Claude or Grok reported for this session: a different kind
+    /// of money, drawn beside the token cost and never added to it. Nil where
+    /// nothing was reported; a reported 0 is 0.
+    var reportedCostUsd: Double?
+    /// Turns that had no rate or no counted tokens, and so no token cost.
+    var tokenUnpricedTurns: Int?
+    /// Claude cache writes priced at the 5-minute rate for want of a split.
+    var cacheSplitUnknownTurns: Int?
+    /// `tokenCostUsd` split by the provider of the turns priced, which is not
+    /// always `provider` (a run filed under Codex can be a Claude session).
+    /// All three nil from an older daemon: the fold then files the whole
+    /// token cost under `provider`.
+    var claudeTokenCostUsd: Double?
+    var grokTokenCostUsd: Double?
+    var codexTokenCostUsd: Double?
 
     enum CodingKeys: String, CodingKey {
         case provider, phase, known, model
@@ -742,6 +766,13 @@ struct HistoryOutcomeSession: Decodable, Identifiable {
         case cacheRead = "cache_read"
         case cacheHitRatio = "cache_hit_ratio"
         case durationMs = "duration_ms"
+        case tokenCostUsd = "token_cost_usd"
+        case reportedCostUsd = "reported_cost_usd"
+        case tokenUnpricedTurns = "token_unpriced_turns"
+        case cacheSplitUnknownTurns = "cache_split_unknown_turns"
+        case claudeTokenCostUsd = "claude_token_cost_usd"
+        case grokTokenCostUsd = "grok_token_cost_usd"
+        case codexTokenCostUsd = "codex_token_cost_usd"
     }
 
     init(from decoder: Decoder) throws {
@@ -759,6 +790,13 @@ struct HistoryOutcomeSession: Decodable, Identifiable {
         cacheRead = c.maybe(.cacheRead)
         cacheHitRatio = c.maybe(.cacheHitRatio)
         durationMs = c.maybe(.durationMs)
+        tokenCostUsd = c.maybe(.tokenCostUsd)
+        reportedCostUsd = c.maybe(.reportedCostUsd)
+        tokenUnpricedTurns = c.maybe(.tokenUnpricedTurns)
+        cacheSplitUnknownTurns = c.maybe(.cacheSplitUnknownTurns)
+        claudeTokenCostUsd = c.maybe(.claudeTokenCostUsd)
+        grokTokenCostUsd = c.maybe(.grokTokenCostUsd)
+        codexTokenCostUsd = c.maybe(.codexTokenCostUsd)
     }
 
     init() {}
@@ -781,6 +819,24 @@ struct HistoryOtherDay: Decodable, Identifiable {
     var grokUnpricedSessions = 0
     var claudeOutputTokens = 0
     var grokOutputTokens = 0
+    /// Counted tokens at each publisher's price, one key per provider. Zero
+    /// is "nothing spent"; the unpriced counts say what could not be priced.
+    var claudeTokenCostUsd: Double = 0
+    var grokTokenCostUsd: Double = 0
+    var codexTokenCostUsd: Double = 0
+    var claudeTokenUnpricedSessions = 0
+    var grokTokenUnpricedSessions = 0
+    var codexTokenUnpricedSessions = 0
+    /// The same sessions by id, so a range counts a session once however many
+    /// days it had an unpriced turn on. Empty from an older daemon.
+    var claudeTokenUnpricedSessionIds: [String] = []
+    var grokTokenUnpricedSessionIds: [String] = []
+    var codexTokenUnpricedSessionIds: [String] = []
+    /// The dollar a provider reported that day. Nil — not 0 — where nothing
+    /// was reported; a reported 0 decodes as 0. Codex reports none.
+    var claudeReportedCostUsd: Double?
+    var grokReportedCostUsd: Double?
+    var cacheSplitUnknownTurns = 0
 
     enum CodingKeys: String, CodingKey {
         case day
@@ -794,6 +850,18 @@ struct HistoryOtherDay: Decodable, Identifiable {
         case grokUnpricedSessions = "grok_unpriced_sessions"
         case claudeOutputTokens = "claude_output_tokens"
         case grokOutputTokens = "grok_output_tokens"
+        case claudeTokenCostUsd = "claude_token_cost_usd"
+        case grokTokenCostUsd = "grok_token_cost_usd"
+        case codexTokenCostUsd = "codex_token_cost_usd"
+        case claudeTokenUnpricedSessions = "claude_token_unpriced_sessions"
+        case grokTokenUnpricedSessions = "grok_token_unpriced_sessions"
+        case codexTokenUnpricedSessions = "codex_token_unpriced_sessions"
+        case claudeTokenUnpricedSessionIds = "claude_token_unpriced_session_ids"
+        case grokTokenUnpricedSessionIds = "grok_token_unpriced_session_ids"
+        case codexTokenUnpricedSessionIds = "codex_token_unpriced_session_ids"
+        case claudeReportedCostUsd = "claude_reported_cost_usd"
+        case grokReportedCostUsd = "grok_reported_cost_usd"
+        case cacheSplitUnknownTurns = "cache_split_unknown_turns"
     }
 
     init(from decoder: Decoder) throws {
@@ -809,6 +877,18 @@ struct HistoryOtherDay: Decodable, Identifiable {
         grokUnpricedSessions = c.value(.grokUnpricedSessions, 0)
         claudeOutputTokens = c.value(.claudeOutputTokens, 0)
         grokOutputTokens = c.value(.grokOutputTokens, 0)
+        claudeTokenCostUsd = c.value(.claudeTokenCostUsd, 0)
+        grokTokenCostUsd = c.value(.grokTokenCostUsd, 0)
+        codexTokenCostUsd = c.value(.codexTokenCostUsd, 0)
+        claudeTokenUnpricedSessions = c.value(.claudeTokenUnpricedSessions, 0)
+        grokTokenUnpricedSessions = c.value(.grokTokenUnpricedSessions, 0)
+        codexTokenUnpricedSessions = c.value(.codexTokenUnpricedSessions, 0)
+        claudeTokenUnpricedSessionIds = c.value(.claudeTokenUnpricedSessionIds, [])
+        grokTokenUnpricedSessionIds = c.value(.grokTokenUnpricedSessionIds, [])
+        codexTokenUnpricedSessionIds = c.value(.codexTokenUnpricedSessionIds, [])
+        claudeReportedCostUsd = c.maybe(.claudeReportedCostUsd)
+        grokReportedCostUsd = c.maybe(.grokReportedCostUsd)
+        cacheSplitUnknownTurns = c.value(.cacheSplitUnknownTurns, 0)
     }
 
     init() {}

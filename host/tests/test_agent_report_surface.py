@@ -67,7 +67,8 @@ def payload(tmp_path):
                      "agents", "cards", "summary", "root", "from", "to",
                      "generated_at", "measurements_available", "coverage",
                      "next_offset", "offset", "agent_scope",
-                     "agents_truncated", "cards_truncated"},
+                     "agents_truncated", "cards_truncated",
+                     "codex_history_partial"},
     }
 
 

@@ -10496,6 +10496,11 @@ class BoardVerbsMixin:
                 "outcomes_reason": outcomes_reason,
                 "measurements_available": not getattr(
                     self, "_outcomes_unavailable", False),
+                # True until a Codex journal pass has read every journal:
+                # the ledger then says Codex is still being read, and its
+                # token cost is a floor rather than the period's whole.
+                "codex_history_partial": bool(getattr(
+                    self, "_codex_history_partial", True)),
                 "other_days": other_days,
                 **joined,
             }
