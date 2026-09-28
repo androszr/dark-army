@@ -592,3 +592,42 @@ def test_a_failed_change_writes_nothing():
     with pytest.raises(relay_bot.BotError):
         relay_bot._update(paths.BOT_PAIR_PATH, refuse)
     assert paths.BOT_PAIR_PATH.read_text() == before
+
+
+def test_post_loopback_needs_the_desk_token_from_the_environment(monkeypatch):
+    """The device verbs are desk verbs: `post_loopback` reads the desk token
+    from `DARK_ARMY_DESK_TOKEN` and never the on-disk session token, and
+    says where to get it when it is missing — before any request is made."""
+    monkeypatch.delenv("DARK_ARMY_DESK_TOKEN", raising=False)
+    (paths.STATE_DIR).mkdir(parents=True, exist_ok=True)
+    (paths.STATE_DIR / "api-token").write_text("session-on-disk\n")
+
+    def no_request(*_a, **_k):
+        raise AssertionError("no request without a desk token")
+
+    monkeypatch.setattr(relay_bot.urllib.request, "urlopen", no_request)
+    with pytest.raises(relay_bot.BotError) as err:
+        relay_bot.post_loopback({"action": "unpair_device", "device_id": "x"})
+    assert "Copy desk key" in str(err.value)
+    assert "DARK_ARMY_DESK_TOKEN" in str(err.value)
+
+    seen = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    def capture(req, timeout=0):
+        seen["token"] = req.get_header("X-bob-token")
+        return _Resp()
+
+    monkeypatch.setattr(relay_bot.urllib.request, "urlopen", capture)
+    monkeypatch.setenv("DARK_ARMY_DESK_TOKEN", "desk-from-env")
+    assert relay_bot.post_loopback({"action": "noop"}) == {"ok": True}
+    assert seen["token"] == "desk-from-env"

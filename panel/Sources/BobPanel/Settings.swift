@@ -15,6 +15,12 @@ extension DaemonClient {
         /// to /Applications from an installed copy and only fills host/dist from
         /// a checkout, and the button must not promise the wrong one.
         var rebuildLabel = "Rebuild & Reload"
+        /// The loopback door's desk token, handed over on the menu bar's
+        /// context push — this pipe and nowhere else, never a file, the
+        /// environment or an argv (`docs/transport-contract.md`, *The
+        /// loopback door has two tokens*). Empty until the first push; every
+        /// panel write sends it as `X-Bob-Token`.
+        var deskToken: String = ""
         /// Every preference, pushed by the menu bar.
         ///
         /// The panel is the only surface now, so it is also the only place these

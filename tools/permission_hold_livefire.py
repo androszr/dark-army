@@ -45,6 +45,13 @@ Stdlib only, its own process, loopback HTTP only, and it writes nothing except
 the card it deletes in its `finally`. Reads and writes use `X-Bob-Token` and
 send no `Origin` header: `Authorization: Bearer` silently 403s while reads keep
 working, which would read as "the ask never arrived".
+
+The token is Dark Army's **desk token**, read from `DARK_ARMY_DESK_TOKEN`:
+every verb this run sends (`board_create`, `board_dispatch`,
+`permission_verdict`, `board_delete`, the terminal stream) is a desk verb, and
+the token file in `~/.dark-army` is the session token, which they refuse.
+Copy it from Settings → Advanced → Copy desk key, then
+`export DARK_ARMY_DESK_TOKEN=…` in the terminal that runs this.
 """
 
 from __future__ import annotations
@@ -269,7 +276,8 @@ def missing_record_lines(text: str) -> list:
 HOST = "127.0.0.1"
 PORT = 19874
 STATE_DIR = Path.home() / ".dark-army"
-TOKEN_PATH = STATE_DIR / "api-token"
+#: Where the desk token comes from — never the session file on disk.
+DESK_TOKEN_ENV = "DARK_ARMY_DESK_TOKEN"
 NOTIFY_PATH = STATE_DIR / "dark-army-notify"
 LOG_PATH = Path.home() / "Library" / "Logs" / "DarkArmy" / "dark-army.log"
 
@@ -336,10 +344,13 @@ class Log:
 
 
 def read_token() -> str:
-    try:
-        return TOKEN_PATH.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise Refusal("no API token at %s (%s)" % (TOKEN_PATH, exc))
+    """The desk token from `DARK_ARMY_DESK_TOKEN`, or a refusal saying where
+    to get it. Never the on-disk session token: every verb here refuses it."""
+    token = os.environ.get(DESK_TOKEN_ENV, "").strip()
+    if not token:
+        raise Refusal("Dark Army's desk token is not set — Settings → Advanced "
+                      "→ Copy desk key, then export DARK_ARMY_DESK_TOKEN")
+    return token
 
 
 def get_state(token: str, timeout: float = 5.0) -> dict:

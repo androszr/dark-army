@@ -369,6 +369,9 @@ def walk(home, *, api_port: int, hook_port: int, hook_socket=None,
         _walk_steps(evidence, home=home, api_port=api_port,
                     notify_python=notify_python, hook_socket=hook_socket,
                     token_path=Path(api_server.API_TOKEN_PATH),
+                    # The desk token, off the in-process daemon: it is never
+                    # on disk, and `enroll_project` is a desk verb.
+                    desk_token=d.desk_token,
                     ide_dir=state_dir / "ide",
                     script=Path(paths.NOTIFY_SCRIPT_PATH), log=log)
     finally:
@@ -386,16 +389,26 @@ def walk(home, *, api_port: int, hook_port: int, hook_socket=None,
 
 
 def _walk_steps(evidence: dict, *, home: Path, api_port: int, notify_python: str,
-                hook_socket, token_path: Path, ide_dir: Path, script: Path,
-                log) -> None:
+                hook_socket, token_path: Path, desk_token, ide_dir: Path,
+                script: Path, log) -> None:
     failures = evidence["failures"]
 
-    token = _poll(lambda: token_path.is_file() and token_path.read_text().strip(),
-                  STARTUP_SECONDS)
-    up = token and _poll(lambda: _http(api_port, "GET", "/api/state")[0] == 200,
-                         STARTUP_SECONDS)
+    # The session token's file is still created, and private; the desk token
+    # the enrolment needs comes off the daemon in this process, once
+    # `/api/state` answers — it is never written anywhere to be read back.
+    session = _poll(lambda: token_path.is_file() and token_path.read_text().strip(),
+                    STARTUP_SECONDS)
+    up = session and _poll(lambda: _http(api_port, "GET", "/api/state")[0] == 200,
+                           STARTUP_SECONDS)
     if not up:
         failures.append("step 2: the daemon's API never answered /api/state")
+        return
+    token = desk_token()
+    evidence["session_token_mode"] = oct(token_path.stat().st_mode & 0o777)
+    evidence["desk_token_on_disk"] = bool(token) and token in token_path.read_text()
+    if not token or evidence["desk_token_on_disk"]:
+        failures.append("step 2: the daemon has no desk token in memory, "
+                        "or it is on disk")
         return
     log(f"daemon up on 127.0.0.1:{api_port}")
 

@@ -3176,6 +3176,13 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                 self._daemon.note_panel_terminal(
                     value if isinstance(value, str) else "")
             return
+        if name == "context_refresh":
+            # The panel was refused (403) and asks for the context again —
+            # which carries the desk token (`docs/transport-contract.md`,
+            # *The loopback door has two tokens*). Just the push, on the
+            # AppKit thread; `_push_panel_context` itself changes nothing.
+            callAfter(self._push_panel_context)
+            return
         handler = self.PANEL_ACTIONS.get(name)
         if handler is None:
             logger.warning("Ignoring unknown panel action %r", name)
@@ -3200,6 +3207,12 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                 self._push_panel_context()
 
         callAfter(run)
+
+    def _desk_token(self) -> str:
+        """The daemon's desk token for the context push, or `""` before the
+        daemon exists. Never logged, never written anywhere but the pipe."""
+        daemon = getattr(self, "_daemon", None)
+        return daemon.desk_token() if daemon is not None else ""
 
     def _push_panel_context(self, respawn: bool = True) -> None:
         """Hand the panel the facts it cannot fetch from the API: build
@@ -3232,6 +3245,11 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         percent = grok.get("percent") if not grok.get("stale") else None
         resets = grok.get("resets_at")
         self._panel.set_context(
+            # The loopback door's desk token, memory only: this pipe is the one
+            # road it takes out of the process — never a file, the
+            # environment, an argv, a snapshot or a log line. A cross-thread
+            # read of a `str` the daemon set once before the panel existed.
+            desk_token=self._desk_token(),
             # Three-way, not two. `info is None` covers two different things:
             # a genuine release with no source anywhere (say so — the menu then
             # reads "Build: release (no source)"), and a checkout whose panel

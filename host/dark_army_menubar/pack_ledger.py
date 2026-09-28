@@ -32,6 +32,10 @@ _DEFAULTS = {
     "app": "",
     "gitnexus_repo": "",
     "settings_allow_owned": [],
+    # The pack's own ``permissions.deny`` rows (pack_render.merge_settings).
+    # A row an older build wrote has none and reads as none owned, so the
+    # first resync adds them once and never removes a project's own.
+    "settings_deny_owned": [],
     # The canonical ignore lines already offered to this project's
     # .gitignore (pack_gitignore.canonical). A row an older build wrote has
     # none and reads as never offered.
@@ -133,6 +137,7 @@ def digests_of(row) -> dict:
 
 def _apply(row: dict, *, profile=None, prefix=None, project=None,
            app=None, gitnexus_repo=None, settings_allow_owned=None,
+           settings_deny_owned=None,
            gitignore_offered=None, pack_digests=None, last_result=None, last_sync_at=None, installed_at=None,
            touch: bool = True) -> None:
     if profile is not None:
@@ -147,6 +152,8 @@ def _apply(row: dict, *, profile=None, prefix=None, project=None,
         row["gitnexus_repo"] = str(gitnexus_repo)
     if settings_allow_owned is not None:
         row["settings_allow_owned"] = [str(item) for item in settings_allow_owned]
+    if settings_deny_owned is not None:
+        row["settings_deny_owned"] = [str(item) for item in settings_deny_owned]
     if gitignore_offered is not None:
         row["gitignore_offered"] = [str(item) for item in gitignore_offered]
     if pack_digests is not None:
@@ -219,6 +226,7 @@ def update(
     app: Optional[str] = None,
     gitnexus_repo: Optional[str] = None,
     settings_allow_owned: Optional[list] = None,
+    settings_deny_owned: Optional[list] = None,
     gitignore_offered: Optional[list] = None,
     pack_digests: Optional[dict] = None,
     last_result: Optional[str] = None,
@@ -241,6 +249,7 @@ def update(
         _apply(row, profile=profile, prefix=prefix, project=project, app=app,
                gitnexus_repo=gitnexus_repo,
                settings_allow_owned=settings_allow_owned,
+               settings_deny_owned=settings_deny_owned,
                gitignore_offered=gitignore_offered,
                pack_digests=pack_digests,
                last_result=last_result, last_sync_at=last_sync_at,
@@ -259,6 +268,7 @@ def remember(
     app: Optional[str] = None,
     gitnexus_repo: Optional[str] = None,
     settings_allow_owned: Optional[list] = None,
+    settings_deny_owned: Optional[list] = None,
     gitignore_offered: Optional[list] = None,
     pack_digests: Optional[dict] = None,
     last_result: Optional[str] = None,
@@ -273,6 +283,7 @@ def remember(
         reserved["root"], profile=profile, prefix=prefix, project=project,
         app=app, gitnexus_repo=gitnexus_repo,
         settings_allow_owned=settings_allow_owned,
+        settings_deny_owned=settings_deny_owned,
         gitignore_offered=gitignore_offered, pack_digests=pack_digests,
         last_result=last_result,
         last_sync_at=last_sync_at, installed_at=installed_at)

@@ -275,11 +275,11 @@ def _write_one(root: str, key: str, data: bytes, mode: int) -> bool:
     return True
 
 
-def _owned_for(root: str) -> list[str]:
+def _owned_for(root: str, field: str = "settings_allow_owned") -> list[str]:
     row = pack_ledger.entry(root)
     if not row:
         return []
-    owned = row.get("settings_allow_owned") or []
+    owned = row.get(field) or []
     return [str(item) for item in owned]
 
 
@@ -448,9 +448,13 @@ def _write_render(
     mapping: dict[str, bytes],
     *,
     owned: list[str],
+    owned_deny: Optional[list[str]] = None,
     digests: Optional[dict] = None,
-) -> tuple[int, list[str], str]:
-    """Write ``mapping`` into ``root``. Returns (wrote, new_owned, note).
+) -> tuple[int, list[str], list[str], str]:
+    """Write ``mapping`` into ``root``.
+
+    Returns (wrote, new_owned, new_owned_deny, note): the settings rows the
+    pack owns after this write, allow and deny, for the ledger.
 
     ``digests`` is the ledger row's ``pack_digests`` (key -> the managed
     region the pack last wrote there), updated in place for every
@@ -460,6 +464,7 @@ def _write_render(
     wrote = 0
     note = ""
     new_owned = list(owned)
+    new_owned_deny = list(owned_deny or [])
     if digests is None:
         digests = {}
     for key, data in mapping.items():
@@ -539,17 +544,19 @@ def _write_render(
                 except OSError:
                     existing = b""
                 try:
-                    payload, new_owned = pack_render.merge_settings(
-                        existing, data, owned)
+                    payload, new_owned, new_owned_deny = (
+                        pack_render.merge_settings(
+                            existing, data, owned, owned_deny))
                 except pack_render.PackRenderError as exc:
                     note = str(exc)
                     continue
             else:
                 new_owned = pack_render.settings_allow_rows(data)
+                new_owned_deny = pack_render.settings_deny_rows(data)
         mode = _EXEC_MODE if key in executables else _FILE_MODE
         if _write_one(root, key, payload, mode):
             wrote += 1
-    return wrote, new_owned, note
+    return wrote, new_owned, new_owned_deny, note
 
 
 
@@ -622,12 +629,14 @@ def install_pack(
         if pack_ledger.entry(folder) is None:
             return False, "that project is no longer syncing", []
         owned = _owned_for(folder)
+        owned_deny = _owned_for(folder, "settings_deny_owned")
         offered = _offered_for(folder)
         digests = _digests_for(folder)
         ignore_note = ""
         try:
-            wrote, new_owned, note = _write_render(
-                folder, mapping, owned=owned, digests=digests)
+            wrote, new_owned, new_owned_deny, note = _write_render(
+                folder, mapping, owned=owned, owned_deny=owned_deny,
+                digests=digests)
             if not note:
                 _unlink_strays(folder, mapping)
                 _unlink_stale_leads(folder, mapping, source)
@@ -644,6 +653,7 @@ def install_pack(
         last = note or _with_note("ok", ignore_note)
         pack_ledger.update(
             folder, settings_allow_owned=new_owned,
+            settings_deny_owned=new_owned_deny,
             gitignore_offered=offered, pack_digests=digests,
             last_result=last)
         return ok, detail, new_owned
@@ -825,11 +835,14 @@ def _resync_one(root: str, raw: dict, source: Path, models=None) -> None:
         if pack_ledger.entry(root) is None:
             return
         owned = [str(item) for item in (live.get("settings_allow_owned") or [])]
+        owned_deny = [
+            str(item) for item in (live.get("settings_deny_owned") or [])]
         offered = [str(item) for item in (live.get("gitignore_offered") or [])]
         digests = pack_ledger.digests_of(live)
         ignore_note = ""
-        _wrote, new_owned, note = _write_render(
-            folder, mapping, owned=owned, digests=digests)
+        _wrote, new_owned, new_owned_deny, note = _write_render(
+            folder, mapping, owned=owned, owned_deny=owned_deny,
+            digests=digests)
         if pack_ledger.entry(root) is None:
             return
         if not note:
@@ -843,6 +856,7 @@ def _resync_one(root: str, raw: dict, source: Path, models=None) -> None:
         pack_ledger.update(
             root,
             settings_allow_owned=new_owned,
+            settings_deny_owned=new_owned_deny,
             gitignore_offered=offered,
             pack_digests=digests,
             last_result=note or _with_note("ok", ignore_note),

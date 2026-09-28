@@ -4,9 +4,13 @@ import Foundation
 
 /// Talks to the daemon. One reader, held open.
 ///
-/// The token is read from disk once and cached; a 403 on a write clears the
-/// cache (`noteAuthRefused`), so a daemon that reissued the file costs one
-/// refused press, never a restart.
+/// Every write carries the **desk token**, which arrives on the menu bar's
+/// context push over stdin (`PanelContext.deskToken`) and is never read from
+/// disk: the file on disk is the session token, which opens only closing a
+/// terminal and a few reads. A 403 on a write asks the menu bar for the
+/// context again (`noteAuthRefused` → `context_refresh`, at most once a
+/// second), so a restarted daemon's fresh token costs one refused press,
+/// never a restart.
 @MainActor
 final class DaemonClient: ObservableObject {
     /// Every writer — `apply`, the two `pending` releases, `loadDoneArchive`
@@ -148,21 +152,22 @@ final class DaemonClient: ObservableObject {
     /// of this client, so no lock.
     private var lastAppliedPayload = ""
 
-    /// The api token, read once and kept — `request()` runs per action and
-    /// per poll, and a file read on each was a syscall per frame for a value
-    /// that changes only when the daemon reissues it. An empty read is not
-    /// cached (the daemon may not have minted the file yet), and a 403 on a
-    /// write clears the cache so the next request re-reads the fresh token.
-    private var cachedToken: String?
+    /// The desk token, off the last context push. `""` until the first push
+    /// lands; a write sent before then is refused and asks for the context.
+    private var token: String { context.deskToken }
 
-    private var token: String {
-        if let cachedToken { return cachedToken }
-        let path = PanelStateDirectory.root
-            .appendingPathComponent("api-token")
-        let read = (try? String(contentsOf: path, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !read.isEmpty { cachedToken = read }
-        return read
+    /// When the last `context_refresh` went out — a burst of 403s (every
+    /// write on a board refresh) asks the menu bar once a second, not once
+    /// per refusal.
+    private var lastContextRefresh: Date?
+
+    /// Ask the menu bar to push the context again, which carries the current
+    /// desk token. Debounced to one request per second.
+    private func requestContextRefresh() {
+        let now = Date()
+        if let last = lastContextRefresh, now.timeIntervalSince(last) < 1 { return }
+        lastContextRefresh = now
+        Panel.send(action: "context_refresh")
     }
 
     // MARK: - The finished column
@@ -197,11 +202,11 @@ final class DaemonClient: ObservableObject {
         doneArchive.retry { [weak self] in await self?.loadDoneArchive() }
     }
 
-    /// A write came back 403: the token on hand no longer matches the file
-    /// the daemon minted (a restart reissues it). Forget it; the press after
-    /// this one reads the current file.
+    /// A write came back 403: the desk token on hand is not the daemon's
+    /// current one (a restart mints a fresh one) or has not arrived yet. Ask
+    /// the menu bar for the context again; the press after this one carries it.
     func noteAuthRefused(_ code: Int) {
-        if code == 403 { cachedToken = nil }
+        if code == 403 { requestContextRefresh() }
     }
 
     /// The pane's stream: one socket per open terminal, carrying the same
@@ -211,7 +216,7 @@ final class DaemonClient: ObservableObject {
     }
 
     /// The stream came back 403: same rule as `noteAuthRefused`.
-    func noteStreamAuthRefused() { cachedToken = nil }
+    func noteStreamAuthRefused() { requestContextRefresh() }
 
     func request(_ path: String) -> URLRequest {
         var req = URLRequest(url: URL(string: "http://\(host):\(port)\(path)")!)

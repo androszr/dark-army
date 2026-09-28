@@ -198,7 +198,8 @@ BUZZ_LEDGER_NAME = "buzz-ledger.jsonl"
 
 
 #: Files here that hold more than the fact that Dark Army is installed, and so are
-#: narrowed to this user on every startup. `api-token` is created 0600 by
+#: narrowed to this user on every startup. `api-token` — the loopback door's
+#: session token; the desk token is never on disk — is created 0600 by
 #: `api_server.load_or_create_token` and needs no help; these predate the habit.
 #: `history.db` is the one that matters — every project path, session title,
 #: model and cost this machine has ever run, and it was mode 0644.

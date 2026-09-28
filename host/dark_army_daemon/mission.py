@@ -129,7 +129,8 @@ def allowed_tools(root) -> tuple:
     `Read(//Users/…/**)` is the spelling the CLI itself writes into
     `settings.json`), `Read` of the one scratch file, and `curl -s` at the
     loopback API. Never a bare `Read` — that would pre-approve
-    `~/.dark-army/api-token` and every other user-readable file — and
+    `~/.dark-army/api-token` (the loopback door's session token) and every
+    other user-readable file — and
     never `Bash(curl:*)`, which is egress to any host. `Grep` and `Glob`
     stay bare: the CLI's own rule is that a `Read` path rule governs them
     as well, and neither prompts on its own. Everything else — `Edit`,

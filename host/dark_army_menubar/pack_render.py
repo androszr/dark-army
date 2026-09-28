@@ -970,9 +970,15 @@ def splice(existing: bytes, managed: bytes) -> bytes:
 
 
 def merge_settings(
-    existing: bytes, managed: bytes, owned: list[str]
-) -> tuple[bytes, list[str]]:
-    """Replace only previously-owned ``permissions.allow`` rows.
+    existing: bytes, managed: bytes, owned: list[str],
+    owned_deny: list[str] | None = None,
+) -> tuple[bytes, list[str], list[str]]:
+    """Replace only previously-owned ``permissions.allow`` and ``deny`` rows.
+
+    Returns ``(bytes, new_owned_allow, new_owned_deny)``. A project's own
+    rows in either list survive; ``owned_deny`` of ``None`` (a ledger row
+    written before the pack owned deny rows) reads as none owned, so the
+    first resync adds the pack's deny rows and removes nothing.
 
     Unparseable existing JSON raises ``PackRenderError`` so the caller can
     leave that one file alone.
@@ -990,44 +996,59 @@ def merge_settings(
             "so Dark Army left it alone"
         )
     try:
-        incoming = json.loads(managed.decode("utf-8"))
+        json.loads(managed.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PackRenderError(
             "the rendered settings.json was not valid JSON"
         ) from exc
-    new_owned: list[str] = []
-    if isinstance(incoming, dict):
-        allow = (incoming.get("permissions") or {}).get("allow") or []
-        if isinstance(allow, list):
-            new_owned = [row for row in allow if isinstance(row, str)]
+    new_owned = settings_allow_rows(managed)
+    new_owned_deny = settings_deny_rows(managed)
     perms = current.get("permissions")
     if not isinstance(perms, dict):
         perms = {}
         current["permissions"] = perms
-    existing_allow = perms.get("allow")
-    if not isinstance(existing_allow, list):
-        existing_allow = []
+    perms["allow"] = _merge_owned_rows(perms.get("allow"), owned, new_owned)
+    if new_owned_deny or owned_deny or "deny" in perms:
+        perms["deny"] = _merge_owned_rows(
+            perms.get("deny"), owned_deny or [], new_owned_deny)
+    return ((json.dumps(current, indent=2) + "\n").encode("utf-8"),
+            new_owned, new_owned_deny)
+
+
+def _merge_owned_rows(existing, owned: list[str],
+                      incoming: list[str]) -> list:
+    """Drop the rows the pack owned last time, keep the project's, add ours."""
+    if not isinstance(existing, list):
+        existing = []
     owned_set = set(owned)
-    kept = [row for row in existing_allow if row not in owned_set]
-    for row in new_owned:
+    kept = [row for row in existing if row not in owned_set]
+    for row in incoming:
         if row not in kept:
             kept.append(row)
-    perms["allow"] = kept
-    return (json.dumps(current, indent=2) + "\n").encode("utf-8"), new_owned
+    return kept
 
 
-def settings_allow_rows(managed: bytes) -> list[str]:
-    """The ``permissions.allow`` rows this pack writes, from rendered JSON."""
+def _permission_rows(managed: bytes, key: str) -> list[str]:
     try:
         incoming = json.loads(managed.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return []
     if not isinstance(incoming, dict):
         return []
-    allow = (incoming.get("permissions") or {}).get("allow") or []
-    if not isinstance(allow, list):
+    rows = (incoming.get("permissions") or {}).get(key) or []
+    if not isinstance(rows, list):
         return []
-    return [row for row in allow if isinstance(row, str)]
+    return [row for row in rows if isinstance(row, str)]
+
+
+def settings_deny_rows(managed: bytes) -> list[str]:
+    """The ``permissions.deny`` rows this pack writes, from rendered JSON."""
+    return _permission_rows(managed, "deny")
+
+
+def settings_allow_rows(managed: bytes) -> list[str]:
+    """The ``permissions.allow`` rows this pack writes, from rendered JSON."""
+    return _permission_rows(managed, "allow")
 
 
 def render(

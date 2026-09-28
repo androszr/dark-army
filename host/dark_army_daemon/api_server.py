@@ -23,6 +23,20 @@ not CORS at all but the `Host` header, which still says `evil.com` because that 
 what the user's browser was told to ask for. So every request must arrive
 addressed to loopback by name. Dark Army's own VS Code extension has always done this;
 this server did not, and the gap was the whole of the read surface.
+
+A local process is the second attacker, and the browser argument says nothing
+about it: any program running as this user — every agent Dark Army starts
+among them — can read any file the daemon writes. So the loopback door holds
+**two tokens** (`docs/transport-contract.md`, *The loopback door has two
+tokens*). The **desk token** (`self.token`) is minted fresh in memory at every
+`start()`, never written to disk, an environment, an argv, a snapshot or a log,
+and handed to the panel over the menu-bar app's private stdin pipe; it opens
+every write. The **session token** (`self.session_token`) is the file that
+already existed, `~/.dark-army/api-token`, and it opens only `SESSION_ACTIONS`
+(closing a terminal without finishing a card, bringing the panel forward) and
+`SESSION_READS`. Everything else refuses it with `DESK_TOKEN_REFUSAL`. This is
+not a sandbox: a same-user process can still read the person's files, kill any
+pid and read the clipboard while the desk key sits on it.
 """
 
 from __future__ import annotations
@@ -61,7 +75,25 @@ logger = logging.getLogger("dark-army.api")
 # to ::1 and have the connection refused. Still loopback-only either way.
 API_HOST = "localhost"
 API_PORT = int(os.environ.get("BOB_COMPANION_API_PORT", "19874"))
+# The **session token**'s file. Readable by every process running as this user —
+# every agent included — so it opens only the verbs and reads below. The desk
+# token that opens everything else lives in memory alone (`ApiServer.start`).
 API_TOKEN_PATH = STATE_DIR / "api-token"
+# What the on-disk session token may do on `/api/action`. `close_terminal`
+# only *without* `by_person` — the flag is the third door into Done
+# (`docs/context-board.md`), and an agent's finishing script never sends it.
+# `reveal_panel` is untrusted aim, never a verb (`_reveal_panel_request`).
+SESSION_ACTIONS = ("close_terminal", "close_refinement_terminal", "reveal_panel")
+# The token-gated GETs the session token may read. `/api/terminal/stream`
+# (it types) and `/api/access-log` (every paired phone's name) stay desk-only,
+# as does the resizing `/api/terminal`.
+SESSION_READS = ("/api/conversation", "/api/knowledge", "/api/scout-reports",
+                 "/api/scout-report", "/api/plans", "/api/plan",
+                 "/api/manual-checks")
+# The 403 detail a session-token holder gets for a desk verb. Words for a
+# person, never the token.
+DESK_TOKEN_REFUSAL = ("that needs Dark Army's desk token — the one on disk only "
+                      "closes terminals and reads")
 # Second listener, opt-in, off by default. Bound to 0.0.0.0 so a phone on the
 # same Wi-Fi can reach it; every request on it is a sealed frame under the
 # device's home key (`relay.HOME`), and the AEAD is the entire boundary on
@@ -562,7 +594,11 @@ class ApiServer:
         # query string -> (monotonic, parsed usage body) for the state fold
         # alone, believed for `USAGE_MEMO_SECONDS`. Memory only, loop only.
         self._usage_memo: dict[str, tuple[float, dict]] = {}
+        # The desk token: minted in `start()`, memory only. `session_token` is
+        # the file's value. Both are emptied on a failed bind, and an empty
+        # token authorises nothing on either tier.
         self.token = ""
+        self.session_token = ""
         # The socket lane's listener (`relay_ws.RelaySocketConnector.nudge`),
         # called at the top of `_broadcast` on every observer callback,
         # before the SSE early return: the picture changed, whether or not
@@ -621,7 +657,12 @@ class ApiServer:
     # --- lifecycle ---
 
     async def start(self) -> None:
-        self.token = load_or_create_token()
+        # The desk token is never written anywhere: it reaches the panel over
+        # the menu-bar app's stdin pipe alone (`BobDaemon.desk_token`). The
+        # file keeps its value — never re-minted — and becomes the session
+        # token, which is exactly what an older build reads after a downgrade.
+        self.token = secrets.token_urlsafe(32)
+        self.session_token = load_or_create_token()
         try:
             self._server = await asyncio.start_server(
                 self._handle_client, self._host, self._port, reuse_address=True,
@@ -632,6 +673,7 @@ class ApiServer:
             # is reachable, and a token with no listener behind it sends the menu
             # off to open a URL that refuses the connection.
             self.token = ""
+            self.session_token = ""
             raise
         self._daemon.add_observer(self)
         self._daemon._schedule_agents_push()   # populate before the first request
@@ -1197,9 +1239,9 @@ class ApiServer:
                 return
             if request.path == "/api/conversation" and request.method == "GET":
                 # Token-gated although a read: a person's whole conversation,
-                # like `/api/knowledge`. `_authorised`'s token half; empty
+                # like `/api/knowledge`. Either token (`_session_authorised`); empty
                 # Origin is allowed on GET. Host already ran above.
-                if not self._authorised(request):
+                if not self._session_authorised(request):
                     await self._respond(writer, 403, "application/json",
                                         b'{"error":"forbidden"}')
                     return
@@ -1219,9 +1261,9 @@ class ApiServer:
             if request.path == "/api/knowledge" and request.method == "GET":
                 # Token-gated although a read: standing policy agents treat
                 # as source of truth, never on `/api/state`, and another
-                # project's notes. `_authorised`'s token half; empty Origin
+                # project's notes. Either token (`_session_authorised`); empty Origin
                 # is allowed on GET. Host already ran above.
-                if not self._authorised(request):
+                if not self._session_authorised(request):
                     await self._respond(writer, 403, "application/json",
                                         b'{"error":"forbidden"}')
                     return
@@ -1233,10 +1275,10 @@ class ApiServer:
                 # Token-gated although a read, exactly as `/api/knowledge`:
                 # every watched project's report titles and verdicts, or
                 # with `?q=` the reports whose body holds the term (a text
-                # search, `scout_index.search`). `_authorised`'s token
-                # half; empty Origin is allowed on GET. Host already ran
-                # above.
-                if not self._authorised(request):
+                # search, `scout_index.search`). Either token
+                # (`_session_authorised`); empty Origin is allowed on GET.
+                # Host already ran above.
+                if not self._session_authorised(request):
                     await self._respond(writer, 403, "application/json",
                                         b'{"error":"forbidden"}')
                     return
@@ -1247,7 +1289,7 @@ class ApiServer:
             if request.path == "/api/scout-report" and request.method == "GET":
                 # One report's text — token-gated like `/api/knowledge`, and
                 # only for a path in `scout_index.locate`'s closed set.
-                if not self._authorised(request):
+                if not self._session_authorised(request):
                     await self._respond(writer, 403, "application/json",
                                         b'{"error":"forbidden"}')
                     return
@@ -1258,9 +1300,9 @@ class ApiServer:
             if request.path == "/api/plans" and request.method == "GET":
                 # Token-gated although a read, exactly as
                 # `/api/scout-reports`: every watched project's plan titles.
-                # `_authorised`'s token half; empty Origin is allowed on
+                # Either token (`_session_authorised`); empty Origin is allowed on
                 # GET. Host already ran above.
-                if not self._authorised(request):
+                if not self._session_authorised(request):
                     await self._respond(writer, 403, "application/json",
                                         b'{"error":"forbidden"}')
                     return
@@ -1270,7 +1312,7 @@ class ApiServer:
             if request.path == "/api/plan" and request.method == "GET":
                 # One plan's text — token-gated like `/api/scout-report`, and
                 # only for a path in `plan_index.locate`'s closed set.
-                if not self._authorised(request):
+                if not self._session_authorised(request):
                     await self._respond(writer, 403, "application/json",
                                         b'{"error":"forbidden"}')
                     return
@@ -1281,9 +1323,9 @@ class ApiServer:
                 # Token-gated although a read, exactly as `/api/knowledge`:
                 # every watched project's leftover checks and their steps.
                 # `?root=&q=&status=` is the list, `?path=` one file's text.
-                # `_authorised`'s token half; empty Origin is allowed on
+                # Either token (`_session_authorised`); empty Origin is allowed on
                 # GET. Host already ran above.
-                if not self._authorised(request):
+                if not self._session_authorised(request):
                     await self._respond(writer, 403, "application/json",
                                         b'{"error":"forbidden"}')
                     return
@@ -1294,7 +1336,7 @@ class ApiServer:
             if request.path == "/api/access-log" and request.method == "GET":
                 # Token-gated although a read, exactly as `/api/knowledge`:
                 # every address that knocked and every paired phone's name.
-                # `_authorised`'s token half; empty Origin is allowed on
+                # Desk token only (`_authorised`); empty Origin is allowed on
                 # GET. Host already ran above.
                 if not self._authorised(request):
                     await self._respond(writer, 403, "application/json",
@@ -1578,7 +1620,12 @@ class ApiServer:
         return name in cls.LOOPBACK_HOSTS
 
     def _authorised(self, request: _Request) -> bool:
-        """Writes need the token *and* an origin that isn't someone else's page."""
+        """Writes need the token *and* an origin that isn't someone else's page.
+
+        The token here is the **desk token** alone — memory only, handed to the
+        panel over its stdin pipe. The file's session token never passes this
+        gate; `_session_authorised` is the narrower one that accepts it.
+        """
         # compare_digest, not `!=`: this is the gate, and `!=` on a str returns
         # as soon as two bytes differ. Guarded on an empty token because a
         # daemon that failed to bind drops it to "" (see `start`), and an empty
@@ -1588,6 +1635,30 @@ class ApiServer:
         if not hmac.compare_digest(request.headers.get("x-bob-token", ""),
                                    self.token):
             return False
+        return self._origin_ok(request)
+
+    def _session_authorised(self, request: _Request) -> bool:
+        """Either token, plus the same Origin rule — the gate for the
+        session tier alone (`SESSION_ACTIONS`, `SESSION_READS`).
+
+        Two `compare_digest` calls, never `in` on a tuple, and an empty token
+        on either side matches nothing: a failed bind empties both, and an
+        empty secret equal to an absent header would open the tier. Every
+        other write keeps `_authorised`, so a session token there falls
+        through to `_route`, which answers 403 with `DESK_TOKEN_REFUSAL`.
+        """
+        presented = request.headers.get("x-bob-token", "")
+        if not presented:
+            return False
+        desk = bool(self.token) and hmac.compare_digest(presented, self.token)
+        session = (bool(self.session_token)
+                   and hmac.compare_digest(presented, self.session_token))
+        if not (desk or session):
+            return False
+        return self._origin_ok(request)
+
+    def _origin_ok(self, request: _Request) -> bool:
+        """The Origin half of both gates: absent, or one spelling of this server."""
         origin = request.headers.get("origin", "")
         # Every spelling of "this server": the browser sends whichever the user
         # typed, and they all reach the same loopback listener.
@@ -1620,7 +1691,12 @@ class ApiServer:
             if request.method != "POST":
                 return 405, "application/json", b'{"error":"method not allowed"}'
             if not self._authorised(request):
-                return 403, "application/json", b'{"error":"forbidden"}'
+                body = {"error": "forbidden"}
+                # A session-token holder is told, in words, why: the verb
+                # needs the desk token. A guessed token hears nothing more.
+                if self._session_authorised(request):
+                    body["detail"] = DESK_TOKEN_REFUSAL
+                return 403, "application/json", json.dumps(body).encode()
             return self._action(request.json())
         return 404, "application/json", b'{"error":"not found"}'
 
@@ -1713,10 +1789,12 @@ class ApiServer:
         duplicated nowhere. Both fields are coerced rather than validated: the
         daemon treats them as untrusted *aim* (they can select a row, never run
         a verb), and a pair that names nothing simply opens the panel plainly.
+        On the session tier (`SESSION_ACTIONS`): an agent may pop the panel
+        with the file's token, a nuisance and not a capability.
         """
         if request.path != "/api/action" or request.method != "POST":
             return None
-        if not self._authorised(request):
+        if not self._session_authorised(request):
             return None
         payload = request.json()
         if payload.get("action") != "reveal_panel":
@@ -1783,8 +1861,10 @@ class ApiServer:
 
     def _refinement_close_request(self, request: _Request) -> Optional[str]:
         # Only the authenticated loopback handler calls this; never a sealed door.
+        # Session tier (`SESSION_ACTIONS`): the planning run's own close-out
+        # sends it with the file's token.
         if (request.path != "/api/action" or request.method != "POST"
-                or not self._authorised(request)):
+                or not self._session_authorised(request)):
             return None
         payload = request.json()
         sid = payload.get("session_id")
@@ -1799,10 +1879,16 @@ class ApiServer:
         sends this same action at the end of an agent's own turn and carries
         no such key, and an older panel or phone build simply does not finish
         cards.
+
+        Session tier (`SESSION_ACTIONS`), **without** `by_person`: the file's
+        token closes a terminal and finishes nothing. `by_person` with only
+        the session token returns None, so `_route` refuses it with
+        `DESK_TOKEN_REFUSAL` — the board's third door into Done stays the
+        desk's.
         """
         if request.path != "/api/action" or request.method != "POST":
             return None
-        if not self._authorised(request):
+        if not self._session_authorised(request):
             return None
         payload = request.json()
         if payload.get("action") != "close_terminal":
@@ -1810,7 +1896,10 @@ class ApiServer:
         session_id = payload.get("session_id", "")
         if not session_id:
             return None
-        return session_id, payload.get("by_person") in (True, "1", "true")
+        by_person = payload.get("by_person") in (True, "1", "true")
+        if by_person and not self._authorised(request):
+            return None
+        return session_id, by_person
 
     def _low_priority_request(self, request: _Request) -> Optional[str]:
         """The session id if this is an authorised low-priority press, else None."""

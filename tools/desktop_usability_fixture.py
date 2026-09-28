@@ -244,8 +244,9 @@ class OwnedState:
         if not self.path.exists():
             self.path.mkdir(mode=0o700)
             self.created_dir = True
-        for name, text in ((MARKER, json.dumps({'synthetic': True, 'pid': os.getpid()})),
-                           ('api-token', 'r24-synthetic-' + secrets.token_urlsafe(32))):
+        # The marker alone: the panel's desk token rides the first context
+        # push on stdin (`launch`), never a file, exactly as the app hands it.
+        for name, text in ((MARKER, json.dumps({'synthetic': True, 'pid': os.getpid()})),):
             fd = os.open(self.path / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, 'w') as stream:
                 stream.write(text)
@@ -321,6 +322,7 @@ def launch(scenario: Scenario, *, home: Path, attest: bool, panel: Path = PANEL,
         child = spawn([str(panel)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                       text=True, bufsize=1, cwd=str(REPO))
         panel_command(child.stdin, 'context', build='R24 synthetic research',
+                      desk_token='r24-synthetic-' + secrets.token_urlsafe(32),
                       settings={'panel_scale': 100})
         panel_command(child.stdin, 'show')
 

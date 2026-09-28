@@ -585,6 +585,32 @@ def test_a_projects_env_key_survives_two_installs_and_the_rows_are_replaced(
     assert allow.count("Bash(python3 .claude/skills/shunt/exempt.py:*)") == 1
 
 
+def test_a_resync_adds_the_guard_rows_once_and_keeps_the_projects_deny(
+        tmp_path, monkeypatch):
+    """The pack's deny rows reach a project whose settings.json already
+    exists, once, beside the project's own deny rows, and the ledger records
+    them as owned (`settings_deny_owned`)."""
+    import json
+    root = tmp_path / "proj"
+    (root / ".claude").mkdir(parents=True)
+    (root / ".claude" / "settings.json").write_text(json.dumps({
+        "permissions": {"allow": [], "deny": ["Bash(git push:*)"]},
+    }))
+    monkeypatch.setattr("dark_army_daemon.paths.AGENT_PACK_PATH",
+                        tmp_path / "agent-pack.json")
+    folder = _admit(monkeypatch, root)
+    for _ in range(2):
+        ok, detail, _owned = pack_install.install_pack(
+            folder, "web", "xx", "sample-app")
+        assert ok, detail
+    deny = json.loads(
+        (root / ".claude" / "settings.json").read_text())["permissions"]["deny"]
+    assert deny[0] == "Bash(git push:*)"
+    assert deny.count("Read(**/.dark-army/key)") == 1
+    assert deny.count("Read(~/.dark-army/api-token)") == 1
+    assert "Read(**/.dark-army/key)" in pack_ledger.entry(folder)["settings_deny_owned"]
+
+
 def test_detect_app_reads_the_xcodeproj_name(tmp_path):
     (tmp_path / "ios" / "Ledgerly.xcodeproj").mkdir(parents=True)
     assert pack_install.detect_app(str(tmp_path)) == "Ledgerly"

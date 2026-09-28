@@ -130,8 +130,15 @@ change that is not loaded.
 
 ## Phase 3: the API
 
+The file is the **session token**: it closes terminals, pops the panel and
+reads, and every other write refuses it with the daemon's words naming the
+desk token. The **desk token** lives in memory only; for its line, the person
+copies it from Settings → Advanced → Copy desk key and exports
+`DARK_ARMY_DESK_TOKEN` in the shell running this probe
+(`docs/transport-contract.md`, *The loopback door has two tokens*).
+
 ```bash
-TOKEN=$(cat ~/.dark-army/api-token 2>/dev/null)
+TOKEN=$(cat ~/.dark-army/api-token 2>/dev/null)   # the session token
 
 # Reads are ungated by design.
 curl -sS --max-time 3 http://127.0.0.1:19874/api/state | head -c 4000
@@ -148,16 +155,22 @@ curl -sS --max-time 4 -N http://127.0.0.1:19874/api/events | head -c 500
 curl -sS -o /dev/null -w 'bearer      -> %{http_code}\n' --max-time 3 \
   -H "Authorization: Bearer $TOKEN" -X POST http://127.0.0.1:19874/api/action \
   -d '{"action":"noop"}'
-curl -sS -o /dev/null -w 'x-bob-token -> %{http_code}\n' --max-time 3 \
+curl -sS -w '\nsession     -> %{http_code}\n' --max-time 3 \
   -H "X-Bob-Token: $TOKEN" -X POST http://127.0.0.1:19874/api/action \
+  -d '{"action":"noop"}'
+# Only when the person exported the desk token for this probe.
+[ -n "$DARK_ARMY_DESK_TOKEN" ] && \
+curl -sS -o /dev/null -w 'desk        -> %{http_code}\n' --max-time 3 \
+  -H "X-Bob-Token: $DARK_ARMY_DESK_TOKEN" -X POST http://127.0.0.1:19874/api/action \
   -d '{"action":"noop"}'
 ```
 
-**Expected: `bearer -> 403`, `x-bob-token -> 400`.** The 400 is the *pass* —
-it means the token was accepted and the daemon got as far as rejecting an
-unknown action. Reading it as a failure is the obvious mistake here. A `403` on
-the second line means every panel action is dead; a `400` on the first means the
-gate is not gating.
+**Expected: `bearer -> 403`, `session -> 403` with `desk token` in the body,
+and — when the desk token was exported — `desk -> 400`.** The session line's
+403 is the *pass*: the on-disk token must not open a desk verb, and a `400`
+there means the split is not gating. The desk line's 400 is the other pass —
+the token was accepted and the daemon got as far as rejecting an unknown
+action; a `403` there means every panel action is dead.
 
 Assert and report:
 
@@ -165,9 +178,10 @@ Assert and report:
   when empty: the running / waiting / sleeping groups, `finished`, notifications,
   subagent rows, `trend`, `mesh`. **An absent key is the panel's worst input** —
   Swift's synthesized `Decodable` throws on a missing key even with a default.
-- the `Authorization: Bearer` call is refused and the `X-Bob-Token` call is not
-  refused *for the same token*. If Bearer is accepted, the gate is wrong; if
-  X-Bob-Token is refused, every panel action is silently 403ing.
+- the `Authorization: Bearer` call is refused, the session token is refused
+  with the desk-token detail, and the desk token (when exported) is not
+  refused. If Bearer or the session token is accepted, the gate is wrong; if
+  the desk token is refused, every panel action is silently 403ing.
 - the API binds **loopback only**. `lsof` in Phase 1 showing `*:19874` rather
   than `127.0.0.1:19874` is a finding on its own.
 - `/api/events` delivers at least an initial frame within the timeout.

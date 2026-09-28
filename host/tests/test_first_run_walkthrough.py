@@ -102,6 +102,10 @@ def test_a_first_launch_replay_ticks_both_facts_in_order(short_home):
     assert evidence["key_dir"] == ".dark-army"
     assert evidence["legacy_key_dir_present"] is False
     assert evidence["key_mode"] == "0o600"
+    # The session token's file is private and the desk token is not in it:
+    # the enrolment rode the desk token off the in-process daemon.
+    assert evidence["session_token_mode"] == "0o600"
+    assert evidence["desk_token_on_disk"] is False
     assert evidence["key_dir_gitignore"] == "*\n"
     assert evidence["project_gitignore_lines"] == 1
     assert evidence["project_entries"] == [".dark-army", ".gitignore"]

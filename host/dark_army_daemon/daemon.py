@@ -5941,6 +5941,19 @@ class BobDaemon(BoardVerbsMixin):
                     self._log_permission(row, "permission_resolved",
                                          outcome="lapsed", why=why)
 
+    def desk_token(self) -> str:
+        """The loopback door's desk token, for the panel's context push alone.
+
+        Minted in memory by `ApiServer.start()` and never written to disk; the
+        menu-bar app hands it to the panel over its private stdin pipe
+        (`_push_panel_context`). It must never reach a snapshot, a log line or
+        a file. A plain `str` read, safe from any thread; `""` before `start()`
+        and after a failed bind.
+        """
+        return getattr(self._api, "token", "") or ""
+
+    # `request_id` stays published on every row below: the phone's lock-screen
+    # Allow needs it, and it is harmless because the verdict needs the desk token.
     def _permission_snapshot(self) -> list[dict]:
         """The open prompts, oldest first — the order they blocked in.
 

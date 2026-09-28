@@ -60,6 +60,12 @@ extension AppDelegate {
                         if let label = obj["rebuild_label"] as? String, !label.isEmpty {
                             ctx.rebuildLabel = label
                         }
+                        // The desk token: a present, non-empty value replaces;
+                        // absent (an older app) or empty keeps what is held,
+                        // so a push never blanks the panel's writes.
+                        if let tok = obj["desk_token"] as? String, !tok.isEmpty {
+                            ctx.deskToken = tok
+                        }
                         ctx.grokPercent = self.jsonDouble(obj["grok_percent"])
                         ctx.grokResetsAt = self.jsonDouble(obj["grok_resets_at"])
                         if let raw = obj["settings"] as? [String: Any] {

@@ -12,8 +12,8 @@ conservative fallback (`docs/agent-context.json`). The board's *rules* are in
 
 ## Panel (`panel/`)
 
-A SwiftUI/AppKit executable (`BobPanel`). Reads `~/.dark-army/api-token`,
-GETs `/api/state`, holds `/api/events` (SSE) open, and renders the live buckets
+A SwiftUI/AppKit executable (`BobPanel`). Takes the desk token off the menu
+bar's context push (never from disk), GETs `/api/state`, holds `/api/events` (SSE) open, and renders the live buckets
 with a per-agent face from `assets/cast`. Launched and driven over stdin by the
 menu bar (`panel_process.py`), not respawned per click.
 
@@ -644,3 +644,13 @@ the wrong header looks like it works and every action silently 403s. And
 `*_writable` flags are for the phone, which can meet an older Mac; the panel
 ships with its daemon, so `Board` carries none and every "drawn absent on an
 older Mac" sentence below is the phone's.
+
+**The header carries the desk token, and it never comes from disk.** It
+arrives on the menu bar's `context` push over stdin (`PanelContext.deskToken`,
+empty until the first push, never blanked by a push without one); the file
+under `~/.dark-army` is the session token, which only closes terminals and
+reads. A 403 sends `context_refresh`, at most once a second, and the app
+pushes the context again (`docs/transport-contract.md`, *The loopback door
+has two tokens*). Settings → Advanced → **Copy desk key** (armed, then
+confirmed, drawn only while a key is held) puts it on the clipboard for the
+person's own tools.

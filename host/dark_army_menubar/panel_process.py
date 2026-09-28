@@ -320,7 +320,15 @@ class PanelProcess:
     def set_context(self, **fields) -> bool:
         """Tell the panel the things only the menu bar knows — build staleness,
         the Grok window (a different account than the one `/api/usage` reports
-        on), and every preference, since the panel owns the settings UI."""
+        on), and every preference, since the panel owns the settings UI.
+
+        It also carries ``desk_token``, the loopback door's desk token
+        (`docs/transport-contract.md`, *The loopback door has two tokens*):
+        this pipe is the only road it takes to the panel, because a third
+        process can read neither side of it — unlike a file, the environment
+        or an argv. So **no payload is ever logged** on this path: `_send`,
+        `_enqueue` and `_drain_outbox` log a broken pipe and nothing else, and
+        `test_menubar.py` pins that the value reaches no log line."""
         return self._send({"action": "context", **fields})
 
     @staticmethod

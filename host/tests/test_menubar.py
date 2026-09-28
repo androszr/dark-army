@@ -1715,9 +1715,11 @@ def test_every_action_the_panel_offers_has_a_handler():
     # source tree (`_push_panel_context` → `dev_build.check_staleness`) every
     # beat. It has a handler; it just is not a table row. See
     # test_panel_visibility.py.
-    # `panel_visibility` and `panel_terminal` are handled before the table
-    # (`_on_panel_action`), so neither has a row in it.
-    assert sent <= set(BobCompanionApp.PANEL_ACTIONS) | {"panel_visibility", "panel_terminal"}
+    # `panel_visibility`, `panel_terminal` and `context_refresh` (a 403 asking
+    # for the desk token again) are handled before the table
+    # (`_on_panel_action`), so none has a row in it.
+    assert sent <= set(BobCompanionApp.PANEL_ACTIONS) | {
+        "panel_visibility", "panel_terminal", "context_refresh"}
 
 
 def test_an_unknown_panel_action_is_ignored():
@@ -3003,3 +3005,88 @@ def test_strip_clock_lives_on_the_instance():
     registered = [t.callback for t in rumps.timer.__dict__.get("*timers", [])]
     assert BobCompanionApp._animate_icon not in registered
     assert registered, "the 30s timers should still be decorated"
+
+
+# The desk token rides the context push, and only the context push
+# (`docs/transport-contract.md`, *The loopback door has two tokens*).
+
+class _DeskDaemon:
+    def __init__(self, token="desk-secret-value"):
+        self.token = token
+
+    def desk_token(self):
+        return self.token
+
+
+def test_panel_context_carries_the_desk_token():
+    daemon = _DeskDaemon()
+    app = _context_app(_daemon=daemon)
+    app._push_panel_context()
+    assert app._panel.contexts[-1]["desk_token"] == daemon.desk_token()
+    # Never inside the settings dict, which other code reads and logs.
+    assert "desk_token" not in app._panel.contexts[-1]["settings"]
+
+
+def test_panel_context_desk_token_is_empty_before_the_daemon():
+    app = _context_app(_daemon=None)
+    app._push_panel_context()
+    assert app._panel.contexts[-1]["desk_token"] == ""
+
+
+def test_the_desk_token_reaches_no_log_line(caplog):
+    """Across a push through the real `PanelProcess` send path — `_send`,
+    `_enqueue` and the sender thread's `_drain_outbox` write — the value
+    rides the pipe and appears in no log record."""
+    import io
+    import json
+    import logging
+    import threading
+    import time
+    from collections import deque
+    from dark_army_menubar import panel_process as PP
+
+    secret = "desk-secret-never-logged"
+    panel = object.__new__(PP.PanelProcess)
+    panel._lock = threading.Lock()
+    panel._outbox = deque()
+    panel._outbox_cond = threading.Condition()
+    panel._alive = lambda: True
+    panel._spawn = lambda: True
+    panel._path = "/stub/BobPanel"
+    written = io.BytesIO()
+
+    class _Proc:
+        stdin = written
+
+    app = _context_app(_daemon=_DeskDaemon(secret))
+    app._panel = panel
+    stop = threading.Event()
+    with caplog.at_level(logging.DEBUG):
+        app._push_panel_context()
+        writer = threading.Thread(
+            target=panel._drain_outbox,
+            args=(_Proc, panel._outbox, panel._outbox_cond, stop))
+        writer.start()
+        deadline = time.monotonic() + 5
+        while secret.encode() not in written.getvalue():
+            assert time.monotonic() < deadline, "the line never reached the pipe"
+            time.sleep(0.01)
+        stop.set()
+        with panel._outbox_cond:
+            panel._outbox_cond.notify_all()
+        writer.join(5)
+    assert json.loads(written.getvalue().splitlines()[0])["desk_token"] == secret
+    for record in caplog.records:
+        assert secret not in record.getMessage()
+        assert secret not in str(record.args)
+
+
+def test_context_refresh_pushes_the_context_again(caplog):
+    import logging
+    pushed = []
+    instance = _action_app()
+    instance._push_panel_context = lambda: pushed.append(True)
+    with caplog.at_level(logging.WARNING):
+        _dispatch(instance, "context_refresh")
+    assert pushed == [True]
+    assert not any("Ignoring unknown" in r.getMessage() for r in caplog.records)

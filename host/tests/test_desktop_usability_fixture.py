@@ -165,11 +165,11 @@ def test_startup_refusals_precede_spawn(tmp_path, scenario, executable):
         fixture.launch(scenario, **dict(kwargs, roster=lambda: ['BobPanel']))
     state = tmp_path / '.dark-army'
     state.mkdir()
-    sentinel = state / 'api-token'
-    sentinel.write_text('existing token')
+    sentinel = state / 'preferences.json'
+    sentinel.write_text('existing preferences')
     with pytest.raises(fixture.Refusal, match='already has files'):
         fixture.launch(scenario, **kwargs)
-    assert sentinel.read_text() == 'existing token'
+    assert sentinel.read_text() == 'existing preferences'
     sentinel.unlink()
     with socket.socket() as occupied:
         occupied.bind(('127.0.0.1', 0))
@@ -202,7 +202,8 @@ def test_exact_argv_pipe_context_and_owned_cleanup(tmp_path, scenario, executabl
         assert kwargs['stdin'] == fixture.subprocess.PIPE
         assert kwargs['stdout'] == fixture.subprocess.PIPE
         state = tmp_path / '.dark-army'
-        assert set(p.name for p in state.iterdir()) == {fixture.MARKER, 'api-token'}
+        # The marker alone: the desk token rides stdin, never a file.
+        assert set(p.name for p in state.iterdir()) == {fixture.MARKER}
         (state / 'panel-position.json').write_text('{}')
         (state / 'unknown-user-file').write_text('preserve')
         return child
@@ -210,6 +211,8 @@ def test_exact_argv_pipe_context_and_owned_cleanup(tmp_path, scenario, executabl
                    port=0, roster=lambda: [], spawn=spawn, commands=['status', 'removed', 'quit'])
     commands = [json.loads(line) for line in seen[0].splitlines()]
     assert [c['action'] for c in commands] == ['context', 'show', 'quit']
+    # The first context push carries the synthetic desk token.
+    assert commands[0]['desk_token'].startswith('r24-synthetic-')
     assert scenario.frame == 'removed'
     state = tmp_path / '.dark-army'
     assert [p.name for p in state.iterdir()] == ['unknown-user-file']
@@ -280,7 +283,7 @@ def test_timeout_never_closes_stdout_held_by_a_live_reader(tmp_path, scenario, e
     assert child.stdout.closes == 0
     state = tmp_path / '.dark-army'
     assert (state / fixture.MARKER).exists()
-    assert (state / 'api-token').exists()
+    assert not (state / 'api-token').exists()
     assert scenario.attempts[-1]['kind'] == 'teardown_pending'
     # Test fixture owns this in-memory stream; there is no real child/reader.
     child.stdout.close()

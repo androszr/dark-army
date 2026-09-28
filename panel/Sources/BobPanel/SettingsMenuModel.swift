@@ -82,6 +82,9 @@ struct SettingsRow: Equatable, Identifiable {
         case designSystem
         /// Stop everything of Dark Army's that is running, in one press.
         case killSwitch
+        /// Copy the loopback door's desk token to the clipboard, armed then
+        /// confirmed — for the person's own command-line tools.
+        case copyDeskToken
     }
 
     enum Kind: Equatable {
@@ -147,6 +150,7 @@ enum SettingsMenuModel {
         packArmed: String? = nil,
         stopSyncArmed: String? = nil,
         killArmed: Bool = false,
+        deskTokenArmed: Bool = false,
         agentModels: DaemonClient.AgentModels? = nil,
         security: SecuritySection = SecuritySection()
     ) -> [SettingsRow] {
@@ -315,6 +319,16 @@ enum SettingsMenuModel {
                              id: launchRowId))
         advanced.append(divider("advanced-log"))
         advanced.append(send("Open log", action: "open_log"))
+        // The desk key, for the person's own command-line tools. Drawn only
+        // once the panel holds one, so a press never copies an empty string;
+        // armed then confirmed, because it puts a secret on the clipboard.
+        if !context.deskToken.isEmpty {
+            advanced.append(SettingsRow(
+                id: deskTokenRowId,
+                title: deskTokenArmed ? deskTokenArmedTitle : deskTokenTitle,
+                kind: .custom(.copyDeskToken),
+                tooltip: deskTokenTooltip))
+        }
         let line = buildLine(settings: s, context: context)
         if !line.isEmpty {
             advanced.append(info(line, id: "info:build", disabled: true))
@@ -377,6 +391,16 @@ enum SettingsMenuModel {
     /// for the heading it lands under, and the panel's arming slot keys off
     /// nothing else, so a rename here is a rename in three tests.
     static let killRowId = "custom:killSwitch"
+    /// The Copy desk key row under Advanced, spelled once for the tests.
+    static let deskTokenRowId = "custom:copyDeskToken"
+    static let deskTokenTitle = "Copy desk key"
+    static let deskTokenArmedTitle = "Press again: copy the desk key"
+    static let deskTokenTooltip =
+        "Puts Dark Army's desk key on the clipboard, for your own command-line "
+        + "tools: export it as DARK_ARMY_DESK_TOKEN in the terminal that runs "
+        + "them. It opens every action the panel can take, and Dark Army makes "
+        + "a new one each time it starts. The key file on disk only closes "
+        + "terminals and reads."
     /// The launch line's row id under Advanced.
     static let launchRowId = "info:launch"
     static let killTitle = "Kill switch — stop everything"
