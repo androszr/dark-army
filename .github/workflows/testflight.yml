@@ -30,10 +30,12 @@ concurrency:
 jobs:
   upload:
     name: Archive and upload to TestFlight
-    # Only the private repository holds the App Store Connect key. A copy of
-    # this file anywhere else (the public repository, a fork) skips the job
-    # instead of failing on a secret it was never given.
-    if: github.repository == 'androszr/bob-companion'
+    # Only androszr/dark-army holds the App Store Connect key, and only in its
+    # `testflight` environment, which admits the `main` branch alone. A copy
+    # of this file anywhere else (a fork, the archived private repository)
+    # skips the job instead of failing on a secret it was never given.
+    if: github.repository == 'androszr/dark-army'
+    environment: testflight
     # macos-15 still ships the iOS 18 SDK. App Store Connect now refuses
     # uploads not built with the iOS 26 SDK (Xcode 26).
     runs-on: macos-26
@@ -84,6 +86,9 @@ jobs:
       # line. There is nobody here to press Trust, so the archive says so up
       # front. The flag is the same one the local build and test invocations
       # carry.
+      # The build number is the run number plus 100. App Store Connect refuses
+      # a build number it has already seen, and the private repository's run
+      # counter reached 95 before TestFlight moved here and restarted at 1.
       - name: Archive
         run: |
           set -euo pipefail
@@ -97,7 +102,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=- \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }}
+            CURRENT_PROJECT_VERSION=$(( ${{ github.run_number }} + 100 ))
 
       # The app and the notification appex are signed WITH the
       # communication capability (the `.communication.entitlements`
@@ -244,6 +249,6 @@ jobs:
         run: |
           echo "### Uploaded to TestFlight" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Build \`${{ github.run_number }}\` from \`${{ github.sha }}\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "Build \`$(( ${{ github.run_number }} + 100 ))\` from \`${{ github.sha }}\`." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "It reaches the phone once App Store Connect finishes processing — internal testing needs no review." >> "$GITHUB_STEP_SUMMARY"

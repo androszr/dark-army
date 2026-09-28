@@ -5,7 +5,7 @@ description: Cuts a new versioned release of the Dark Army macOS menu bar app on
 
 # Releasing Dark Army
 
-The remote is **GitHub** (`origin` → `github.com/androszr/bob-companion`), and
+The remote is **GitHub** (`origin` → `github.com/androszr/dark-army`), and
 the default branch is **`main`**. GitLab is not used and its remote has been
 removed. There is **no release-building CI**, so the release artifact is
 **built locally** with `host/build.sh` and attached to a GitHub release.
@@ -148,7 +148,7 @@ mkdir -p host/dist
   echo "<replace: three to six sentences a person cares about, picked from the list below>"; echo
   echo "## Every change"; echo
   git log --no-merges --format='- %s' ${prev:+"$prev"..}"$tag"
-  if [ -n "$prev" ]; then echo; echo "Compare: https://github.com/androszr/bob-companion/compare/$prev...$tag"; fi
+  if [ -n "$prev" ]; then echo; echo "Compare: https://github.com/androszr/dark-army/compare/$prev...$tag"; fi
 } > host/dist/release-notes.md
 ```
 
@@ -163,7 +163,7 @@ tagged tree stays clean.
 
 ```bash
 gh release create vX.Y.Z host/dist/dark-army-macos-arm64.zip \
-  --repo androszr/bob-companion \
+  --repo androszr/dark-army \
   --title "vX.Y.Z — <theme>" \
   --notes-file host/dist/release-notes.md
 ```
@@ -243,7 +243,7 @@ add the title, and paste `host/dist/release-notes.md` as the description →
 
 **7. Verify:**
 ```bash
-gh release view vX.Y.Z --repo androszr/bob-companion   # expect the .zip asset listed
+gh release view vX.Y.Z --repo androszr/dark-army   # expect the .zip asset listed
 ```
 
 ## Optional: update your own machine

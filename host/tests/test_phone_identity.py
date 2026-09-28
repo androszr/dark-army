@@ -90,6 +90,20 @@ def test_the_testflight_check_reads_the_group_from_the_identity_file():
     assert wf.count("ios/Config/Identity.xcconfig") >= 2
 
 
+def test_testflight_ships_from_the_public_repository():
+    # TestFlight moved from the private androszr/bob-companion to the public
+    # androszr/dark-army on 28 Sep 2026. The key lives in the public repo's
+    # `testflight` environment, so the job must name it, and the build number
+    # must clear the private repo's last build (95), since the new repo's run
+    # counter restarted at 1 and App Store Connect refuses a reused number.
+    wf = (ROOT / ".github" / "workflows" / "testflight.yml").read_text()
+    assert "if: github.repository == 'androszr/dark-army'" in wf
+    assert "androszr/bob-companion'" not in wf
+    assert "\n    environment: testflight\n" in wf
+    assert "CURRENT_PROJECT_VERSION=$(( ${{ github.run_number }} + 100 ))" in wf
+    assert "CURRENT_PROJECT_VERSION=${{ github.run_number }}" not in wf
+
+
 def test_testflight_signs_with_rendered_entitlements_and_team():
     # The archive is unsigned and the workflow signs it with `codesign`, which
     # does not expand build settings: the raw files would embed the literal
