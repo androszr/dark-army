@@ -384,7 +384,13 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     nothing), closes the terminal and spawns the brief on disk; an
     unconfirmed close keeps what runs. An adopted terminal is stamped
     current. This is how a Mission Control spawned "read-only" stopped
-    saying so once the brief that made it act landed. `end_mission()` closes the terminal
+    saying so once the brief that made it act landed. **The folder is
+    compared the same way**, on the alive rung and the adopt rung: a
+    terminal whose root is not `_find_own_checkout()` now (which answers
+    `dev_build.main_checkout`, never a card's side folder) is closed and
+    re-spawned — one opened from a side folder lost the board when Done
+    took that folder's key back; an unreadable checkout keeps what runs.
+    `end_mission()` closes the terminal
     alone: the record is blanked only on a confirmed close
     (`PtyHost.close` False keeps it: `MISSION_CLOSE_FAILED_REFUSAL`),
     keeps `ended` / `ended_at`, so `mission_snapshot()` (omittable,

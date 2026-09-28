@@ -322,6 +322,70 @@ async def test_a_terminal_spawned_on_an_older_brief_is_replaced_on_the_next_open
         await _close_all(d)
 
 
+def _side_folder(checkout: Path) -> Path:
+    """A card's side folder as git leaves one: `.git` is a file naming the
+    worktree's git folder, whose `commondir` names the main `.git`."""
+    (checkout / "host").mkdir(exist_ok=True)
+    (checkout / "host" / "build.sh").write_text("#!/bin/sh\n")
+    gitdir = checkout / ".git" / "worktrees" / "card-x"
+    gitdir.mkdir(parents=True)
+    (gitdir / "commondir").write_text("../..\n")
+    side = checkout / ".worktrees" / "card-x"
+    (side / "host").mkdir(parents=True)
+    (side / "host" / "build.sh").write_text("#!/bin/sh\n")
+    (side / ".git").write_text(f"gitdir: {gitdir}\n")
+    return side
+
+
+def test_a_side_folder_reads_as_the_main_checkout(daemon, checkout,
+                                                  monkeypatch):
+    """An app run from a card's side folder finds that folder by the ancestor
+    walk; Mission Control must still open in the main checkout."""
+    side = _side_folder(checkout)
+    monkeypatch.setattr(dev_build, "find_repo_root", lambda: side)
+    assert daemon_board._find_own_checkout() == str(checkout)
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_in_another_folder_is_replaced_not_kept_or_adopted(
+        daemon, checkout, monkeypatch, tmp_path):
+    """Mission Control opened while the checkout read as a card's side folder
+    stayed there across the fix, and Done took that folder's key back: every
+    board call was refused as not enrolled. The next open replaces it — on
+    the alive rung and on the adopt-by-name rung alike."""
+    d, _store = daemon
+    opened: list = []
+    elsewhere = tmp_path / "side"
+    (elsewhere / "docs").mkdir(parents=True)
+    (elsewhere / "docs" / "mission-control-brief.md").write_text(
+        (checkout / "docs" / "mission-control-brief.md").read_text())
+    _enrol(monkeypatch, checkout, elsewhere)
+    _real_spawn(monkeypatch, d, opened)
+    try:
+        for lose_record in (False, True):
+            monkeypatch.setattr(dev_build, "find_repo_root", lambda: elsewhere)
+            d._mission_attempt = 0.0
+            d._adhoc_launches.clear()
+            ok, first = await d.open_mission()
+            assert ok, first
+            assert opened[-1]["root"] == dispatch.normalise_root(str(elsewhere))
+            monkeypatch.setattr(dev_build, "find_repo_root", lambda: checkout)
+            if lose_record:
+                d._mission = {}
+            d._mission_attempt = 0.0
+            d._adhoc_launches.clear()
+            ok, second = await d.open_mission()
+            assert ok, second
+            assert second != first and second != mission.ALREADY_RUNNING
+            assert opened[-1]["root"] == dispatch.normalise_root(str(checkout))
+            old = d._pty.get(first)
+            assert old is None or old.exited
+            await _close_all(d)
+            d._mission = {}
+    finally:
+        await _close_all(d)
+
+
 def test_the_brief_carries_no_waiting_marker():
     """Mission Control answers nobody: a `bob-tldr` or `bob-actions` marker
     in its brief would teach it to end turns under Needs you."""

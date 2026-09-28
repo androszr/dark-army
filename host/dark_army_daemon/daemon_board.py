@@ -130,15 +130,33 @@ def _find_own_checkout() -> str:
     """Dark Army's own checkout as `dev_build.find_repo_root` verifies it —
     the same root `enrollment.enroll_self` enrols and `pack_install`'s
     `_is_bobs_own` tests — or `""`. Imported inside, as `enroll_self` does:
-    the daemon reaches into the menu-bar package for this one read only."""
+    the daemon reaches into the menu-bar package for this one read only.
+
+    **Never a card's side folder**: an app run from one finds it by the
+    ancestor walk, and Done later removes the folder and takes back its key —
+    Mission Control opened there lost the board mid-run. `main_checkout`
+    answers the main checkout, as `enroll_self` and the build stamp do."""
     try:
         from dark_army_menubar import dev_build
         root = dev_build.find_repo_root()
+        if root:
+            root = dev_build.main_checkout(root)
     except Exception:
         logger.debug("could not locate Dark Army's own repo root",
                      exc_info=True)
         return ""
     return str(root) if root else ""
+
+def _mission_folder_is_stale(root: str) -> bool:
+    """True when a live Mission Control terminal runs in a folder that is not
+    Dark Army's own checkout as `_find_own_checkout` reads it now. **Executor
+    only.** An unreadable checkout answers False — keep what runs, as an
+    unreadable brief does — so only a known mismatch replaces the session."""
+    home = _find_own_checkout()
+    if not home or not root:
+        return False
+    return dispatch.normalise_root(str(root)) != dispatch.normalise_root(home)
+
 
 #: The same logger object `daemon.py` writes to — one stream, one name.
 logger = logging.getLogger("dark-army")
@@ -5822,20 +5840,40 @@ class BoardVerbsMixin:
                 # a brief that cannot be read right now, keeps what runs.
                 # A record with no digest was written by a daemon that
                 # compared nothing and is stale by definition.
+                # And in which folder? One spawned while Dark Army's own
+                # checkout read as a card's side folder stays there after
+                # the fix, and Done takes that folder's key back: every
+                # board call it makes is then refused as not enrolled.
                 recorded = str((self._mission or {}).get("brief_digest") or "")
                 current = await loop.run_in_executor(
                     None, self._current_brief_digest)
-                if not current or recorded == current:
+                stale_brief = bool(current) and recorded != current
+                stale_folder = await loop.run_in_executor(
+                    None, _mission_folder_is_stale, term.root)
+                if not stale_brief and not stale_folder:
                     return True, MISSION_ALREADY_RUNNING
+                why = "an older brief" if stale_brief else "another folder"
                 closed = await self._pty.close(term.handle)
                 if not closed:
-                    logger.warning("Mission Control is on an older brief "
-                                   "but its close was unconfirmed (%s); "
-                                   "kept", term.handle)
+                    logger.warning("Mission Control is on %s but its close "
+                                   "was unconfirmed (%s); kept", why,
+                                   term.handle)
                     return True, MISSION_ALREADY_RUNNING
-                logger.info("closed Mission Control spawned on an older "
-                            "brief (%s); spawning again", term.handle)
+                logger.info("closed Mission Control running on %s (%s); "
+                            "spawning again", why, term.handle)
             adopted = self._adopt_named_mission_terminal()
+            if adopted is not None and await loop.run_in_executor(
+                    None, _mission_folder_is_stale, adopted.root):
+                # Adopted by name after a lost record — but in the wrong
+                # folder, the same case as above: replace, never adopt.
+                if not await self._pty.close(adopted.handle):
+                    logger.warning("Mission Control is in another folder "
+                                   "but its close was unconfirmed (%s); "
+                                   "kept", adopted.handle)
+                    return True, MISSION_ALREADY_RUNNING
+                logger.info("closed Mission Control running in another "
+                            "folder (%s); spawning again", adopted.handle)
+                adopted = None
             if adopted is not None:
                 # A lost record says nothing about the brief; the adopted
                 # terminal is taken as current and compared from here on.
