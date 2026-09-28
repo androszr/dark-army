@@ -194,6 +194,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// from.
     private var reactivateTarget: NSRunningApplication?
 
+    /// When the app last became active — so a Dock click that pulled the
+    /// window from behind another app fronts it rather than hiding it
+    /// (`DockToggle`).
+    private var becameActiveAt: Date?
+
     /// True when the menu bar launched us, rather than a person.
     private let owned = CommandLine.arguments.contains("--hidden")
     /// Whether anyone is on the other end of stdin — see `stdinIsDriven()`.
@@ -721,19 +726,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// is not a return to it.
     func applicationDidBecomeActive(_ notification: System.Notification) {
         _ = notification
+        becameActiveAt = Date()
         guard panel.isVisible, panel.occlusionState.contains(.visible) else { return }
         Panel.send(action: "refresh_notification_status")
     }
 
-    /// A click on the Dock icon: bring the window back if nothing of ours is
-    /// on screen. Asked of the panel itself, not `hasVisibleWindows`.
+    /// A click on the Dock icon toggles the window, like the strip: shown if
+    /// nothing of ours is on screen or it sits behind another app, put away
+    /// if it is already in front (`DockToggle`). Asked of the panel itself,
+    /// not `hasVisibleWindows`.
     func applicationShouldHandleReopen(_ sender: NSApplication,
                                        hasVisibleWindows: Bool) -> Bool {
-        if !panel.isVisible || !panel.occlusionState.contains(.visible) {
-            show(x: nil, y: nil)
-            return false
+        let seen = panel.isVisible && panel.occlusionState.contains(.visible)
+        switch DockToggle.verdict(seen: seen, active: NSApp.isActive,
+                                  becameActive: becameActiveAt, now: Date()) {
+        case .show: show(x: nil, y: nil)
+        case .hide: hide()
         }
-        return true
+        return false
     }
 
     private func scheduleFrameSave() {

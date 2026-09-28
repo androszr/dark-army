@@ -42,7 +42,10 @@ Mission Control, with a real menu bar and Dock icon. The red close button and
 ⌘W put the window away exactly as the strip's toggle does (`windowWillClose`
 mirrors `hide()`; `isReleasedWhenClosed = false` keeps the object for the next
 `show`). App-menu Quit routes through `PanelExit.requested`; a Dock-tile quit
-with a sheet up is refused by AppKit, accepted as residual.
+with a sheet up is refused by AppKit, accepted as residual. A Dock-icon click
+toggles like the strip (`DockToggle`): it shows a hidden or covered window and
+hides one already in front, but a click that has just activated the app (within
+`DockToggle.activationWindow`) only fronts it.
 `windowDidChangeOcclusionState` writes the platform's visibility into the same
 `visible`/`boardOpen` gate the stdin fast path writes; stdin stays primary,
 both writers idempotent through `didSet`. The occluded edge closes the gate after
