@@ -191,5 +191,23 @@ enum FleetLinks {
         parts.queryItems = [URLQueryItem(name: "session", value: sessionId)]
         return parts.url
     }
+
+    /// `bobphone://review?run=<id>`, or nil for an empty id: the phone's
+    /// Review screen on that run.
+    static func review(_ runId: String) -> URL? {
+        guard !runId.isEmpty else { return nil }
+        var parts = URLComponents()
+        parts.scheme = scheme
+        parts.host = "review"
+        parts.queryItems = [URLQueryItem(name: "run", value: runId)]
+        return parts.url
+    }
+
+    /// The Lock Screen card's link, chosen by its kind: the review for a
+    /// `picks` subject that names a run, the agent otherwise.
+    static func waiter(kind: String, runId: String, sessionId: String) -> URL? {
+        if kind == "picks", !runId.isEmpty { return review(runId) }
+        return agent(sessionId)
+    }
 }
 

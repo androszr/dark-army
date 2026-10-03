@@ -1162,8 +1162,12 @@ walk — no Face ID sheet, no receipt, no outbox) posting the verbs the app
 posts, `permission_verdict` or `dismiss`. The Mac re-checks the pairing,
 the lease and the tuple as for any press. A collapsed buzz, a finish, a
 machine alert, or a phone whose switch is off carries nothing and the
-buttons are not drawn — the push is byte-identical to before. Pinned by
-`test_lock_screen_actions.py`.
+buttons are not drawn — the push is byte-identical to before. **A fourth
+action, Open review** (`bob.review` / `bob.review.open`), rides a picks buzz on
+every paired phone, switch or not: it is `.foreground` +
+`.authenticationRequired`, writes nothing, and `LockScreenActions.opens`
+hands the run id (`run_id`, `idOK`) to `PhoneRouter.openReview`; the body tap
+is unchanged. Pinned by `test_lock_screen_actions.py`.
 
 **The banner's three lines are iOS's own rendering of the `aps` dict the
 mailbox built, and the phone reads none of them.** Top to bottom: who and
@@ -1172,7 +1176,7 @@ session it is working (`work`, the subtitle) and what is needed (`need`,
 the body — "Approve running Bash", the question's text or the agent's own
 one-line summary, clamped to 120 characters on both ends; absent where there
 is nothing to say). `Push.swift` reads only `act`, `session_id`,
-`request_id`, `receipt_id` and `destination_version` off `userInfo`; the
+`request_id`, `run_id`, `receipt_id` and `destination_version` off `userInfo`; the
 words are for the person on the lock screen, and the app fetches the real
 content over the sealed channel once it is open. The wire is
 `docs/transport-contract.md`, *And one line saying what is needed*.
@@ -1558,6 +1562,13 @@ The one-entry rule holds both ways — a prompt or question on the bound
 session keeps its own entry and the run yields; a plain wait on it is the
 run's (`ReviewRules.coveredStates`). Moving on to the buzz that raises it:
 `docs/transport-contract.md`, *The buzz says which kind it is*.
+
+**The card's tap** is `widgetURL(FleetLinks.waiter(...))`: the review link
+`bobphone://review?run=<id>` for a `picks` state with a `runId`, the agent link
+otherwise. `PhoneRouter.open` keeps `?run=` only under `LockScreenActions.idOK`
+in the one review-run slot (`pendingReviewRun`), and `ReviewView` takes it on
+appear and when the router's `signal` moves, behind the gate; a run the phone
+does not list opens the section and stops.
 
 **The one agent at the top of Needs you is a Live Activity** — a card on
 the Lock Screen and, on phones that have one, in the Dynamic Island: the

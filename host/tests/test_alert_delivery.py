@@ -1645,7 +1645,7 @@ def _picks_alert(sid="", **over):
                  "nickname": "repo", "title": "repo is waiting on your picks",
                  "body": "2 findings — pick the fixes", "rule": "review_picks",
                  "severity": "warn", "kind": "picks", "actions": [],
-                 "need": "Pick the fixes: 2 findings"}, **over)
+                 "need": "Pick the fixes: 2 findings", "run_id": "r-1"}, **over)
 
 
 @pytest.mark.asyncio
@@ -1703,7 +1703,7 @@ def test_the_picks_buzz_is_composed_from_its_own_closed_fields():
     assert BobDaemon._compose_push_title([alert]) == "Vex is waiting on your picks"
     assert BobDaemon._compose_push_kind([alert]) == "picks"
     assert BobDaemon._compose_push_need([alert]) == "Pick the fixes: 2 findings"
-    assert BobDaemon._compose_push_act([alert]) == {}
+    assert BobDaemon._compose_push_act([alert]) == {"act": "review", "run_id": "r-1"}
 
 
 def test_picks_ranks_below_a_question_and_above_attention():
@@ -1725,6 +1725,8 @@ async def test_the_picks_buzz_carries_no_finding_text(monkeypatch):
     assert "token" not in flat and "utils.py" not in flat
     assert "secret-project" not in flat
     assert body["need"] == "Pick the fixes: 2 findings"
+    # The button's reference is the record's id and nothing longer.
+    assert body["act"] == "review" and body["run_id"] == "r-1"
 
 
 @pytest.fixture

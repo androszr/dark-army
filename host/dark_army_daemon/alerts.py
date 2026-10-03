@@ -165,6 +165,9 @@ class Alert:
     #: the permission prompt this alert is about, for a phone that may
     #: answer it from the lock screen; `""` for every other rule.
     request_id: str = ""
+    #: the review run this alert is about, for a phone that may open it from
+    #: the banner; `""` on every other rule.
+    run_id: str = ""
     answerable: bool = True
     #: what the agent is asking for, in its own words — the question's text
     #: or the `bob-tldr` summary (`_need`); `""` where it said nothing. The
@@ -176,7 +179,7 @@ class Alert:
 
     def as_dict(self) -> dict:
         return {"id": self.id, "session_id": self.session_id,
-                "request_id": self.request_id,
+                "request_id": self.request_id, "run_id": self.run_id,
                 "answerable": self.answerable,
                 "need": self.need, "tool": self.tool,
                 "nickname": self.nickname, "title": self.title,
@@ -617,7 +620,7 @@ class AlertPolicy:
             actions=("reveal", "mute") if sid else (),
             subtitle=_subtitle(nickname, project, ""),
             character=cast.character_for(nickname, sid) if sid else "",
-            state="", kind=KIND_PICKS,
+            state="", kind=KIND_PICKS, run_id=run_id,
             need=f"Pick the fixes: {count} finding" + ("" if count == 1 else "s"))
 
     def _maybe(self, sid: str, rule: str, now: float, nickname: str,

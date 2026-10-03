@@ -11,6 +11,9 @@ import SwiftUI
 /// the queue's mark until the run row appears.
 struct ReviewView: View {
     @ObservedObject var client: PhoneClient
+    /// Watched for its `signal`: a Lock Screen link can land while this
+    /// screen is already in front, with no fresh `onAppear` to take the run.
+    @ObservedObject private var router = PhoneRouter.shared
 
     @State private var root = ""
     @State private var tool = ReviewRules.defaultProvider
@@ -21,6 +24,11 @@ struct ReviewView: View {
     @State private var checking = false
     @State private var note = ""
     @State private var openRun: String?
+    /// A run a link named, waiting for the first review data to decide on.
+    @State private var heldRun = ""
+    /// When the run was taken: "not listed" is only decided from a picture
+    /// that arrived after this, never from the one already on screen.
+    @State private var heldAt = Date()
 
     private var review: ReviewSection { client.snapshot.review }
     private var board: Board { client.snapshot.board }
@@ -50,11 +58,32 @@ struct ReviewView: View {
             ReviewRunView(client: client, runId: id)
                 .navigationTitle("review run")
         }
-        .onAppear {
-            let held = PhoneRouter.shared.takeReviewRun()
-            if !held.isEmpty { openRun = held }
-        }
+        .onAppear { openHeldRun() }
+        // A held run is pushed as soon as `snapshot.review` lists it; it is
+        // dropped (the section stays as it is) only once a picture newer than
+        // the hold has arrived and still does not list it. Until then the id
+        // waits here, memory only, and is dropped when the screen goes.
+        .onChange(of: router.signal) { _, _ in openHeldRun() }
+        .onChange(of: review) { _, _ in settleHeldRun() }
+        .onChange(of: client.pictureAsOf) { _, _ in settleHeldRun() }
+        .onDisappear { heldRun = "" }
         .onChange(of: root) { _, _ in refreshOffer() }
+    }
+
+    private func openHeldRun() {
+        let taken = PhoneRouter.shared.takeReviewRun()
+        if !taken.isEmpty { heldRun = taken; heldAt = Date() }
+        settleHeldRun()
+    }
+
+    private func settleHeldRun() {
+        guard !heldRun.isEmpty else { return }
+        switch HeldReviewRun.decide(listed: review.run(id: heldRun) != nil,
+                                    pictureAsOf: client.pictureAsOf, heldAt: heldAt) {
+        case .open: openRun = heldRun; heldRun = ""
+        case .drop: heldRun = ""
+        case .wait: break
+        }
     }
 
     // MARK: the form
@@ -232,5 +261,19 @@ struct ReviewView: View {
                 scope: startScope)
             if !result.ok { note = result.detail }
         }
+    }
+}
+
+/// What to do with a run a link named, given the picture on screen. Pure.
+enum HeldReviewRun {
+    enum Decision: Equatable { case open, drop, wait }
+
+    /// Listed: open now. Not listed: drop only when the picture is newer than
+    /// the hold (a review started while the phone was locked is not on the
+    /// picture the phone woke with); otherwise wait for one.
+    static func decide(listed: Bool, pictureAsOf: Date?, heldAt: Date) -> Decision {
+        if listed { return .open }
+        if let pictureAsOf, pictureAsOf > heldAt { return .drop }
+        return .wait
     }
 }

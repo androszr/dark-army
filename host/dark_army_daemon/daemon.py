@@ -12361,7 +12361,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                 continue
             sent += 1
             facts = dict(body)
-            if act and relay.lock_screen_actions(device_id):
+            # The review act is a foreground button that writes nothing, so
+            # it rides every paired phone; every other act stays behind the
+            # "Answer from the lock screen" switch, which gates writes.
+            if act and (act.get("act") == "review"
+                        or relay.lock_screen_actions(device_id)):
                 facts.update(act)
             capture = getattr(self, "_decisions", None)
             if capture is None:
@@ -12667,11 +12671,16 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
         `request_id` and `session_id` (Allow / Deny → `permission_verdict`);
         a question or attention kind carries `act: "acknowledge"` with the
         session (→ `dismiss`); a machine alert (no session) and a finish
-        carry nothing. Identifiers only — the question's words never ride.
+        carry nothing; a picks kind carries `act: "review"` with `run_id` —
+        a foreground button, no write — on every phone. Identifiers only —
+        the question's words never ride.
         """
         if len(pending) != 1:
             return {}
         alert = pending[0]
+        if str(alert.get("kind") or "") == alerting.KIND_PICKS:
+            rid = str(alert.get("run_id") or "")
+            return {"act": "review", "run_id": rid} if rid else {}
         sid = str(alert.get("session_id") or "")
         if not sid:
             return {}

@@ -132,7 +132,7 @@ PUSH_NEED_CHARS = 120
 #: `card_id` a single-alert buzz carries on every device so the phone can
 #: open the card or agent from the picture it holds; a value out of shape
 #: is dropped silently (`work`'s rule), never a refusal.
-PUSH_ACTS = ("permission", "acknowledge")
+PUSH_ACTS = ("permission", "acknowledge", "review")
 PUSH_ID_SHAPE = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
 #: The live card's leg (`push_activity`): the kind words a card may wear —
 #: `live_activity.KINDS`, restated here because this file writes the wire and
@@ -725,7 +725,14 @@ class RelayConnector:
         # act rides only on the shaped `session_id` already in `fields` — it
         # does not re-assign it — and a permission also needs a shaped rid.
         act = str((body or {}).get("act") or "")
-        if act in PUSH_ACTS and "session_id" in fields:
+        if act == "review":
+            # A foreground button naming a review run: no session needed, and
+            # `run_id` joins the alert leg only with this act.
+            run = str((body or {}).get("run_id") or "")
+            if PUSH_ID_SHAPE.match(run):
+                fields["act"] = "review"
+                fields["run_id"] = run
+        elif act in PUSH_ACTS and "session_id" in fields:
             rid = str((body or {}).get("request_id") or "")
             if act != "permission" or PUSH_ID_SHAPE.match(rid):
                 fields["act"] = act

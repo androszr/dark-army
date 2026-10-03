@@ -180,7 +180,10 @@ moment it decides every interruption; the bound session's own card and report
 rules are skipped so one event is one buzz. The Mac's panel and the strip do
 not change. In full: `docs/transport-contract.md`, *The buzz says which kind
 it is* and *The buzz has a live-card leg*; `docs/phone-contract.md`, *The
-waiting agent is a Live Activity*.
+waiting agent is a Live Activity*. The Lock Screen card's tap and the banner's
+**Open review** button both deep-link to the run (`bobphone://review?run=`,
+`bob.review`): *A buzz may carry what to press* and *Allow, Deny and
+Acknowledge on the banner*.
 
 ## Not here
 

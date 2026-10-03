@@ -73,7 +73,7 @@ const SOUNDS = {
 Object.setPrototypeOf(SOUNDS, null); // `SOUNDS["constructor"]` must be undefined
 const CH_SHAPE = /^[0-9a-f]{32}$/;
 const TOK_SHAPE = /^[0-9a-f]{32,200}$/;
-const ACTS = ["permission", "acknowledge"];  // pinned to relay_client.PUSH_ACTS
+const ACTS = ["permission", "acknowledge", "review"];  // pinned to relay_client.PUSH_ACTS
 const ID_SHAPE = /^[A-Za-z0-9._:-]{1,120}$/;
 // The live card's leg, pinned to relay_client.ACTIVITY_* / live_activity.KINDS.
 const ACTIVITY_EVENTS = ["update", "end"];
@@ -405,11 +405,19 @@ module.exports = async (req, res) => {
     const sid = String(body.session_id || "");
     const rid = String(body.request_id || "");
     const okRid = act !== "permission" || ID_SHAPE.test(rid);
-    if (!ACTS.includes(act) || !ID_SHAPE.test(sid) || !okRid) return answer(res, 400, "bad act");
-    payload.aps.category = act === "permission" ? "bob.permission" : "bob.acknowledge";
-    payload.act = act;
-    payload.session_id = sid;
-    if (act === "permission") payload.request_id = rid;
+    if (act === "review") {  // a foreground button: the run's short id alone
+      const run = String(body.run_id || "");
+      if (!ID_SHAPE.test(run)) return answer(res, 400, "bad act");
+      payload.aps.category = "bob.review";
+      payload.act = act;
+      payload.run_id = run;
+    } else {
+      if (!ACTS.includes(act) || !ID_SHAPE.test(sid) || !okRid) return answer(res, 400, "bad act");
+      payload.aps.category = act === "permission" ? "bob.permission" : "bob.acknowledge";
+      payload.act = act;
+      payload.session_id = sid;
+      if (act === "permission") payload.request_id = rid;
+    }
   }
   }
   let status;

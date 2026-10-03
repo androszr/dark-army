@@ -58,6 +58,12 @@ def test_as_dict_states_request_id_even_when_empty():
     ([_alert(kind="question")], {"act": "acknowledge", "session_id": "s1"}),
     ([_alert(kind="attention")], {"act": "acknowledge", "session_id": "s1"}),
     ([_alert(kind="finished")], {}),
+    pytest.param([_alert(kind="picks", rule="review_picks", run_id="r-1")],
+     {"act": "review", "run_id": "r-1"}, id="review-bound"),
+    pytest.param([_alert(kind="picks", rule="review_picks", run_id="r-1", session_id="")],
+     {"act": "review", "run_id": "r-1"}, id="review-unbound"),
+    pytest.param([_alert(kind="picks", rule="review_picks", run_id="")], {}, id="review-no-run"),
+    pytest.param([_alert(kind="picks", rule="review_picks", run_id="r-1"), _alert(kind="question")], {}, id="review-beside-another"),
     ([_alert(kind="security", session_id="")], {}),
     ([_alert(kind="question"), _alert(kind="question", session_id="s2")], {}),
 ])
@@ -124,6 +130,62 @@ async def test_push_alert_joins_act_fields_only_in_shape(connector):
     assert set(plain) == {"tok", "env", "title", "badge", "kind"}
 
 
+@pytest.mark.asyncio
+async def test_push_alert_joins_the_review_act_with_a_run_id_and_no_session(connector):
+    conn, _srv, _key, _url = connector
+    calls = []
+
+    async def fake_http(method, url, data=None, headers=None):
+        calls.append(json.loads(data))
+        return 200, b"ok"
+
+    conn._http = fake_http
+    relay.note_push_token("dev-1", "ab" * 32, "dev")
+    base = {"title": "Vex is waiting on your picks", "badge": 1, "kind": "picks"}
+    assert await conn.push_alert("dev-1", dict(base, act="review", run_id="r-1"))
+    assert await conn.push_alert("dev-1", dict(base, act="review", run_id="bad id!"))
+    assert await conn.push_alert("dev-1", dict(base, act="review"))
+    good, bad, missing = calls
+    assert good["act"] == "review" and good["run_id"] == "r-1"
+    assert "session_id" not in good and "request_id" not in good
+    for posted in (bad, missing):
+        assert "act" not in posted and "run_id" not in posted
+
+
+def test_the_review_button_rides_every_device(monkeypatch):
+    """The review act writes nothing, so it is not behind the per-device
+    "Answer from the lock screen" switch; every other act still is."""
+    import asyncio
+
+    daemon = BobDaemon.__new__(BobDaemon)
+    daemon.remote_access_enabled = True
+    daemon._agents_snapshot_cache = {"waiting": []}
+    daemon._cards_snapshot_cache = []
+    posted = {}
+
+    async def push(did, body):
+        posted.setdefault(len(posted), {})[did] = body
+
+    daemon._relay_connector = type("Connector", (), {"push_alert": staticmethod(push)})()
+    monkeypatch.setattr(relay, "channel_ids", lambda: ["off", "on"])
+    monkeypatch.setattr(relay, "push_token", lambda _: "token")
+    monkeypatch.setattr(relay, "lock_screen_actions", lambda did: did == "on")
+
+    async def run(pending):
+        posted.clear()
+        assert daemon._push_phone_alerts(pending) == "sent:2"
+        await asyncio.sleep(0)
+        return {did: body for entry in posted.values() for did, body in entry.items()}
+
+    picks = asyncio.run(run([_alert(kind="picks", rule="review_picks",
+                                    run_id="r-1")]))
+    for did in ("off", "on"):
+        assert picks[did]["act"] == "review" and picks[did]["run_id"] == "r-1"
+    question = asyncio.run(run([_alert(kind="question")]))
+    assert "act" not in question["off"]
+    assert question["on"]["act"] == "acknowledge"
+
+
 def test_the_mailbox_pins_the_same_acts_and_id_shape():
     text = PUSH_JS.read_text()
     acts = re.search(r'const ACTS = \[(.*?)\];', text)
@@ -133,6 +195,7 @@ def test_the_mailbox_pins_the_same_acts_and_id_shape():
     shape = re.search(r"const ID_SHAPE = /(.*?)/;", text)
     assert shape and shape.group(1) == relay_client.PUSH_ID_SHAPE.pattern
     assert '"bob.permission"' in text and '"bob.acknowledge"' in text
+    assert '"bob.review"' in text
     assert "payload.aps.category" in text
 
 
@@ -144,10 +207,16 @@ def test_the_phone_names_the_same_categories_and_verbs():
     assert "PhoneActions.dismiss" in swift
     # Three buttons, each `.authenticationRequired` (plus the doc line).
     assert swift.count("options: [.authenticationRequired") == 3
+    # Open review: a foreground button, still behind the unlock.
+    assert 'reviewCategory = "bob.review"' in swift
+    assert '"Open review"' in swift
+    assert "options: [.foreground, .authenticationRequired]" in swift
+    assert "static func opens(" in swift
     assert "RemoteAuth" not in swift
     push = (PHONE / "Push.swift").read_text()
     assert "LockScreenActions.register()" in push
     assert "LockScreenActions.press(" in push
+    assert "LockScreenActions.opens(" in push
     client = (PHONE / "Client.swift").read_text()
     write = client[client.index("func lockScreenWrite("):]
     write = write[:write.index("\n    }\n")]
@@ -166,3 +235,33 @@ def test_the_loopback_verb_takes_a_bare_bool_only():
         block = src[src.index(f"{name} = ("):]
         block = block[:block.index("\n    )")]
         assert "set_lock_screen_actions" not in block
+
+
+@pytest.mark.asyncio
+async def test_review_act_never_writes_a_request_id(connector):
+    conn, _srv, _key, _url = connector
+    calls = []
+
+    async def fake_http(method, url, data=None, headers=None):
+        calls.append(json.loads(data))
+        return 200, b"ok"
+
+    conn._http = fake_http
+    relay.note_push_token("dev-1", "ab" * 32, "dev")
+    assert await conn.push_alert("dev-1", {"title": "t", "badge": 1, "kind": "picks",
+                                           "act": "review", "run_id": "r-1",
+                                           "request_id": "hook-1"})
+    assert calls[0]["act"] == "review" and "request_id" not in calls[0]
+
+
+def test_review_act_is_not_behind_the_switch_in_the_loop():
+    src = Path(BobDaemon.__module__.replace(".", "/") + ".py")
+    text = (ROOT / "host" / src).read_text()
+    assert 'act.get("act") == "review"' in text
+
+
+def test_review_run_id_is_a_closed_field_on_the_alert():
+    row = alerting.Alert(id="a", session_id="", nickname="n", title="t", body="b",
+                         severity="warn", rule="review_picks", created_at=0.0,
+                         run_id="r-1").as_dict()
+    assert row["run_id"] == "r-1"

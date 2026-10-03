@@ -566,21 +566,21 @@ and `relay/tests/push-destination.test.mjs`.
 ## A buzz may carry what to press
 
 **The lock-screen leg of the push.** `BobDaemon._compose_push_act` reads the
-drain: exactly one pending alert with a session, or `{}`. A `permission`
-rule gives `{"act": "permission", "request_id", "session_id"}`; a
-`question` or `attention` kind gives `{"act": "acknowledge",
-"session_id"}`; a finish, a machine alert and a collapsed buzz give
-nothing. The fields join a device's push **only where that device's
-`lock_screen_actions` is on** (`relay.lock_screen_actions`, a bool on the
-`relay.json` channel entry, default off, set by the loopback verb
-`set_lock_screen_actions` on `_devices_request`'s allow-list — `set_away_days`'
-gate, a bare bool, on neither `LAN_ACTIONS` nor `REMOTE_ACTIONS`;
-`devices_snapshot` publishes it). `relay_client.push_alert` joins them only
-in `PUSH_ACTS` / `PUSH_ID_SHAPE`'s shapes and `push.js` re-checks the same
-two (`ACTS`, `ID_SHAPE`, pinned equal) before setting `aps.category`. What
-rides is identifiers, never the ask's words; the alert's `request_id` is
-stamped by `AlertPolicy._permission` and is `""` on every other rule.
-Pinned by `test_lock_screen_actions.py`.
+drain: exactly one pending alert, or `{}`. A `permission` rule with a session
+gives `{"act": "permission", "request_id", "session_id"}`; a `question` or
+`attention` kind with one gives `{"act": "acknowledge", "session_id"}`; a
+finish, a machine alert and a collapsed buzz give nothing. Those fields join
+a device's push **only where its `lock_screen_actions` is on**
+(`relay.lock_screen_actions`, a bool on the `relay.json` channel entry,
+default off, set by the loopback verb `set_lock_screen_actions` — a bare
+bool, on neither `LAN_ACTIONS` nor `REMOTE_ACTIONS`; `devices_snapshot`
+publishes it). **A third act, `review`:** a `picks` kind with a non-empty
+`Alert.run_id` gives `{"act": "review", "run_id"}` on **every** paired device
+(a foreground button, no write, so not behind the switch). `push_alert` joins
+fields only in `PUSH_ACTS` / `PUSH_ID_SHAPE`'s shapes (`run_id` only with
+`review`) and `push.js` re-checks (`ACTS`, `ID_SHAPE`, pinned equal), setting
+`aps.category` (`bob.review`; a bad `run_id` is `400 "bad act"`). Identifiers
+only, never the ask's words; `request_id` is stamped by `_permission`. Pinned by `test_lock_screen_actions.py`.
 
 **A buzz names its subject.** Beside the receipt, a single-alert buzz carries
 `session_id` and, where the last published board binds that session to a

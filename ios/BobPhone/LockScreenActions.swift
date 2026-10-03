@@ -11,6 +11,9 @@ import UserNotifications
 /// `PhoneClient.lockScreenWrite` — `permission_verdict` for Allow / Deny,
 /// `dismiss` for Acknowledge, the verbs the app posts — and the Mac
 /// re-checks the pairing, the lease and the verb as it does for any press.
+/// A picks buzz also carries **Open review**, a `.foreground` button that
+/// writes nothing: it asks for the unlock, opens the app and hands the run's
+/// short id to `PhoneRouter.openReview` (`opens`), on every paired phone.
 /// A buzz without the fields (the switch off, an older Mac) carries no
 /// category and taps open the app exactly as before.
 enum LockScreenActions {
@@ -19,6 +22,8 @@ enum LockScreenActions {
     static let allow = "bob.allow"
     static let deny = "bob.deny"
     static let acknowledge = "bob.acknowledge.press"
+    static let reviewCategory = "bob.review"
+    static let openReview = "bob.review.open"
 
     struct Press: Equatable {
         let action: String
@@ -40,7 +45,13 @@ enum LockScreenActions {
         let ack = UNNotificationCategory(
             identifier: acknowledgeCategory, actions: [ackAction],
             intentIdentifiers: [], options: [])
-        UNUserNotificationCenter.current().setNotificationCategories([permission, ack])
+        let openAction = UNNotificationAction(
+            identifier: openReview, title: "Open review",
+            options: [.foreground, .authenticationRequired])
+        let review = UNNotificationCategory(
+            identifier: reviewCategory, actions: [openAction],
+            intentIdentifiers: [], options: [])
+        UNUserNotificationCenter.current().setNotificationCategories([permission, ack, review])
     }
 
     /// The one write a button means, or nil for a tap on the banner body
@@ -62,6 +73,15 @@ enum LockScreenActions {
         default:
             return nil
         }
+    }
+
+    /// The review run an **Open review** press names, or nil for anything
+    /// else (the body tap, another button, an out-of-shape id). Pure.
+    static func opens(actionIdentifier: String, userInfo: [AnyHashable: Any]) -> String? {
+        guard actionIdentifier == openReview,
+              userInfo["act"] as? String == "review",
+              let run = userInfo["run_id"] as? String, idOK(run) else { return nil }
+        return run
     }
 
     /// `relay_client.PUSH_ID_SHAPE`.
