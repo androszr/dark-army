@@ -362,3 +362,43 @@ async def test_a_project_merge_that_slips_in_is_waited_for_not_recorded(
     await _settle(d)
     assert len(calls) == 2
     assert store.get(card["id"])["merge_state"] == "merged"
+
+
+@pytest.mark.asyncio
+async def test_a_card_sharing_a_branch_is_skipped_and_named(daemon, repo):
+    d, store = daemon
+    first, second = await _cards(d, store, repo, "lead card", "twin card")
+    store.record_worktree(second["id"], second["worktree_path"],
+                          first["worktree_branch"])
+    second = dict(store.get(second["id"]), _root=repo)
+    ok, detail = await _batch(d, _pairs(first, second))
+    assert ok, detail
+    assert "twin card — Shares its branch with lead card, which merges it" \
+        in detail
+    assert store.get(first["id"])["merge_state"] == "merged"
+    assert store.get(second["id"])["merge_state"] == ""
+
+
+@pytest.mark.asyncio
+async def test_a_failed_record_leaves_no_merging_entry(daemon, repo,
+                                                       monkeypatch):
+    d, store = daemon
+    (card,) = await _cards(d, store, repo, "only card")
+    real = d._board_call
+    state = {"n": 0}
+
+    async def flaky(name, *args, **kw):
+        if name == "record_merge" and state["n"] == 0:
+            state["n"] = 1
+            raise RuntimeError("disk full")
+        return await real(name, *args, **kw)
+
+    monkeypatch.setattr(d, "_board_call", flaky)
+    with pytest.raises(RuntimeError):
+        await d.merge_card(card["id"], _rev(repo, card["worktree_branch"]))
+    assert not d._merging
+    ok, detail = await d.merge_card(card["id"],
+                                    _rev(repo, card["worktree_branch"]))
+    assert ok, detail
+    await _settle(d)
+    assert store.get(card["id"])["merge_state"] == "merged"

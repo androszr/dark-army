@@ -46,6 +46,16 @@ final class WorktreeRowsTests: XCTestCase {
                        ["tc", "tb"])
     }
 
+    func testTheFetchKeyMovesWithTheColumn() {
+        let open = WorktreeRows.fetchKey(
+            cards: [(id: "a", column: "in_progress", mergeState: "", mergeLine: "")],
+            listed: ["a"])
+        let done = WorktreeRows.fetchKey(
+            cards: [(id: "a", column: "done", mergeState: "", mergeLine: "")],
+            listed: ["a"])
+        XCTAssertNotEqual(open, done)
+    }
+
     func testTheWords() {
         XCTAssertEqual(WorktreeRows.verb(count: 2), "MERGE 2")
         XCTAssertEqual(WorktreeRows.armedVerb(count: 2), "Merge 2 into main?")

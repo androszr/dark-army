@@ -2336,9 +2336,6 @@ struct CardChangeReview: Decodable, Equatable {
     init() {}
 }
 
-/// The sealed `card_changes` page — a Done card's branch against the main
-/// line. `available` is **stated**; `files` absent decodes empty.
-/// `branchTip` is echoed back on a file's changes and on MERGE.
 /// One row of the Worktrees list: a card's side folder with the daemon's own
 /// status word and line, drawn verbatim. Every key through the tolerant
 /// `value` helper, so one absent key never fails the page.
@@ -2358,7 +2355,11 @@ struct WorktreeRow: Decodable, Equatable, Identifiable {
     var branchTip = ""
 
     /// A folder with no card has no id: its folder names it.
-    var id: String { cardId.isEmpty ? "folder:" + project + ":" + folder : cardId }
+    /// Two projects may share a label, so the page's position joins it.
+    var ordinal = 0
+    var id: String {
+        cardId.isEmpty ? "folder:" + project + ":" + folder + ":" + String(ordinal) : cardId
+    }
 
     enum CodingKeys: String, CodingKey {
         case title, project, column, branch, folder, status, word, line
@@ -2406,11 +2407,15 @@ struct WorktreesPage: Decodable, Equatable {
         available = c.value(.available, false)
         let lossy: [ReviewLossy<WorktreeRow>] = c.value(.rows, [])
         rows = lossy.compactMap(\.value)
+        for index in rows.indices { rows[index].ordinal = index }
         truncated = c.value(.truncated, false)
         reason = c.value(.reason, "")
     }
 }
 
+/// The sealed `card_changes` page — a Done card's branch against the main
+/// line. `available` is **stated**; `files` absent decodes empty.
+/// `branchTip` is echoed back on a file's changes and on MERGE.
 struct CardChangesReport: Decodable, Equatable {
     var available = false
     var cardId = ""

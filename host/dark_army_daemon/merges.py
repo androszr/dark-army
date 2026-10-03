@@ -135,6 +135,7 @@ PROJECT_MERGING_REFUSAL = ("Another card of this project is merging — press "
                            "again when it has finished.")
 TIP_CHANGED_REFUSAL = ("This card's branch changed since you looked — open "
                        "its changes again and press MERGE once more.")
+SHARED_BRANCH_REFUSAL = "Shares its branch with {0}, which merges it."
 MERGE_QUEUED_NOTE = "Waiting its turn to merge — {0} of {1} in this batch."
 MERGE_QUEUED_REFUSAL = ("This card is waiting its turn in a batch of merges — "
                         "press again when the batch has finished.")

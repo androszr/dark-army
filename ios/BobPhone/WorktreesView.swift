@@ -65,7 +65,7 @@ struct WorktreesView: View {
 
     private var fetchKey: String {
         WorktreeRows.fetchKey(
-            cards: board.cards.map { (id: $0.id, mergeState: $0.mergeState,
+            cards: board.cards.map { (id: $0.id, column: $0.column, mergeState: $0.mergeState,
                                       mergeLine: $0.mergeLine) },
             listed: rows.map(\.cardId).filter { !$0.isEmpty })
     }
@@ -84,7 +84,7 @@ struct WorktreesView: View {
                     AgentChatterView(.line, wait: .refreshing, seed: "worktrees",
                                      spoken: "Checking with the Mac")
                         .id("worktrees")
-                } else if failed {
+                } else if failed && rows.isEmpty {
                     failure
                 } else if loaded && !page.available {
                     CommentLine(text: page.reason.isEmpty
@@ -93,13 +93,16 @@ struct WorktreesView: View {
                 } else if loaded && rows.isEmpty {
                     CommentLine(text: "no worktrees yet")
                 }
+                if failed && !rows.isEmpty {
+                    CommentLine(text: "Could not reach the Mac — this list may be out of date.")
+                }
                 if showsMerge { mergeBar }
                 pressReply
                 ForEach(projects, id: \.self) { project in
                     projectSection(project)
                 }
                 if page.truncated {
-                    CommentLine(text: "The list is cut short; the oldest rows are not shown.")
+                    CommentLine(text: "The list is cut short; some rows are not shown.")
                 }
             }
             .padding(.horizontal, 14)
@@ -417,7 +420,7 @@ struct WorktreesView: View {
                 page = fetched
                 failed = false
             } else {
-                failed = rows.isEmpty
+                failed = true
             }
             loaded = true
             prune()

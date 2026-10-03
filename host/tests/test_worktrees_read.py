@@ -337,3 +337,32 @@ async def test_a_caller_arriving_mid_read_gets_a_read_that_started_after_it(
     assert (await first)["read_number"] == 1
     assert [p["read_number"] for p in later] == [2, 2]
     assert len(starts) == 2 and starts[1] > arrived
+
+
+def test_cards_sharing_a_branch_tick_only_the_first(setup):
+    api, daemon, store, root = setup
+    first = _card(store, root, "first sharer")
+    second = _card(store, root, "second sharer")
+    store.record_worktree(second["id"], "", first["worktree_branch"])
+    rows = [r for r in daemon._worktrees_sync()["rows"]
+            if r["title"].endswith("sharer")]
+    assert len(rows) == 2
+    assert sum(1 for r in rows if r["mergeable"]) == 1
+    loser = next(r for r in rows if not r["mergeable"])
+    winner = next(r for r in rows if r["mergeable"])
+    assert loser["status"] == winner["status"]
+    assert loser["line"] == merges.SHARED_BRANCH_REFUSAL.format(
+        winner["title"])
+
+
+def test_a_sharer_that_cannot_merge_never_wins_the_branch(setup):
+    api, daemon, store, root = setup
+    first = _card(store, root, "early sharer", column="in_progress")
+    second = _card(store, root, "late sharer")
+    store.record_worktree(second["id"], "", first["worktree_branch"])
+    rows = {r["title"]: r for r in daemon._worktrees_sync()["rows"]
+            if r["title"].endswith("sharer")}
+    assert not rows["early sharer"]["mergeable"]
+    assert rows["late sharer"]["mergeable"]
+    assert rows["late sharer"]["line"] != merges.SHARED_BRANCH_REFUSAL.format(
+        "early sharer")

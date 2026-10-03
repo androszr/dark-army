@@ -11170,8 +11170,15 @@ class BoardVerbsMixin:
         merging = dict(getattr(self, "_merging", None) or {})
         merging[cid] = {"root": root, "since": time.time(), "token": token}
         self._merging = merging
-        await self._board_call("record_merge", cid, "", "")
-        await self._publish_board()
+        try:
+            await self._board_call("record_merge", cid, "", "")
+            await self._publish_board()
+        except BaseException:
+            # No task yet, so no `finally` of its own: the entry made above
+            # must not outlive the failure (card stuck "Merging", project
+            # refusals, Rebuild refused).
+            self._pop_merging(cid, token)
+            raise
         return True, merges.MERGING_NOTE, root, token
 
     async def merge_card(self, card_id: str, expected_tip=None) -> tuple:
@@ -11213,6 +11220,7 @@ class BoardVerbsMixin:
         started: list = []
         skipped: list = []
         tips: dict = {}
+        branches: dict = {}
         for cid, tip in pairs:
             cid = str(cid or "")
             card = await self._board_call("get", cid)
@@ -11228,6 +11236,14 @@ class BoardVerbsMixin:
             if refusal:
                 skipped.append((title, refusal))
                 continue
+            branch = str((card or {}).get("worktree_branch") or "")
+            key = (dispatch.normalise_root(str(root or "")), branch)
+            if branch and key in branches:
+                skipped.append((title, merges.SHARED_BRANCH_REFUSAL.format(
+                    branches[key])))
+                continue
+            if branch:
+                branches[key] = title
             started.append((cid, title))
             tips[cid] = str(tip)
         if not started:
@@ -12249,6 +12265,7 @@ class BoardVerbsMixin:
                 label = labels.get(norm) or os.path.basename(
                     norm.rstrip(os.sep)) or "project"
                 trunk = self._merge_trunk_sync(root)
+                first_row = len(rows)
                 named: set = set()
                 for card in cards:
                     if dispatch.normalise_root(
@@ -12267,6 +12284,21 @@ class BoardVerbsMixin:
                     rows.append(self._worktree_row(
                         root, label, trunk, card, cid, path, branch,
                         cid in merging, cid in queue))
+                # Cards started together share one branch: only the first
+                # row of a (root, branch) can be ticked; merging it lands
+                # them all, and a second merge would find the branch gone.
+                first_of: dict = {}
+                for item in rows[first_row:]:
+                    if not item.get("branch"):
+                        continue
+                    if not item.get("mergeable"):
+                        continue
+                    if item["branch"] not in first_of:
+                        first_of[item["branch"]] = item.get("title") or ""
+                    else:
+                        item["mergeable"] = False
+                        item["line"] = merges.SHARED_BRANCH_REFUSAL.format(
+                            first_of[item["branch"]])
                 rows.extend(self._worktree_orphan_rows(root, label, named))
             rows = worktree_list.order(rows)
             if len(rows) > worktree_list.MAX_ROWS:

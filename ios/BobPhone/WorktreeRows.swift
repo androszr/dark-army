@@ -67,16 +67,16 @@ enum WorktreeRows {
     /// What the button says past the bound.
     static let tooManyLine = "At most \(maximum) at a time"
 
-    /// The key the screen re-reads on: each listed card's id, state and line
+    /// The key the screen re-reads on: each listed card's id, column, state and line
     /// off the live snapshot, so the list is read again exactly when a merge
     /// on it moves.
-    static func fetchKey(cards: [(id: String, mergeState: String, mergeLine: String)],
+    static func fetchKey(cards: [(id: String, column: String, mergeState: String, mergeLine: String)],
                          listed: [String]) -> String {
         listed.map { id in
             guard let card = cards.first(where: { $0.id == id }) else {
-                return id + "::"
+                return id + ":::"
             }
-            return id + ":" + card.mergeState + ":" + card.mergeLine
+            return id + ":" + card.column + ":" + card.mergeState + ":" + card.mergeLine
         }.joined(separator: "|")
     }
 }

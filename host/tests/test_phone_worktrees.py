@@ -155,6 +155,10 @@ out["tips"] = WorktreeRows.tips(for: ["c", "b"], entries: [
 out["verb"] = WorktreeRows.verb(count: 2)
 out["armed"] = WorktreeRows.armedVerb(count: 3)
 out["max"] = WorktreeRows.maximum
+out["key_open"] = WorktreeRows.fetchKey(
+    cards: [(id: "a", column: "in_progress", mergeState: "", mergeLine: "")], listed: ["a"])
+out["key_done"] = WorktreeRows.fetchKey(
+    cards: [(id: "a", column: "done", mergeState: "", mergeLine: "")], listed: ["a"])
 let data = try! JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])
 FileHandle.standardOutput.write(data)
 '''
@@ -205,6 +209,7 @@ def test_the_tick_rule_run_under_swiftc(tmp_path):
     assert got["verb"] == "MERGE 2"
     assert got["armed"] == "Merge 3 into main?"
     assert got["max"] == 8
+    assert got["key_open"] != got["key_done"]
 
 
 def test_the_read_is_an_unowned_task_that_task_id_cannot_cancel():
@@ -215,7 +220,7 @@ def test_the_read_is_an_unowned_task_that_task_id_cannot_cancel():
     assert "guard !Task.isCancelled else { return }" in view
     # A cancelled read is returned from before it can set `failed`.
     body = view[view.index("readTask = Task { @MainActor in"):]
-    assert body.index("Task.isCancelled") < body.index("failed = rows.isEmpty")
+    assert body.index("Task.isCancelled") < body.index("failed = true")
     assert "await readTask?.value" in view
 
 
