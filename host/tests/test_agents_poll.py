@@ -1444,6 +1444,53 @@ def test_pid_backed_codex_snapshot_never_publishes_can_type(monkeypatch):
     assert entry["can_type"] is False
 
 
+def test_vscode_attribution_pid_adds_no_process_control(monkeypatch):
+    from dark_army_daemon import codex_rollouts
+
+    class Process(_CodexProc):
+        def __init__(self):
+            super().__init__()
+            self.info["cmdline"] = ["codex"]
+
+        def exe(self):
+            return self.info["exe"]
+
+        def cwd(self):
+            return self.info["cwd"]
+
+        def create_time(self):
+            return self.info["create_time"]
+
+        def cmdline(self):
+            return list(self.info["cmdline"])
+
+    process = Process()
+    record = _codex_root()
+    record.source_kind = "vscode"
+    record.started_at = 100.799
+    codex_rollouts.attach_process_ids([record], [process])
+    assert record.pid == process.pid
+    assert record.process_identity is None
+    assert record.process_seen is None
+
+    daemon = BobDaemon()
+    daemon._codex_records[record.session_id] = record
+    monkeypatch.setattr(daemon, "_refresh_codex_records", lambda: None)
+    snapshot = daemon._enrich_agent_stubs(daemon._collect_agent_stubs())
+    entry = next(row for bucket in ("running", "waiting", "sleeping")
+                 for row in snapshot[bucket]
+                 if row["session_id"] == record.session_id)
+    assert entry["pid"] == process.pid
+    assert entry["can_stop"] is False
+    assert entry["can_jump"] is False
+    assert entry["can_close"] is False
+    assert entry["can_type"] is False
+    assert entry.get("channel") is not True
+    assert daemon.stop_codex_session(record.session_id) == (
+        False, "this Codex session has no controllable CLI identity")
+    assert process.terminated is False and process.killed is False
+
+
 def test_codex_stop_signals_only_a_fully_matching_native_resume(monkeypatch):
     from dark_army_daemon import codex_rollouts
 

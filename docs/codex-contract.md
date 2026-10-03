@@ -111,7 +111,10 @@ same terminal withdraws the target) and double-checks its listener identity
 within four seconds, then checks the captured roster before the existing editor
 reveal. This evidence grants `can_jump`; human Close additionally requires the
 stopped-turn checks below. It grants no public PID, Stop, reply, typing, board
-attribution or reverse navigation authority. Decoration separately rechecks
+attribution or reverse navigation authority. A separate conservative process
+scan may attach a PID to an isolated vscode-sourced TUI root for board ancestry;
+the shared-terminal protocol evidence itself grants no such attribution.
+Decoration separately rechecks
 the private targets as described above. It launches
 no Codex server, subscribes to no thread and reads no internal SQLite state.
 Tests: `test_codex_terminal.py`. A changed journal path, cwd or thread id
@@ -212,7 +215,7 @@ A small cross-process validation/disposal race
 remains, as with private refinement close.
 
 **Control is published per row, never inferred.** `codex_rollouts.py`
-attaches a process only to a root `codex-tui` / CLI / user thread in the
+attaches a control-bearing process identity only to a root `codex-tui` / CLI / user thread in the
 exact cwd. A candidate must be the canonical native executable whose
 basename is exactly `codex`, with `.app/Contents`, `app-server`,
 `code-mode-host`, child journals and inaccessible process fields all
@@ -227,7 +230,16 @@ into more than once inside the live window, which neither rung above can
 resolve. It **publishes no control at all**: `matching_process_identity`
 admits only the two kinds above, so a `nearest_start` PID is attribution
 data — which Codex thread a board verb came from, and whether a row came
-out of the terminal Dark Army opened — and never a button. Unproven plain, app and IDE roots are Hide-only;
+out of the terminal Dark Army opened — and never a button. An isolated
+`codex-tui` / vscode / user root may receive a PID alone when it is the only
+top-level root and the only fully inspected native TUI process in its cwd,
+that process predates the rollout by at most five minutes, no plausible
+unreadable process competes, and a fresh identity check still agrees.
+Contradictory resume identity and any PID already assigned elsewhere refuse
+the match. Each scan clears stale attribution first. This PID can satisfy a
+card launch receipt's separate terminal-ancestry check; it sets neither
+`process_identity` nor `process_seen`, so it grants no CLI liveness, Stop,
+Jump, Close or reply authority by itself. Unproven plain, app and IDE roots are Hide-only;
 finished and child rows have no actions. Every row carries explicit
 `can_stop` / `can_jump` / `can_hide` / `can_resume`, decoded by the panel
 with false defaults — **PID is data, never UI authority**. Stop reopens

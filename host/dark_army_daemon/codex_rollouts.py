@@ -58,7 +58,7 @@ PROCESS_SNAPSHOT_TTL_SECONDS = 5.0
 # `(monotonic stamp, list)` of the last healthy scan. `None` — enumeration
 # unavailable — is never stored, so the next caller retries at once.
 _PROCESS_SNAPSHOT: Optional[tuple[float, list]] = None
-# The safe-root session ids `load_recent` last attached processes to.
+# The attachment-eligible root ids `load_recent` last scanned processes for.
 _LAST_ROOT_IDS: frozenset = frozenset()
 # `(the shared scan's list, its members, {kind: candidates},
 # {raw exe: realpath})`: the shared reading classified once per kind
@@ -877,7 +877,10 @@ def load_recent(
     # must never be tombstoned "no process" off a reading taken before its
     # process existed.
     global _LAST_ROOT_IDS
-    ids = frozenset(r.session_id for r in out if _safe_cli_root(r))
+    ids = frozenset(
+        r.session_id for r in out
+        if _safe_cli_root(r) or _vscode_attribution_root(r)
+    )
     with _CACHE_LOCK:
         if ids != _LAST_ROOT_IDS:
             invalidate_process_snapshot()
@@ -940,6 +943,23 @@ def _safe_cli_root(record: CodexRecord) -> bool:
         and record.originator == "codex-tui"
         and record.source_kind == "cli"
         and record.thread_source == "user"
+    )
+
+
+def _vscode_attribution_root(record: CodexRecord) -> bool:
+    """A shared-server TUI root eligible for PID data, never CLI authority."""
+    try:
+        started = float(record.started_at)
+    except (TypeError, ValueError):
+        return False
+    return (
+        not record.is_child
+        and record.originator == "codex-tui"
+        and record.source_kind == "vscode"
+        and record.thread_source == "user"
+        and bool(record.cwd and record.thread_id)
+        and math.isfinite(started)
+        and started > 0
     )
 
 
@@ -1888,11 +1908,12 @@ def attach_process_ids(records: list[CodexRecord], processes=None) -> None:
     for attribution and nothing a button may act on.
     """
     roots = [record for record in records if _safe_cli_root(record)]
-    if not roots:
+    vscode_roots = [record for record in records if _vscode_attribution_root(record)]
+    if not roots and not vscode_roots:
         return
     # Materialize exactly once, including caller-supplied iterators. Never let
     # an unavailable scan fall through into the control helper's default scan.
-    for record in roots:
+    for record in (*roots, *vscode_roots):
         record.pid = None
         record.process_identity = None
         record.process_seen = None
@@ -1903,7 +1924,8 @@ def attach_process_ids(records: list[CodexRecord], processes=None) -> None:
     if observed is None:
         return
     candidates = _native_processes(observed)
-    _observe_root_liveness(roots, observed, candidates)
+    if roots:
+        _observe_root_liveness(roots, observed, candidates)
 
     claimed: set[int] = set()
     for record in roots:
@@ -1935,6 +1957,46 @@ def attach_process_ids(records: list[CodexRecord], processes=None) -> None:
             pending[0].pid = base.pid
 
     _pair_by_start_time(roots, candidates)
+    _attach_vscode_attribution(records, vscode_roots, observed, candidates)
+
+
+def _attach_vscode_attribution(records, vscode_roots, observed, candidates) -> None:
+    """Publish a PID only for one stable, unopposed native terminal in a cwd."""
+    top_level_by_cwd: dict[str, set[str]] = {}
+    for record in records:
+        if not record.is_child and record.cwd:
+            top_level_by_cwd.setdefault(record.cwd, set()).add(record.session_id)
+    unreadable = _shared_classification(observed, "unreadable", _classify_unreadable)
+    for record in vscode_roots:
+        if len(top_level_by_cwd.get(record.cwd, ())) != 1:
+            continue
+        matches = [item for item in candidates if item[1].cwd == record.cwd]
+        if len(matches) != 1:
+            continue
+        proc, identity = matches[0]
+        if any(other is not record and other.pid == identity.pid for other in records):
+            continue
+        if any(
+            arg == "resume" and index + 1 < len(identity.argv)
+            and identity.argv[index + 1] != record.thread_id
+            for index, arg in enumerate(identity.argv)
+        ):
+            continue
+        try:
+            started = float(record.started_at)
+        except (TypeError, ValueError):
+            continue
+        if (not math.isfinite(identity.create_time) or identity.create_time <= 0
+                or not 0 <= started - identity.create_time <= NEAREST_START_SECONDS):
+            continue
+        if any(
+            other is not proc and (not cwd or cwd == record.cwd)
+            for other, cwd in unreadable
+        ):
+            continue
+        if _fresh_liveness_identity(proc) != identity:
+            continue
+        record.pid = identity.pid
 
 
 def _pair_by_start_time(
