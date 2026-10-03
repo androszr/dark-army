@@ -1016,7 +1016,8 @@ final class BoardState: ObservableObject {
                          beneficiary: draft.outcome.beneficiary,
                          intendedBenefit: draft.outcome.intendedBenefit,
                          successCriterion: draft.outcome.successCriterion,
-                         expanded: draft.expanded)
+                         expanded: draft.expanded,
+                         blockedBy: draft.blockedBy)
     }
 
     /// The autosave tick. Writes the row and leaves the folder where it is —
@@ -1073,6 +1074,7 @@ final class BoardState: ObservableObject {
         next.outcome.successCriterion = d.successCriterion
         next.priority = d.priority
         next.area = d.area
+        next.blockedBy = d.blockedBy
         next.expanded = d.expanded
         draft = next
         refusals[BoardState.newCard] = ""
@@ -1143,7 +1145,7 @@ final class BoardState: ObservableObject {
             draft.title, draft.summary, draft.prompt, draft.workflow,
             draft.outcome.beneficiary, draft.outcome.intendedBenefit,
             draft.outcome.successCriterion, draft.priority, draft.model,
-            draft.area])
+            draft.area, draft.blockedBy])
     }
     func revealPhaseTwo() { draft.expanded = true }
 
@@ -1392,8 +1394,12 @@ struct BoardDraft {
     /// banked draft — `refine`'s stated rule, for the same reason: a banked
     /// draft carries no intent about starting anything.
     var startWhenPlanned = false
-    /// Newline-separated card ids this draft waits on. Composer does not send
-    /// it; saving an existing card does.
+    /// Newline-separated card ids this draft waits on. The composer sends it
+    /// with the create (`boardCreate(blockedBy:)`), Prepare fills it only
+    /// while it is empty (`DependencySuggestion`), and a project-picker move
+    /// clears it — the choices were that project's. Saving an existing card
+    /// does not send it: the card window's WAITS ON section writes it.
+    var blockedBy = ""
     /// Newline-joined relative attachment paths, filled from the card on
     /// an existing-card open. The composer writes `stagedAttachments`
     /// instead; this is the read-only half.
@@ -1423,6 +1429,7 @@ struct BoardDraft {
         model = card.model
         priority = card.priority
         area = card.area
+        blockedBy = card.blockedBy
         column = card.column
         workflow = card.workflow.joined(separator: "\n")
         attachments = card.attachments.joined(separator: "\n")

@@ -2074,3 +2074,201 @@ async def test_a_refused_objective_logs_the_reason(
     records = [r.getMessage() for r in caplog.records
                if r.getMessage().startswith("Prepare refused")]
     assert len(records) == 1
+
+
+# --- DEPENDS ON: the project's unfinished cards the idea may wait on
+
+_CANDS = [("id1", "Build the pipeline"), ("id2", "Night lighting"),
+          ("id3", "Fix the door")]
+
+
+def test_dependencies_block_is_empty_without_candidates():
+    assert card_prepare._dependencies_block(()) == ""
+    assert card_prepare._dependencies_block([]) == ""
+
+
+def test_dependencies_block_sits_after_folders_before_idea_with_area_last():
+    body = card_prepare.prompt_for(
+        title="t", summary="s", tool="claude", project="p",
+        roster=_ROSTER, idea="a thought", roots=_ROOTS, candidates=_CANDS)
+    assert body.index("FOLDER:") < body.index("DEPENDS ON:")
+    assert body.index("DEPENDS ON:") < body.index("IDEA:")
+    assert "- Night lighting" in body
+    assert "id2" not in body
+    assert body.rindex("AREA:") > body.index("IDEA:")
+    assert body.rstrip().splitlines()[-1].startswith("- ")  # the area list
+
+
+def test_dependencies_legacy_press_is_unchanged_by_candidates():
+    plain = card_prepare.prompt_for(
+        title="t", summary="s", tool="claude", project="p", roster=_ROSTER)
+    with_cands = card_prepare.prompt_for(
+        title="t", summary="s", tool="claude", project="p", roster=_ROSTER,
+        candidates=_CANDS)
+    assert plain == with_cands
+    assert "DEPENDS ON" not in plain
+
+
+def test_dependencies_idea_prompt_without_candidates_is_unchanged():
+    assert card_prepare.prompt_for(
+        title="", summary="", tool="claude", project="p", idea="x",
+        candidates=()) == card_prepare.prompt_for(
+            title="", summary="", tool="claude", project="p", idea="x")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("DEPENDS ON:\nBuild the pipeline\nAREA: NONE\n", ["id1"]),
+    ("DEPENDS ON:\nbuild THE pipeline\n", ["id1"]),
+    ("**DEPENDS ON:**\n- Night lighting\n- \"Fix the door\"\n", ["id2", "id3"]),
+    ("## DEPENDS ON\n* Fix the door\n", ["id3"]),
+    ("DEPENDS ON: Fix the door\n", ["id3"]),
+    ("DEPENDS ON:\nid2\n", ["id2"]),
+    ("DEPENDS ON:\nNONE\n", []),
+    ("INSTRUCTIONS:\nDo it.\n", []),
+    ("DEPENDS ON:\n", []),
+    ("DEPENDS ON:\nMade up card\nFix the door\n", ["id3"]),
+    ("DEPENDS ON:\nFix the door\nNight lighting\nBuild the pipeline\n",
+     ["id3", "id2", "id1"]),
+    ("DEPENDS ON:\nFix the door\nfix the door\nid3\n", ["id3"]),
+    ("DEPENDS ON:\nFix the door\n\nNight lighting\n", ["id3"]),
+    ("DEPENDS ON:\nFix the door\nAREA:\nNight lighting\n", ["id3"]),
+    ("DEPENDS ON:\nNight lighting\nFOLDER: x\nFix the door\n", ["id2"]),
+    ("DEPENDS ON:\nBuild the pipeline\nDEPENDS ON:\nFix the door\n", ["id3"]),
+])
+def test_dependencies_reader_table(raw, expected):
+    assert card_prepare.parse_dependencies(raw, _CANDS) == expected
+
+
+def test_dependencies_unknown_title_is_dropped_and_ids_must_be_offered():
+    raw = "DEPENDS ON:\nNot a card at all\nid999\n"
+    assert card_prepare.parse_dependencies(raw, _CANDS) == []
+    assert card_prepare.parse_dependencies(raw, ()) == []
+
+
+def test_dependencies_reader_is_capped_at_the_stores_cap():
+    cands = [(f"c{i}", f"Card number {i}") for i in range(12)]
+    raw = "DEPENDS ON:\n" + "\n".join(t for _i, t in cands) + "\n"
+    out = card_prepare.parse_dependencies(raw, cands)
+    assert out == [f"c{i}" for i in range(8)]
+
+
+def test_dependencies_a_shared_title_resolves_to_nothing():
+    cands = [("a", "Newsroom"), ("b", "newsroom"), ("c", "Other")]
+    assert card_prepare.parse_dependencies(
+        "DEPENDS ON:\nNewsroom\nOther\n", cands) == ["c"]
+
+
+def test_dependencies_label_shaped_titles_are_not_candidates():
+    for bad in ("SUMMARY: rewrite", "Fix FOLDER: x", "AREA: pocket",
+                "DEPENDS ON: it", "", "   "):
+        assert not card_prepare.candidate_ok(bad), bad
+    assert card_prepare.candidate_ok("Rewrite the summary box")
+
+
+@pytest.mark.asyncio
+async def test_dependencies_idea_press_answers_ids(tmp_path, monkeypatch):
+    daemon, root = _tolerant_daemon(
+        tmp_path, monkeypatch,
+        b"TITLE: T\nSUMMARY: S.\nINSTRUCTIONS: Do it.\nSPECIALISTS: NONE\n"
+        b"DEPENDS ON:\nNight lighting\nInvented card\nAREA: NONE\n")
+    result, detail = await daemon._prepare_card_text_locked(
+        dict(_IDEA_FIELDS), str(root), candidates=_CANDS)
+    assert result is not None, detail
+    assert result["suggested_dependencies"] == ["id2"]
+    assert result["prompt"] == "Do it."
+    assert result["suggested_area"] == "universal"
+
+
+@pytest.mark.asyncio
+async def test_dependencies_none_answer_leaves_the_list_empty(
+        tmp_path, monkeypatch):
+    daemon, root = _tolerant_daemon(
+        tmp_path, monkeypatch,
+        b"TITLE: T\nSUMMARY: S.\nINSTRUCTIONS: Do it.\nSPECIALISTS: NONE\n"
+        b"DEPENDS ON:\nNONE\n")
+    result, _ = await daemon._prepare_card_text_locked(
+        dict(_IDEA_FIELDS), str(root), candidates=_CANDS)
+    assert result["suggested_dependencies"] == []
+
+
+@pytest.mark.asyncio
+async def test_dependencies_legacy_press_is_unchanged_in_its_keys(
+        tmp_path, monkeypatch):
+    daemon, root = _tolerant_daemon(
+        tmp_path, monkeypatch,
+        b"INSTRUCTIONS:\nDo it.\nSPECIALISTS: NONE\nDEPENDS ON:\nFix the door\n")
+    result, _ = await daemon._prepare_card_text_locked(
+        {"title": "t", "summary": "s", "tool": "claude", "project": "p",
+         "attachment_paths": []}, str(root), candidates=_CANDS)
+    assert set(result) == {"prompt", "workflow", "suggested_root",
+                           "suggested_area"}
+
+
+@pytest.mark.asyncio
+async def test_dependencies_offered_same_project_not_done_only(
+        tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    daemon, fake_exec = _prepare_daemon(
+        tmp_path, monkeypatch,
+        b"TITLE: T\nSUMMARY: S.\nINSTRUCTIONS: Do it.\nSPECIALISTS: NONE\n"
+        b"DEPENDS ON:\nStill working\nOther root card\n")
+    daemon._known_project_roots = lambda: [str(root), str(other)]
+
+    def card(cid, title, where, column="backlog"):
+        return {"id": cid, "title": title, "root": str(where),
+                "column_name": column}
+
+    long_title = "L" * 300
+    daemon._board_state = {
+        "projects": [{"name": "project", "root": str(root)}],
+        "cards": [
+            card("a", "Still working", root, "in_progress"),
+            card("b", "Finished card", root, "done"),
+            card("c", "Other root card", other),
+            card("d", "Twin", root), card("e", "twin", root),
+            card("f", "SUMMARY: shaped like a label", root),
+            card("g", long_title, root),
+        ]}
+    fields = dict(_IDEA_FIELDS, root=str(root))
+    result, detail = await daemon.prepare_card_text(fields)
+    assert result is not None, detail
+    prompt = fake_exec.argv[fake_exec.argv.index("-p") + 1]
+    assert "- Still working" in prompt
+    for absent in ("Finished card", "Other root card", "Twin", "twin",
+                   "shaped like a label"):
+        assert absent not in prompt, absent
+    assert "- " + "L" * card_prepare.MAX_DEPENDENCY_TITLE_CHARS + "\n" in prompt
+    assert "L" * (card_prepare.MAX_DEPENDENCY_TITLE_CHARS + 1) not in prompt
+    # The reader is closed against the same list: only the offered id comes back.
+    assert result["suggested_dependencies"] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_dependencies_offer_is_capped_at_forty(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    daemon, fake_exec = _prepare_daemon(
+        tmp_path, monkeypatch,
+        b"TITLE: T\nSUMMARY: S.\nINSTRUCTIONS: Do it.\nSPECIALISTS: NONE\n")
+    daemon._known_project_roots = lambda: [str(root)]
+    daemon._board_state = {
+        "projects": [{"name": "project", "root": str(root)}],
+        "cards": [{"id": f"c{i}", "title": f"Card {i:03d}", "root": str(root),
+                   "column_name": "prep"} for i in range(60)]}
+    result, detail = await daemon.prepare_card_text(
+        dict(_IDEA_FIELDS, root=str(root)))
+    assert result is not None, detail
+    prompt = fake_exec.argv[fake_exec.argv.index("-p") + 1]
+    assert prompt.count("- Card ") == card_prepare.MAX_DEPENDENCY_CHOICES
+    assert "Card 039" in prompt and "Card 040" not in prompt
+
+
+def test_dependencies_line_led_by_a_roster_name_is_not_a_specialist():
+    roster = [("bc-implementer", ""), ("bc-verifier", "")]
+    raw = ("TITLE: T\nSUMMARY: S\nINSTRUCTIONS: Do.\nSPECIALISTS:\n"
+           "- bc-implementer\nDEPENDS ON:\nbc-verifier misses stale counts\n"
+           "AREA: gate\n")
+    assert card_prepare.parse_idea(raw, roster)[3] == ["bc-implementer"]

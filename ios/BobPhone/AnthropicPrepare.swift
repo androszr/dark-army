@@ -170,6 +170,7 @@ enum PhonePreparer {
     static func prepare(idea: String, tool: String, projectName: String,
                         roots: [String], roster: [String],
                         areas: [(slug: String, name: String, concept: String)],
+                        candidates: [(id: String, title: String)] = [],
                         hasPhotos: Bool) async -> PhonePrepareResult {
         if hasPhotos {
             return PhonePrepareResult(ok: false, detail: noPhotos, prompt: "", workflow: "")
@@ -180,6 +181,7 @@ enum PhonePreparer {
         let prompt = CardPrepareRules.promptForIdea(
             modeHead: PreparerBrief.modeHeadIdea, idea: idea, tool: tool,
             project: projectName, roster: roster, roots: roots,
+            candidates: candidates.map(\.title),
             areas: areas.map { (name: $0.name, concept: $0.concept) })
         let raw: String
         switch await AnthropicMessages.send(key: key, system: PreparerBrief.text,
@@ -214,6 +216,8 @@ enum PhonePreparer {
             beneficiary: objective["beneficiary"] ?? "",
             intendedBenefit: objective["intended_benefit"] ?? "",
             successCriterion: objective["success_criterion"] ?? "",
+            suggestedDependencies: CardPrepareRules.parseDependencies(
+                raw, candidates: candidates),
             preparedVia: .phone)
     }
 }

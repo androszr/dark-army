@@ -503,6 +503,11 @@ struct PhonePrepareResult {
     var beneficiary: String = ""
     var intendedBenefit: String = ""
     var successCriterion: String = ""
+    /// Ids of this project's own unfinished cards the helper named under
+    /// DEPENDS ON, from the list it was shown; idea mode only. Absent from
+    /// an older Mac, which is `[]`: no opinion. Applied only into an empty
+    /// waits-on box (`DependencySuggestion.decide`).
+    var suggestedDependencies: [String] = []
     /// Which side answered. Defaulted so `parse(data:code:)` — the Mac's
     /// reply — is untouched; `PhonePreparer` sets `.phone`.
     var preparedVia: PrepareRoute = .mac
@@ -530,6 +535,7 @@ struct PhonePrepareResult {
             suggestedArea: (obj?["suggested_area"] as? String) ?? "",
             beneficiary: (obj?["beneficiary"] as? String) ?? "",
             intendedBenefit: (obj?["intended_benefit"] as? String) ?? "",
-            successCriterion: (obj?["success_criterion"] as? String) ?? "")
+            successCriterion: (obj?["success_criterion"] as? String) ?? "",
+            suggestedDependencies: (obj?["suggested_dependencies"] as? [String]) ?? [])
     }
 }

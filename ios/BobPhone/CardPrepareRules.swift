@@ -14,6 +14,10 @@ enum CardPrepareRules {
     // The Mac's bounds, by name.
     static let maxIdeaInput = 2000
     static let maxProjectChoices = 40
+    static let maxDependencyChoices = 40
+    static let maxDependencyTitleChars = 120
+    /// `board.MAX_BLOCKERS`: what survives the reader, as in the store.
+    static let maxBlockers = 8
     static let maxTitleOut = 80
     static let maxTitleWords = 14
     static let maxSummaryChars = 2000
@@ -42,11 +46,13 @@ enum CardPrepareRules {
     static func promptForIdea(modeHead: String, idea: String, tool: String,
                               project: String, roster: [String],
                               roots: [String],
+                              candidates: [String] = [],
                               areas: [(name: String, concept: String)]) -> String {
         let thought = String(collapse(idea).unicodeScalars.prefix(maxIdeaInput))
         return modeHead
             + rosterBlock(roster)
             + foldersBlock(roots)
+            + dependenciesBlock(candidates)
             + "IDEA: \(thought)\n"
             + "ASSISTANT: \(tool)\n"
             + "PROJECT: \(project)\n"
@@ -82,6 +88,20 @@ enum CardPrepareRules {
         return lines.joined(separator: "\n") + "\n\n"
     }
 
+    /// `card_prepare._dependencies_block`: the project's unfinished cards the
+    /// idea may wait on, as titles; empty for none, so a prompt without
+    /// candidates is byte-equal to the one before this section existed.
+    static func dependenciesBlock(_ titles: [String]) -> String {
+        let shown = titles.filter { !trim($0).isEmpty }
+        if shown.isEmpty { return "" }
+        var lines = ["After SPECIALISTS and FOLDER, and before AREA, add one section:",
+                     "DEPENDS ON:",
+                     "DEPENDS ON lists the cards below that this work must wait for, "
+                     + "one title per line, copied character for character, or NONE."]
+        for title in shown.prefix(maxDependencyChoices) { lines.append("- \(title)") }
+        return lines.joined(separator: "\n") + "\n\n"
+    }
+
     static func areasBlock(_ areas: [(name: String, concept: String)]) -> String {
         "\nAfter SPECIALISTS and FOLDER, add the final section AREA:\n"
             + "Choose exactly one area name below, or NONE.\n"
@@ -101,7 +121,17 @@ enum CardPrepareRules {
         return (cleanLine(found["TITLE"] ?? ""),
                 cleanLine(found["SUMMARY"] ?? ""),
                 cleanInstructions(instructions),
-                cleanSpecialists(found["SPECIALISTS"] ?? "", roster: roster))
+                cleanSpecialists(cutAtDependsOn(found["SPECIALISTS"] ?? ""), roster: roster))
+    }
+
+    /// The SPECIALISTS body up to the first `DEPENDS ON:` label: that section
+    /// is asked for after it, so its lines land inside this body and a title
+    /// starting with a roster name must not be read as a specialist.
+    static func cutAtDependsOn(_ body: String) -> String {
+        guard let hit = dependsLabelPattern?.firstMatch(
+                in: body, options: [], range: NSRange(body.startIndex..., in: body)),
+              let range = Range(hit.range, in: body) else { return body }
+        return String(body[..<range.lowerBound])
     }
 
     /// The three objective lines keyed by card field; `NONE`, absent and
@@ -222,6 +252,132 @@ enum CardPrepareRules {
                 + "line would read it as an option, not as instructions"
         }
         return nil
+    }
+
+    // --- DEPENDS ON ------------------------------------------------------
+
+    /// Constant patterns, written to compile; a failure would leave the
+    /// pattern nil and the rule it guards silent, which the parity test
+    /// catches on the Mac, never on a phone.
+    private static func regex(_ pattern: String) -> NSRegularExpression? {
+        try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
+    }
+
+    private static let sectionIdeaPattern = regex(
+        "^[ \\t]*#{1,6}[ \\t]*[*_`]*(" + ideaLabels.joined(separator: "|")
+        + ")[*_`]*:?[*_`]*[ \\t]*$"
+        + "|[*_`]*(" + ideaLabels.joined(separator: "|")
+        + ")[*_`]*:(?:[*_`]*(?=[ \\t]|$))?")
+    private static let areaLabelPattern = regex(
+        "^[ \\t]*#{1,6}[ \\t]*[*_`]*AREA[*_`]*:?[*_`]*[ \\t]*$"
+        + "|[*_`]*AREA[*_`]*:(?:[*_`]*(?=[ \\t]|$))?")
+    private static let dependsLabelPattern = regex(
+        "^[ \\t]*#{1,6}[ \\t]*[*_`]*DEPENDS[ \\t]+ON[*_`]*:?[*_`]*[ \\t]*$"
+        + "|[*_`]*DEPENDS[ \\t]+ON[*_`]*:(?:[*_`]*(?=[ \\t]|$))?")
+
+    private static func matches(_ pattern: NSRegularExpression?, _ text: String) -> Bool {
+        pattern?.firstMatch(in: text, options: [],
+                            range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    /// `card_prepare.candidate_ok`: a title shaped like a section label
+    /// would cut a section when echoed into the answer, so it is not offered.
+    static func candidateOk(_ title: String) -> Bool {
+        let text = trim(title)
+        if text.isEmpty { return false }
+        return !(matches(sectionIdeaPattern, text) || matches(areaLabelPattern, text)
+                 || matches(dependsLabelPattern, text) || text.contains("FOLDER:"))
+    }
+
+    /// The closed list the DEPENDS ON menu offers, `[(id, title)]`: the
+    /// cards of `root` not in Done, titles collapsed and clipped before they
+    /// are offered *and* matched, a label-shaped title or one shared by two
+    /// cards left out, board order, at most forty. The Mac's daemon builds
+    /// the same list in `_dependency_candidates`.
+    static func candidates(from rows: [(id: String, title: String, root: String, column: String)],
+                           root: String) -> [(id: String, title: String)] {
+        var counts: [String: Int] = [:]
+        var kept: [(id: String, title: String)] = []
+        for row in rows where row.root == root && row.column != "done" {
+            let title = String(collapse(row.title).unicodeScalars.prefix(maxDependencyTitleChars))
+            if row.id.isEmpty || !candidateOk(title) { continue }
+            counts[title.lowercased(), default: 0] += 1
+            kept.append((row.id, title))
+        }
+        return Array(kept.filter { counts[$0.title.lowercased()] == 1 }
+            .prefix(maxDependencyChoices))
+    }
+
+    /// `card_prepare.parse_dependencies`: the last `DEPENDS ON:` section's
+    /// lines, each matched case-insensitively against an offered title or
+    /// exactly against an offered id; only ids the caller supplied come back,
+    /// in answer order, de-duplicated, at most eight.
+    static func parseDependencies(_ raw: String,
+                                  candidates: [(id: String, title: String)]) -> [String] {
+        var byTitle: [String: [String]] = [:]
+        var ids = Set<String>()
+        for candidate in candidates {
+            let key = String(collapse(candidate.title).unicodeScalars.prefix(maxDependencyTitleChars))
+            if candidate.id.isEmpty || key.isEmpty { continue }
+            ids.insert(candidate.id)
+            byTitle[key.lowercased(), default: []].append(candidate.id)
+        }
+        if ids.isEmpty { return [] }
+        let text = stripFences(raw)
+        let whole = NSRange(text.startIndex..., in: text)
+        guard let last = dependsLabelPattern?.matches(in: text, options: [], range: whole).last,
+              let labelEnd = Range(last.range, in: text)?.upperBound else { return [] }
+        var found: [String] = []
+        for (position, line) in splitLines(String(text[labelEnd...])).enumerated() {
+            if trim(line).isEmpty {
+                if position == 0 { continue }
+                break
+            }
+            if matches(sectionIdeaPattern, line) || matches(areaLabelPattern, line)
+                || line.contains("FOLDER:") { break }
+            var item = undecorate(trim(line))
+            item = dropListMarker(item)
+            item = undecorate(trim(unquote(item)))
+            if item.isEmpty || item.uppercased() == "NONE" { continue }
+            let hit: String
+            if ids.contains(item) {
+                hit = item
+            } else {
+                let hits = byTitle[collapse(item).lowercased()] ?? []
+                if hits.count != 1 { continue }
+                hit = hits[0]
+            }
+            if !found.contains(hit) { found.append(hit) }
+        }
+        return Array(found.prefix(maxBlockers))
+    }
+
+    /// `card_prepare._undecorate`: one heading marker, then every matching
+    /// wrapper pair (`**Foo**`, `` `Foo` ``) off both ends; a pair whose
+    /// inner text carries the token again is two spans and is left whole.
+    static func undecorate(_ text: String) -> String {
+        var line = trim(text)
+        var hashes = 0
+        for ch in line { if ch == "#" { hashes += 1 } else { break } }
+        if (1...6).contains(hashes) {
+            let after = line.dropFirst(hashes)
+            if let first = after.first, first == " " || first == "\t" {
+                line = trim(String(after))
+            }
+        }
+        let wraps = ["**", "__", "`", "*", "_"]
+        outer: while true {
+            for wrap in wraps {
+                let n = wrap.count
+                if line.count > 2 * n && line.hasPrefix(wrap) && line.hasSuffix(wrap) {
+                    let inner = String(line.dropFirst(n).dropLast(n))
+                    if inner.contains(wrap) { continue }
+                    line = trim(inner)
+                    continue outer
+                }
+            }
+            return line
+        }
     }
 
     // --- the helpers ----------------------------------------------------

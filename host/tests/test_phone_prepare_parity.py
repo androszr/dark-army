@@ -76,12 +76,29 @@ GOLDEN_ANSWERS = [
     # empty and whitespace
     "",
     "   \n\n  ",
+    # DEPENDS ON: an exact title and a decorated, quoted one, then AREA
+    "TITLE: T\nSUMMARY: S\nINSTRUCTIONS: Do.\nSPECIALISTS: NONE\n"
+    "DEPENDS ON:\n- Build the pipeline\n- \"night LIGHTING\"\n* c3\n"
+    "AREA: Pocket\n",
+    # DEPENDS ON: NONE plus an unknown line, and a duplicate title offered
+    # twice (resolves to nothing)
+    "TITLE: T\nSUMMARY: S\nINSTRUCTIONS: Do.\nSPECIALISTS: NONE\n"
+    "DEPENDS ON:\nNONE\nA card nobody offered\nTwin\nAREA: gate\n",
+    # a DEPENDS ON line led by a roster name must not become a specialist
+    "TITLE: T\nSUMMARY: S\nINSTRUCTIONS: Do.\nSPECIALISTS:\n- bc-implementer\n"
+    "DEPENDS ON:\nbc-verifier misses stale counts\nAREA: gate\n",
 ]
+
+#: The closed list the DEPENDS ON reader is given in every golden, `[id, title]`.
+CANDIDATES = [["c1", "Build the pipeline"], ["c2", "Night lighting"],
+              ["c3", "Fix the door"], ["c4", "Twin"], ["c5", "twin"]]
 
 PROMPT_FIXTURES = [
     dict(idea="  Make   the widget\n\tmove  ", tool="claude", project="alpha",
          roster=ROSTER, roots=ROOTS),
     dict(idea="x" * 2500, tool="", project="", roster=[], roots=["/only"]),
+    dict(idea="Add the night lighting", tool="claude", project="alpha",
+         roster=ROSTER, roots=ROOTS, candidates=CANDIDATES),
 ]
 
 
@@ -125,6 +142,9 @@ struct In: Decodable {
     let tool: String?
     let project: String?
     let modeHead: String?
+    let candidates: [[String]]
+    let rows: [[String]]?
+    let root: String?
 }
 let input = try! JSONDecoder().decode(In.self, from: FileHandle.standardInput.readDataToEndOfFile())
 var out: [String: Any] = [:]
@@ -132,7 +152,12 @@ if input.mode == "prompt" {
     out["prompt"] = CardPrepareRules.promptForIdea(
         modeHead: input.modeHead!, idea: input.idea!, tool: input.tool!,
         project: input.project!, roster: input.roster, roots: input.roots,
+        candidates: input.candidates.map { $0[1] },
         areas: input.areas.map { (name: $0[0], concept: $0[1]) })
+} else if input.mode == "candidates" {
+    out["candidates"] = CardPrepareRules.candidates(
+        from: input.rows!.map { (id: $0[0], title: $0[1], root: $0[2], column: $0[3]) },
+        root: input.root!).map { [$0.id, $0.title] }
 } else {
     let raw = input.raw!
     let idea = CardPrepareRules.parseIdea(raw, roster: input.roster)
@@ -144,6 +169,8 @@ if input.mode == "prompt" {
     out["objective"] = objective
     out["folder"] = CardPrepareRules.parseFolder(raw, roots: input.roots)
     out["area"] = CardPrepareRules.parseArea(raw, areas: input.areaKeys.map { (slug: $0[0], name: $0[1]) })
+    out["dependencies"] = CardPrepareRules.parseDependencies(
+        raw, candidates: input.candidates.map { (id: $0[0], title: $0[1]) })
     out["title_refusal"] = CardPrepareRules.titleRefusal(idea.title) ?? ""
     out["summary_refusal"] = CardPrepareRules.summaryRefusal(idea.summary) ?? ""
     out["objective_refusal"] = CardPrepareRules.objectiveRefusal(objective) ?? ""
@@ -171,7 +198,7 @@ def probe(tmp_path_factory):
 
     def run(payload: dict) -> dict:
         base = {"roster": ROSTER, "roots": ROOTS, "areas": AREAS,
-                "areaKeys": AREA_KEYS}
+                "areaKeys": AREA_KEYS, "candidates": CANDIDATES}
         base.update(payload)
         ran = subprocess.run([str(executable)], input=json.dumps(base),
                              capture_output=True, text=True, timeout=30)
@@ -190,6 +217,8 @@ def _python_reading(raw: str) -> dict:
         "objective": objective,
         "folder": card_prepare.parse_folder(raw, ROOTS),
         "area": card_prepare.parse_area(raw),
+        "dependencies": card_prepare.parse_dependencies(
+            raw, [tuple(c) for c in CANDIDATES]),
         "title_refusal": card_prepare.title_refusal(title) or "",
         "summary_refusal": card_prepare.summary_refusal(summary) or "",
         "objective_refusal": card_prepare.objective_refusal(objective) or "",
@@ -205,16 +234,18 @@ def test_both_readers_agree_on_every_golden(probe, raw):
     assert probe({"mode": "read", "raw": raw}) == _python_reading(raw)
 
 
-@pytest.mark.parametrize("fixture", PROMPT_FIXTURES, ids=("plain", "bounds"))
+@pytest.mark.parametrize("fixture", PROMPT_FIXTURES,
+                         ids=("plain", "bounds", "candidates"))
 def test_the_prompt_is_the_macs_byte_for_byte(probe, fixture):
+    candidates = fixture.get("candidates", [])
     expected = card_prepare.prompt_for(
         title="", summary="", tool=fixture["tool"], project=fixture["project"],
         roster=[(n, "") for n in fixture["roster"]], idea=fixture["idea"],
-        roots=fixture["roots"])
+        roots=fixture["roots"], candidates=[tuple(c) for c in candidates])
     got = probe({"mode": "prompt", "modeHead": card_prepare.MODE_HEAD_IDEA,
                  "idea": fixture["idea"], "tool": fixture["tool"],
                  "project": fixture["project"], "roster": fixture["roster"],
-                 "roots": fixture["roots"]})
+                 "roots": fixture["roots"], "candidates": candidates})
     assert got["prompt"] == expected
 
 
@@ -235,3 +266,31 @@ def test_the_key_never_rides_anything_the_phone_sends():
     widget = (ROOT / "ios" / "BobPhoneWidget").glob("*.swift")
     for path in widget:
         assert "Anthropic" not in path.read_text(), path.name
+
+
+def test_the_candidate_list_is_built_by_one_rule_on_both_sides(probe):
+    rows = [
+        {"id": "a", "title": "Still working", "root": "/p", "column": "prep"},
+        {"id": "b", "title": "Finished", "root": "/p", "column": "done"},
+        {"id": "c", "title": "Elsewhere", "root": "/q", "column": "prep"},
+        {"id": "d", "title": "Twin", "root": "/p", "column": "prep"},
+        {"id": "e", "title": "twin", "root": "/p", "column": "backlog"},
+        {"id": "f", "title": "SUMMARY: reads as a label", "root": "/p",
+         "column": "prep"},
+        {"id": "g", "title": "L" * 300, "root": "/p", "column": "prep"},
+        {"id": "h", "title": "  spaced   out  ", "root": "/p", "column": "prep"},
+    ] + [{"id": f"n{i}", "title": f"Card {i:03d}", "root": "/p",
+          "column": "prep"} for i in range(60)]
+    got = probe({"mode": "candidates", "root": "/p",
+                 "rows": [[r["id"], r["title"], r["root"], r["column"]]
+                          for r in rows]})
+    cards = [{"id": r["id"], "title": r["title"], "root": r["root"],
+              "column_name": r["column"]} for r in rows]
+    # The daemon's own builder, over the same cards.
+    from dark_army_daemon.daemon import BobDaemon
+    daemon = BobDaemon.__new__(BobDaemon)
+    daemon._board_state = {"cards": cards}
+    expected = [list(pair) for pair in daemon._dependency_candidates("/p")]
+    assert got["candidates"] == expected
+    assert len(expected) == card_prepare.MAX_DEPENDENCY_CHOICES
+    assert expected[0] == ["a", "Still working"]

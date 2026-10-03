@@ -37,6 +37,10 @@ struct ComposerView: View {
     /// column, no snapshot and in no banked draft.
     @State private var startWhenPlanned = false
     @State private var area = ""
+    /// The cards this draft waits on, newline-joined ids — the store's own
+    /// shape. Drawn and sent only against a Mac that said it takes the link
+    /// (`dependencies_supported`); Prepare fills it only while empty.
+    @State private var blockedBy = ""
     /// Build (`""`) or Scout (`"scout"`) — the Mac composer's Kind chips.
     /// A scout investigates and writes a report instead of code; it has no
     /// plan to refine, so Save & Refine and start-when-planned are absent
@@ -132,6 +136,7 @@ struct ComposerView: View {
         _successCriterion = State(initialValue: d?.successCriterion ?? "")
         _draftPriority = State(initialValue: d?.priority ?? "")
         _area = State(initialValue: d?.area ?? "")
+        _blockedBy = State(initialValue: d?.blockedBy ?? "")
         _kind = State(initialValue: d?.kind ?? "")
         _expanded = State(initialValue: d?.expanded ?? false)
         // The staging id travels with the draft: a restored composer must
@@ -171,7 +176,8 @@ struct ComposerView: View {
     private var phaseTwoVisible: Bool {
         ComposerPhase.expanded(flag: expanded, fields: [
             title, summary, prompt, workflow, beneficiary,
-            intendedBenefit, successCriterion, draftPriority, model, area])
+            intendedBenefit, successCriterion, draftPriority, model, area,
+            blockedBy])
     }
 
     var body: some View {
@@ -279,6 +285,14 @@ struct ComposerView: View {
                 if board.areasSupported {
                     Text("Area").font(Theme.mono(11)).foregroundStyle(Theme.faint)
                     AreaGrid(selected: $area)
+                }
+                // The waits-on box, only against a Mac that takes the link
+                // and only once a project is chosen: the choices are that
+                // project's unfinished cards.
+                if board.dependenciesSupported, !projectRoot.isEmpty {
+                    Text("waits on").font(Theme.mono(11)).foregroundStyle(Theme.faint)
+                    ComposerDependencyPicker(selected: $blockedBy,
+                                             root: projectRoot, cards: board.cards)
                 }
                 if board.prioritySupported {
                     Text("priority (0–100, empty for no opinion)")
@@ -422,7 +436,11 @@ struct ComposerView: View {
         // `onAppear`'s first fill of an empty picker keeps a resumed draft's
         // faces.
         .onChange(of: projectRoot) { previous, current in
-            if !previous.isEmpty && previous != current { workflow = "" }
+            if !previous.isEmpty && previous != current {
+                workflow = ""
+                // The waits-on choices were the old project's cards.
+                blockedBy = ""
+            }
             if !current.isEmpty { lastRoot = current }
         }
         // Every persisted field, quietly banked as it is typed.
@@ -526,7 +544,7 @@ struct ComposerView: View {
                       intendedBenefit: intendedBenefit,
                       successCriterion: successCriterion,
                       priority: draftPriority, area: area, kind: kind,
-                      expanded: expanded)
+                      expanded: expanded, blockedBy: blockedBy)
     }
 
     /// Everything persisted, as one comparable value. `updatedAt` moves on
@@ -534,7 +552,7 @@ struct ComposerView: View {
     /// `stagingId` is absent: it is minted once and never changes.
     private var draftKey: [String] {
         [title, summary, prompt, tool, model, projectRoot, workflow, idea,
-         draftPriority, area, kind,
+         draftPriority, area, kind, blockedBy,
          beneficiary, intendedBenefit, successCriterion, expanded ? "1" : "", "\u{0}"]
             + staged + ["\u{0}"] + localPhotos
     }
@@ -992,6 +1010,11 @@ struct ComposerView: View {
                 roots: board.projects.map(\.root),
                 roster: PhonePreparer.roster(from: Array(Specialists.table.keys)),
                 areas: Areas.all.map { (slug: $0.slug, name: $0.name, concept: $0.concept) },
+                candidates: board.dependenciesSupported
+                    ? CardPrepareRules.candidates(from: board.cards.map {
+                        (id: $0.id, title: $0.title, root: $0.root, column: $0.column)
+                    }, root: projectRoot)
+                    : [],
                 hasPhotos: !staged.isEmpty || !localPhotos.isEmpty)
         } else {
             // The older-Mac degrade: a Mac that does not know `idea` reads
@@ -1036,9 +1059,22 @@ struct ComposerView: View {
             // project it held is kept only where the picker can still name
             // it. Same project, unlisted or no opinion: nothing is written.
             if board.areasSupported, let offered = AreaSuggestion.decide(offer: result.suggestedArea, current: area) { area = offered }
+            // The waits-on box, the area's rule: only an empty box, only ids
+            // this project still lists, only against a Mac that takes the
+            // link. Before the project move below, which clears the box.
+            let boxBeforePrepare = blockedBy
+            if board.dependenciesSupported,
+               let offered = DependencySuggestion.decide(
+                offer: result.suggestedDependencies, current: blockedBy,
+                listed: Set(board.cards.filter {
+                    $0.root == projectRoot && $0.column != "done"
+                }.map(\.id))) {
+                blockedBy = offered
+            }
             let wanted = result.suggestedRoot.trimmingCharacters(
                 in: .whitespacesAndNewlines)
-            if let pick = board.projects.first(where: { $0.root == wanted }),
+            if DependencySuggestion.allowsProjectMove(boxBeforePrepare: boxBeforePrepare),
+               let pick = board.projects.first(where: { $0.root == wanted }),
                pick.root != projectRoot {
                 revertRoot = board.projects.contains { $0.root == projectRoot }
                     ? projectRoot : ""
@@ -1130,6 +1166,10 @@ struct ComposerView: View {
         }
         // Live path only, `refine`'s own rule and the same reason.
         if board.areasSupported && !area.isEmpty { fields["area"] = area }
+        // Same live-path rule, and only against a Mac that takes the link.
+        if board.dependenciesSupported && !blockedBy.isEmpty {
+            fields["blocked_by"] = blockedBy
+        }
         // A scout only, and only against a Mac that takes the key: a build
         // card's kind is the store's default.
         if board.scoutSupported && kind == "scout" { fields["kind"] = kind }
@@ -1470,5 +1510,73 @@ enum ProviderChoice {
     /// Where the cursor starts: on the chosen tile, else the first.
     static func startCursor(tiles: [Tile]) -> Int {
         tiles.firstIndex(where: \.selected) ?? 0
+    }
+}
+
+/// The composer's waits-on box: one row per chosen card with ✕, and **Add…**
+/// over this project's other unfinished cards not already chosen, capped at
+/// the store's eight (`BoardCard.dependencyChoices`' rule, the saved card's
+/// picker in `CardDetailView`). Bound to newline-joined ids; the Mac still
+/// refuses a loop or another project in words at create.
+private struct ComposerDependencyPicker: View {
+    @Binding var selected: String
+    let root: String
+    let cards: [BoardCard]
+
+    private var chosen: [BoardCard] {
+        let wanted = selected.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return wanted.compactMap { id in cards.first { $0.id == id } }
+    }
+
+    private var choices: [BoardCard] {
+        let listed = Set(chosen.map(\.id))
+        guard listed.count < 8 else { return [] }
+        return cards.filter {
+            $0.root == root && !listed.contains($0.id) && $0.column != "done"
+        }
+    }
+
+    private func write(_ ids: [String]) {
+        selected = ids.joined(separator: "\n")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(chosen) { card in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(card.title.isEmpty ? "untitled" : card.title)
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.phosphor)
+                    Spacer(minLength: 8)
+                    DecryptButton {
+                        write(chosen.map(\.id).filter { $0 != card.id })
+                    } label: {
+                        Text("\u{2715}")
+                            .font(Theme.mono(13))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.phosphor)
+                    .accessibilityLabel("Stop waiting on \(card.title.isEmpty ? "untitled" : card.title)")
+                }
+            }
+            if !choices.isEmpty {
+                Menu {
+                    ForEach(choices) { other in
+                        DecryptButton(other.title.isEmpty ? "untitled" : other.title) {
+                            write(chosen.map(\.id) + [other.id])
+                        }
+                    }
+                } label: {
+                    Text("WAITS ON \u{00b7} Add\u{2026}")
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.phosphor)
+                        .frame(minHeight: 44, alignment: .leading)
+                }
+                .accessibilityLabel("Add a card this one waits on")
+            }
+        }
     }
 }

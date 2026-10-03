@@ -200,6 +200,12 @@ ROSTER_READ_BYTES = 8192
 #: beyond the bound are simply not offered.
 MAX_PROJECT_CHOICES = 40
 
+#: How many of the project's unfinished cards the DEPENDS ON menu will list,
+#: and how much of each title is shown *and* matched (the clip happens before
+#: both, so what the helper copies is what the reader compares).
+MAX_DEPENDENCY_CHOICES = 40
+MAX_DEPENDENCY_TITLE_CHARS = 120
+
 #: How much of the one-box idea the helper is shown. The same ceiling the
 #: description already has: the idea is what the description would have been.
 MAX_IDEA_INPUT = board.MAX_SUMMARY_CHARS
@@ -407,6 +413,12 @@ _SECTION_IDEA = re.compile(
 _AREA_LABEL = re.compile(
     r"^[ \t]*#{1,6}[ \t]*[*_`]*AREA[*_`]*:?[*_`]*[ \t]*$"
     r"|[*_`]*AREA[*_`]*:(?:[*_`]*(?=[ \t]|$))?",
+    re.MULTILINE)
+#: The idea-mode answer's optional DEPENDS ON section, the `_AREA_LABEL`
+#: shape over its own words. Not a widening of `_SECTION_IDEA`.
+_DEPENDS_LABEL = re.compile(
+    r"^[ \t]*#{1,6}[ \t]*[*_`]*DEPENDS[ \t]+ON[*_`]*:?[*_`]*[ \t]*$"
+    r"|[*_`]*DEPENDS[ \t]+ON[*_`]*:(?:[*_`]*(?=[ \t]|$))?",
     re.MULTILINE)
 #: Where an area answer's tacked-on description begins ("Pocket — phones &
 #: widgets", "Pocket (phones)", "Pocket: phones"); the left piece is matched.
@@ -619,9 +631,41 @@ def _folders_block(roots) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def candidate_ok(title: str) -> bool:
+    """Whether a card title may be offered under DEPENDS ON.
+
+    A title that reads as a section label (`SUMMARY: rewrite`, `FOLDER: x`,
+    `AREA: y`, `DEPENDS ON: z`) would, echoed into the answer, cut a section
+    in half; such a title is left out, on the daemon and on the phone alike.
+    """
+    text = str(title or "").strip()
+    if not text:
+        return False
+    return not (_SECTION_IDEA.search(text) or _AREA_LABEL.search(text)
+                or _DEPENDS_LABEL.search(text) or "FOLDER:" in text)
+
+
+def _dependencies_block(candidates) -> str:
+    """The prompt's closed list of cards this work may wait on, or nothing.
+
+    `candidates` is `[(card_id, title), ...]`. Empty for none, so the whole
+    prompt stays byte-identical to the call this function has always made.
+    """
+    titles = [str(t) for _i, t in (candidates or ()) if str(t or "").strip()]
+    if not titles:
+        return ""
+    lines = ["After SPECIALISTS and FOLDER, and before AREA, add one section:",
+             "DEPENDS ON:",
+             "DEPENDS ON lists the cards below that this work must wait for, "
+             "one title per line, copied character for character, or NONE."]
+    for title in titles[:MAX_DEPENDENCY_CHOICES]:
+        lines.append(f"- {title}")
+    return "\n".join(lines) + "\n\n"
+
+
 def prompt_for(*, title: str, summary: str, tool: str, project: str,
                roster=(), attachments=(), idea: str = "",
-               roots=()) -> str:
+               roots=(), candidates=()) -> str:
     """The data half of the `-p` argument: mode head, roster, fields.
 
     The rules live in the named agent, not here. Summary is collapsed and
@@ -639,6 +683,10 @@ def prompt_for(*, title: str, summary: str, tool: str, project: str,
     `roots` is the closed set of project folders the composer could actually
     select; with fewer than two of them the block is empty and the whole
     prompt is byte-identical to the call this function has always made.
+
+    `candidates` (`[(card_id, title)]`) rides only in idea mode, after the
+    folder block and before the `IDEA:` line; without any, or in the legacy
+    mode, the prompt is byte-identical.
     """
     paths = tuple(p for p in (attachments or ()) if p)
     thought = " ".join((idea or "").split())[:MAX_IDEA_INPUT]
@@ -647,6 +695,7 @@ def prompt_for(*, title: str, summary: str, tool: str, project: str,
             f"{_mode_head(idea=True)}"
             f"{_roster_block(roster)}"
             f"{_folders_block(roots)}"
+            f"{_dependencies_block(candidates)}"
             f"IDEA: {thought}\n"
             f"ASSISTANT: {tool or ''}\n"
             f"PROJECT: {project or ''}\n"
@@ -702,6 +751,7 @@ def argv(executable: str, model: str = "", **fields) -> list[str]:
         roster=fields.get("roster") or (),
         # A data field like `roster`, never str()'d.
         roots=fields.get("roots") or (),
+        candidates=fields.get("candidates") or (),
         attachments=attachments,
         idea=str(fields.get("idea") or ""),
     )
@@ -921,7 +971,14 @@ def parse_idea(raw: str, roster=()) -> tuple[str, str, str, list]:
     title = _clean_line(found.get("TITLE", ""))
     summary = _clean_line(found.get("SUMMARY", ""))
     prompt = _clean_instructions(found["INSTRUCTIONS"])
-    stages = _clean_specialists(found.get("SPECIALISTS", ""), roster)
+    # DEPENDS ON: is asked for after SPECIALISTS, so its lines land inside
+    # this body; cut there, or a title starting with a roster name would be
+    # read as a specialist.
+    specialists = found.get("SPECIALISTS", "")
+    cut = _DEPENDS_LABEL.search(specialists)
+    if cut:
+        specialists = specialists[:cut.start()]
+    stages = _clean_specialists(specialists, roster)
     return title, summary, prompt, stages
 
 
@@ -1081,13 +1138,15 @@ __all__ = [
     "MAX_TITLE_OUT", "MAX_TITLE_WORDS",
     "MAX_ROSTER_AGENTS", "MAX_ROSTER_DESC_CHARS", "ROSTER_READ_BYTES",
     "MAX_PROJECT_CHOICES",
+    "MAX_DEPENDENCY_CHOICES", "MAX_DEPENDENCY_TITLE_CHARS",
     "MODE_HEAD", "MODE_HEAD_IDEA",
     "PREPARER_ROLE", "BRIEF_READ_BYTES", "GROK_AGENT_FILENAME",
     "Brief", "is_preparer_name", "brief_ok", "read_brief",
     "agents_json", "grok_agent_file",
     "prompt_for", "argv", "env_for", "helper_tool", "HELPER_MODELS",
     "WORKER_MODELS",
-    "parse", "parse_idea", "parse_folder", "parse_area", "refusal",
+    "parse", "parse_idea", "parse_folder", "parse_area", "parse_dependencies",
+    "candidate_ok", "refusal",
     "LOG_EXCERPT_CHARS", "log_excerpt",
     "title_refusal", "summary_refusal",
     "OBJECTIVE_LABELS", "parse_objective", "objective_refusal",
@@ -1123,3 +1182,61 @@ def parse_area(raw: str) -> str:
     # once the description is cut away.
     line = _undecorate(_TRAILING_PARENTHETICAL.sub("", line).strip())
     return areas.normalise(line)[0]
+
+
+def parse_dependencies(raw: str, candidates=()) -> list[str]:
+    """The `DEPENDS ON:` answer as a list of ids Dark Army itself supplied.
+
+    `candidates` is `[(card_id, title)]`, the closed list the helper was
+    shown. A scanner like `parse_folder`: the *last* label wins, and the
+    section runs to the first blank line or the next label (`_SECTION_IDEA`,
+    `AREA`, `FOLDER:`). Each line loses its list marker, quotes and markdown
+    decoration and is matched case-insensitively against an offered title,
+    or exactly against an offered id. `NONE`, an absent section and unknown
+    lines give nothing; duplicates collapse in answer order; at most
+    `board.MAX_BLOCKERS` survive. A title offered twice (after the clip)
+    resolves to nothing, so the reader never guesses. Never a refusal.
+    """
+    by_title: dict[str, list[str]] = {}
+    ids: set[str] = set()
+    for cid, title in (candidates or ()):
+        cid = str(cid or "")
+        key = " ".join(str(title or "").split())[:MAX_DEPENDENCY_TITLE_CHARS]
+        if not cid or not key:
+            continue
+        ids.add(cid)
+        by_title.setdefault(key.lower(), []).append(cid)
+    if not ids:
+        return []
+    text = _strip_fences(raw or "")
+    matches = list(_DEPENDS_LABEL.finditer(text))
+    if not matches:
+        return []
+    found: list[str] = []
+    rest = text[matches[-1].end():]
+    for position, line in enumerate(rest.splitlines()):
+        if not line.strip():
+            if position == 0:
+                continue  # the label's own line ended with nothing after it
+            break
+        if (_SECTION_IDEA.search(line) or _AREA_LABEL.search(line)
+                or "FOLDER:" in line):
+            break
+        item = _undecorate(line.strip())
+        for prefix in _LIST_MARKERS:
+            if item.startswith(prefix):
+                item = item[len(prefix):].strip()
+                break
+        item = _undecorate(_unquote(item).strip())
+        if not item or item.upper() == "NONE":
+            continue
+        if item in ids:
+            hit = item
+        else:
+            hits = by_title.get(" ".join(item.split()).lower()) or []
+            if len(hits) != 1:
+                continue
+            hit = hits[0]
+        if hit not in found:
+            found.append(hit)
+    return found[:board.MAX_BLOCKERS]

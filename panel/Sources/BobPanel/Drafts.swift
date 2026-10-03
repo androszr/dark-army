@@ -37,6 +37,9 @@ struct CardDraft: Identifiable, Equatable {
     /// Banked for the same reason as the objective.
     var priority: String
     var area: String
+    /// The cards this draft waits on, newline-joined ids; `""` for none.
+    /// Absent in an older row, which decodes as empty.
+    var blockedBy: String
     /// Whether the composer had opened its second half. Default false so an
     /// older row without the key reopens short unless a later box holds text.
     var expanded: Bool
@@ -50,7 +53,7 @@ struct CardDraft: Identifiable, Equatable {
          updatedAt: Double = 0, priority: String = "", area: String = "",
          beneficiary: String = "", intendedBenefit: String = "",
          successCriterion: String = "",
-         expanded: Bool = false) {
+         expanded: Bool = false, blockedBy: String = "") {
         self.id = id
         self.project = project
         self.root = root
@@ -69,6 +72,7 @@ struct CardDraft: Identifiable, Equatable {
         self.successCriterion = successCriterion
         self.priority = priority
         self.area = area
+        self.blockedBy = blockedBy
         self.expanded = expanded
     }
 
@@ -99,7 +103,8 @@ struct CardDraft: Identifiable, Equatable {
             beneficiary: dict["beneficiary"] as? String ?? "",
             intendedBenefit: dict["intended_benefit"] as? String ?? "",
             successCriterion: dict["success_criterion"] as? String ?? "",
-            expanded: dict["expanded"] as? Bool ?? false)
+            expanded: dict["expanded"] as? Bool ?? false,
+            blockedBy: dict["blocked_by"] as? String ?? "")
     }
 
     var body: [String: Any] {
@@ -121,6 +126,7 @@ struct CardDraft: Identifiable, Equatable {
             "success_criterion": successCriterion,
             "priority": priority,
             "area": area,
+            "blocked_by": blockedBy,
             "expanded": expanded,
         ]
     }
@@ -279,7 +285,8 @@ enum CardDrafts {
         let typed = [draft.title, draft.summary, draft.prompt, draft.workflow,
                      draft.idea, draft.outcome.beneficiary,
                      draft.outcome.intendedBenefit,
-                     draft.outcome.successCriterion, draft.priority, draft.area]
+                     draft.outcome.successCriterion, draft.priority, draft.area,
+                     draft.blockedBy]
         return typed.contains {
             !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }

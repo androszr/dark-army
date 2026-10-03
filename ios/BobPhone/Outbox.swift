@@ -159,6 +159,8 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
     /// The importance number typed before the card exists, banked too.
     var priority: String = ""
     var area: String = ""
+    /// The cards this draft waits on, newline-joined ids; `""` for none.
+    var blockedBy: String = ""
     /// Build (`""`) or Scout (`"scout"`), kept with the draft.
     var kind: String = ""
     /// Whether the composer had opened its second half. Default false so an
@@ -178,7 +180,7 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
         case workflow, idea, staged, localPhotos, open, updatedAt
         case beneficiary, intendedBenefit, successCriterion
         case priority, area, kind
-        case expanded
+        case expanded, blockedBy
     }
 
     init(id: String, tab: String, title: String, summary: String,
@@ -188,7 +190,7 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
          open: Bool, beneficiary: String = "",
          intendedBenefit: String = "", successCriterion: String = "",
          priority: String = "", area: String = "", kind: String = "",
-         expanded: Bool = false) {
+         expanded: Bool = false, blockedBy: String = "") {
         self.id = id
         self.tab = tab
         self.title = title
@@ -210,6 +212,7 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
         self.area = area
         self.kind = kind
         self.expanded = expanded
+        self.blockedBy = blockedBy
     }
 
     /// `OutboxEntry`'s exact rule: an unknown key is ignored, a wrong-shaped
@@ -237,6 +240,7 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
         area = c.value(.area, "")
         kind = c.value(.kind, "")
         expanded = c.value(.expanded, false)
+        blockedBy = c.value(.blockedBy, "")
         idea = c.value(.idea, "")
         staged = c.value(.staged, [])
         localPhotos = c.value(.localPhotos, [])
@@ -253,7 +257,7 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
             !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         let objective = [beneficiary, intendedBenefit, successCriterion,
-                         priority, area].contains {
+                         priority, area, blockedBy].contains {
             !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         return typed || objective || !staged.isEmpty || !localPhotos.isEmpty

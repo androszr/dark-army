@@ -594,11 +594,10 @@ byte-pinned by `test_phone_theme_drift.py`: edit both copies together.
 `AreaGrid` offers eight reflowing tiles with the usual lead's portrait and
 name, drawn only when `areas_supported` is true. `area` defaults to empty in
 every decoder and rides the revision-guarded writes and queued phone creates.
-Prepare's final `AREA:` answer is a closed-list suggestion, applied only into
-an empty box; the daemon answers `universal` where the helper named none, so
-an empty box is never left blank, and idea-mode and area labels tolerate
-markdown decoration (`**TITLE:**`, `## AREA`) while legacy `_SECTION` does
-not. A plan's
+Prepare's `AREA:` and `DEPENDS ON:` answers are closed-list suggestions,
+applied only into an empty box (`docs/card-dependencies.md`); the daemon
+answers `universal` where the helper named none, and idea-mode and area
+labels tolerate markdown decoration while legacy `_SECTION` does not. A plan's
 `- **Area:**` header seeds an empty field on attachment and launch through
 `fill_area_if_empty`; a later launch can re-seed a person's cleared field.
 **The objective takes the same route**: the plan's `Who benefits:` /
