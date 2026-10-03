@@ -401,6 +401,8 @@ judged by the Start rule, and one armed-then-confirmed press sending
 **The agent sheet swipes to the next agent in Needs you** (28 Sep 2026) —
 in full in `docs/phone-contract.md`.
 
+**A Prep or Backlog card swipes on the phone too** (3 Oct 2026): START or Refine and a dots menu holding a confirmed Delete, the card screen's own presses behind a sideways swipe; in full in `docs/phone-contract.md`.
+
 **The Mac board's ticks outlive looking away too** (25 Sep 2026): a
 search, a project change or a fold keeps select mode and its ticks, the
 batch button counts every ticked card drawn or not, and the selecting row
