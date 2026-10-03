@@ -213,7 +213,7 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
 
     **The Bearings digest** (`bearings.py`, pure; loopback `GET
     /api/bearings`; sealed `bearings` on both doors) is
-    `docs/transport-contract.md`'s, *`bearings` is a sealed read*.
+    `docs/sealed-reads-contract.md`'s, *`bearings` is a sealed read*.
 
     **A frame that says nothing is not sent.** `_broadcast` is a
     **trailing-edge limiter**: `BROADCAST_MIN_INTERVAL` (200ms) floors any
@@ -285,16 +285,16 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `GET /api/scout-reports`, with a `q=` text search over the bodies, and
     `GET /api/scout-report`, token-gated;
     sealed reads `scout_reports` / `scout_report` on both doors) are
-    `docs/transport-contract.md`'s, *`scout_reports` and `scout_report` are
+    `docs/sealed-reads-contract.md`'s, *`scout_reports` and `scout_report` are
     sealed reads*.
 
     **The plan list and body** (`plan_index.py`, pure; loopback
     `GET /api/plans` / `GET /api/plan`; sealed `plans` / `plan`) are
-    `docs/transport-contract.md`'s, *`plans` and `plan` are sealed reads*.
+    `docs/sealed-reads-contract.md`'s, *`plans` and `plan` are sealed reads*.
 
     **The phone's week** (loopback `GET /api/history-week`, token-gated;
     sealed `history_week` on both doors, a closed projection) is
-    `docs/transport-contract.md`'s, *`history_week` is a sealed read*.
+    `docs/sealed-reads-contract.md`'s, *`history_week` is a sealed read*.
 
     **The per-frame log pair is behind a switch**: `_log_broadcast` is DEBUG,
     the panel's `snapshot` line behind `Trace.verbose`
@@ -417,7 +417,7 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `_log_session_end`, exactly once, and a restart is not a start
     (`_seed_logged_starts`). Served as `GET /api/log` on loopback and the
     sealed `log` read on both doors, beside `work_record` and `card_sync` —
-    all three in full in `docs/transport-contract.md`. Pinned by
+    all three in full in `docs/sealed-reads-contract.md`. Pinned by
     `test_event_log.py`, `test_event_log_hooks.py` and
     `test_phone_event_log.py`.
   - **`enrollment.py`** — **which projects Dark Army is allowed to watch at all**.

@@ -71,7 +71,7 @@ attach on the executor, replaced by a re-attach, empty for a report with no
 block — drawn through `ScoutVerdictLine` on the tile, the card window and the
 phone's card screen; the Reports list still reads the file. Every report also lists in the Mac's Reports tab
 and the phone's Scouting tile on the Menu; the index and the body read are
-`docs/transport-contract.md`'s.
+`docs/sealed-reads-contract.md`'s.
 
 **A card may hold a standing instruction to take the second path by itself.**
 `start_when_planned` (v17, ring 1, `''` off / `'1'` on, normalised at both

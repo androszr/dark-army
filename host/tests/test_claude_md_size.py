@@ -33,6 +33,7 @@ CEILINGS = (
 # one would silently re-lose the text the size test exists to protect.
 CONTRACT_DOCS = (
     "docs/transport-contract.md",
+    "docs/sealed-reads-contract.md",
     "docs/codex-contract.md",
     "docs/phone-contract.md",
     "docs/menubar-strip-contract.md",

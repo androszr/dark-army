@@ -178,7 +178,7 @@ tab is the scout-report list in the board's place
 (`RailLayout.LeftPane.reports`, `ScoutReportsPane`), the rail its search and
 project rows (`ScoutReportsRail`), a text search merged in after a pause;
 Escape closes an open report, then leaves
-the tab (`closeReport`, `leaveReports`); `docs/transport-contract.md` holds
+the tab (`closeReport`, `leaveReports`); `docs/sealed-reads-contract.md` holds
 the two reads. History is the desk-only
 wide ledger in the board's place (`RailLayout.LeftPane.history`); the rail
 is its scope; its headline is `token_cost_usd` (a reported dollar sits
@@ -663,7 +663,7 @@ when the property has a default, so every model decodes through tolerant
 helpers — one absent field must never blank the panel. Writes need the
 **`X-Bob-Token`** header, not `Authorization: Bearer`; reads are ungated, so
 the wrong header looks like it works and every action silently 403s. And
-**the panel decodes no version markers**: the fourteen `*_supported` /
+**the panel decodes no version markers**: the `*_supported` /
 `*_writable` flags are for the phone, which can meet an older Mac; the panel
 ships with its daemon, so `Board` carries none and every "drawn absent on an
 older Mac" sentence below is the phone's.

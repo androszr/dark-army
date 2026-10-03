@@ -7,7 +7,7 @@ same table `ios/BobPhoneTests/ScoutReportSearchTests.swift` and
 `panel/Tests/BobPanelTests/ScoutReportsTests.swift` hold. The wiring —
 the phone's two sealed reads, the project membership, the literal titles,
 the Menu's gate, the Mac's tab — is pinned by source greps. Contracts:
-`docs/transport-contract.md` (*`scout_reports` and `scout_report` are
+`docs/sealed-reads-contract.md` (*`scout_reports` and `scout_report` are
 sealed reads*) and `docs/phone-contract.md` (*Scout reports open from the
 Menu's Scouting tile*).
 """

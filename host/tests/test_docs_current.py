@@ -31,6 +31,7 @@ DOCS = (
     "GEMINI.md",
     # The contract documents lifted out of CLAUDE.md on 6 Sep 2026.
     "docs/transport-contract.md",
+    "docs/sealed-reads-contract.md",  # split out of the transport contract, 3 Oct 2026
     "docs/codex-contract.md",
     "docs/phone-contract.md",
     "docs/menubar-strip-contract.md",

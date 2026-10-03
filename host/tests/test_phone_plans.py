@@ -7,7 +7,7 @@ run here under `swiftc` beside `ScoutReports.swift`, whose generic
 `ios/BobPhoneTests/PlanSearchTests.swift` holds. The wiring — the two
 sealed reads, the project membership, the literal titles, the Menu's gate,
 the card jump — is pinned by source greps. Contracts:
-`docs/transport-contract.md` (*`plans` and `plan` are sealed reads*) and
+`docs/sealed-reads-contract.md` (*`plans` and `plan` are sealed reads*) and
 `docs/phone-contract.md` (*Plans open from the Menu's Plans tile*).
 """
 

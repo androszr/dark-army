@@ -699,7 +699,7 @@ never ride a snapshot. No git runs on the snapshot path. `_worktree_note`
 returns `""` while `merge_state` is `conflict` or `checks_failed`.
 
 **The Changes read** (`card_changes`, loopback `GET /api/card-changes?card=`
-and the sealed kind on both doors, `docs/transport-contract.md`) is on demand
+and the sealed kind on both doors, `docs/sealed-reads-contract.md`) is on demand
 only — a few read-only git calls under `_changes_lock`, from the project's root
 so it works with the folder released: the commits since the merge base
 (`argv_log`, at most 100), the files with added and removed counts

@@ -4,7 +4,7 @@ One body on three doors — loopback `GET /api/history-week` (token-gated like
 `/api/knowledge`), the sealed kind at home and the sealed kind away — cut
 from `agent_efficiency_report(7, "")` to a closed key set, so no card title,
 person or project folder ever rides the relay. A read: neither action tuple,
-no lease, no `remote_activity` record. `docs/transport-contract.md`,
+no lease, no `remote_activity` record. `docs/sealed-reads-contract.md`,
 *`history_week` is a sealed read*.
 """
 from __future__ import annotations
