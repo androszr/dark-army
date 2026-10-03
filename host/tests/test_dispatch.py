@@ -2883,3 +2883,245 @@ def test_batch_blocks_names_a_plan_only_where_the_card_has_one():
 def test_start_prompt_is_untouched_by_the_batch_implement_form():
     card = _batch_card(1, plan_path="/p/plans/1.md")
     assert dispatch.start_prompt(card).startswith("Plan: /p/plans/1.md\n\n")
+
+
+# --- The reasoning effort (plans/2026-10-03-card-and-role-effort-level.md) ----
+
+def test_effort_before_separator_on_every_tool():
+    """The flag must precede `--`: after it, it is prompt text and the session
+    silently runs at the wrong effort. Pinned exactly, per CLI."""
+    assert dispatch.argv_for("claude", "claude", "do it", effort="high") == [
+        "claude", "--effort", "high", "do it"]
+    assert dispatch.argv_for("codex", "codex", "do it", effort="high") == [
+        "codex", "-c", "model_reasoning_effort=high", "--", "do it"]
+    assert dispatch.argv_for("grok", "grok", "do it", effort="high") == [
+        "grok", "--reasoning-effort", "high", "--", "do it"]
+
+
+def test_effort_and_model_both_sit_before_the_separator():
+    assert dispatch.argv_for("codex", "codex", "p", model="gpt-6-sol",
+                             effort="low") == [
+        "codex", "--model", "gpt-6-sol", "-c", "model_reasoning_effort=low",
+        "--", "p"]
+    assert dispatch.argv_for("claude", "claude", "p", model="opus",
+                             effort="max") == [
+        "claude", "--model", "opus", "--effort", "max", "p"]
+    assert dispatch.argv_for("grok", "grok", "p", model="grok-4.5",
+                             effort="minimal") == [
+        "grok", "--model", "grok-4.5", "--reasoning-effort", "minimal",
+        "--", "p"]
+
+
+def test_an_empty_effort_is_todays_argv_byte_for_byte():
+    for tool in ("claude", "codex", "grok"):
+        assert dispatch.argv_for(tool, tool, "p", effort="") == dispatch.argv_for(
+            tool, tool, "p")
+        assert not any("effort" in part for part in dispatch.argv_for(
+            tool, tool, "p", model=dispatch.MODELS[tool][0]))
+
+
+def test_the_prompt_is_still_last_with_an_effort():
+    for tool in ("claude", "codex", "grok"):
+        level = dispatch.EFFORTS[tool][0]
+        assert dispatch.argv_for(tool, tool, "the prompt", effort=level)[-1] == (
+            "the prompt")
+
+
+def test_effort_levels_per_tool_and_the_gpt_5_5_exclusion():
+    assert "ultra" not in dispatch.EFFORTS["codex"]
+    assert "none" not in dispatch.EFFORTS["grok"]
+    assert "max" in dispatch.efforts_for("codex", "")
+    assert "max" not in dispatch.efforts_for("codex", "gpt-5.5")
+    assert dispatch.efforts_for("gemini", "") == ()
+
+
+def test_effort_catalogue_has_the_tool_default_and_every_model():
+    cat = dispatch.effort_catalogue()
+    assert set(cat) == set(dispatch.EFFORTS)
+    for tool, entry in cat.items():
+        assert set(entry) == {""} | set(dispatch.MODELS[tool])
+    assert "max" in cat["codex"][""]
+    assert "max" not in cat["codex"]["gpt-5.5"]
+
+
+def _effort_card(**kw):
+    card = {"id": "c", "column_name": "backlog", "tool": "claude",
+            "root": "/tmp", "prompt": "go", "project": "bob"}
+    card.update(kw)
+    return card
+
+
+def _effort_guard(card):
+    return dispatch.guard(card, roots={"/tmp"}, in_flight=[], now=1e9)
+
+
+def test_guard_refuses_an_off_list_effort_in_words():
+    ok, detail = _effort_guard(_effort_card(effort="ultra"))
+    assert not ok and "effort" in detail and "claude" in detail
+    ok, detail = _effort_guard(_effort_card(tool="codex", model="gpt-5.5",
+                                     effort="max"))
+    assert not ok and "effort" in detail
+
+
+def test_guard_accepts_every_offered_effort_and_default():
+    for tool, entry in dispatch.effort_catalogue().items():
+        for model, levels in entry.items():
+            for level in levels:
+                ok, detail = _effort_guard(_effort_card(tool=tool, model=model,
+                                                 effort=level))
+                assert ok, (tool, model, level, detail)
+    assert _effort_guard(_effort_card(effort=""))[0]
+    assert _effort_guard(_effort_card())[0]
+
+
+@pytest.mark.asyncio
+async def test_card_effort_wins_over_the_main_slot(daemon, monkeypatch):
+    d, store = daemon
+    d.set_agent_efforts({"claude": {"main": "low"}})
+    card = _make(store, effort="high")
+    seen = _capture(d, monkeypatch)
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    argv = seen["argv"]
+    assert argv[argv.index("--effort") + 1] == "high"
+    assert argv[-1].startswith("go")
+
+
+@pytest.mark.asyncio
+async def test_card_effort_wins_before_the_separator_on_codex(
+        daemon, monkeypatch):
+    d, store = daemon
+    card = _make(store, tool="codex", effort="medium")
+    seen = _capture(d, monkeypatch, executable="/bin/codex")
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    argv = seen["argv"]
+    assert argv[argv.index("-c") + 1] == "model_reasoning_effort=medium"
+    assert argv.index("-c") < argv.index("--")
+
+
+@pytest.mark.asyncio
+async def test_card_effort_wins_before_the_separator_on_grok(
+        daemon, monkeypatch):
+    d, store = daemon
+    card = _make(store, tool="grok", effort="minimal")
+    seen = _capture(d, monkeypatch, executable="/bin/grok")
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    argv = seen["argv"]
+    assert argv[argv.index("--reasoning-effort") + 1] == "minimal"
+    assert argv.index("--reasoning-effort") < argv.index("--")
+
+
+@pytest.mark.asyncio
+async def test_a_default_card_takes_the_project_effort(daemon, monkeypatch):
+    d, store = daemon
+    d.set_agent_efforts({"claude": {"main": "medium"}})
+    d.set_agent_effort_override("/tmp", {"claude": {"main": "xhigh"}})
+    card = _make(store)
+    seen = _capture(d, monkeypatch)
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    assert seen["argv"][seen["argv"].index("--effort") + 1] == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_a_default_card_falls_back_to_the_machine_wide_effort(
+        daemon, monkeypatch):
+    d, store = daemon
+    d.set_agent_efforts({"claude": {"main": "medium"}})
+    card = _make(store)
+    seen = _capture(d, monkeypatch)
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    assert seen["argv"][seen["argv"].index("--effort") + 1] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_a_project_override_default_effort_beats_a_global_choice(
+        daemon, monkeypatch):
+    d, store = daemon
+    d.set_agent_efforts({"claude": {"main": "medium"}})
+    d.set_agent_effort_override("/tmp", {"claude": {"main": ""}})
+    card = _make(store)
+    seen = _capture(d, monkeypatch)
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    assert "--effort" not in seen["argv"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["claude", "codex", "grok"])
+async def test_everything_at_default_is_todays_argv_with_no_effort_flag(
+        daemon, monkeypatch, tool):
+    d, store = daemon
+    card = _make(store, tool=tool)
+    seen = _capture(d, monkeypatch, executable=f"/bin/{tool}")
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    text = " ".join(seen["argv"][:-1])
+    for word in ("--effort", "--reasoning-effort", "model_reasoning_effort"):
+        assert word not in text, (tool, word)
+
+
+def test_agent_effort_for_revalidates_against_the_model_on_the_way_out():
+    from dark_army_daemon import daemon as daemon_mod
+    d = daemon_mod.BobDaemon.__new__(daemon_mod.BobDaemon)
+    d.agent_models = {"codex": {"main": "gpt-5.5"}}
+    d.agent_model_overrides = {}
+    d.agent_efforts = {"codex": {"main": "max"}}
+    d.agent_effort_overrides = {}
+    # gpt-5.5 has no `max`: a stored level the model rejects reads as Default.
+    assert d._agent_effort_for("/tmp", "codex", "main") == ""
+    d.agent_models = {"codex": {"main": "gpt-6-sol"}}
+    assert d._agent_effort_for("/tmp", "codex", "main") == "max"
+    assert d._agent_effort_for("/tmp", "codex", "main", model="gpt-5.5") == ""
+    assert d._agent_effort_for("/tmp", "codex", "card-preparer") == ""
+    assert d._agent_effort_for("/tmp", "gemini", "main") == ""
+    d.agent_efforts = {"codex": {"main": "ultra"}}
+    assert d._agent_effort_for("/tmp", "codex", "main") == ""
+
+
+@pytest.mark.asyncio
+async def test_refine_launches_at_the_main_slot_effort(daemon, monkeypatch):
+    d, store = daemon
+    d.set_agent_efforts({"codex": {"main": "low"}})
+    card = _make(store, column_name="prep", tool="codex", effort="high")
+    seen = _capture(d, monkeypatch, executable="/bin/codex")
+    ok, detail = await d.refine_card(card["id"])
+    assert ok, detail
+    argv = seen["argv"]
+    # The card's own effort is Start's alone; the planner takes the slot.
+    assert argv[argv.index("-c") + 1] == "model_reasoning_effort=low"
+    assert argv.index("-c") < argv.index("--")
+
+
+@pytest.mark.asyncio
+async def test_card_effort_is_judged_against_the_model_the_launch_will_use(
+        daemon, monkeypatch):
+    """A Default-model Codex card whose main slot resolves to gpt-5.5 must not
+    launch with `max`, which Codex refuses at spawn: refused in words before
+    any spawn, never trimmed."""
+    d, store = daemon
+    d.set_agent_models({"codex": {"main": "gpt-5.5"}})
+    card = _make(store, tool="codex", effort="max")
+    assert store.get(card["id"])["model"] == ""
+    seen = _capture(d, monkeypatch, executable="/bin/codex")
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert not ok
+    assert detail == dispatch.EFFORT_REFUSAL.format(tool="codex")
+    assert "argv" not in seen
+
+
+@pytest.mark.asyncio
+async def test_card_effort_the_launch_model_offers_still_starts(
+        daemon, monkeypatch):
+    d, store = daemon
+    d.set_agent_models({"codex": {"main": "gpt-5.5"}})
+    card = _make(store, tool="codex", effort="xhigh")
+    seen = _capture(d, monkeypatch, executable="/bin/codex")
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    argv = seen["argv"]
+    assert argv[argv.index("--model") + 1] == "gpt-5.5"
+    assert argv[argv.index("-c") + 1] == "model_reasoning_effort=xhigh"

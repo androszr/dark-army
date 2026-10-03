@@ -195,13 +195,15 @@ enum SettingsSearch {
     }
 
     /// What decides whether two consecutive picks are one run: the action,
-    /// and for a `.map` value the record minus its `model` — so the Agent
-    /// models chips of one slot join and those of the next slot do not, even
-    /// when a search has dropped the `info` row that separated them.
+    /// and for a `.map` value the record minus its `model` and `effort` — so
+    /// the Agent models chips of one slot join and those of the next slot do
+    /// not, even when a search has dropped the `info` row that separated them.
+    /// (The effort chips differ in `effort` the way model chips differ in
+    /// `model`, and carry a different action from the model run beside them.)
     static func runKey(_ entry: SettingsEntry) -> String? {
         guard case .pick(let action, let value, _) = entry.row.kind else { return nil }
         if case .map(let record) = value {
-            let facets = record.filter { $0.key != "model" }
+            let facets = record.filter { $0.key != "model" && $0.key != "effort" }
             return action + "|" + facets.keys.sorted()
                 .map { "\($0)=\(facets[$0] ?? "")" }.joined(separator: ";")
         }

@@ -146,7 +146,7 @@ def test_a_resync_asked_for_mid_pass_runs_once_more(monkeypatch):
     passes = []
     started, release = threading.Event(), threading.Event()
 
-    def fake(models_for):
+    def fake(models_for, efforts_for=None):
         passes.append(1)
         if len(passes) == 1:
             started.set()
@@ -168,3 +168,50 @@ def test_a_model_press_resyncs_at_once():
     src = Path(__file__).resolve().parents[1] / "dark_army_menubar" / "app.py"
     body = src.read_text().split("def _set_agent_model(self, value)")[1].split("\n    def ")[0]
     assert body.count("self._resync_agent_packs()") == 2
+
+
+def _effort_line(path: Path) -> str:
+    for line in path.read_text().splitlines():
+        if line.startswith("effort:") or line.startswith("model_reasoning_effort"):
+            return line
+    return ""
+
+
+def test_effort_pin_own_checkout_pins_the_effort_line_of_every_brief_and_shim(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(dev_build, "find_repo_root", lambda: None)
+    root = _own_checkout(tmp_path)
+    settings = {**_settings(),
+                "agent_efforts": {"claude": {"verifier": "low"},
+                                  "codex": {"verifier": "medium"},
+                                  "grok": {"verifier": "minimal"}}}
+    models = agent_models.resolve(settings, str(root))
+    efforts = agent_models.resolve_efforts(settings, str(root))
+    wrote = pack_install.pin_own_checkout(str(root), models, efforts)
+    assert ".claude/agents/bc-verifier.md" in wrote
+    assert _effort_line(root / ".claude/agents/bc-verifier.md") == "effort: low"
+    assert _effort_line(root / ".codex/agents/bc-verifier.toml") == (
+        'model_reasoning_effort = "medium"')
+    assert _effort_line(root / ".grok/agents/bc-verifier.md") == "effort: minimal"
+    # An untouched role keeps the shipped Codex level and no other line.
+    assert _effort_line(root / ".codex/agents/bc-planner.toml") == (
+        'model_reasoning_effort = "high"')
+    assert _effort_line(root / ".claude/agents/bc-planner.md") == ""
+    # A hand-named brief is never touched.
+    assert _effort_line(root / ".claude/agents/mission-control.md") == ""
+    # A second pass changes nothing; Default removes the line again.
+    assert pack_install.pin_own_checkout(str(root), models, efforts) == []
+    efforts["claude"]["verifier"] = ""
+    assert pack_install.pin_own_checkout(str(root), models, efforts) == [
+        ".claude/agents/bc-verifier.md"]
+    assert _effort_line(root / ".claude/agents/bc-verifier.md") == ""
+
+
+def test_effort_a_none_table_touches_no_effort_line(tmp_path, monkeypatch):
+    monkeypatch.setattr(dev_build, "find_repo_root", lambda: None)
+    root = _own_checkout(tmp_path)
+    models = agent_models.resolve(_settings(), str(root))
+    pack_install.pin_own_checkout(str(root), models)
+    assert _effort_line(root / ".codex/agents/bc-planner.toml") == (
+        'model_reasoning_effort = "high"')
+    assert _effort_line(root / ".claude/agents/bc-planner.md") == ""

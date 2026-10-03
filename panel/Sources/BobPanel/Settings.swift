@@ -250,6 +250,22 @@ extension DaemonClient {
         var byRoot: [String: [String: [String: String]]] = [:]
         var options: [String: [String: [String]]] = [:]
         var slots: [String] = []
+        /// The reasoning effort beside each model: the resolved machine-wide
+        /// table (`agent_efforts`), the override map as stored
+        /// (`agent_efforts_by_root`), the levels per provider and slot for that
+        /// slot's resolved model (`agent_effort_options`) and the drawable
+        /// slots (`agent_effort_slots`). Each decodes with `as?` on its own and
+        /// an older menu bar sends none — `available` stays keyed on the model
+        /// options alone, and a slot with no options draws no effort control.
+        var efforts: [String: [String: String]] = [:]
+        var effortsByRoot: [String: [String: [String: String]]] = [:]
+        var effortOptions: [String: [String: [String]]] = [:]
+        var effortSlots: [String] = []
+        /// The levels each *project's* models offer, keyed like
+        /// `effortsByRoot` (`agent_effort_options_by_root`). A root absent here
+        /// — or an older menu bar that sends none — falls back to the
+        /// machine-wide `effortOptions`.
+        var effortOptionsByRoot: [String: [String: [String: [String]]]] = [:]
         /// Provider order as the menu bar states it; a table is unordered.
         static let providers = ["claude", "codex", "grok"]
 
@@ -273,6 +289,43 @@ extension DaemonClient {
             if let rows = raw["agent_model_slots"] as? [String] {
                 slots = rows
             }
+            if let table = raw["agent_efforts"] as? [String: [String: String]] {
+                efforts = table
+            }
+            if let table = raw["agent_efforts_by_root"] as? [String: [String: [String: String]]] {
+                effortsByRoot = table
+            }
+            if let table = raw["agent_effort_options"] as? [String: [String: [String]]] {
+                effortOptions = table
+            }
+            if let rows = raw["agent_effort_slots"] as? [String] {
+                effortSlots = rows
+            }
+            if let table = raw["agent_effort_options_by_root"]
+                as? [String: [String: [String: [String]]]] {
+                effortOptionsByRoot = table
+            }
+        }
+
+        /// The levels a pop-up offers for one provider and slot; empty — so the
+        /// control is absent — where the menu bar sent none or the slot has no
+        /// effort cell.
+        func allowedEfforts(provider: String, slot: String, root: String? = nil) -> [String] {
+            guard effortSlots.contains(slot) else { return [] }
+            if let root, let table = effortOptionsByRoot[root] {
+                return table[provider]?[slot] ?? []
+            }
+            return effortOptions[provider]?[slot] ?? []
+        }
+
+        /// The machine-wide effort; `""` is Default.
+        func chosenEffort(provider: String, slot: String) -> String {
+            efforts[provider]?[slot] ?? ""
+        }
+
+        /// One project's own effort, or nil where it inherits.
+        func effortOverride(root: String, provider: String, slot: String) -> String? {
+            effortsByRoot[root]?[provider]?[slot]
         }
 
         /// The names a chip run offers for one provider and slot.

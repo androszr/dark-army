@@ -57,7 +57,7 @@ from .knowledge_store import KnowledgeStoreMixin
 # holds. Never call a launcher function from here. `normalise_root` is the
 # folder canonicaliser, pure path arithmetic, and the one spelling of "same
 # project" the dependency refusal in `_update_locked` shares with the queue.
-from .dispatch import MODELS, normalise_root
+from .dispatch import MODELS, efforts_for, normalise_root
 from .paths import BOARD_PATH, STATE_DIR, ensure_state_dir
 
 logger = logging.getLogger("dark-army.board")
@@ -107,7 +107,10 @@ logger = logging.getLogger("dark-army.board")
 #: verdict and the branch version it judged), through the ADD COLUMN list
 #: (`docs/card-worktrees.md`, *Review and merge*). Written by `record_merge`
 #: and `record_review_verdict` alone.
-SCHEMA_VERSION = 31
+#: v32 adds one `cards` column, `effort`, beside `model`: the reasoning effort
+#: the card's session launches at, `''` meaning Default (no flag), through the
+#: ADD COLUMN list (`docs/context-board.md`, *A card may name the effort*).
+SCHEMA_VERSION = 32
 
 #: Ceiling for board.db-wal, applied per connection in `connect()`. SQLite
 #: reuses a WAL file from its start after a checkpoint but never shrinks
@@ -568,6 +571,13 @@ CREATE TABLE IF NOT EXISTS cards (
     -- single-spaced so the CREATE and ALTER spellings can be pinned against
     -- each other by a grep, `queue_rank`'s own comment.
     model TEXT NOT NULL DEFAULT '',
+    -- The reasoning effort the card's assistant launches at, at v32. `''` is
+    -- Default (no effort flag at all) and always legal; anything else must be
+    -- in `dispatch.efforts_for(tool, model)`, checked at `create` and `update`.
+    -- A thing a person states (ring 1, `_WRITABLE`); cleared by the store on a
+    -- retool and when a model change rejects it. Single-spaced so the CREATE
+    -- and ALTER spellings can be pinned against each other by a grep.
+    effort TEXT NOT NULL DEFAULT '',
     -- Client create-idempotency token. A retried `board_create` with the
     -- same staging id returns this row, unchanged. Empty is "no token";
     -- the partial unique index is what makes many tokenless cards legal.
@@ -901,7 +911,7 @@ SINGLE_WRITER = {
 #: a field the guard cannot see.
 REVISED_COLUMNS = frozenset({
     "title", "summary", "prompt", "workflow", "column_name", "tool",
-    "model", "project", "root", "blocked_by",
+    "model", "effort", "project", "root", "blocked_by",
     "attachments", "plan_path", "closed_by", "close_note", "manual_steps",
     "start_when_planned",
     # The importance number, at v18. In here because it is drawn on the card
@@ -1040,6 +1050,9 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         # card's tool at both `create` and `update`, and cleared by the store
         # itself on a retool (see `update`).
         "model",
+        # The reasoning effort, at v32 — stated like `model` beside it, judged
+        # against `dispatch.efforts_for(tool, model)` at `create` and `update`.
+        "effort",
         # The standing "start it when its plan lands" tick, at v17 — a thing
         # a person states, like `model` and `tool` beside it, and that is the
         # whole feature: a surface must be able to set it, so it is in
@@ -1184,6 +1197,9 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         # identically to the CREATE path above, which a grep for the column's
         # declaration proves by finding exactly these two lines.
         ("model", "TEXT NOT NULL DEFAULT ''"),
+        # The reasoning effort, at v32. Spelled identically to the CREATE path,
+        # both reading effort TEXT NOT NULL DEFAULT '' — a grep finds two.
+        ("effort", "TEXT NOT NULL DEFAULT ''"),
         # Client create-idempotency token. Same DEFAULT rule: a build that
         # has never heard of it goes on INSERTing without naming it.
         # Spelled identically to the CREATE path above, both reading
@@ -2306,6 +2322,9 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         model = str(fields.get("model") or "")
         if model and model not in MODELS.get(tool, ()):
             return None, f"this card names a model Dark Army does not offer for {tool}"
+        effort = str(fields.get("effort") or "")
+        if effort and effort not in efforts_for(tool, model):
+            return None, f"this card names an effort Dark Army does not offer for {tool}"
         if self.total() >= MAX_CARDS:
             return None, f"the board is full ({MAX_CARDS} cards)"
         attached = "\n".join(attachments.split_field(fields.get("attachments")))
@@ -2352,6 +2371,7 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             "queue_rank": None,
             "attachments": attached,
             "model": model,
+            "effort": effort,
             "start_when_planned": normalise_flag(fields.get("start_when_planned")),
             "priority": priority,
             "area": area,
@@ -2585,6 +2605,27 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             retooled = "tool" in updates and updates["tool"] != current.get("tool")
             if retooled and not named:
                 updates["model"] = ""
+        # The effort belongs to the (tool, model) pair, resolved here with them:
+        # an explicit off-list level is refused in words, and a retool or a
+        # model change the stored level does not fit clears it — the same
+        # direction as the model clear above, removing a stale claim and never
+        # manufacturing one.
+        if "effort" in updates or "model" in updates or "tool" in updates:
+            new_tool = str(updates.get("tool", current.get("tool")) or "")
+            new_model = str(updates.get("model", current.get("model")) or "")
+            offered = efforts_for(new_tool, new_model)
+            if "effort" in updates:
+                asked = str(updates.get("effort") or "")
+                if asked and asked not in offered:
+                    return None, ("this card names an effort Dark Army does not "
+                                  f"offer for {new_tool}")
+                updates["effort"] = asked
+            else:
+                retooled = ("tool" in updates
+                            and updates["tool"] != current.get("tool"))
+                stored = str(current.get("effort") or "")
+                if stored and (retooled or stored not in offered):
+                    updates["effort"] = ""
         if not updates:
             # Named fields, none of them writable — a caller that thinks it
             # changed something and did not. Answering with the card and

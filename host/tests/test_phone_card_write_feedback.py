@@ -225,7 +225,9 @@ def test_every_acting_control_dims_and_the_pressed_one_relabels():
     # picker relabels with the press's mark (the `.dependencies` slot).
     # 24 on 3 Oct 2026: MERGE, Fix and RUN REVIEW on a Done card joined as
     # three acting controls that dim with the rest (`CardMerge`).
-    assert text.count(".disabled(sending)") == 24
+    # 25 on 3 Oct 2026: the card's effort picker joined beside the model's
+    # (`effortPicker`) and dims with the rest.
+    assert text.count(".disabled(sending)") == 25
     assert "private var sending: Bool { settlingHere }" in text
     assert text.count(".disabled(settlingHere)") == 1
     assert "pendingStartWhenPlanned = nil" in text, (

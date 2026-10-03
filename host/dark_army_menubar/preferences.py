@@ -163,6 +163,18 @@ DEFAULTS = {
     # entry rather than being stored. Same validation, same downgrade
     # safety, same rule about the name.
     "agent_models_by_root": {},
+    # The reasoning effort beside each model, as two further keys — never a
+    # sub-key of the model tables, which an older build reads with their own
+    # meaning. `agent_efforts` is `{provider: {slot: level}}` and
+    # `agent_efforts_by_root` `{root: {provider: {slot: level}}}`, with the
+    # model keys' rules: an absent slot means the shipped level
+    # (`agent_models.SHIPPED_EFFORTS`), `""` is Default (no flag, no brief
+    # line), `"inherit"` on the wire removes an override. Validated at
+    # `_set_agent_effort` against the slot's resolved model and again by the
+    # daemon's `_agent_effort_for`. Additive and downgrade-safe; **never
+    # renamed.**
+    "agent_efforts": {},
+    "agent_efforts_by_root": {},
     # The panel's size as a percent of the design (100/125/150/175). **100**,
     # because an upgrade must change nothing on screen. The offered steps live
     # in the panel's `PanelScale`; this file only stores the number. The key

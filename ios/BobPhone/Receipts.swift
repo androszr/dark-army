@@ -72,6 +72,9 @@ enum ReceiptEffect: Codable, Equatable {
     case cardTool(cardId: String, tool: String)
     /// The card should shortly name this model (`""` is Default).
     case cardModel(cardId: String, model: String)
+    /// The card should shortly name this effort (`""` is Default), judged by
+    /// `card.effort == effort` the way `.cardModel` is.
+    case cardEffort(cardId: String, effort: String)
     /// The card should shortly show a refinement at work — a planning
     /// session, a plan, or the card out of Prep — for the same reason:
     /// Refine settling on the 200 alone put the button back to "Refine"
@@ -889,6 +892,10 @@ final class ReceiptLedger: ObservableObject {
             guard let card = snapshot.board.cards.first(where: { $0.id == cardId })
             else { return false }
             return card.model == model
+        case .cardEffort(let cardId, let effort):
+            guard let card = snapshot.board.cards.first(where: { $0.id == cardId })
+            else { return false }
+            return card.effort == effort
         case .cardRefining(let cardId):
             guard let card = snapshot.board.cards.first(where: { $0.id == cardId })
             else { return false }
@@ -983,6 +990,9 @@ final class ReceiptLedger: ObservableObject {
             }
             if let model = fields["model"] {
                 return .cardModel(cardId: card, model: model)
+            }
+            if let effort = fields["effort"] {
+                return .cardEffort(cardId: card, effort: effort)
             }
             // A field save: the Mac's own change number is the proof, and
             // the guard already told the phone which one to expect.

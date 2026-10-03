@@ -1473,6 +1473,11 @@ struct Board: Decodable {
     /// too old to send it, which is exactly the gate every model chooser keys
     /// off: absent, never blank.
     var models: [String: [String]] = [:]
+    /// The effort levels per assistant and model — the Mac's own
+    /// `dispatch.effort_catalogue()`: `{tool: {"": [...], "<model>": [...]}}`.
+    /// Empty from a Mac too old to send it, which is exactly the gate the
+    /// effort pickers key off: absent, never blank.
+    var efforts: [String: [String: [String]]] = [:]
     var projects: [BoardProject] = []
     var dispatchEnabled = false
     /// Whether the Mac will write a card's instructions from plain words —
@@ -1685,7 +1690,7 @@ struct Board: Decodable {
         case plansSupported = "plans_supported"
         case accessLogSupported = "access_log_supported"
         case linkTimingSupported = "link_timing_supported"
-        case available, cards, counts, tools, installed, models, projects
+        case available, cards, counts, tools, installed, models, efforts, projects
         case dispatchEnabled = "dispatch_enabled"
         case prepareEnabled = "prepare_enabled"
         case autostartEnabled = "autostart_enabled"
@@ -1749,6 +1754,7 @@ struct Board: Decodable {
         tools = c.value(.tools, [])
         installed = c.value(.installed, [:])
         models = c.value(.models, [:])
+        efforts = c.value(.efforts, [:])
         projects = c.value(.projects, [])
         dispatchEnabled = c.value(.dispatchEnabled, false)
         prepareEnabled = c.value(.prepareEnabled, false)
@@ -1927,6 +1933,14 @@ struct Board: Decodable {
     /// cases the chooser is *absent* rather than empty.
     func modelOptions(for tool: String) -> [String] {
         models[tool] ?? []
+    }
+
+    /// The effort levels on offer for one assistant on one model: the model's
+    /// own entry, else the assistant's `""` entry, else nothing — in which case
+    /// the picker is *absent* rather than empty (an older Mac, no assistant, or
+    /// an assistant with no levels).
+    func effortOptions(for tool: String, model: String) -> [String] {
+        efforts[tool]?[model] ?? efforts[tool]?[""] ?? []
     }
 
     /// Presentation only; selection and dispatch keep the daemon's raw id.
@@ -2415,6 +2429,10 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// The model the card pins its assistant to, `""` meaning "let the
     /// assistant decide". Cleared by the store whenever the tool changes.
     var model = ""
+    /// The reasoning effort the card launches at, `""` meaning "let the
+    /// assistant decide". Cleared by the store on a retool and when a model
+    /// change rejects it. Absent from an older Mac, which reads as Default.
+    var effort = ""
     /// The composer's staging id, when this card was created with one.
     /// Empty on older Macs and on cards written without a token.
     var createToken = ""
@@ -2647,7 +2665,7 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case outcomeRevision = "outcome_revision"
         case outcomeStatus = "outcome_status"
-        case id, title, summary, project, tool, model, prompt, root
+        case id, title, summary, project, tool, model, effort, prompt, root
         case workflow, crew
         case leadFace = "lead_face"
         case agentTrail = "agent_trail"
@@ -2715,6 +2733,7 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         column = c.value(.column, "backlog")
         tool = c.value(.tool, "")
         model = c.value(.model, "")
+        effort = c.value(.effort, "")
         createToken = c.value(.createToken, "")
         linkState = c.value(.linkState, "")
         dispatchError = c.value(.dispatchError, "")
@@ -2889,6 +2908,9 @@ struct RunHealth: Decodable, Equatable {
     var attempts = 0
     var returns = 0
     var fixRounds: Int?
+    /// The effort the running session itself reported (`stats.effort`), `""`
+    /// where unknown or from an older daemon — drawn verbatim, never derived.
+    var effort = ""
     /// The Mac's amber bit. Never the only signal: the word comes first.
     var attention = false
     /// Whether the reading came off a live row on this frame rather than
@@ -2897,7 +2919,7 @@ struct RunHealth: Decodable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case sizeClass = "class"
-        case basis, turns, asks, refusals, attempts, returns, attention, live
+        case basis, turns, asks, refusals, attempts, returns, attention, live, effort
         case tokensK = "tokens_k"
         case ctxPct = "ctx_pct"
         case fixRounds = "fix_rounds"
@@ -2915,6 +2937,7 @@ struct RunHealth: Decodable, Equatable {
         attempts = c.value(.attempts, 0)
         returns = c.value(.returns, 0)
         fixRounds = c.maybe(.fixRounds)
+        effort = c.value(.effort, "")
         attention = c.value(.attention, false)
         live = c.value(.live, false)
     }

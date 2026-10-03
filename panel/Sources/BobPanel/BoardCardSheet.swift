@@ -673,6 +673,7 @@ struct BoardCardSheet: View {
             guard result.ok else { return }
             state.draft.tool = tool
             state.draft.model = ""
+            state.draft.effort = ""
             if let revision = result.cardRevision {
                 state.draft.revision = revision
             }
@@ -999,7 +1000,22 @@ struct BoardCardSheet: View {
         // Default, so a model from the wrong provider can never be left
         // behind on a draft. The store does the same on its own, which is
         // why this is a mirror rather than the rule.
-        .onChange(of: state.draft.tool) { state.draft.model = "" }
+        .onChange(of: state.draft.tool) {
+            state.draft.model = ""
+            state.draft.effort = ""
+        }
+        // And the effort's own mirror of the store's clear: a model whose
+        // list no longer offers the chosen level puts it back to Default.
+        // The store judges the (tool, model, effort) triple itself.
+        .onChange(of: state.draft.model) {
+            if !state.draft.effort.isEmpty,
+               !Board.effortOptions(efforts: board.efforts,
+                                    tool: state.draft.tool,
+                                    model: state.draft.model)
+                    .contains(state.draft.effort) {
+                state.draft.effort = ""
+            }
+        }
         // Every route that opens or replaces the composer bumps the
         // generation, and this view keeps its identity (and its `@State`)
         // across a + NEW CARD or a resumed draft while the card window is
@@ -1029,6 +1045,7 @@ struct BoardCardSheet: View {
         titleField
         summaryField
         modelField
+        effortField
         areaPicker
         priorityField
         instructionsField
@@ -1087,6 +1104,7 @@ struct BoardCardSheet: View {
         editorGroup("Where it runs") {
             projectField
             modelField
+            effortField
             areaPicker
         }
         editorGroup("How important") {
@@ -1150,6 +1168,7 @@ struct BoardCardSheet: View {
         if d.tool != opened.tool { out.append("assistant") }
         if d.kind != opened.kind { out.append("kind") }
         if d.model != opened.model { out.append("model") }
+        if d.effort != opened.effort { out.append("effort") }
         if d.area != opened.area { out.append("area") }
         if d.priority != opened.priority { out.append("priority") }
         if d.prompt != opened.prompt { out.append("instructions") }
@@ -1191,6 +1210,7 @@ struct BoardCardSheet: View {
         state.draft.root = opened.root
         state.draft.tool = opened.tool
         state.draft.model = opened.model
+        state.draft.effort = opened.effort
         state.draft.area = opened.area
         state.draft.priority = opened.priority
         state.draft.prompt = opened.prompt
@@ -1288,6 +1308,34 @@ struct BoardCardSheet: View {
                                                tool: state.draft.tool),
                             id: \.self) { model in
                         Text(Board.modelLabel(model)).tag(model)
+                    }
+                }
+                .labelsHidden()
+                .font(.system(size: 12))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    /// The reasoning effort, directly under the model it depends on. Absent,
+    /// not empty, on the same terms as `modelField`: an older daemon sends no
+    /// catalogue, no assistant is chosen, or the assistant has no levels. Only
+    /// the levels the chosen assistant **and model** accept are offered, so
+    /// the choice cannot name one the store would refuse.
+    @ViewBuilder
+    private var effortField: some View {
+        let levels = Board.effortOptions(efforts: board.efforts,
+                                         tool: state.draft.tool,
+                                         model: state.draft.model)
+        if !levels.isEmpty {
+            field("Effort",
+                  "How hard the model thinks on each answer: lower is "
+                  + "quicker and cheaper, higher is slower and more "
+                  + "thorough. Default lets the assistant decide.") {
+                Picker("", selection: $state.draft.effort) {
+                    Text("Default").tag("")
+                    ForEach(levels, id: \.self) { level in
+                        Text(level).tag(level)
                     }
                 }
                 .labelsHidden()
@@ -3713,6 +3761,7 @@ struct BoardCardSheet: View {
                 "prompt": draft.prompt, "project": draft.project,
                 "root": draft.root, "tool": draft.tool,
                 "model": draft.model,
+                "effort": draft.effort,
                 // Always a string, never a number: `_board_fields` does
                 // `str(payload.get(key) or "")`, so a JSON `0` would store
                 // `""` — unscored rather than the lowest score.
@@ -3814,6 +3863,7 @@ struct BoardCardSheet: View {
                 workflow: draft.workflow,
                 attachments: attached,
                 model: draft.model,
+                effort: draft.effort,
                 createToken: id,
                 refine: refine,
                 beneficiary: draft.outcome.beneficiary,

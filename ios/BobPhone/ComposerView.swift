@@ -24,6 +24,9 @@ struct ComposerView: View {
     /// the `.onChange` reset below is the sheet's own precedent rather than a
     /// second copy of the store's clear-on-retool rule.
     @State private var model = ""
+    /// `""` means Default — no effort flag. Draft state like `model`: the
+    /// `.onChange` resets below mirror the store's clears, they are not the rule.
+    @State private var effort = ""
     @State private var projectRoot = ""
     /// The card's expected stages. Written by Prepare, drawn as faces under
     /// a caption rather than as a typed box, and restored from the draft.
@@ -124,6 +127,7 @@ struct ComposerView: View {
         _prompt = State(initialValue: d?.prompt ?? "")
         _tool = State(initialValue: d?.tool ?? "")
         _model = State(initialValue: d?.model ?? "")
+        _effort = State(initialValue: d?.effort ?? "")
         _projectRoot = State(initialValue: d?.projectRoot ?? "")
         _workflow = State(initialValue: d?.workflow ?? "")
         _idea = State(initialValue: d?.idea ?? "")
@@ -171,7 +175,7 @@ struct ComposerView: View {
     private var phaseTwoVisible: Bool {
         ComposerPhase.expanded(flag: expanded, fields: [
             title, summary, prompt, workflow, beneficiary,
-            intendedBenefit, successCriterion, draftPriority, model, area])
+            intendedBenefit, successCriterion, draftPriority, model, effort, area])
     }
 
     var body: some View {
@@ -226,6 +230,9 @@ struct ComposerView: View {
                       multiline: true, dictation: "composer.summary")
                 if !board.modelOptions(for: tool).isEmpty {
                     modelPicker
+                }
+                if !board.effortOptions(for: tool, model: model).isEmpty {
+                    effortPicker
                 }
                 field("notes", text: $prompt, axis: .vertical,
                       hint: "what the assistant should do",
@@ -413,7 +420,16 @@ struct ComposerView: View {
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(Theme.bar, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .onChange(of: tool) { model = "" }
+        .onChange(of: tool) {
+            model = ""
+            effort = ""
+        }
+        .onChange(of: model) {
+            if !effort.isEmpty,
+               !board.effortOptions(for: tool, model: model).contains(effort) {
+                effort = ""
+            }
+        }
         // The faces Prepare drew were computed against the project the picker
         // held when it ran — including the moment Prepare's own folder
         // suggestion moves it. A move makes them another project's staff, and
@@ -526,7 +542,7 @@ struct ComposerView: View {
                       intendedBenefit: intendedBenefit,
                       successCriterion: successCriterion,
                       priority: draftPriority, area: area, kind: kind,
-                      expanded: expanded)
+                      expanded: expanded, effort: effort)
     }
 
     /// Everything persisted, as one comparable value. `updatedAt` moves on
@@ -534,7 +550,7 @@ struct ComposerView: View {
     /// `stagingId` is absent: it is minted once and never changes.
     private var draftKey: [String] {
         [title, summary, prompt, tool, model, projectRoot, workflow, idea,
-         draftPriority, area, kind,
+         draftPriority, area, kind, effort,
          beneficiary, intendedBenefit, successCriterion, expanded ? "1" : "", "\u{0}"]
             + staged + ["\u{0}"] + localPhotos
     }
@@ -663,6 +679,27 @@ struct ComposerView: View {
                 }
             } label: {
                 Text(model.isEmpty ? "Default" : Board.modelLabel(model))
+                    .font(Theme.mono(13))
+                    .foregroundStyle(Theme.phosphor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+                    .overlay(Rectangle().stroke(Theme.hair, lineWidth: 1))
+            }
+        }
+    }
+
+    private var effortPicker: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("effort")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.faint)
+            Menu {
+                DecryptButton("Default") { effort = "" }
+                ForEach(board.effortOptions(for: tool, model: model), id: \.self) { level in
+                    DecryptButton(level) { effort = level }
+                }
+            } label: {
+                Text(effort.isEmpty ? "Default" : effort)
                     .font(Theme.mono(13))
                     .foregroundStyle(Theme.phosphor)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1098,6 +1135,10 @@ struct ComposerView: View {
             "model": model,
             "column_name": "prep",
         ]
+        // Only when chosen: a Default card's create stays byte-identical.
+        if !effort.isEmpty {
+            fields["effort"] = effort
+        }
         if !staged.isEmpty {
             fields["attachments"] = staged.joined(separator: "\n")
         }
@@ -1176,6 +1217,7 @@ struct ComposerView: View {
                        beneficiary: beneficiary,
                        intendedBenefit: intendedBenefit,
                        successCriterion: successCriterion,
+                       effort: effort,
                        priority: draftPriority, area: area, kind: kind)
         // `enqueue` first: the entry now owns the folder and the id, and
         // `load()`'s entry-wins rule covers a crash between the two.

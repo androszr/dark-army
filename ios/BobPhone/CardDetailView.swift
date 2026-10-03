@@ -220,6 +220,9 @@ struct PhoneCardDetailView: View {
     /// when another card comes behind the same view. View state only.
     @State private var pendingTool: String?
     @State private var pendingModel: String?
+    /// The effort the person just tapped, held on screen the same way and for
+    /// the same reason as `pendingModel`. View state only.
+    @State private var pendingEffort: String?
     /// Which folded sections the person has opened on *this* screen. Plain
     /// screen state, deliberately **not** on `PhoneCardDraftState`, which the
     /// router keeps per card across opens: `CardSections` decides what is
@@ -230,7 +233,7 @@ struct PhoneCardDetailView: View {
 
     /// The acting controls on this screen, one slot each.
     private enum Pressed {
-        case start, startHere, done, refine, delete, move, tool, model
+        case start, startHere, done, refine, delete, move, tool, model, effort
         case save, approve, message, startWhenPlanned
         case manualClear, manualOutcome, review, promote, dependencies
         case merge, mergeFix, reviewRun
@@ -502,6 +505,7 @@ struct PhoneCardDetailView: View {
             if mark == nil {
                 pendingTool = nil
                 pendingModel = nil
+                pendingEffort = nil
                 leaveDeletedCard()
             }
         }
@@ -518,6 +522,7 @@ struct PhoneCardDetailView: View {
             pendingStartWhenPlanned = nil
             pendingTool = nil
             pendingModel = nil
+            pendingEffort = nil
             openedSections = []
             changes = nil
             changesFailed = false
@@ -672,6 +677,13 @@ struct PhoneCardDetailView: View {
             // The assistant row is in the lead now, above the sections.
             if canRetool, !board.modelOptions(for: card.tool).isEmpty {
                 modelPicker
+            }
+            // The effort under the model, behind the same retool gate and
+            // drawn only where the Mac sent levels for this assistant on this
+            // model (absent against an older Mac).
+            if canRetool,
+               !board.effortOptions(for: card.tool, model: pendingModel ?? card.model).isEmpty {
+                effortPicker
             }
             editorSection
             dependencyPicker
@@ -1633,6 +1645,7 @@ struct PhoneCardDetailView: View {
         var parts: [String] = []
         if !card.project.isEmpty { parts.append(card.project) }
         if !card.model.isEmpty { parts.append(card.model) }
+        if !card.effort.isEmpty { parts.append(card.effort) }
         return parts.joined(separator: " · ")
     }
 
@@ -1828,6 +1841,51 @@ struct PhoneCardDetailView: View {
         }
     }
 
+    /// The effort, under the model: Default sends `""`. Sends `effort` alone
+    /// in its own `board_update` — the model's rule: the client dedupes one
+    /// in-flight POST per verb, and gluing it onto another write would make
+    /// the second a silent empty refusal.
+    private var effortPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("effort")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.faint)
+                .accessibilityHidden(true)
+            Menu {
+                DecryptButton("Default") { setEffort("") }
+                ForEach(board.effortOptions(for: card.tool,
+                                            model: pendingModel ?? card.model),
+                        id: \.self) { level in
+                    DecryptButton(level) { setEffort(level) }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(shownEffortLabel)
+                        .foregroundStyle(pressed == .effort ? Theme.dim : Theme.phosphor)
+                    if pressed == .effort {
+                        Text(mark)
+                            .foregroundStyle(Theme.phosphor)
+                    }
+                }
+                .font(Theme.mono(13))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+                .overlay(Rectangle().stroke(Theme.hair, lineWidth: 1))
+            }
+            .disabled(sending)
+            .disabled(pressed == .effort)
+            .accessibilityLabel("Effort")
+            .accessibilityValue(pressed == .effort
+                                ? "\(shownEffortLabel), \(spokenMark)"
+                                : shownEffortLabel)
+        }
+    }
+
+    private var shownEffortLabel: String {
+        let level = pendingEffort ?? card.effort
+        return level.isEmpty ? "Default" : level
+    }
+
     /// The model name on the menu's face: the one just chosen while its
     /// press is in play, the card's own otherwise.
     private var shownModelLabel: String {
@@ -1887,6 +1945,19 @@ struct PhoneCardDetailView: View {
                                     ["card_id": live.id, "model": name],
                                     as: .model)
             if !result.ok { pendingModel = nil }
+            apply(result)
+        }
+    }
+
+    private func setEffort(_ level: String) {
+        let live = card
+        if level == live.effort { return }
+        pendingEffort = level
+        Task {
+            let result = await send(PhoneActions.boardUpdate,
+                                    ["card_id": live.id, "effort": level],
+                                    as: .effort)
+            if !result.ok { pendingEffort = nil }
             apply(result)
         }
     }
@@ -2212,6 +2283,7 @@ struct PhoneCardDetailView: View {
         pendingStartWhenPlanned = nil
         pendingTool = nil
         pendingModel = nil
+        pendingEffort = nil
         note = queued.text
         client.readQueueNote(for: card.id)
         let result = PhoneActionResult(ok: false, detail: queued.text)

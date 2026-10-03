@@ -22,6 +22,9 @@ struct OutboxEntry: Identifiable, Codable, Equatable {
     var prompt: String = ""
     var tool: String = ""
     var model: String = ""
+    /// The reasoning effort typed with the card, `""` meaning Default. Sent
+    /// only when non-empty, so a Default card's create is byte-identical.
+    var effort: String = ""
     var project: String = ""
     var root: String = ""
     var workflow: String = ""
@@ -64,6 +67,7 @@ struct OutboxEntry: Identifiable, Codable, Equatable {
         case heldUntil, retryDelay
         case beneficiary, intendedBenefit, successCriterion
         case priority, area, kind
+        case effort
     }
 
     init(id: String, title: String, summary: String, prompt: String,
@@ -71,13 +75,15 @@ struct OutboxEntry: Identifiable, Codable, Equatable {
          workflow: String, remotePaths: [String], localPhotos: [String],
          createdAt: Double, beneficiary: String = "",
          intendedBenefit: String = "", successCriterion: String = "",
-         priority: String = "", area: String = "", kind: String = "") {
+         priority: String = "", area: String = "", kind: String = "",
+         effort: String = "") {
         self.id = id
         self.title = title
         self.summary = summary
         self.prompt = prompt
         self.tool = tool
         self.model = model
+        self.effort = effort
         self.project = project
         self.root = root
         self.workflow = workflow
@@ -108,6 +114,7 @@ struct OutboxEntry: Identifiable, Codable, Equatable {
         prompt = c.value(.prompt, "")
         tool = c.value(.tool, "")
         model = c.value(.model, "")
+        effort = c.value(.effort, "")
         project = c.value(.project, "")
         root = c.value(.root, "")
         workflow = c.value(.workflow, "")
@@ -147,6 +154,8 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
     var prompt: String = ""
     var tool: String = ""
     var model: String = ""
+    /// The reasoning effort banked with the draft; absent reads as Default.
+    var effort: String = ""
     var projectRoot: String = ""
     var workflow: String = ""
     /// The one-box idea Prepare writes the other fields from. Composer
@@ -178,7 +187,7 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
         case workflow, idea, staged, localPhotos, open, updatedAt
         case beneficiary, intendedBenefit, successCriterion
         case priority, area, kind
-        case expanded
+        case expanded, effort
     }
 
     init(id: String, tab: String, title: String, summary: String,
@@ -188,8 +197,9 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
          open: Bool, beneficiary: String = "",
          intendedBenefit: String = "", successCriterion: String = "",
          priority: String = "", area: String = "", kind: String = "",
-         expanded: Bool = false) {
+         expanded: Bool = false, effort: String = "") {
         self.id = id
+        self.effort = effort
         self.tab = tab
         self.title = title
         self.summary = summary
@@ -228,6 +238,7 @@ struct ComposerDraft: Identifiable, Codable, Equatable {
         prompt = c.value(.prompt, "")
         tool = c.value(.tool, "")
         model = c.value(.model, "")
+        effort = c.value(.effort, "")
         projectRoot = c.value(.projectRoot, "")
         workflow = c.value(.workflow, "")
         beneficiary = c.value(.beneficiary, "")
@@ -285,11 +296,14 @@ struct BoardCatalogue: Codable, Equatable {
 
     var tools: [String] = []
     var models: [String: [String]] = [:]
+    /// The remembered effort levels per assistant and model; absent from a
+    /// catalogue file written before the setting reads as empty.
+    var efforts: [String: [String: [String]]] = [:]
     var projects: [Project] = []
     var prepareEnabled: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case tools, models, projects, prepareEnabled
+        case tools, models, projects, prepareEnabled, efforts
     }
 
     init() {}
@@ -297,6 +311,7 @@ struct BoardCatalogue: Codable, Equatable {
     init(board: Board) {
         tools = board.tools
         models = board.models
+        efforts = board.efforts
         projects = board.projects.map { Project(name: $0.name, root: $0.root) }
         prepareEnabled = board.prepareEnabled
     }
@@ -305,6 +320,7 @@ struct BoardCatalogue: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         tools = c.value(.tools, [])
         models = c.value(.models, [:])
+        efforts = c.value(.efforts, [:])
         projects = c.value(.projects, [])
         prepareEnabled = c.value(.prepareEnabled, false)
     }
@@ -319,6 +335,7 @@ struct BoardCatalogue: Codable, Equatable {
         value.available = true
         value.tools = tools
         value.models = models
+        value.efforts = efforts
         value.projects = projects.map { project in
             var made = BoardProject()
             made.name = project.name
@@ -615,7 +632,7 @@ final class OutboxStore: ObservableObject {
                  workflow: String, remotePaths: [String],
                  localPhotos: [String], beneficiary: String = "",
                  intendedBenefit: String = "",
-                 successCriterion: String = "",
+                 successCriterion: String = "", effort: String = "",
                  priority: String = "", area: String = "",
                  kind: String = "") -> OutboxEntry {
         let trim = { (text: String) in
@@ -628,7 +645,7 @@ final class OutboxStore: ObservableObject {
             localPhotos: localPhotos, createdAt: Date().timeIntervalSince1970,
             beneficiary: beneficiary, intendedBenefit: intendedBenefit,
             successCriterion: successCriterion, priority: priority, area: area,
-            kind: kind)
+            kind: kind, effort: effort)
         entries.removeAll { $0.id == entry.id }
         entries.append(entry)
         entries.sort { $0.createdAt < $1.createdAt }
@@ -827,6 +844,10 @@ final class OutboxStore: ObservableObject {
             "model": entry.model,
             "column_name": "prep",
         ]
+        // Only when chosen: a Default card's create stays byte-identical.
+        if !entry.effort.isEmpty {
+            fields["effort"] = entry.effort
+        }
         if !entry.remotePaths.isEmpty {
             fields["attachments"] = entry.remotePaths.joined(separator: "\n")
         }

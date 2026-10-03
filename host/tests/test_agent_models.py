@@ -257,3 +257,126 @@ def test_the_module_never_names_the_pack_allowlist():
     from pathlib import Path
     text = Path(m.__file__).read_text(encoding="utf-8")
     assert "PACK_" + "DESTINATIONS" not in text
+
+
+# --- the reasoning effort beside each model ----------------------------------
+
+def test_every_shipped_effort_cell_is_allowed_for_the_shipped_model():
+    assert set(m.SHIPPED_EFFORTS) == set(m.PROVIDERS)
+    for provider, row in m.SHIPPED_EFFORTS.items():
+        assert set(row) == set(m.EFFORT_SLOTS), provider
+        for slot, effort in row.items():
+            assert m.validate_effort(provider, slot, effort,
+                                     model=m.SHIPPED[provider][slot])
+
+
+def test_the_codex_roles_ship_high_and_everything_else_ships_default():
+    assert m.SHIPPED_EFFORTS["codex"]["main"] == ""
+    for slot in m.EFFORT_SLOTS[1:]:
+        assert m.SHIPPED_EFFORTS["codex"][slot] == "high"
+    for provider in ("claude", "grok"):
+        assert set(m.SHIPPED_EFFORTS[provider].values()) == {""}
+
+
+def test_effort_slots_have_no_preparer_or_worker():
+    assert "card-preparer" not in m.EFFORT_SLOTS and "worker" not in m.EFFORT_SLOTS
+    slots = m.effort_slots_for(["planner", "worker", "card-preparer"])
+    assert slots == ["main", "planner"]
+    assert m.effort_slots_for([])[0] == "main"
+
+
+def test_validate_effort_default_inherit_and_levels():
+    assert m.validate_effort("claude", "main", "")
+    assert m.validate_effort("claude", "main", "high")
+    assert not m.validate_effort("claude", "main", "ultra")
+    assert not m.validate_effort("claude", "main", "inherit")
+    assert m.validate_effort("claude", "main", "inherit", override=True)
+    assert not m.validate_effort("claude", "worker", "low")
+    assert not m.validate_effort("gemini", "main", "")
+    assert not m.validate_effort("claude", "main", 3)
+    assert not m.validate_effort("grok", "main", "max")
+    assert m.validate_effort("grok", "main", "minimal")
+
+
+def test_validate_effort_is_judged_against_the_model_when_known():
+    assert m.validate_effort("codex", "main", "max", model="gpt-6-sol")
+    assert not m.validate_effort("codex", "main", "max", model="gpt-5.5")
+    assert m.validate_effort("codex", "main", "max")
+
+
+def test_allowed_efforts_follow_the_model():
+    assert "max" in m.allowed_efforts("codex", "planner", "gpt-6-astra")
+    assert "max" not in m.allowed_efforts("codex", "planner", "gpt-5.5")
+    assert m.allowed_efforts("codex", "card-preparer", "") == ()
+
+
+def test_clean_efforts_drops_the_unusable_and_keeps_neighbours():
+    out = m.clean_efforts({"claude": {"planner": "low", "main": "ultra",
+                                      "worker": "low"},
+                           "gemini": {"main": "low"}, "grok": "x"})
+    assert out == {"claude": {"planner": "low"}}
+    assert m.clean_efforts({"claude": {"planner": "inherit"}}) == {}
+    assert m.clean_efforts({"claude": {"planner": "inherit"}}, override=True) == {}
+    assert m.clean_efforts("nope") == {}
+
+
+def test_effort_precedence_override_global_shipped_and_empty_is_explicit():
+    settings = {"agent_efforts": {"claude": {"planner": "medium"},
+                                  "codex": {"planner": ""}},
+                "agent_efforts_by_root": {"/tmp/p": {"claude": {"planner": "low"}}}}
+    glob = m.resolve_efforts_global(settings)
+    assert glob["claude"]["planner"] == "medium"
+    assert glob["claude"]["verifier"] == ""
+    assert glob["codex"]["planner"] == ""           # explicit Default
+    assert glob["codex"]["verifier"] == "high"       # shipped
+    assert m.resolve_efforts(settings, "/tmp/p")["claude"]["planner"] == "low"
+    assert m.resolve_efforts(settings, "/tmp/other")["claude"]["planner"] == "medium"
+
+
+def test_resolve_efforts_reads_a_level_the_resolved_model_rejects_as_default():
+    settings = {"agent_models": {"codex": {"verifier": "gpt-5.5"}},
+                "agent_efforts": {"codex": {"verifier": "max"}}}
+    assert m.resolve_efforts(settings, "")["codex"]["verifier"] == ""
+    settings["agent_models"] = {"codex": {"verifier": "gpt-6-luna"}}
+    assert m.resolve_efforts(settings, "")["codex"]["verifier"] == "max"
+
+
+def test_clean_effort_overrides_keys_on_the_canonical_root():
+    out = m.clean_effort_overrides({"/tmp/p/": {"claude": {"main": "low"}},
+                                    "": {"claude": {"main": "low"}},
+                                    "/tmp/q": {"claude": {"main": "bogus"}}})
+    assert list(out.values()) == [{"claude": {"main": "low"}}]
+
+
+def test_published_global_efforts_are_model_checked():
+    settings = {"agent_models": {"codex": {"verifier": "gpt-5.5"}},
+                "agent_efforts": {"codex": {"verifier": "max"}}}
+    assert m.resolve_efforts_global(settings)["codex"]["verifier"] == ""
+    settings["agent_models"] = {"codex": {"verifier": "gpt-6-luna"}}
+    assert m.resolve_efforts_global(settings)["codex"]["verifier"] == "max"
+    # A project whose own model offers the level still gets it from the
+    # machine-wide choice even where the global model would blank it.
+    settings = {"agent_models": {"codex": {"verifier": "gpt-5.5"}},
+                "agent_models_by_root": {"/tmp/p": {"codex": {"verifier": "gpt-6-luna"}}},
+                "agent_efforts": {"codex": {"verifier": "max"}}}
+    assert m.resolve_efforts_global(settings)["codex"]["verifier"] == ""
+    assert m.resolve_efforts(settings, "/tmp/p")["codex"]["verifier"] == "max"
+
+
+def test_effort_options_follow_each_projects_models():
+    settings = {"agent_models": {"codex": {"verifier": "gpt-6-luna"}},
+                "agent_models_by_root": {"/tmp/p": {"codex": {"verifier": "gpt-5.5"}}}}
+    assert "max" in m.effort_options(settings)["codex"]["verifier"]
+    assert "max" not in m.effort_options(settings, "/tmp/p")["codex"]["verifier"]
+
+
+def test_published_by_root_blanks_rejected_entries_and_carries_options():
+    settings = {"agent_models_by_root": {"/tmp/p": {"codex": {"verifier": "gpt-5.5"}}},
+                "agent_efforts_by_root": {"/tmp/p": {"codex": {"verifier": "max",
+                                                              "planner": "low"}}}}
+    out = m.published_efforts_by_root(settings)
+    root = "/tmp/p"
+    assert out["efforts"][root]["codex"] == {"verifier": "", "planner": "low"}
+    assert "max" not in out["options"][root]["codex"]["verifier"]
+    assert "max" in out["options"][root]["codex"]["planner"]
+    assert m.published_efforts_by_root({}) == {"efforts": {}, "options": {}}

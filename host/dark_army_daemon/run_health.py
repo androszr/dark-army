@@ -76,6 +76,9 @@ LEDGER_DAYS = 90
 PUBLISHED_KEYS = frozenset({
     "class", "basis", "turns", "tokens_k", "ctx_pct", "asks", "refusals",
     "attempts", "returns", "fix_rounds", "attention", "live",
+    # The effort the running session reported (`stats.effort`), `""` where
+    # unknown — drawn verbatim beside the line, never derived by a client.
+    "effort",
 })
 #: The three loop-side counters a session state carries, copied onto the
 #: stub by `_collect_agent_stubs` and published on the row beside `stats`.
@@ -274,6 +277,7 @@ def compose(row: Optional[dict], counts: Optional[dict],
             "returns": returns,
             "attention": attention(size_class, ctx, rounds),
             "live": True,
+            "effort": str(stats.get("effort") or "") if stats else "",
         }
         if turns is not None:
             out["turns"] = turns
@@ -296,6 +300,7 @@ def compose(row: Optional[dict], counts: Optional[dict],
         out.setdefault("asks", 0)
         out.setdefault("refusals", 0)
         out.setdefault("attention", False)
+        out.setdefault("effort", "")
         return out
     return None
 
@@ -314,7 +319,7 @@ _cache: dict = {}
 _READING_TYPES = {
     "class": str, "basis": str, "turns": int, "tokens_k": int,
     "ctx_pct": int, "asks": int, "refusals": int, "fix_rounds": int,
-    "attention": bool,
+    "attention": bool, "effort": str,
 }
 
 

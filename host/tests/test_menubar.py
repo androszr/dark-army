@@ -3155,6 +3155,142 @@ def test_the_stored_tables_are_what_the_startup_feed_hands_the_daemon(
     ]
 
 
+class _EffortDaemon:
+    def __init__(self):
+        self.globals = []
+        self.overrides = []
+
+    def set_agent_efforts(self, mapping):
+        self.globals.append(mapping)
+
+    def set_agent_effort_override(self, root, mapping):
+        self.overrides.append((root, mapping))
+
+
+def test_a_valid_agent_effort_press_saves_and_feeds_the_daemon(monkeypatch):
+    from dark_army_menubar import app as A
+    saved = []
+    monkeypatch.setattr(A, "save_preferences", lambda updates: saved.append(updates))
+    daemon = _EffortDaemon()
+    instance = _action_app(_daemon=daemon)
+    resynced = []
+    instance._resync_agent_packs = lambda: resynced.append(True)
+    _dispatch(instance, "set_agent_effort",
+              {"provider": "claude", "slot": "verifier", "effort": "low"})
+    assert instance._settings["agent_efforts"] == {"claude": {"verifier": "low"}}
+    assert saved == [{"agent_efforts": {"claude": {"verifier": "low"}}}]
+    assert daemon.globals == [{"claude": {"verifier": "low"}}]
+    assert daemon.overrides == []
+    assert resynced == [True]
+
+
+def test_a_project_agent_effort_press_writes_the_override_map_and_inherit_removes(
+        monkeypatch):
+    from dark_army_menubar import app as A
+    saved = []
+    monkeypatch.setattr(A, "save_preferences", lambda updates: saved.append(updates))
+    daemon = _EffortDaemon()
+    instance = _action_app(_daemon=daemon)
+    instance._resync_agent_packs = lambda: None
+    _dispatch(instance, "set_agent_effort",
+              {"provider": "grok", "slot": "main", "effort": "minimal",
+               "root": "/tmp/proj"})
+    assert instance._settings["agent_efforts_by_root"] == {
+        "/tmp/proj": {"grok": {"main": "minimal"}}}
+    assert daemon.overrides == [("/tmp/proj", {"grok": {"main": "minimal"}})]
+    assert daemon.globals == []
+    _dispatch(instance, "set_agent_effort",
+              {"provider": "grok", "slot": "main", "effort": "inherit",
+               "root": "/tmp/proj"})
+    assert instance._settings["agent_efforts_by_root"] == {}
+    assert daemon.overrides[-1] == ("/tmp/proj", None)
+
+
+def test_an_off_list_agent_effort_press_writes_nothing_and_calls_nothing(
+        monkeypatch):
+    from dark_army_menubar import app as A
+    saved = []
+    monkeypatch.setattr(A, "save_preferences", lambda updates: saved.append(updates))
+    daemon = _EffortDaemon()
+    instance = _action_app(_daemon=daemon)
+    # codex/planner resolves to gpt-6-astra (has max); gpt-5.5 does not.
+    instance._settings["agent_models"] = {"codex": {"verifier": "gpt-5.5"}}
+    for value in (
+        {"provider": "claude", "slot": "main", "effort": "ultra"},
+        {"provider": "grok", "slot": "main", "effort": "max"},
+        {"provider": "codex", "slot": "verifier", "effort": "max"},
+        {"provider": "claude", "slot": "card-preparer", "effort": "low"},
+        {"provider": "claude", "slot": "worker", "effort": "low"},
+        {"provider": "gemini", "slot": "main", "effort": ""},
+        {"provider": "claude", "slot": "main", "effort": "inherit"},  # no root
+        "not a dict",
+    ):
+        _dispatch(instance, "set_agent_effort", value)
+    assert saved == []
+    assert daemon.globals == [] and daemon.overrides == []
+    assert "agent_efforts" not in instance._settings
+    assert "agent_efforts_by_root" not in instance._settings
+
+
+def test_the_panel_context_carries_the_effort_tables_options_and_slots(
+        monkeypatch):
+    from dark_army_daemon import agent_models
+    from dark_army_menubar import app as A, pack_render
+    monkeypatch.setattr(A, "ax_is_process_trusted", lambda: True)
+    monkeypatch.setattr(A, "macwhisper_installed", lambda: False)
+    app = _context_app()
+    app._settings["agent_models"] = {"codex": {"verifier": "gpt-5.5"}}
+    app._settings["agent_efforts"] = {"claude": {"planner": "low"}}
+    app._settings["agent_efforts_by_root"] = {"/tmp/p": {"grok": {"main": "low"}}}
+    app._push_panel_context()
+    settings = app._panel.contexts[-1]["settings"]
+    table = settings["agent_efforts"]
+    assert table["claude"]["planner"] == "low"
+    assert table["codex"]["planner"] == "high"
+    assert settings["agent_efforts_by_root"] == {"/tmp/p": {"grok": {"main": "low"}}}
+    options = settings["agent_effort_options"]
+    assert "max" in options["codex"]["planner"]
+    assert "max" not in options["codex"]["verifier"]   # gpt-5.5 resolved
+    assert set(options["claude"]) == set(agent_models.EFFORT_SLOTS)
+    slots = settings["agent_effort_slots"]
+    assert slots == agent_models.effort_slots_for(pack_render.shipped_roles())
+    assert "card-preparer" not in slots and "worker" not in slots
+    assert slots[0] == "main"
+
+
+def test_the_panel_context_publishes_model_checked_and_per_root_effort_views(
+        monkeypatch):
+    from dark_army_menubar import app as A
+    monkeypatch.setattr(A, "ax_is_process_trusted", lambda: True)
+    monkeypatch.setattr(A, "macwhisper_installed", lambda: False)
+    app = _context_app()
+    app._settings["agent_models"] = {"codex": {"verifier": "gpt-5.5"}}
+    app._settings["agent_models_by_root"] = {
+        "/tmp/p": {"codex": {"verifier": "gpt-6-luna"}}}
+    app._settings["agent_efforts"] = {"codex": {"verifier": "max"}}
+    app._settings["agent_efforts_by_root"] = {
+        "/tmp/p": {"codex": {"verifier": "max"}}}
+    app._push_panel_context()
+    settings = app._panel.contexts[-1]["settings"]
+    # Stored `max`, global model gpt-5.5: published as Default, not dropped.
+    assert settings["agent_efforts"]["codex"]["verifier"] == ""
+    root = "/tmp/p"
+    # The project's own model offers max, so its entry stands and its options
+    # carry it, while the machine-wide options do not.
+    assert settings["agent_efforts_by_root"][root]["codex"]["verifier"] == "max"
+    assert "max" in settings["agent_effort_options_by_root"][root]["codex"]["verifier"]
+    assert "max" not in settings["agent_effort_options"]["codex"]["verifier"]
+
+
+def test_set_agent_effort_is_a_panel_verb_and_not_a_phone_one():
+    from dark_army_menubar.app import BobCompanionApp
+    from dark_army_daemon.daemon import PHONE_PREFERENCES
+    assert "set_agent_effort" in BobCompanionApp.PANEL_ACTIONS
+    assert "agent_effort" not in BobCompanionApp.PREFERENCE_REQUESTS
+    assert "agent_efforts" not in BobCompanionApp.PREFERENCE_REQUESTS
+    assert "agent_effort" not in PHONE_PREFERENCES
+
+
 # --- The strip's clock ---------------------------------------------------------
 
 class FakeStripTimer:

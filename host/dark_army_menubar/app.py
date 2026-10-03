@@ -774,6 +774,15 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                 dict(prefs.get("agent_models_by_root") or {})
                 if isinstance(prefs.get("agent_models_by_root"), dict)
                 else {}),
+            # And the same two tables for the reasoning effort, held raw for
+            # the same reason (`agent_efforts`, `agent_efforts_by_root`).
+            "agent_efforts": (
+                dict(prefs.get("agent_efforts") or {})
+                if isinstance(prefs.get("agent_efforts"), dict) else {}),
+            "agent_efforts_by_root": (
+                dict(prefs.get("agent_efforts_by_root") or {})
+                if isinstance(prefs.get("agent_efforts_by_root"), dict)
+                else {}),
             # The panel's size as a percent of the design. 100 is the default
             # because an upgrade must change nothing on screen; the offered
             # steps live in the panel's PanelScale; the key is never renamed;
@@ -939,6 +948,10 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             self._settings.get("agent_models", {}))
         self._daemon.set_agent_model_overrides(
             self._settings.get("agent_models_by_root", {}))
+        self._daemon.set_agent_efforts(
+            self._settings.get("agent_efforts", {}))
+        self._daemon.set_agent_effort_overrides(
+            self._settings.get("agent_efforts_by_root", {}))
         self._daemon.board_close_terminal_enabled = bool(
             self._settings.get("board_close_terminal", True))
         # The stored timeout is the one value the daemon reads, handed over
@@ -2520,6 +2533,75 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                     root, model)
         self._resync_agent_packs()
 
+    def _set_agent_effort(self, value) -> None:
+        """Choose the reasoning effort of one agent slot, machine-wide or for
+        one project — `_set_agent_model`'s shape over the two effort tables.
+
+        An empty `root` writes `agent_efforts`; a root writes that project's
+        override, where `agent_models.INHERIT` removes the entry. The level is
+        judged by `agent_models.validate_effort` against the slot's **resolved
+        model** (a level that model does not offer is one log line and **no
+        write**, never trimmed to the nearest). Same threading as the model
+        press: a stdin action on the AppKit thread, the daemon setter a plain
+        assignment, the brief rewrite on `_resync_agent_packs`' worker thread.
+        Not in `PREFERENCE_REQUESTS`.
+        """
+        if not isinstance(value, dict):
+            logger.info("ignoring an agent effort press that is not a "
+                        "provider/slot/effort triple")
+            return
+        provider = str(value.get("provider") or "").strip()
+        slot = str(value.get("slot") or "").strip()
+        effort = value.get("effort")
+        effort = str(effort if effort is not None else "").strip()
+        root = str(value.get("root") or "").strip()
+        resolved = agent_models.resolve(self._settings, root)
+        model = (resolved.get(provider) or {}).get(slot, "")
+        if not agent_models.validate_effort(
+                provider, slot, effort, override=bool(root), model=model):
+            logger.info("refusing an agent effort Dark Army does not offer: "
+                        "%s/%s = %r", provider, slot, effort)
+            return
+        if not root:
+            current = {k: dict(v) for k, v in
+                       (self._settings.get("agent_efforts") or {}).items()
+                       if isinstance(v, dict)}
+            row = dict(current.get(provider) or {})
+            row[slot] = effort
+            current[provider] = row
+            self._settings["agent_efforts"] = current
+            save_preferences(updates={"agent_efforts": current})
+            if self._daemon:
+                self._daemon.set_agent_efforts(current)
+            logger.info("Agent effort for %s/%s set to %s", provider, slot,
+                        effort or "Default")
+            self._resync_agent_packs()
+            return
+        by_root = {k: v for k, v in
+                   (self._settings.get("agent_efforts_by_root") or {}).items()}
+        table = {k: dict(v) for k, v in (by_root.get(root) or {}).items()
+                 if isinstance(v, dict)}
+        row = dict(table.get(provider) or {})
+        if effort == agent_models.INHERIT:
+            row.pop(slot, None)
+        else:
+            row[slot] = effort
+        if row:
+            table[provider] = row
+        else:
+            table.pop(provider, None)
+        if table:
+            by_root[root] = table
+        else:
+            by_root.pop(root, None)
+        self._settings["agent_efforts_by_root"] = by_root
+        save_preferences(updates={"agent_efforts_by_root": by_root})
+        if self._daemon:
+            self._daemon.set_agent_effort_override(root, by_root.get(root))
+        logger.info("Agent effort for %s/%s in %s set to %s", provider, slot,
+                    root, effort)
+        self._resync_agent_packs()
+
     def _set_board_close_terminal(self, enabled: bool) -> None:
         """Let a card arriving in Done dispose the terminal tab outright.
 
@@ -2952,13 +3034,14 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         # settings here on the AppKit thread and handed to the worker: the
         # renderer stays pure and the worker never reads `_settings`.
         models = agent_models.resolve(self._settings, root)
+        efforts = agent_models.resolve_efforts(self._settings, root)
 
         def worker():
             try:
                 ok, detail, owned = pack_install.install_pack(
                     root, profile, prefix, project,
                     app=app_name, gitnexus_repo=gitnexus_repo,
-                    models=models)
+                    models=models, efforts=efforts)
             except Exception as exc:
                 logger.exception("agent pack install failed to run")
                 ok, detail, owned = False, str(exc), []
@@ -3010,10 +3093,17 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         project, read from the stored settings at the moment of the render."""
         return agent_models.resolve(self._settings, root)
 
+    def _agent_efforts_for_root(self, root: str) -> dict:
+        """`resync_all`'s `efforts_for`: the resolved per-role effort table for
+        one project, read from the stored settings at the moment of the render."""
+        return agent_models.resolve_efforts(self._settings, root)
+
     def _resync_agent_packs(self) -> None:
         def worker():
             try:
-                pack_install.resync_all(models_for=self._agent_models_for_root)
+                pack_install.resync_all(
+                    models_for=self._agent_models_for_root,
+                    efforts_for=self._agent_efforts_for_root)
             except Exception:
                 logger.exception("agent pack resync failed")
             callAfter(self._push_panel_context)
@@ -3100,6 +3190,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         "set_board_parallel_root":    lambda app, v: app._set_board_parallel_root(v),
         "set_board_isolation_root":   lambda app, v: app._set_board_isolation_root(v),
         "set_agent_model":            lambda app, v: app._set_agent_model(v),
+        "set_agent_effort":           lambda app, v: app._set_agent_effort(v),
         "set_panel_scale":            lambda app, v: app._set_panel_scale(int(v)),
         "set_board_close_terminal":   lambda app, v: app._set_board_close_terminal(bool(v)),
         "set_lan_access":             lambda app, v: app._set_lan_access(bool(v)),
@@ -3225,6 +3316,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             self._panel_probes = probes
         info = probes.get("build_info")
         rebuild = self._rebuild_facts()
+        _by_root_efforts = agent_models.published_efforts_by_root(self._settings)
         grok = getattr(self, "_grok_limits", {}) or {}
         percent = grok.get("percent") if not grok.get("stale") else None
         resets = grok.get("resets_at")
@@ -3286,6 +3378,22 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                 "agent_model_slots": agent_models.slots_for(
                     pack_render.shipped_roles(),
                     worker=pack_render.ships_shunt()),
+                # And the effort beside each model: the machine-wide table
+                # resolved, the override map as stored, the levels per slot
+                # for that slot's *resolved* model (so a model press
+                # re-narrows the menu on the next push), and the drawable
+                # slots — never the card preparer or the worker.
+                "agent_efforts": agent_models.resolve_efforts_global(
+                    self._settings),
+                "agent_efforts_by_root": _by_root_efforts["efforts"],
+                "agent_effort_options": agent_models.effort_options(
+                    self._settings),
+                # Per project: the levels *that project's* models offer, keyed
+                # like the override map. A root absent here falls back to the
+                # machine-wide options on the panel.
+                "agent_effort_options_by_root": _by_root_efforts["options"],
+                "agent_effort_slots": agent_models.effort_slots_for(
+                    pack_render.shipped_roles()),
                 "agent_pack": {
                     "available": getattr(self, "_pack_root", None) is not None,
                     "projects": pack_ledger.published(),
@@ -4108,7 +4216,9 @@ def main():
     # item. Bounded inside resync_all; a failure is a log line.
     def _resync_packs():
         try:
-            pack_install.resync_all(models_for=app._agent_models_for_root)
+            pack_install.resync_all(
+                models_for=app._agent_models_for_root,
+                efforts_for=app._agent_efforts_for_root)
         except Exception:
             logger.exception("agent pack resync failed")
 

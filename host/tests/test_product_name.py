@@ -642,6 +642,8 @@ EXPECTED_PREFERENCE_KEYS = {
     "board_isolation_by_root",
     "agent_models",
     "agent_models_by_root",
+    "agent_efforts",
+    "agent_efforts_by_root",
     "panel_scale",
     "board_close_terminal",
     "board_own_terminal",

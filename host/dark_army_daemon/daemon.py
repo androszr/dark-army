@@ -2193,6 +2193,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
         # the AppKit thread, read on the loop.
         self.agent_models: dict = {}
         self.agent_model_overrides: dict = {}
+        # The effort twins (`agent_efforts`, `agent_efforts_by_root`), fed the
+        # same way and read by `_agent_effort_for` beside the model.
+        self.agent_efforts: dict = {}
+        self.agent_effort_overrides: dict = {}
         # Cards the reconcile decided may start now, one per project, drained
         # on the loop by `_flush_queue_dispatches`. Decided on the executor
         # and acted on the loop — `_flush_auto_compacts`' pattern, and for its

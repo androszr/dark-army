@@ -13,9 +13,10 @@ import Foundation
 /// colour; `attention` is a second signal, never the only one.
 enum RunHealthLine {
     /// `LARGE · 84t · 2.1M · ctx 65% · asks 3 · refusals 1 · attempt 2 ·
-    /// back 1 · fixes 2`. Unknown figures are left out rather than drawn as
-    /// zero; an absent fix count draws `fixes –`, because a run nobody
-    /// counted is not a run with no fix rounds.
+    /// back 1 · fixes 2 · effort high`. Unknown figures are left out rather
+    /// than drawn as zero; an absent fix count draws `fixes –`, because a run
+    /// nobody counted is not a run with no fix rounds. The effort is the one
+    /// the session itself reported, last, and absent while unknown.
     static func text(_ h: RunHealth) -> String {
         var parts: [String] = []
         parts.append(sizeWord(h.sizeClass))
@@ -31,6 +32,7 @@ enum RunHealthLine {
         } else {
             parts.append("fixes –")
         }
+        if !h.effort.isEmpty { parts.append("effort \(h.effort)") }
         return parts.joined(separator: " · ")
     }
 
@@ -54,6 +56,7 @@ enum RunHealthLine {
         } else {
             parts.append("fix rounds not counted")
         }
+        if !h.effort.isEmpty { parts.append("effort \(h.effort)") }
         return parts.joined(separator: ", ") + "."
     }
 

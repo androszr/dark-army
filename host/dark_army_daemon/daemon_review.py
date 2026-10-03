@@ -279,7 +279,8 @@ class ReviewVerbsMixin:
                 return False, "Dark Army could not write the review folder"
             argv = dispatch.argv_for(
                 str(tool), executable, text,
-                self._agent_model_for(canonical, str(tool), "main"))
+                self._agent_model_for(canonical, str(tool), "main"),
+                self._agent_effort_for(canonical, str(tool), "main"))
             spawned, spawn_detail, pid = await dispatch.spawn_local(
                 canonical, argv, review_run.pty_name(run_id),
                 stamp=origin.stamp("review", run_id))

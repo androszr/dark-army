@@ -861,6 +861,8 @@ def test_duplicate_reads_the_payload_so_a_different_press_queues(queue_bin):
         ("permission_verdict", {"request_id": "r1", "behavior": "allow"},
          {"request_id": "r2", "behavior": "allow"}),
         ("board_update", {"card_id": "c", "tool": "codex"}, {"card_id": "c", "model": "x"}),
+        ("board_update", {"card_id": "c", "effort": "low"}, {"card_id": "c", "effort": "high"}),
+        ("board_update", {"card_id": "c", "model": "x"}, {"card_id": "c", "effort": "high"}),
         ("board_queue_move", {"card_id": "c", "before_id": "a"}, {"card_id": "c", "before_id": "b"}),
         ("set_board_autostart", {"enabled": "on"}, {"enabled": "off"}),
     ]

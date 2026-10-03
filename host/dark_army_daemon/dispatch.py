@@ -104,8 +104,9 @@ where they are `#`-commented rather than left in this docstring on purpose: a
 reviewer greps this file for those flag names to prove none of them is passed,
 and prose naming them in order to disclaim them is exactly what would answer
 such a grep. `test_dispatch.py` tokenises the file for the same reason. Four
-of the five bullets there are still disclaimers; the model flag is the one
-exception, passed only when a card names a model out of `MODELS`.
+of the bullets there are still disclaimers; the model and effort flags are the
+exceptions, passed only when a card names a model out of `MODELS` or a level
+out of `EFFORTS`.
 """
 
 from __future__ import annotations
@@ -127,6 +128,10 @@ from __future__ import annotations
 #   belonged to the user's own settings and never to the board
 #   (plans/2026-08-30-per-card-model-choice.md). A Default card still launches
 #   with no model flag at all, exactly as before.
+# * the effort flag is passed on the same terms: only when a card (or the main
+#   slot in Settings) names a level out of `EFFORTS`, before any `--`, and a
+#   Default card launches with no effort flag at all
+#   (plans/2026-10-03-card-and-role-effort-level.md).
 # * and no `--dangerously-load-development-channels` — adding it would silently
 #   give a dispatched session a capability a hand-started one does not have, on
 #   Dark Army's initiative. A dispatched session is an ordinary session.
@@ -228,18 +233,25 @@ CODEX_CANDIDATES = (
 #:
 #: The model flag, where a card names one, sits **before** the separator: what
 #: follows `--` is the prompt, so a flag placed after it is prompt text and the
-#: session silently runs on the wrong model. The long form `--model` for all
+#: session silently runs on the wrong model. The effort flag follows the same
+#: rule, and is spelled per CLI (claude `--effort`, codex `-c
+#: model_reasoning_effort=<level>` as two argv elements, grok
+#: `--reasoning-effort`); empty means Default, no flag at all. The long form `--model` for all
 #: three (claude has no short form; codex and grok accept `-m` too, and one
 #: spelling is easier to audit than three).
 _ARGV = {
-    "claude": lambda exe, prompt, model: (
-        [exe] + (["--model", model] if model else []) + [prompt]
+    "claude": lambda exe, prompt, model, effort="": (
+        [exe] + (["--model", model] if model else [])
+        + (["--effort", effort] if effort else []) + [prompt]
     ),
-    "codex": lambda exe, prompt, model: (
-        [exe] + (["--model", model] if model else []) + ["--", prompt]
+    "codex": lambda exe, prompt, model, effort="": (
+        [exe] + (["--model", model] if model else [])
+        + (["-c", f"model_reasoning_effort={effort}"] if effort else [])
+        + ["--", prompt]
     ),
-    "grok": lambda exe, prompt, model: (
-        [exe] + (["--model", model] if model else []) + ["--", prompt]
+    "grok": lambda exe, prompt, model, effort="": (
+        [exe] + (["--model", model] if model else [])
+        + (["--reasoning-effort", effort] if effort else []) + ["--", prompt]
     ),
 }
 
@@ -293,6 +305,51 @@ MODELS = {
     "grok": ("grok-4.7", "grok-4.6", "grok-4.5"),
 }
 
+#: The effort levels a card (or a role in Settings) may name, per tool.
+#: Curated and shipped in code like `MODELS`; `""` is always legal and means
+#: *Default* — no effort flag at all — and is never listed. Measured on this
+#: machine, 2026-10-03: claude 2.1.288 `--effort` (low, medium, high, xhigh,
+#: max; a level a model lacks is downgraded silently by Claude Code itself),
+#: codex 0.157.0 `model_reasoning_effort` (`ultra` is a different capability
+#: and stays off the menu), grok 1.0.44 `--reasoning-effort` (the middle five
+#: of its seven; `none` stays off). A one-line edit here is the whole
+#: maintenance story, as it is for `MODELS`.
+EFFORTS = {
+    "claude": ("low", "medium", "high", "xhigh", "max"),
+    "codex": ("low", "medium", "high", "xhigh", "max"),
+    "grok": ("minimal", "low", "medium", "high", "xhigh"),
+}
+
+#: Levels a specific model refuses, from `codex debug models`'
+#: `supported_reasoning_levels`: `gpt-5.5` has no `max`. Codex refuses an
+#: unsupported level at spawn in its own words, so it is excluded here.
+EFFORT_EXCLUSIONS = {("codex", "gpt-5.5"): ("max",)}
+
+
+def efforts_for(tool: str, model: str = "") -> tuple:
+    """The effort levels offered for `tool` on `model` (`""` = the tool's own
+    default model). `()` for a tool with no catalogue."""
+    levels = EFFORTS.get(tool, ())
+    gone = EFFORT_EXCLUSIONS.get((tool, str(model or "")), ())
+    return tuple(level for level in levels if level not in gone)
+
+
+def effort_catalogue() -> dict:
+    """`{tool: {"": [levels], "<model>": [levels]}}` — one entry per model in
+    `MODELS[tool]` plus `""`. Static, so it rides the board snapshot like
+    `MODELS` and never makes a frame news."""
+    out = {}
+    for tool in EFFORTS:
+        entry = {"": list(efforts_for(tool, ""))}
+        for model in MODELS.get(tool, ()):
+            entry[model] = list(efforts_for(tool, model))
+        out[tool] = entry
+    return out
+
+
+EFFORT_REFUSAL = "this card names an effort Dark Army does not offer for {tool}"
+
+
 #: Prompts that are not prompts. Read out of each CLI's own `--help` on the
 #: installed version — the `Commands:` block of `claude --help` (2.1.239) and
 #: of `codex --help` (codex-cli 0.147.0), plus the aliases those blocks name
@@ -330,7 +387,8 @@ _SUBCOMMANDS = {
 _UNSUPPORTED: dict = {}
 
 
-def argv_for(tool: str, executable: str, prompt: str, model: str = "") -> list:
+def argv_for(tool: str, executable: str, prompt: str, model: str = "",
+             effort: str = "") -> list:
     """The exact argv. The prompt is always the **last** element, verbatim.
 
     No quoting, no escaping, no substitution: `execve` takes an array and VS
@@ -346,11 +404,14 @@ def argv_for(tool: str, executable: str, prompt: str, model: str = "") -> list:
     before per-card models existed. The unknown-tool fallback ignores it,
     `guard()` having already refused a non-empty model for a tool with no
     catalogue.
+
+    `effort` is the same shape: empty is Default and adds nothing, and the flag
+    sits before any `--` so it is never prompt text.
     """
     build = _ARGV.get(tool)
     if build is None:
         return [executable, str(prompt)]
-    return build(executable, str(prompt), str(model or ""))
+    return build(executable, str(prompt), str(model or ""), str(effort or ""))
 
 
 def resolve_executable(tool: str) -> Optional[str]:
@@ -529,6 +590,9 @@ def guard(card: dict, *, roots: Iterable[str], in_flight: Iterable[dict],
     model = str(card.get("model") or "")
     if model and model not in MODELS.get(tool, ()):
         return False, f"this card names a model Dark Army does not offer for {tool}"
+    effort = str(card.get("effort") or "")
+    if effort and effort not in efforts_for(tool, model):
+        return False, EFFORT_REFUSAL.format(tool=tool)
 
     # The prompt is checked here, with the rest of the state, so the refusal
     # reaches the presser as a reason on the card rather than as a session that
