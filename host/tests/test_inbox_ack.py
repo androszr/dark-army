@@ -59,7 +59,8 @@ def test_never_kinds_and_ack_kinds_partition():
     client's ack for them is refused as unknown."""
     assert NEVER_KINDS == frozenset({"permission"})
     assert ACK_KINDS == frozenset(
-        {"question", "waiting", "ended_work", "manual_check", "start_asked"})
+        {"question", "waiting", "ended_work", "manual_check", "start_asked",
+         "review_picks"})
     assert ACK_KINDS.isdisjoint(NEVER_KINDS)
     assert "plan_ready" not in ACK_KINDS | NEVER_KINDS
     assert "awaiting_review" not in ACK_KINDS | NEVER_KINDS

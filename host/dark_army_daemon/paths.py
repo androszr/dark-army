@@ -133,6 +133,13 @@ RUN_HEALTH_PATH = STATE_DIR / 'run-health.json'
 # the ring below; read by an older daemon never, by a newer one with a
 # default for every key.
 MISSION_PATH = STATE_DIR / "mission.json"
+# Review runs (review_run.py, docs/review-runs.md): one record per run with its
+# root and broker handle, so 0600 in the ring below (`review-runs.json`), and a
+# folder per run (`review-runs/<id>/`) holding run.json, picks.json and the two
+# files the assistant writes (findings.md, steps.md). A directory, 0700 like
+# the shunt ledger. Nothing under a project is ever written for a review.
+REVIEW_RUNS_PATH = STATE_DIR / "review-runs.json"
+REVIEW_RUNS_DIR = STATE_DIR / "review-runs"
 # The statusLine command we displaced, if the user already had one. Our script
 # shells out to it and prints its output verbatim, so installing Dark Army never costs
 # someone the status line they built.
@@ -226,6 +233,9 @@ _PRIVATE_FILES = ("decisions.db", "decisions.db-wal", "decisions.db-shm",
                   # Mission Control's record (mission.py): a broker handle
                   # and a project root, so the same ring.
                   "mission.json",
+                  # Review runs' records (review_run.py): project roots and
+                  # broker handles, so the same ring.
+                  "review-runs.json",
                   # Written by the panel, never read by the daemon: half-typed
                   # cards, which is project paths and instructions nobody has
                   # submitted. The panel chmods it 0600 on every write; this
@@ -362,4 +372,6 @@ def ensure_state_dir() -> Path:
             _restrict(SHUNT_EXEMPT_DIR, 0o700)
         if SHUNT_LEDGER_DIR.exists():
             _restrict(SHUNT_LEDGER_DIR, 0o700)
+        if REVIEW_RUNS_DIR.exists():
+            _restrict(REVIEW_RUNS_DIR, 0o700)
     return STATE_DIR

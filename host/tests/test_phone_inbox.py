@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PHONE = ROOT / "ios" / "BobPhone"
 PANEL_INBOX = ROOT / "panel" / "Sources" / "BobPanel" / "Inbox.swift"
 PHONE_INBOX = PHONE / "Inbox.swift"
+PANEL_REVIEW_RULES = ROOT / "panel" / "Sources" / "BobPanel" / "ReviewRules.swift"
+PHONE_REVIEW_RULES = PHONE / "ReviewRules.swift"
 PHONE_MODELS = PHONE / "Models.swift"
 PHONE_COLLAB = PHONE / "Collaboration.swift"
 PHONE_AREA_WIRE = PHONE / "AreaWire.swift"
@@ -245,6 +247,22 @@ struct Agents {
 }
 struct SectionRow {
     let agent: Agent
+}
+// The Review section's two shapes `Inbox.items` reads: the runs and, per
+// run, the facts the Needs you entry is made of. The fixtures carry none.
+struct ReviewRun {
+    var id = ""
+    var project = ""
+    var root = ""
+    var state = ""
+    var sessionId = ""
+    var scopeLine = ""
+    var startedAt: Double = 0
+    var findingsAt: Double = 0
+    var findings: [Int] = []
+}
+struct ReviewSection {
+    var runs: [ReviewRun] = []
 }
 struct PermissionPrompt {
     var sessionId = ""
@@ -508,7 +526,8 @@ def binaries(tmp_path_factory):
     desktop_main.write_text(DESKTOP_HARNESS)
     desktop_bin = folder / "desktop-inbox"
     built = subprocess.run(
-        [swiftc, str(PANEL_INBOX), str(desktop_main), "-o", str(desktop_bin)],
+        [swiftc, str(PANEL_INBOX), str(PANEL_REVIEW_RULES), str(desktop_main),
+         "-o", str(desktop_bin)],
         capture_output=True, text=True, timeout=60)
     assert built.returncode == 0, built.stderr
     phone_main = folder / "phone_main.swift"
@@ -517,7 +536,7 @@ def binaries(tmp_path_factory):
     built = subprocess.run(
         [swiftc, str(PHONE_MODELS), str(PHONE_AREA_WIRE), str(PHONE_COLLAB),
          str(PHONE_RUN_FIGURES), str(PHONE_WORK_REPORT), str(PHONE_INBOX),
-         str(phone_main),
+         str(PHONE_REVIEW_RULES), str(phone_main),
          "-o", str(phone_bin)],
         capture_output=True, text=True, timeout=90)
     assert built.returncode == 0, built.stderr

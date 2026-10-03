@@ -653,3 +653,25 @@ def test_pack_pathspecs_has_one_entry_per_destination_without_a_slash():
     assert len(specs) == len(set(specs)) and ".claude/skills" in specs
     assert not any(spec.endswith("/") for spec in specs)
     assert all(pack_install.is_pack_path(spec) for spec in specs)
+
+
+def test_the_ledger_row_carries_the_profiles_after_steps_at_install(
+        tmp_path, monkeypatch):
+    """The Review section reads the offer off this row (stdlib, no menu-bar
+    import), so the install and the resync both write it."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    monkeypatch.setattr("dark_army_daemon.paths.AGENT_PACK_PATH",
+                        tmp_path / "agent-pack.json")
+    folder = _admit(monkeypatch, root)
+    ok, detail, _owned = pack_install.install_pack(
+        folder, "ios", "xx", "sample-app")
+    assert ok, detail
+    row = pack_ledger.entry(folder)
+    assert "testflight" in [step[0] for step in row["after_steps"]]
+    # A resync writes it again, and an older row with none reads as none.
+    pack_ledger.update(folder, after_steps=[])
+    assert pack_ledger.entry(folder)["after_steps"] == []
+    pack_install.resync_all()
+    assert "testflight" in [
+        step[0] for step in pack_ledger.entry(folder)["after_steps"]]

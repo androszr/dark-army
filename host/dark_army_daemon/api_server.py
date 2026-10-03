@@ -319,7 +319,7 @@ _OMITTABLE_SECTIONS = (
     "counts", "notifications", "agents", "signals", "mesh",
     "collaboration", "permissions",
     "board", "enrollment", "devices", "inbox", "security", "mission",
-    "power",
+    "power", "review",
 )
 
 
@@ -878,6 +878,11 @@ class ApiServer:
             # is stated, never inferred; no handle rides here.
             "mission": self._daemon.mission_snapshot()
             if hasattr(self._daemon, "mission_snapshot") else {},
+            # The Review section: runs with their findings, picks and step
+            # ledger. `available` is stated, never inferred; no handle, no
+            # digest and no run-folder path ride here.
+            "review": self._daemon.review_snapshot()
+            if hasattr(self._daemon, "review_snapshot") else {},
             # The host Mac's power source for the phone's Fleet tab.
             # `available` is stated; no clock and no secret ride here.
             "power": self._daemon.power_snapshot()
@@ -1370,6 +1375,19 @@ class ApiServer:
                     request.query)
                 await self._respond(writer, status, ctype, body)
                 return
+            if request.path == "/api/review" and request.method == "GET":
+                # What a review of one project would cover and offer. Token
+                # gated although a read, as `/api/knowledge` is; the desk token
+                # only (`_authorised`). `?root=`; empty Origin is allowed on
+                # GET. Host already ran above.
+                if not self._authorised(request):
+                    await self._respond(writer, 403, "application/json",
+                                        b'{"error":"forbidden"}')
+                    return
+                status, ctype, body = await self._review_offer_for(
+                    request.query)
+                await self._respond(writer, status, ctype, body)
+                return
             if request.path == "/api/access-log" and request.method == "GET":
                 # Token-gated although a read, exactly as `/api/knowledge`:
                 # every address that knocked and every paired phone's name.
@@ -1529,6 +1547,13 @@ class ApiServer:
             mission_action = self._mission_request(request)
             if mission_action is not None:
                 status, ctype, body = await self._mission(mission_action)
+                await self._respond(writer, status, ctype, body)
+                return
+            # The Review section's three verbs are awaited for the same
+            # reason: Start spends money, Continue types into a terminal.
+            review_action = self._review_request(request)
+            if review_action is not None:
+                status, ctype, body = await self._review_run(*review_action)
                 await self._respond(writer, status, ctype, body)
                 return
             # A question answer is awaited for wrap-up's reason: it types into
@@ -2208,6 +2233,109 @@ class ApiServer:
         body = json.dumps({"ok": ok, "detail": detail or ""}).encode()
         return (200 if ok else 409), "application/json", body
 
+    #: The Review section's three verbs, one name each (docs/review-runs.md).
+    REVIEW_ACTIONS = ("review_start", "review_continue", "review_end")
+
+    def _review_request(self, request: _Request):
+        """`(action, payload)` if this is an authorised review POST, else
+        None. `_mission_request`'s shape: behind the existing `_authorised`
+        (`X-Bob-Token` and the Origin allowlist); None sends the request back
+        down `_route`, which answers 403/405/400."""
+        if request.path != "/api/action" or request.method != "POST":
+            return None
+        if not self._authorised(request):
+            return None
+        payload = request.json()
+        action = payload.get("action")
+        if action not in self.REVIEW_ACTIONS:
+            return None
+        return str(action), payload
+
+    @staticmethod
+    def _review_ids(value, *, integers: bool):
+        """A list from a JSON list or a comma-joined string (the panel's
+        `post` sends strings only); None when malformed."""
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            value = [p.strip() for p in value.split(",") if p.strip()]
+        if not isinstance(value, list):
+            return None
+        if integers:
+            out = []
+            for item in value:
+                if isinstance(item, bool):
+                    return None
+                if isinstance(item, int):
+                    out.append(item)
+                elif isinstance(item, str) and item.isascii() \
+                        and item.isdigit() and len(item) < 6:
+                    out.append(int(item))
+                else:
+                    return None
+            return out
+        return value if all(isinstance(i, str) for i in value) else None
+
+    async def _review_run(self, action: str, payload: dict):
+        """Start, continue or end a review run. 200 with the daemon's detail,
+        409 for a refusal in its own words, 400 for a malformed payload."""
+        if action == "review_start":
+            steps = self._review_ids(payload.get("steps"), integers=False)
+            if steps is None:
+                return 400, "application/json", json.dumps(
+                    {"ok": False, "detail": "steps must be a list of names"}
+                ).encode()
+            ok, detail = await self._daemon.start_review(
+                str(payload.get("root") or ""),
+                str(payload.get("tool") or ""), steps)
+        elif action == "review_continue":
+            fix = self._review_ids(payload.get("fix"), integers=True)
+            if fix is None:
+                return 400, "application/json", json.dumps(
+                    {"ok": False, "detail": "fix must be a list of numbers"}
+                ).encode()
+            ok, detail = await self._daemon.continue_review(
+                str(payload.get("run_id") or ""), fix)
+        elif action == "review_end":
+            ok, detail = await self._daemon.end_review(
+                str(payload.get("run_id") or ""))
+        else:
+            return 404, "application/json", b'{"error":"not found"}'
+        return (200 if ok else 409), "application/json", json.dumps(
+            {"ok": ok, "detail": detail or ""}).encode()
+
+    async def _review_offer_for(self, query_or_payload):
+        """What a review of one project would cover — loopback `GET
+        /api/review?root=` and the sealed `review_offer` kind (`root` in the
+        JSON body, never a query string). A missing root is a refusal in
+        words."""
+        try:
+            if isinstance(query_or_payload, dict):
+                root = str(query_or_payload.get("root") or "").strip()
+            else:
+                params = parse_qs(query_or_payload or "",
+                                  keep_blank_values=True)
+                if any(len(v) != 1 for v in params.values()):
+                    raise ValueError("review parameters must not repeat")
+                root = str(params.get("root", [""])[0] or "").strip()
+            if not root:
+                raise ValueError("Dark Army needs an enrolled project")
+            if len(root) > 1024:
+                raise ValueError(
+                    "a project root must be at most 1024 characters")
+            handler = getattr(self._daemon, "review_offer", None)
+            if handler is None:
+                offer = {"available": False, "root": root, "steps": [],
+                         "reason": "this Dark Army cannot review"}
+            else:
+                loop = asyncio.get_running_loop()
+                offer = await loop.run_in_executor(None, handler, root)
+            return 200, "application/json", json.dumps(
+                offer, allow_nan=False).encode()
+        except (ValueError, TypeError) as exc:
+            return 400, "application/json", json.dumps(
+                {"error": str(exc)}).encode()
+
     def _enrollment_request(self, request: _Request):
         """`(action, root)` if this is an authorised enrolment write, else None.
 
@@ -2724,7 +2852,7 @@ class ApiServer:
                     "terminal", "conversation", "done", "knowledge",
                     "access_log", "bearings", "scout_reports",
                     "scout_report", "manual_checks", "plans", "plan", "image",
-                    "history_week", "action"):
+                    "history_week", "review_offer", "action"):
             status, ctype, out = await self._sealed_run(
                 kind, payload, device_id, actions=self.LAN_ACTIONS,
                 check_lease=False, record=False)
@@ -3257,6 +3385,22 @@ class ApiServer:
         # by identity at the moment it fires; a mistaken End costs one
         # reopen. No parenthesis in this block.
         "mission_end",
+        # Starting a review run from the phone's Menu. It opens a session
+        # that can act on the project, so its reach is bounded by
+        # terminal_input and no lower: one provider in one enrolled folder
+        # with a constant brief, at most one live run per project, behind
+        # the launcher switch, the cooldown and the launch bounds; the
+        # ticked after-steps ride the prompt and are the only ones
+        # authorised. No parenthesis in this block.
+        "review_start",
+        # Continuing it with the ticked findings. The second deliberate
+        # press: it writes the picks beside the findings and types one
+        # line into that run's own terminal, refused while a permission
+        # prompt is up. No parenthesis in this block.
+        "review_continue",
+        # Ending it. Closes that run's terminal and nothing else, guarded
+        # by identity at the moment it fires. No parenthesis in this block.
+        "review_end",
         # Turning a finished scout's report into a Prep build card from the
         # phone, where the report is now read. Strictly less than
         # board_create, which is on this tuple already: the new card's
@@ -3397,6 +3541,21 @@ class ApiServer:
         # reopen. Away it rides the lease like every other write. No
         # parenthesis in this block.
         "mission_end",
+        # Away as well as at home, and its own decision: a review of what
+        # is not yet on the remote is a thing to start from the train, and
+        # the press can start nothing but that one provider in that one
+        # folder with the steps the person ticked. Away it rides the lease,
+        # Face ID and the receipt token like every write. No parenthesis in
+        # this block.
+        "review_start",
+        # Away as well as at home, and its own decision: picking the fixes
+        # is the moment the run waits on a person. Away it rides the lease
+        # like every other write. No parenthesis in this block.
+        "review_continue",
+        # Away as well as at home, and its own decision: ending a stuck run
+        # closes one named terminal by identity. Away it rides the lease
+        # like every other write. No parenthesis in this block.
+        "review_end",
         # Away as well as at home, and its own decision: a scout's report
         # is the thing a person reads on the train, and "make this a build
         # card" is the one verb the report asks for. It creates one Prep
@@ -3647,6 +3806,8 @@ class ApiServer:
             ok, detail = await self._daemon.end_mission()
             return (200 if ok else 409), "application/json", json.dumps(
                 {"ok": ok, "detail": detail or ""}).encode()
+        if action in self.REVIEW_ACTIONS:
+            return await self._review_run(action, payload)
         if action in ("dismiss", "stop_session", "delete_agent"):
             return self._action(payload)
         return 404, "application/json", b'{"error":"not found"}'
@@ -3987,6 +4148,12 @@ class ApiServer:
             # string would reach the relay's logs) and is re-checked
             # against `scout_index.locate`'s closed set at the read.
             return await self._scout_report_for(payload)
+        if kind == "review_offer":
+            # What a review of one project would cover and offer. `knowledge`'s
+            # rule: a **read**, above the `action` branch — neither action
+            # tuple, no lease check, no `remote_activity` record. `root`
+            # rides the JSON body, never a query string.
+            return await self._review_offer_for(payload)
         if kind == "manual_checks":
             # The Checks section: every enrolled project's manual checks, or
             # one file's text when `path` is in the body. `knowledge`'s

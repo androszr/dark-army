@@ -92,6 +92,10 @@ struct Snapshot: Decodable {
     /// daemon, which decodes `available == false` and draws the Comm tab's
     /// one sentence.
     var mission = MissionSection()
+    /// The Review section: runs with their findings, picks and step ledger.
+    /// Absent from an older daemon, which decodes `available == false` and
+    /// draws the section's one sentence.
+    var review = ReviewSection()
 
     /// The top-level sections a slim frame may omit — `_OMITTABLE_SECTIONS`
     /// in `api_server.py`, in the same order, minus `mesh`: the daemon still
@@ -106,12 +110,13 @@ struct Snapshot: Decodable {
         case inbox
         case security
         case mission
+        case review
     }
 
     enum CodingKeys: String, CodingKey {
         case generatedAt = "generated_at"
         case counts, agents, notifications, signals, collaboration, permissions, board
-        case enrollment, devices, inbox, security, mission
+        case enrollment, devices, inbox, security, mission, review
         case reconcilerAvailable = "reconciler_available"
         case reconcilerError = "reconciler_error"
     }
@@ -172,6 +177,9 @@ struct Snapshot: Decodable {
         if c.contains(.mission) {
             mission = try c.decode(MissionSection.self, forKey: .mission)
         } else { carried.insert(.mission) }
+        if c.contains(.review) {
+            review = try c.decode(ReviewSection.self, forKey: .review)
+        } else { carried.insert(.review) }
     }
 
     init() {}

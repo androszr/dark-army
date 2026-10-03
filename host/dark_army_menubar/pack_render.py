@@ -21,7 +21,7 @@ import json
 import re
 from pathlib import Path
 
-from dark_army_menubar import pack_gitignore
+from dark_army_menubar import pack_gitignore, review_steps
 
 #: The three built-in choices. A profile is otherwise any folder holding a
 #: `profile.json` — under the vendored `profiles/` or under the person's own
@@ -246,6 +246,11 @@ def normalise_profile(data, name: str) -> dict:
     out["skill_rows"] = _strings(data, "skill_rows", name)
     out["settings_allow"] = _strings(data, "settings_allow", name)
     out["one_time_steps"] = _strings(data, "one_time_steps", name)
+    try:
+        out["after_steps"] = review_steps.check_steps(
+            data.get("after_steps"), name)
+    except ValueError as exc:
+        raise PackRenderError(str(exc)) from exc
     areas = data.get("areas")
     if areas is not None:
         areas = _strings(data, "areas", name)
@@ -915,6 +920,30 @@ def gitignore_lines(profile: str, source: Path | None = None,
         seen.add(form)
         out.append(line)
     return out
+
+
+def after_steps_for(profile: str, source: Path | None = None,
+                    user_dir: Path | None = None) -> list[list[str]]:
+    """The review section's after-steps for ``profile`` as `[id, label, how]`
+    triples, ids unique across the profiles of a ``both`` install, first
+    declaration winning. ``[]`` for an unknown or unreadable profile: the
+    ledger row then offers the generic commit and push."""
+    try:
+        if not valid_profile_id(profile):
+            return []
+        root = Path(source) if source is not None else vendor_dir()
+        names = ["web", "ios"] if profile == "both" else [profile]
+        out: list[list[str]] = []
+        seen: set[str] = set()
+        for name in names:
+            for step in load_profile(name, root, user_dir).get(
+                    "after_steps") or []:
+                if step[0] not in seen:
+                    seen.add(step[0])
+                    out.append(list(step))
+        return out
+    except PackRenderError:
+        return []
 
 
 def _managed_region(managed: bytes) -> bytes:

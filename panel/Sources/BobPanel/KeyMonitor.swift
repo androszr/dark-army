@@ -190,7 +190,9 @@ extension AppDelegate {
                                              historyDay: self.keys.historyDay,
                                              historyOpen: self.keys.historyOpen,
                                              reportOpen: self.keys.reportOpen,
-                                             reportsOpen: self.keys.reportsOpen) {
+                                             reportsOpen: self.keys.reportsOpen,
+                                             reviewRunOpen: self.keys.reviewRunOpen,
+                                             reviewOpen: self.keys.reviewOpen) {
                 case .endEditing:
                     // A filter is a thing you back out of before the panel is,
                     // even when the field itself no longer has focus.
@@ -216,6 +218,10 @@ extension AppDelegate {
                     self.keys.send(.closeReport)
                 case .leaveReports:
                     self.keys.send(.leaveReports)
+                case .closeReviewRun:
+                    self.keys.send(.closeReviewRun)
+                case .leaveReview:
+                    self.keys.send(.leaveReview)
                 case .deselect:
                     self.keys.send(.deselect)
                 case .back:

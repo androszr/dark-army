@@ -667,7 +667,9 @@ def install_pack(
             folder, settings_allow_owned=new_owned,
             settings_deny_owned=new_owned_deny,
             gitignore_offered=offered, pack_digests=digests,
-            last_result=last)
+            last_result=last,
+            after_steps=pack_render.after_steps_for(
+                profile, source, user_profiles_dir()))
         return ok, detail, new_owned
     finally:
         _end_write(folder)
@@ -872,6 +874,8 @@ def _resync_one(root: str, raw: dict, source: Path, models=None) -> None:
             gitignore_offered=offered,
             pack_digests=digests,
             last_result=note or _with_note("ok", ignore_note),
+            after_steps=pack_render.after_steps_for(
+                profile, source, user_profiles_dir()),
         )
     finally:
         _end_write(folder)

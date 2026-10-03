@@ -62,7 +62,8 @@ ENV_KEY_RE = re.compile(r"\ABOB_COMPANION_ORIGIN\Z")
 #: unattributed row this module exists to remove. `mission` is the other
 #: cardless kind: the one standing Mission Control terminal Dark Army opens
 #: on the Comm tab's first visit (`mission.py`).
-KINDS = ("card-start", "card-refine", "card-consult", "adhoc", "mission")
+KINDS = ("card-start", "card-refine", "card-consult", "adhoc", "mission",
+         "review")
 
 #: The stored and transported bound. Small on purpose: this is a label, and
 #: anything longer is either a bug or somebody probing.
@@ -167,6 +168,7 @@ _VERBS = {
 _WHOLE_LINES = {
     "adhoc": "Dark Army opened this terminal for you",
     "mission": "Dark Army opened this terminal as Mission Control",
+    "review": "Dark Army opened this terminal to review a project",
 }
 
 

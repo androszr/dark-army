@@ -169,6 +169,25 @@ def argv_new_file_diff(root: str, rel: str) -> list:
     return _git(root) + ["diff", "--no-index", "--", os.devnull, str(rel)]
 
 
+def argv_upstream(root: str) -> list:
+    """The branch the current one tracks (`origin/main`), or a failure when it
+    tracks none — the review section's scope (`review_run.scope_for`)."""
+    return _git(root) + ["rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                         "@{u}"]
+
+
+def argv_ahead(root: str, upstream: str) -> list:
+    """How many commits the current branch has that `upstream` has not."""
+    return _git(root) + ["rev-list", "--count", f"{upstream}..HEAD"]
+
+
+def argv_status(root: str) -> list:
+    """Every changed or untracked path, NUL-separated (`--porcelain -z`), for
+    the review section's changed-file count."""
+    return _git(root) + ["status", "--porcelain", "--untracked-files=all",
+                         "-z"]
+
+
 def git_env(base=None) -> dict:
     """The environment every one of those runs under.
 

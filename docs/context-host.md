@@ -402,6 +402,9 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `docs/session-state-contract.md`). `mission_open` / `mission_end` are
     on both phone tuples; `terminal_input` reaches every pty Dark Army hosts.
     `test_mission_control.py`.
+  - **Review runs** (`review_run.py`, `daemon_review.py`) — a card-less
+    chore on Dark Army's own pty, the ticked steps the only authorised ones,
+    nothing written under a project: `docs/review-runs.md`.
   - **`event_log.py`** — the Mac's diary, for the phone to read *later*: a
     bounded, append-only JSONL journal (`~/.dark-army/event-log.jsonl`,
     in `paths._PRIVATE_FILES`, ≤ 500 lines, 24 h) of session starts and ends,

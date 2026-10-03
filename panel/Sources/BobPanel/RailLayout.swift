@@ -26,6 +26,10 @@ enum RailLayout {
         /// drawn across the board's pane. The board stays mounted
         /// underneath, History's way.
         case reports
+        /// The Review tab: the open run's checklist, step ledger and
+        /// terminal, drawn across the board's pane. The board stays
+        /// mounted underneath, History's way.
+        case review
     }
 
     /// History and Reports take the board's place whatever is selected. The detail
@@ -35,6 +39,7 @@ enum RailLayout {
     static func leftPane(tab: PanelView.Tab, selected: String?) -> LeftPane {
         if tab == .history { return .history }
         if tab == .reports { return .reports }
+        if tab == .review { return .review }
         if tab == .comm { return .mission }
         if tab == .agents, let selected { return .detail(selected) }
         return .board
@@ -55,6 +60,10 @@ enum RailLayout {
         case closeReport
         /// Leave the Reports tab and bring the board back.
         case leaveReports
+        /// Close the run the Review tab has open; the form comes back.
+        case closeReviewRun
+        /// Leave the Review tab and bring the board back.
+        case leaveReview
         /// Close the selected agent's detail and bring the board back.
         case deselect
         /// Pop the project drill-in.
@@ -76,13 +85,17 @@ enum RailLayout {
                            historyDay: Bool = false,
                            historyOpen: Bool = false,
                            reportOpen: Bool = false,
-                           reportsOpen: Bool = false) -> EscapeRung {
+                           reportsOpen: Bool = false,
+                           reviewRunOpen: Bool = false,
+                           reviewOpen: Bool = false) -> EscapeRung {
         if editing || filterActive { return .endEditing }
         if historyRun { return .closeHistoryRun }
         if historyDay { return .closeHistoryDay }
         if historyOpen { return .leaveHistory }
         if reportOpen { return .closeReport }
         if reportsOpen { return .leaveReports }
+        if reviewRunOpen { return .closeReviewRun }
+        if reviewOpen { return .leaveReview }
         if detailOpen { return .deselect }
         if drilledIn { return .back }
         return .hide

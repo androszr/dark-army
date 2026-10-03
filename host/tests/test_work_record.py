@@ -108,7 +108,10 @@ def test_every_git_call_keeps_its_hands_off_the_index_lock():
                  work_record.argv_numstat("/r", "abc"),
                  work_record.argv_untracked("/r"),
                  work_record.argv_file_diff("/r", "abc", "a.py"),
-                 work_record.argv_new_file_diff("/r", "a.py")):
+                 work_record.argv_new_file_diff("/r", "a.py"),
+                 work_record.argv_upstream("/r"),
+                 work_record.argv_ahead("/r", "origin/main"),
+                 work_record.argv_status("/r")):
         assert argv[0] == "git"
         assert "--no-optional-locks" in argv
         assert argv[argv.index("-C") + 1] == "/r"

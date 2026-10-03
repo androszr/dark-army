@@ -59,6 +59,10 @@ enum InboxWireKind: Int, Hashable {
     /// earlier raw value — and so every stored id — is unchanged; its kind
     /// is ANSWER, because the person is deciding yes or no.
     case startAsked
+    /// A review run is waiting on the person's picks (`ReviewRules.picksEntry`).
+    /// Last so every earlier raw value is unchanged; its kind is ANSWER, the
+    /// person is choosing the fixes.
+    case reviewPicks
 
     var name: String {
         switch self {
@@ -68,12 +72,13 @@ enum InboxWireKind: Int, Hashable {
         case .manualCheck: return "manual_check"
         case .waiting: return "waiting"
         case .startAsked: return "start_asked"
+        case .reviewPicks: return "review_picks"
         }
     }
 
     var kind: InboxKind {
         switch self {
-        case .permission, .question, .startAsked: return .answer
+        case .permission, .question, .startAsked, .reviewPicks: return .answer
         case .endedWork, .manualCheck: return .look
         case .waiting: return .stopped
         }
@@ -116,7 +121,7 @@ enum InboxFingerprint {
     }
 
     static func value(wire: InboxWireKind, questions: [AgentQuestion] = [],
-                      card: BoardCard? = nil) -> String {
+                      card: BoardCard? = nil, material: String = "") -> String {
         let name = wire.name
         switch wire {
         case .waiting:
@@ -127,6 +132,8 @@ enum InboxFingerprint {
             return value(kind: name, material: card?.manualSteps ?? "")
         case .startAsked:
             return value(kind: name, material: card?.startAskId ?? "")
+        case .reviewPicks:
+            return value(kind: name, material: material)
         case .permission, .endedWork:
             return value(kind: name, material: "")
         }
@@ -138,11 +145,14 @@ enum InboxFingerprint {
 enum InboxTarget: Hashable {
     case session(String)
     case card(String)
+    /// A review run (`r:<run id>`).
+    case review(String)
 
     var key: String {
         switch self {
         case .session(let id): return "s:" + id
         case .card(let id): return "c:" + id
+        case .review(let id): return "r:" + id
         }
     }
 }
@@ -166,6 +176,9 @@ struct InboxItem: Identifiable, Hashable {
     /// decode freezes on a quiet minute, and the row's clock is a
     /// `TimelineView` over this stamp.
     var since: Double = 0
+    /// What the entry's Dismiss fingerprint is made of, for the kinds whose
+    /// subject is neither a session nor a card (a review run's picks).
+    var material: String = ""
 
     var kind: InboxKind { wire.kind }
     var id: String { "\(target.key)#\(wire.rawValue)" }
@@ -207,7 +220,8 @@ enum Inbox {
                       answered: Set<String> = [],
                       now: Double = 0,
                       acks: [InboxAckRecord] = [],
-                      fleet: Agents = Agents()) -> [InboxItem] {
+                      fleet: Agents = Agents(),
+                      review: ReviewSection = ReviewSection()) -> [InboxItem] {
         var out: [InboxItem] = []
 
         for row in rows {
@@ -239,6 +253,14 @@ enum Inbox {
                                      target: target, cardId: "",
                                      sessionId: agent.sessionId,
                                      since: waitingSince))
+            } else if review.runs.contains(where: {
+                ReviewRules.coveredStates.contains($0.state)
+                    && ReviewRules.isReviewRow(sessionId: agent.sessionId,
+                                               runSessions: [$0.sessionId])
+            }) {
+                // A review run's terminal waiting between steps: the run's
+                // own entry (or its report) carries the decision.
+                continue
             } else {
                 // What the agent last said in one line, where it left one;
                 // its work report's headline (the daemon's line) next; the
@@ -293,6 +315,20 @@ enum Inbox {
             }
         }
 
+        for run in review.runs {
+            guard let entry = ReviewRules.picksEntry(
+                runId: run.id, state: run.state, scopeLine: run.scopeLine,
+                findingCount: run.findings.count) else { continue }
+            out.append(InboxItem(
+                wire: .reviewPicks, project: run.project,
+                title: "Review · \(run.project.isEmpty ? run.root : run.project)",
+                detail: entry.detail, target: .review(run.id), cardId: "",
+                sessionId: run.sessionId,
+                since: run.findingsAt > 0 ? run.findingsAt : run.startedAt,
+                material: ReviewRules.fingerprintMaterial(
+                    runId: run.id, findingsAt: run.findingsAt)))
+        }
+
         if !acks.isEmpty {
             out.removeAll { item in
                 let fp = InboxFingerprint.value(
@@ -303,7 +339,8 @@ enum Inbox {
                     // large value copied into the predicate) and find
                     // none — per entry, per call, per snapshot.
                     card: item.cardId.isEmpty
-                        ? nil : cards.first { $0.id == item.cardId })
+                        ? nil : cards.first { $0.id == item.cardId },
+                    material: item.material)
                 return acks.contains {
                     $0.key == item.target.key
                         && $0.kind == item.wire.name

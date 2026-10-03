@@ -542,6 +542,8 @@ Pinned by `host/tests/test_phone_terminal.py` and
 
 ## The Menu tab gathers Usage, Comm, Scouting and Manual checks
 
+A **Review** tile (`MenuSection.review`; `ReviewView`, `ReviewRunView`) is lit by `review_supported`; a `review_picks` Needs you entry opens it and posts nothing: `docs/review-runs.md`, `test_phone_review.py`.
+
 Four tabs: Needs you, Fleet, Board, **Menu** (`MenuView.swift`), a grid four
 across (two at accessibility sizes) of `MenuSection` tiles — Usage, History,
 Comm, Scouting, Manual checks, Plans — beside the bundled Design system,

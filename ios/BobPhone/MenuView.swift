@@ -6,7 +6,7 @@ import WebKit
 /// their own until the menu gathered them, so `bobphone://usage` (the
 /// widget's meter) and a draft stamped `comm` still name them.
 enum MenuSection: String, CaseIterable, Hashable, Identifiable {
-    case usage, history, comm, scouting, checks, plans, designSystem
+    case usage, history, comm, scouting, checks, plans, designSystem, review
 
     var id: String { rawValue }
 
@@ -20,6 +20,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         case .checks: return "Manual checks"
         case .plans: return "Plans"
         case .designSystem: return "Design system"
+        case .review: return "Review"
         }
     }
 
@@ -32,6 +33,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         case .checks: return "checklist"
         case .plans: return "doc.text"
         case .designSystem: return "square.grid.2x2"
+        case .review: return "doc.text.magnifyingglass"
         }
     }
 
@@ -42,7 +44,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     /// light through `lit(scoutReports:manualChecks:plans:historyWeek:)`.
     var built: Bool {
         switch self {
-        case .usage, .comm, .designSystem: return true
+        case .usage, .comm, .designSystem, .review: return true
         case .scouting, .checks, .plans, .history: return false
         }
     }
@@ -55,8 +57,10 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     /// the week (`Board.historyWeekSupported`), every other section as
     /// `built`.
     func lit(scoutReports: Bool, manualChecks: Bool = false,
-             plans: Bool = false, historyWeek: Bool = false) -> Bool {
+             plans: Bool = false, historyWeek: Bool = false,
+             review: Bool = true) -> Bool {
         switch self {
+        case .review: return review
         case .scouting: return scoutReports
         case .checks: return manualChecks
         case .plans: return plans
@@ -118,7 +122,8 @@ struct MenuView: View {
             scoutReports: client.snapshot.board.scoutReportsSupported,
             manualChecks: client.snapshot.board.manualChecksSupported,
             plans: client.snapshot.board.plansSupported,
-            historyWeek: client.snapshot.board.historyWeekSupported)
+            historyWeek: client.snapshot.board.historyWeekSupported,
+            review: client.snapshot.board.reviewSupported)
         return DecryptButton(action: { open = section }) {
             VStack(spacing: 8) {
                 Image(systemName: section.symbol)
@@ -224,6 +229,9 @@ struct MenuSectionScreen: View {
         case .designSystem:
             SignalWorkshopPhone()
                 .navigationTitle("Design system")
+        case .review:
+            ReviewView(client: client)
+                .navigationTitle("review")
         }
     }
 }

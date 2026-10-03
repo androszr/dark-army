@@ -20,6 +20,13 @@
     "| `/app-audit` | entitlement drift, privacy strings, ATS, money-as-Double, background registration, then the app reviewer | a verdict |",
     "| `/release-ios` | runbook for the TestFlight upload a push to main sets in motion, and the one-time App Store Connect setup | confirmation the build reached the phone |"
   ],
+  "after_steps": [
+    ["build", "Build", "run the ios_build_gate command from docs/context.md and report its result"],
+    ["test", "Test", "run the ios_test_gate command from docs/context.md and report its result"],
+    ["commit", "Commit", "make one commit of the working tree in the repository's whole-sentence style"],
+    ["push", "Push to the remote", "git push to the upstream branch"],
+    ["testflight", "TestFlight", "a push to main sets .github/workflows/testflight.yml in motion; otherwise gh workflow run testflight.yml --ref main; then gh run list --workflow testflight.yml --limit 1 and write STEP testflight: started with the run URL; if gh is absent the step is failed in words, never done"]
+  ],
   "settings_allow": [
     "Bash(xcodebuild:*)",
     "Bash(python3 scripts/check-entitlements.py)",

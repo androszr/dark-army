@@ -42,8 +42,10 @@ def test_the_grid_holds_sections_in_order():
     menu = _enum(_read(MENU), "MenuSection")
     assert "case usage, history, comm, scouting, checks, plans, designSystem" in menu
     for title in ('"Usage"', '"History"', '"Comm"', '"Scouting"', '"Manual checks"',
-                  '"Plans"', '"Design system"'):
+                  '"Plans"', '"Design system"', '"Review"'):
         assert f"return {title}" in menu, title
+    # Review is appended after the sections already there, never inserted.
+    assert "designSystem, review" in menu
 
 
 def test_the_grid_is_four_columns_and_two_at_accessibility_sizes():
@@ -73,6 +75,8 @@ def test_a_tile_pushes_onto_the_tab_stack_with_a_back_button():
 def test_the_unbuilt_sections_say_so():
     view = _read(MENU)
     assert "case .scouting, .checks, .plans, .history: return false" in view
+    # Review is built: it lights through its own marker, never `built`'s false.
+    assert ".review" not in view.split("case .scouting, .checks, .plans, .history: return false")[0].split("var built: Bool")[1].split("return true")[1]
     assert "MenuNotYet(" in view
     assert '"Not built yet"' in view
 

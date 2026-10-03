@@ -28,6 +28,27 @@ extension DaemonClient {
         return try? JSONDecoder().decode(ManualChecksReport.self, from: data)
     }
 
+    /// What a review of one project would cover and offer
+    /// (`GET /api/review?root=`, loopback). `knowledgeReport(root:)`'s shape:
+    /// the root is percent-encoded into the query, the token rides
+    /// `request(_:)`, a 403 is noted, anything else is `nil`. The phone never
+    /// sends a query string; its read is the sealed `review_offer` kind.
+    func reviewOffer(root: String) async -> ReviewOffer? {
+        guard !root.isEmpty,
+              let encoded = root.addingPercentEncoding(
+                withAllowedCharacters: Self.knowledgeRootUnreserved)
+        else { return nil }
+        var req = request("/api/review?root=\(encoded)")
+        req.timeoutInterval = 15
+        guard let (data, response) = try? await URLSession.shared.data(for: req) else {
+            return nil
+        }
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        noteAuthRefused(code)
+        guard code == 200 else { return nil }
+        return try? JSONDecoder().decode(ReviewOffer.self, from: data)
+    }
+
     /// One check file's text. The daemon re-checks the place and the shape;
     /// outside an enrolled project's folder the answer is `available: false`
     /// with the reason in words.

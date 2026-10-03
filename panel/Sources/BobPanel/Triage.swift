@@ -33,6 +33,10 @@ enum TriageIntent: Equatable {
     case closeReport
     /// Leave the Reports tab and bring the board back.
     case leaveReports
+    /// Close the run the Review tab has open; the form comes back.
+    case closeReviewRun
+    /// Leave the Review tab and bring the board back.
+    case leaveReview
 }
 
 /// One press. The sequence number is what makes two identical presses in a row
@@ -81,6 +85,9 @@ final class KeyRouter: ObservableObject {
     /// The Reports tab's two rungs: a report open inside the tab.
     @Published var reportOpen = false
     @Published var reportsOpen = false
+    /// The Review tab's two rungs: a run open inside the tab.
+    @Published var reviewRunOpen = false
+    @Published var reviewOpen = false
     /// The hosted native terminal holds the caret. Escape must reach the
     /// pty (vim, grok, a cancel) rather than close the detail.
     @Published var terminalFocused = false

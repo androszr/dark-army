@@ -48,6 +48,10 @@ ARM_SLOTS = (
     "refineBatch",
     # The Backlog row's batch Start (25 Sep 2026): its own slot, never a card screen's Start.
     "startBatch",
+    # Continue and End on a Review run (docs/review-runs.md): their own
+    # slots, armed on the run id, so no other arm can confirm either.
+    "reviewContinue",
+    "reviewEnd",
 )
 
 OLDER_MAC = "this Mac cannot take commands from the phone yet"

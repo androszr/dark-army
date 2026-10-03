@@ -299,3 +299,42 @@ def test_a_linked_leads_folder_is_never_pruned(project, tmp_path):
     os.symlink(outside, root / ".claude" / "leads")
     pack_install._unlink_stale_leads(folder, {}, pack_install.pack_root())
     assert (outside / "desk.md").is_file()
+
+
+# --- after_steps: what the Review section offers a project (docs/review-runs.md)
+
+def test_both_shipped_profiles_declare_unique_lowercase_after_steps():
+    for name in ("ios-swift-testflight", "web-next-vercel"):
+        data = json.loads((REPO / "host/dark_army_menubar/agent_pack/profiles"
+                           / name / "profile.json").read_text(encoding="utf-8"))
+        steps = data["after_steps"]
+        ids = [row[0] for row in steps]
+        assert ids and len(ids) == len(set(ids)), name
+        assert all(i == i.lower() and i.isascii() for i in ids), name
+        assert all(len(row) == 3 and row[2].strip() for row in steps), name
+        assert {"commit", "push"} <= set(ids), name
+    ios = json.loads((REPO / "host/dark_army_menubar/agent_pack/profiles/"
+                      "ios-swift-testflight/profile.json").read_text())
+    assert "testflight" in [row[0] for row in ios["after_steps"]]
+
+
+def test_a_profile_with_no_after_steps_gets_the_generic_commit_and_push():
+    from dark_army_menubar import review_steps
+    profile = pack_render.normalise_profile({}, "bare")
+    assert [row[0] for row in profile["after_steps"]] == ["commit", "push"]
+    assert profile["after_steps"] == review_steps.generic_steps()
+
+
+def test_a_malformed_after_step_is_a_render_error():
+    with pytest.raises(pack_render.PackRenderError):
+        pack_render.normalise_profile({"after_steps": [["Up", "A", "x"]]}, "bad")
+    with pytest.raises(pack_render.PackRenderError):
+        pack_render.normalise_profile({"after_steps": "commit"}, "bad")
+
+
+def test_after_steps_for_a_both_install_merges_without_repeating_an_id():
+    steps = pack_render.after_steps_for("both")
+    ids = [row[0] for row in steps]
+    assert len(ids) == len(set(ids))
+    assert "testflight" in ids and "lint" in ids
+    assert pack_render.after_steps_for("no-such-profile") == []

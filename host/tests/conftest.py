@@ -95,6 +95,11 @@ def _isolate_sessions(tmp_path, monkeypatch):
     # daemon holds its own copy in memory) — the damage lands at the next
     # restart, which adopts whatever the last test left behind.
     monkeypatch.setattr(identity, "IDENTITY_PATH", tmp_path / "identities.json")
+    # Review runs' records and folders (review_run.py): a BobDaemon loads the
+    # records in __init__ and a run writes its folder, so neither may reach
+    # the machine's ~/.dark-army.
+    monkeypatch.setattr(paths, "REVIEW_RUNS_PATH", tmp_path / "review-runs.json")
+    monkeypatch.setattr(paths, "REVIEW_RUNS_DIR", tmp_path / "review-runs")
 
 
 @pytest.fixture(autouse=True)

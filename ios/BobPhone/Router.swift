@@ -112,6 +112,25 @@ final class PhoneRouter: ObservableObject {
     /// consumed with the tab like the session.
     private var pendingSection: MenuSection?
 
+    /// The Review run a Needs you press named, `""` for none. Memory only,
+    /// consumed by `ReviewView` once it is in front.
+    private var pendingReviewRun = ""
+
+    /// A Needs you entry for a run waiting on picks: the Menu tab comes
+    /// forward with the Review screen open and the run to show held for it.
+    /// Posts nothing — it only moves the screen.
+    func openReview(runId: String) {
+        pendingSection = .review
+        pendingReviewRun = runId
+        go(.menu)
+    }
+
+    /// Consume the run a press named, if any.
+    func takeReviewRun() -> String {
+        defer { pendingReviewRun = "" }
+        return pendingReviewRun
+    }
+
     /// Consume the section a link named, if any.
     func takeSection() -> MenuSection? {
         defer { pendingSection = nil }

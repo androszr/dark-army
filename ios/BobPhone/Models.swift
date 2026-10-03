@@ -45,6 +45,10 @@ struct Snapshot: Decodable {
     /// which decodes `available == false` and draws the Comm tab's one
     /// sentence.
     var mission = MissionSection()
+    /// The Review section: runs with their findings, picks and step ledger.
+    /// Older Macs send none, which decodes `available == false` and the
+    /// Review screen draws one sentence.
+    var review = ReviewSection()
     /// The host Mac's battery for the Fleet tab. Older Macs send none,
     /// which decodes `available == false` and Fleet draws nothing.
     var power = PowerSection()
@@ -60,7 +64,7 @@ struct Snapshot: Decodable {
         case generatedAt = "generated_at"
         case counts, agents, board, notifications, permissions, devices, collaboration
         case fleetFigures = "fleet_figures"
-        case enrollment, inbox, security, mission, power
+        case enrollment, inbox, security, mission, power, review
         case stateDigest = "state_digest"
     }
 
@@ -81,6 +85,7 @@ struct Snapshot: Decodable {
         security = c.value(.security, SecuritySection())
         mission = c.value(.mission, MissionSection())
         power = c.value(.power, PowerSection())
+        review = c.value(.review, ReviewSection())
         stateDigest = c.value(.stateDigest, "")
     }
 
@@ -94,7 +99,7 @@ struct Snapshot: Decodable {
     /// sections and are never carried.
     enum Section: String, CaseIterable {
         case counts, notifications, agents, collaboration, permissions, board
-        case enrollment, devices, inbox, security, mission, power
+        case enrollment, devices, inbox, security, mission, power, review
     }
 
     /// Take one section, named on the wire, from the picture already held.
@@ -118,6 +123,7 @@ struct Snapshot: Decodable {
         case .security: security = held.security
         case .mission: mission = held.mission
         case .power: power = held.power
+        case .review: review = held.review
         }
         return true
     }
@@ -165,6 +171,203 @@ struct MissionSection: Decodable, Equatable {
         name = c.value(.name, "")
         openedAt = c.value(.openedAt, 0)
     }
+}
+
+/// The `review` section of the state (`BobDaemon.review_snapshot`): the
+/// Review runs, newest first, each with its graded findings, the picks
+/// the person made, the after-steps and the step ledger the run reported.
+/// `available` is stated by the Mac; absent decodes false and the screen
+/// draws one sentence. Every field is defaulted and the arrays decode
+/// element by element, so one malformed finding drops that finding and never
+/// the frame. Never a handle, a digest or a folder path.
+struct ReviewSection: Decodable, Equatable {
+    var available = false
+    var runs: [ReviewRun] = []
+
+    enum CodingKeys: String, CodingKey { case available, runs }
+
+    init(available: Bool = false, runs: [ReviewRun] = []) {
+        self.available = available
+        self.runs = runs
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        let rows: [ReviewLossy<ReviewRun>] = c.value(.runs, [])
+        runs = rows.compactMap(\.value)
+    }
+
+    func run(id: String) -> ReviewRun? { runs.first { $0.id == id } }
+}
+
+struct ReviewRun: Decodable, Equatable, Identifiable {
+    var id = ""
+    var root = ""
+    var project = ""
+    var tool = ""
+    var state = ""
+    var scope = ""
+    var scopeLine = ""
+    var upstream = ""
+    var sessionId = ""
+    var startedAt: Double = 0
+    var findingsAt: Double = 0
+    var decidedAt: Double = 0
+    var finishedAt: Double = 0
+    var verdict = ""
+    var error = ""
+    var truncated = false
+    var findings: [ReviewFinding] = []
+    var picks: [Int] = []
+    var steps: [ReviewStep] = []
+    var ledger: [ReviewLedgerLine] = []
+
+    enum CodingKeys: String, CodingKey {
+        case id, root, project, tool, state, scope, upstream, verdict, error
+        case truncated, findings, picks, steps, ledger
+        case scopeLine = "scope_line"
+        case sessionId = "session_id"
+        case startedAt = "started_at"
+        case findingsAt = "findings_at"
+        case decidedAt = "decided_at"
+        case finishedAt = "finished_at"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        root = c.value(.root, "")
+        project = c.value(.project, "")
+        tool = c.value(.tool, "")
+        state = c.value(.state, "")
+        scope = c.value(.scope, "")
+        scopeLine = c.value(.scopeLine, "")
+        upstream = c.value(.upstream, "")
+        sessionId = c.value(.sessionId, "")
+        startedAt = c.value(.startedAt, 0)
+        findingsAt = c.value(.findingsAt, 0)
+        decidedAt = c.value(.decidedAt, 0)
+        finishedAt = c.value(.finishedAt, 0)
+        verdict = c.value(.verdict, "")
+        error = c.value(.error, "")
+        truncated = c.value(.truncated, false)
+        let found: [ReviewLossy<ReviewFinding>] = c.value(.findings, [])
+        findings = found.compactMap(\.value)
+        let picked: [ReviewLossy<Int>] = c.value(.picks, [])
+        picks = picked.compactMap(\.value)
+        let stepRows: [ReviewLossy<ReviewStep>] = c.value(.steps, [])
+        steps = stepRows.compactMap(\.value)
+        let lines: [ReviewLossy<ReviewLedgerLine>] = c.value(.ledger, [])
+        ledger = lines.compactMap(\.value)
+    }
+}
+
+struct ReviewFinding: Decodable, Equatable, Identifiable {
+    var index = 0
+    var grade = ""
+    var line = ""
+    var `where` = ""
+    var fix = ""
+    var confidence = ""
+
+    var id: Int { index }
+
+    enum CodingKeys: String, CodingKey {
+        case index, grade, line, `where`, fix, confidence
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        index = c.value(.index, 0)
+        grade = c.value(.grade, "")
+        line = c.value(.line, "")
+        `where` = c.value(.where, "")
+        fix = c.value(.fix, "")
+        confidence = c.value(.confidence, "")
+    }
+}
+
+struct ReviewStep: Decodable, Equatable, Identifiable {
+    var id = ""
+    var label = ""
+    var status = ""
+    var words = ""
+    /// Only on an offer: how the step is done. A run's snapshot omits it.
+    var how = ""
+
+    enum CodingKeys: String, CodingKey { case id, label, status, words, how }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        label = c.value(.label, "")
+        status = c.value(.status, "")
+        words = c.value(.words, "")
+        how = c.value(.how, "")
+    }
+}
+
+struct ReviewLedgerLine: Decodable, Equatable, Identifiable {
+    var id = ""
+    var status = ""
+    var words = ""
+
+    enum CodingKeys: String, CodingKey { case id, status, words }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        status = c.value(.status, "")
+        words = c.value(.words, "")
+    }
+}
+
+/// What a review of one project would cover and may do afterwards, read
+/// through the sealed `review_offer` kind (`BobDaemon.review_offer`).
+struct ReviewOffer: Decodable, Equatable {
+    var available = false
+    var root = ""
+    var project = ""
+    var scope = ""
+    var scopeLine = ""
+    var upstream = ""
+    var reason = ""
+    var steps: [ReviewStep] = []
+
+    enum CodingKeys: String, CodingKey {
+        case available, root, project, scope, upstream, reason, steps
+        case scopeLine = "scope_line"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        root = c.value(.root, "")
+        project = c.value(.project, "")
+        scope = c.value(.scope, "")
+        scopeLine = c.value(.scopeLine, "")
+        upstream = c.value(.upstream, "")
+        reason = c.value(.reason, "")
+        let rows: [ReviewLossy<ReviewStep>] = c.value(.steps, [])
+        steps = rows.compactMap(\.value)
+    }
+}
+
+/// One ragged element: a malformed one decodes to nil and is dropped.
+struct ReviewLossy<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }
 
 /// The `power` section of the state (`BobDaemon.power_snapshot`): the host
@@ -1360,6 +1563,14 @@ struct Board: Decodable {
     /// (`board_manual_outcome`). Its own marker, so the list can be drawn
     /// against a Mac that refuses the press.
     var manualOutcomeWritable = false
+    /// Whether this Mac serves the Review section (`state.review`, the
+    /// sealed `review_offer` read). Absent means **false**: the Menu tile is
+    /// dim and the screen says so in a sentence.
+    var reviewSupported = false
+    /// Whether this Mac takes `review_start`, `review_continue` and
+    /// `review_end` from a phone — its own marker on `reviewSupported`'s
+    /// argument, because the older `review_writable` is "Mark reviewed".
+    var reviewRunWritable = false
     /// Its twin for Mark reviewed — `board_review`. Two flags, not one, so a
     /// Mac that honours one verb and not the other hides exactly one button.
     var reviewWritable = false
@@ -1437,6 +1648,8 @@ struct Board: Decodable {
         case manualChecksSupported = "manual_checks_supported"
         case manualOutcomeWritable = "manual_outcome_writable"
         case reviewWritable = "review_writable"
+        case reviewSupported = "review_supported"
+        case reviewRunWritable = "review_run_writable"
         case ownTerminalEnabled = "own_terminal_enabled"
         case ownTerminalSpawnSupported = "own_terminal_spawn_supported"
         case doneClearToken = "done_clear_token"
@@ -1496,6 +1709,8 @@ struct Board: Decodable {
         manualChecksSupported = c.value(.manualChecksSupported, false)
         manualOutcomeWritable = c.value(.manualOutcomeWritable, false)
         reviewWritable = c.value(.reviewWritable, false)
+        reviewSupported = c.value(.reviewSupported, false)
+        reviewRunWritable = c.value(.reviewRunWritable, false)
         ownTerminalEnabled = c.value(.ownTerminalEnabled, false)
         ownTerminalSpawnSupported = c.value(.ownTerminalSpawnSupported, false)
         doneClearToken = c.value(.doneClearToken, "")

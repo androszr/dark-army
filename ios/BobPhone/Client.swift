@@ -3595,6 +3595,28 @@ extension PhoneClient {
         return try? JSONDecoder().decode(ManualCheckDocument.self, from: answer.body)
     }
 
+    /// What a review of one project would cover and may do afterwards —
+    /// the sealed `review_offer` **read** on both doors, `knowledgeReport`'s
+    /// shape: relay first when away, never on the poll, the background
+    /// refresh or the widget. `root` rides the JSON body, never a query
+    /// string, so a path never reaches the relay's logs.
+    func reviewOffer(root: String) async -> ReviewOffer? {
+        guard let record, !backgroundRun, !root.isEmpty else { return nil }
+        let body: [String: Any] = ["root": root]
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "review_offer", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(kind: "review_offer", body: body,
+                                        host: record.host, port: record.port,
+                                        timeout: 10)
+        } else { return nil }
+        guard record.token == self.record?.token, let answer,
+              answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return try? JSONDecoder().decode(ReviewOffer.self, from: answer.body)
+    }
+
     /// The Mac's scout-report list, newest first, no bodies — on
     /// `knowledgeReport(root:)`'s shape and `log`'s rule: a **read** on
     /// both doors, relay first when away, never on the poll or
