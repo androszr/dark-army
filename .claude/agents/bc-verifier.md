@@ -99,7 +99,7 @@ Run all of these every time; report each as a criterion.
 
 | Check | Command | Pass condition |
 |---|---|---|
-| Tests | `cd host && .venv/bin/pytest -q -n auto -p no:cacheprovider` (across workers, about three minutes; never without `-n auto`) | exit 0 — or every red id classified `PRE-EXISTING` or `IN-FLIGHT` by `SCRATCH=<the run's scratch dir> bash .claude/skills/ship/gate.sh classify <ids…>`, each with the helper's line as evidence. A `YOURS` id is a FAIL; an `IN-FLIGHT` id off a dirty sibling outside this delta (`ios/BobPhone/`, `docs/`) is not. No other exemption, ever |
+| Tests | `cd host && .venv/bin/pytest -q -n auto -p no:cacheprovider` (across workers, about three minutes; never without `-n auto`) | exit 0 — or every red id classified `PRE-EXISTING` or `IN-FLIGHT` by `SCRATCH=<the run's scratch dir> bash .claude/skills/ship/gate.sh classify <ids…>`, each with the helper's line as evidence. A `YOURS` id is a FAIL; an `IN-FLIGHT` id off a dirty sibling outside this delta (`ios/BobPhone/`, `docs/`, or the agent trees `.claude/agents/`, `.codex/agents/`, `.grok/agents/`) is not. No other exemption, ever |
 | Byte-compile | `cd host && .venv/bin/python -m compileall -q dark_army_daemon dark_army_menubar` | exit 0 |
 | Panel builds (if `panel/` touched) | `cd panel && swift build -c release` | exit 0 |
 | Extension builds (if `vscode-extension/src` touched) | `cd vscode-extension && npm run build` | exit 0 |
@@ -161,8 +161,9 @@ Notes on the standing checks, learned the hard way:
   answers `PRE-EXISTING` (red there too), `IN-FLIGHT` (green there, but its
   file was changed by another run since this one's baseline and the delta does
   not touch it — including a phone grep whose dirty source is a sibling
-  under `ios/BobPhone/` outside this delta, or an inventory test whose dirty
-  source is a sibling under `docs/`) or `YOURS`. Quote the line as the
+  under `ios/BobPhone/` outside this delta, or a test whose dirty source is a
+  sibling under `docs/` or the agent trees `.claude/agents/`,
+  `.codex/agents/`, `.grok/agents/`) or `YOURS`. Quote the line as the
   row's evidence; the log it names is on disk. `YOURS` is a FAIL with the id.
   Classifying is reading, not fixing: you still edit nothing, and you never
   wave a bare red through.

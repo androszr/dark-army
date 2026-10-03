@@ -319,6 +319,131 @@ def test_classify_inventory_grep_is_yours_when_only_the_delta_docs_moved(run):
     assert "YOURS tests/test_ship_context.py::test_inventory_check_passes_on_this_tree (the delta touches docs/)" in done.stdout
 
 
+def test_classify_shim_policy_is_in_flight_when_another_run_dirtied_a_codex_shim(run):
+    repo, scratch = run
+    test = repo / "host/tests/test_agent_models_own_checkout.py"
+    test.write_text(
+        "from pathlib import Path\n"
+        "def test_repo_codex_shims_match_the_shipped_role_policy():\n"
+        "    shim = Path(__file__).resolve().parents[2] / '.codex/agents/bc-verifier.toml'\n"
+        "    assert shim.read_text() == 'model = \"gpt-6-sol\"\\n'\n",
+        encoding="utf-8")
+    shim = repo / ".codex/agents/bc-verifier.toml"
+    shim.parent.mkdir(parents=True)
+    shim.write_text('model = "gpt-6-sol"\n', encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "shim policy")
+    (scratch / "pre-ship-head.txt").write_text(_git(repo, "rev-parse", "HEAD"), encoding="utf-8")
+    shim.write_text('model = "gpt-6-luna"\n', encoding="utf-8")
+    id = "tests/test_agent_models_own_checkout.py::test_repo_codex_shims_match_the_shipped_role_policy"
+    done = _gate(repo, scratch, "classify", id)
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert done.stdout.startswith(f"IN-FLIGHT {id}"), done.stdout
+    assert ".codex/agents/bc-verifier.toml" in done.stdout
+    assert (scratch / "in-flight.txt").read_text(encoding="utf-8").splitlines() == [id]
+    assert not (scratch / "pre-existing.txt").exists()
+
+
+def test_classify_shim_policy_is_in_flight_when_a_sibling_shim_is_dirty(run):
+    repo, scratch = run
+    test = repo / "host/tests/test_agent_models_own_checkout.py"
+    test.write_text("def test_repo_codex_shims_match_the_shipped_role_policy():\n    assert True\n", encoding="utf-8")
+    shims = repo / ".codex/agents"
+    shims.mkdir(parents=True)
+    implementer = shims / "bc-implementer.toml"
+    verifier = shims / "bc-verifier.toml"
+    implementer.write_text('model = "old"\n', encoding="utf-8")
+    verifier.write_text('model = "old"\n', encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "shim policy")
+    (scratch / "pre-ship-head.txt").write_text(_git(repo, "rev-parse", "HEAD"), encoding="utf-8")
+    (scratch / "ship-delta-paths.txt").write_text(".codex/agents/bc-implementer.toml\n", encoding="utf-8")
+    implementer.write_text('model = "ours"\n', encoding="utf-8")
+    verifier.write_text('model = "theirs"\n', encoding="utf-8")
+    id = "tests/test_agent_models_own_checkout.py::test_repo_codex_shims_match_the_shipped_role_policy"
+    done = _gate(repo, scratch, "classify", id)
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert done.stdout.startswith(f"IN-FLIGHT {id}"), done.stdout
+    assert ".codex/agents/bc-verifier.toml" in done.stdout
+
+
+def test_classify_shim_policy_is_yours_when_the_delta_touches_the_shim(run):
+    repo, scratch = run
+    (repo / "host/tests/test_agent_models_own_checkout.py").write_text(
+        "def test_repo_codex_shims_match_the_shipped_role_policy():\n    assert True\n", encoding="utf-8")
+    shim = repo / ".codex/agents/bc-verifier.toml"
+    shim.parent.mkdir(parents=True)
+    shim.write_text('model = "old"\n', encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "shim policy")
+    (scratch / "pre-ship-head.txt").write_text(_git(repo, "rev-parse", "HEAD"), encoding="utf-8")
+    (scratch / "ship-delta-paths.txt").write_text(".codex/agents/bc-verifier.toml\n", encoding="utf-8")
+    shim.write_text('model = "ours"\n', encoding="utf-8")
+    id = "tests/test_agent_models_own_checkout.py::test_repo_codex_shims_match_the_shipped_role_policy"
+    done = _gate(repo, scratch, "classify", id)
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert done.stdout.startswith(f"YOURS {id} (the delta touches .codex/agents/)"), done.stdout
+
+
+def test_classify_shim_policy_is_yours_when_the_delta_touches_agent_models(run):
+    repo, scratch = run
+    (scratch / "ship-delta-paths.txt").write_text("host/dark_army_daemon/agent_models.py\n", encoding="utf-8")
+    id = "tests/test_agent_models_own_checkout.py::test_repo_codex_shims_match_the_shipped_role_policy"
+    done = _gate(repo, scratch, "classify", id)
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert done.stdout.startswith(f"YOURS {id} (the delta touches host/dark_army_daemon/agent_models.py)"), done.stdout
+
+
+@pytest.mark.parametrize("path", [
+    ".claude/agents/bc-planner.md",
+    ".codex/agents/bc-planner.toml",
+    ".grok/agents/bc-planner.md",
+])
+def test_classify_brief_readers_are_in_flight_on_any_dirty_agent_tree(run, path):
+    repo, scratch = run
+    (repo / "host/tests/test_agent_briefs.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    brief = repo / path
+    brief.parent.mkdir(parents=True)
+    brief.write_text("old\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "agent brief")
+    (scratch / "pre-ship-head.txt").write_text(_git(repo, "rev-parse", "HEAD"), encoding="utf-8")
+    brief.write_text("new\n", encoding="utf-8")
+    id = "tests/test_agent_briefs.py::test_x"
+    done = _gate(repo, scratch, "classify", id)
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert done.stdout.startswith(f"IN-FLIGHT {id}"), done.stdout
+    assert path in done.stdout
+
+
+def test_classify_dirty_agent_sibling_wins_over_owned_brief_reader_test(run):
+    repo, scratch = run
+    test = repo / "host/tests/test_ship_gate.py"
+    source = (
+        "from pathlib import Path\n"
+        "def test_x():\n"
+        "    brief = Path(__file__).resolve().parents[2] / '.claude/agents/bc-verifier.md'\n"
+        "    assert brief.read_text() == 'old\\n'\n"
+    )
+    test.write_text(source, encoding="utf-8")
+    brief = repo / ".claude/agents/bc-verifier.md"
+    brief.parent.mkdir(parents=True)
+    brief.write_text("old\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "brief reader")
+    (scratch / "pre-ship-head.txt").write_text(_git(repo, "rev-parse", "HEAD"), encoding="utf-8")
+    (scratch / "ship-delta-paths.txt").write_text("host/tests/test_ship_gate.py\n", encoding="utf-8")
+    test.write_text(source + "\n# This run edited the test without changing its result.\n", encoding="utf-8")
+    brief.write_text("new\n", encoding="utf-8")
+    id = "tests/test_ship_gate.py::test_x"
+    done = _gate(repo, scratch, "classify", id)
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert done.stdout.startswith(f"IN-FLIGHT {id}"), done.stdout
+    assert ".claude/agents/bc-verifier.md" in done.stdout
+    assert (scratch / "in-flight.txt").read_text(encoding="utf-8").splitlines() == [id]
+    assert not (scratch / "pre-existing.txt").exists()
+
+
 def test_a_missing_pytest_is_not_an_attempt(run):
     """Exit 127/4/5 with no parsed ids is cwd/argv, not a test failure."""
     repo, scratch = run
@@ -436,8 +561,10 @@ def test_the_briefs_name_the_helper_and_the_three_classes():
     assert "you never run it for them" not in verifier
     assert "ios/BobPhone/" in verifier
     assert "docs/" in verifier
+    assert ".codex/agents/" in verifier
     assert "do not run the subset first" in verifier
     assert "docs/" in implementer
+    assert ".codex/agents/" in implementer
     common = _flat(COMMON)
     assert "still working?" in common
     assert "does **not** pre-read the subject documents" in common or "does not pre-read the subject documents" in common

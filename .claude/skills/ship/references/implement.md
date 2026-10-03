@@ -365,7 +365,8 @@ touch goes through `gate.sh classify` once and comes back `PRE-EXISTING` (red
 at the baseline too — replayed **by id** in a worktree, never the whole
 suite), `IN-FLIGHT` (another card's half-built work in the same tree,
 including a phone grep test whose `ios/BobPhone/` sources are dirty outside
-this delta, or an inventory test whose `docs/` sibling is — reported, never
+this delta, or a sibling under `docs/` or the agent trees `.claude/agents/`,
+`.codex/agents/`, `.grok/agents/` — reported, never
 fixed, never counted; the last run to finish is the one that must be green
 on the whole tree) or `YOURS`. The full suite runs twice per
 clean run — the implementer's and the verifier's, independent by design —

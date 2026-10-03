@@ -286,8 +286,10 @@ cmd_baseline() {
 }
 
 # candidate_paths <id>: the test file, the module it is named after, and —
-# for phone/panel source-grep tests — the trees those tests actually read.
-# A trailing slash is a prefix: any path under it counts.
+# for source-grep tests — the trees those tests actually read, including
+# ios/BobPhone/, docs/, and the agent trees .claude/agents/,
+# .codex/agents/, .grok/agents/. A test that reads a repo tree outside
+# host/ lists that tree here. A trailing slash matches every path under it.
 candidate_paths() {
     local file="${1%%::*}" name
     name="$(basename "$file" .py)"
@@ -310,6 +312,42 @@ candidate_paths() {
             echo "docs/"
             echo "CLAUDE.md"
             echo "AGENTS.md"
+            ;;
+    esac
+    case "$file" in
+        tests/test_agent_briefs.py|tests/test_card_preparer_brief.py|tests/test_ship_context.py|tests/test_crew.py|tests/test_objective_carried.py|tests/test_review_skill.py|tests/test_ship_follow_up_filing.py|tests/test_board_workflow.py|tests/test_ship_gate.py)
+            echo ".claude/agents/"
+            ;;
+    esac
+    case "$file" in
+        tests/test_agent_briefs.py|tests/test_agent_models_own_checkout.py|tests/test_card_preparer_brief.py|tests/test_ship_context.py)
+            echo ".codex/agents/"
+            ;;
+    esac
+    case "$file" in
+        tests/test_agent_briefs.py|tests/test_card_preparer_brief.py)
+            echo ".grok/agents/"
+            ;;
+    esac
+    case "$file" in
+        tests/test_ship_follow_up_filing.py|tests/test_ship_gate.py)
+            echo ".claude/skills/ship/"
+            ;;
+    esac
+    case "$file" in
+        tests/test_agent_models_own_checkout.py)
+            echo "host/dark_army_daemon/agent_models.py"
+            ;;
+    esac
+    case "$file" in
+        tests/test_no_change"lo"g.py)
+            echo ".claude/"
+            echo ".agents/"
+            echo ".codex/"
+            echo ".grok/agents/"
+            echo "tools/"
+            echo "host/dark_army_menubar/agent_pack/"
+            echo "docs/"
             ;;
     esac
 }
@@ -361,9 +399,9 @@ sys.exit(1)
 # cmd_classify <id…>: YOURS when the delta touches the test, its module, or
 # a tree the test greps *and no sibling outside the delta is dirty*; else
 # PRE-EXISTING when red at baseline; else IN-FLIGHT when a candidate
-# (including ios/BobPhone/ for phone grep tests, docs/ for inventory
-# tests) is dirty now, was not at baseline, and is not in the delta. A
-# prefix match on ios/BobPhone/ or docs/ is not YOURS when another file
+# (including ios/BobPhone/, docs/, and the agent trees .claude/agents/,
+# .codex/agents/, .grok/agents/) is dirty now, was not at baseline, and
+# is not in the delta. A prefix match on one of these trees is not YOURS when another file
 # in that tree outside the delta is the dirty source — that sibling is
 # IN-FLIGHT. CLAUDE.md / AGENTS.md on an inventory id are the same
 # load-set: a dirty docs/ sibling still wins. An unbuildable baseline
@@ -386,12 +424,12 @@ cmd_classify() {
             if in_list "$cand" "$delta_blob"; then owned="$cand"; break; fi
         done < <(candidate_paths "$id")
         if [ -n "$owned" ]; then
-            # A directory prefix (ios/BobPhone/, docs/) matches every file
-            # in that tree in the delta. CLAUDE.md / AGENTS.md are in the
-            # inventory load set with docs/. Still look for a sibling
-            # outside the delta that became dirty after the baseline —
-            # that is another run.
-            if [[ "$owned" == */ || "$owned" == "CLAUDE.md" || "$owned" == "AGENTS.md" ]]; then
+            # A directory prefix matches every file in that tree. The test
+            # file is the first candidate, so owning it can mask a later
+            # dirty tree candidate. CLAUDE.md / AGENTS.md are in the
+            # inventory load set with docs/. Check for foreign candidates
+            # before calling any of those owned paths YOURS.
+            if [[ "$owned" == */ || "$owned" == "CLAUDE.md" || "$owned" == "AGENTS.md" || "$owned" == "host/${id%%::*}" ]]; then
                 flight="$(candidate_paths "$id" | first_flight "$status_now" "$status_then" "$delta_blob" || true)"
                 if [ -n "$flight" ]; then
                     echo "IN-FLIGHT $id ($flight changed by another run since this one's baseline — report it, never fix or count it)"
