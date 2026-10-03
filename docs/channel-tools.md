@@ -188,9 +188,11 @@ every enrolled machine and baked into every running session's
 old name holds the old tool list until it exits. So one installed script,
 `~/.dark-army/dark-army-channel`, answers to either name, and
 `channel_install` registers it twice at user scope — both names removed
-before either is added, so the previous build's flagless `bob` never sits
-beside the new `dark-army` (the cost is a brief window with no board tools),
-then `dark-army` first:
+before either is added (`bob` removed first), so the previous build's flagless `bob` never sits
+beside the new `dark-army` (the cost is a brief window with no board tools;
+a remove that fails for any reason other than the name not being registered
+stops the install before any add, and because `bob` goes first a failed
+remove never leaves only the passive `bob` registration); the adds then put `dark-army` first:
 
 - `dark-army` — `--name=dark-army`, tools `dark_army_*`,
   `<channel source="dark-army">`, launch line
