@@ -2371,6 +2371,12 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         # got a card with no `revision` key would guard its first save
         # against nothing.
         card["revision"] = 0
+        # The cards this one waits on, judged by the same reading
+        # `_update_locked` uses; `''` when none. A refusal refuses the create.
+        card["blocked_by"], refusal = self._blocked_by_refusal(
+            card["id"], fields.get("blocked_by"), card["root"])
+        if refusal:
+            return None, refusal
         with self._lock:
             try:
                 with self._conn:
@@ -2483,28 +2489,10 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
                 # kind of mistake worth an error message.
                 value = join_stages(value)
             elif key == "blocked_by":
-                ids = parse_ids(value)
-                if any(len(i) > MAX_CARD_ID_CHARS for i in ids):
-                    return None, ("a card id is at most "
-                                  f"{MAX_CARD_ID_CHARS} characters")
-                if str(card_id) in ids:
-                    return None, "a card cannot wait on itself"
-                if self._creates_cycle(card_id, ids):
-                    return None, "those cards already wait on each other"
-                # Same project only: the queue, the drain and the parallel
-                # limit are per project, so a hold on another project's card
-                # would stall this queue with nothing on this project's screen
-                # saying why. An id naming no card is not refused — it cannot
-                # hold anything (a missing dependency reads as met) and a
-                # restore should still mean something (`parse_ids`).
-                mine = normalise_root(str(current.get("root") or ""))
-                for other_id in ids:
-                    other = self.get(other_id)
-                    if other is not None and normalise_root(
-                            str(other.get("root") or "")) != mine:
-                        return None, ("a card can only wait on a card in its "
-                                      "own project")
-                value = join_ids(ids)
+                value, refusal = self._blocked_by_refusal(
+                    card_id, value, str(current.get("root") or ""))
+                if refusal:
+                    return None, refusal
             elif key == "position":
                 try:
                     value = float(value)
@@ -3381,6 +3369,36 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         if column not in COLUMNS:
             return None, f"unknown column {column!r}"
         return self.update(card_id, {"column_name": column})
+
+    def _blocked_by_refusal(self, card_id: str, value, root: str) -> tuple:
+        """`(joined_ids, refusal)` for a `blocked_by` value on card `card_id`
+        in project `root`: the one reading `create` and `_update_locked` share.
+
+        Refuses a too-long id, a self-wait, a cycle and a card in another
+        project, in those words. An id naming no card is not refused — it
+        cannot hold anything (a missing dependency reads as met) and a
+        restore should still mean something (`parse_ids`). The cap and the
+        order are `parse_ids`' / `join_ids`'.
+        """
+        ids = parse_ids(value)
+        if any(len(i) > MAX_CARD_ID_CHARS for i in ids):
+            return "", ("a card id is at most "
+                        f"{MAX_CARD_ID_CHARS} characters")
+        if str(card_id) in ids:
+            return "", "a card cannot wait on itself"
+        if self._creates_cycle(card_id, ids):
+            return "", "those cards already wait on each other"
+        # Same project only: the queue, the drain and the parallel limit are
+        # per project, so a hold on another project's card would stall this
+        # queue with nothing on this project's screen saying why.
+        mine = normalise_root(str(root or ""))
+        for other_id in ids:
+            other = self.get(other_id)
+            if other is not None and normalise_root(
+                    str(other.get("root") or "")) != mine:
+                return "", ("a card can only wait on a card in its own "
+                            "project")
+        return join_ids(ids), ""
 
     def _creates_cycle(self, card_id: str, ids) -> bool:
         """Whether any path from the named blockers reaches `card_id`.

@@ -5371,9 +5371,9 @@ class ApiServer:
     #: person states about their own card, `model`'s side of the line. The
     #: joined ids ride as one string (`str(...)` below, newline-separated);
     #: a self-wait, a cycle and a card in another project are refused at the
-    #: store, in `_update_locked`, so every writer inherits them. `create`
-    #: never writes it — a link is set on a card that exists, through
-    #: `board_update`. `position` is **not** here: a client sending an
+    #: store by `_blocked_by_refusal`, which `create` and `_update_locked`
+    #: both call, so every writer inherits them and a composer's Create
+    #: carries the link. `position` is **not** here: a client sending an
     #: arbitrary float is the thing `board_reorder` exists to prevent.
     #: `plan_path`, `refine_session_id` and `refine_state` are **deliberately
     #: absent** too, each on the side of the line it belongs to: the refine
@@ -6694,6 +6694,14 @@ class ApiServer:
             # daemon sends no key, which both composers read as "leave the
             # folder the person chose alone" rather than as "blank it".
             "suggested_root": (result or {}).get("suggested_root", ""),
+            # Ids of the project's own unfinished cards the helper named
+            # under DEPENDS ON, from the list it was shown; idea mode only.
+            # Additive like `suggested_root`: an older daemon sends no key
+            # and `[]` means no opinion, so a composer fills its waits-on
+            # box only when this is non-empty *and* the box is empty.
+            "suggested_dependencies": [
+                str(i) for i in
+                ((result or {}).get("suggested_dependencies") or [])],
             # The drafted objective, idea mode only, each possibly empty.
             # Same additive rule: an older daemon sends no key, a composer
             # applies a value only when it is non-empty *and* the box is

@@ -268,7 +268,11 @@ def test_the_card_screen_waits_on_cards_only_where_the_mac_says_so():
     for name in ("CardDetailView.swift", "Models.swift", "BoardView.swift",
                  "ComposerView.swift"):
         assert "Blocker" not in _read(PHONE / name), name
-    assert "blocked_by" not in _read(PHONE / "ComposerView.swift")
+    # The composer carries the link too (Prepare suggests it), and only
+    # against a Mac that says `dependencies_supported`.
+    composer = _read(PHONE / "ComposerView.swift")
+    assert composer.count('fields["blocked_by"]') == 1
+    assert "board.dependenciesSupported && !blockedBy.isEmpty" in composer
 
 
 def test_the_client_declares_the_hold_and_clears_it_from_a_snapshot():

@@ -30,6 +30,7 @@ extension DaemonClient {
                      priority: String = "",
                      area: String = "",
                      kind: String = "",
+                     blockedBy: String = "",
                      startWhenPlanned: Bool = false) async -> ActionResult {
         var body = ["action": "board_create", "title": title,
                     "summary": summary, "prompt": prompt,
@@ -51,6 +52,9 @@ extension DaemonClient {
         if !priority.isEmpty { body["priority"] = priority }
         if !area.isEmpty { body["area"] = area }
         if !kind.isEmpty { body["kind"] = kind }
+        // The cards this one waits on, newline-joined ids, only when chosen:
+        // the store judges them (`_blocked_by_refusal`) in its own words.
+        if !blockedBy.isEmpty { body["blocked_by"] = blockedBy }
         return await post(body)
     }
 
@@ -518,6 +522,8 @@ extension DaemonClient {
         let beneficiary = obj?["beneficiary"] as? String ?? ""
         let intendedBenefit = obj?["intended_benefit"] as? String ?? ""
         let successCriterion = obj?["success_criterion"] as? String ?? ""
+        // Absent from an older daemon's answer, which is `[]`: no opinion.
+        let suggestedDependencies = obj?["suggested_dependencies"] as? [String] ?? []
         let detail = obj?["detail"] as? String ?? ""
         let okFlag = obj?["ok"] as? Bool ?? false
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -529,7 +535,8 @@ extension DaemonClient {
                                  suggestedArea: obj?["suggested_area"] as? String ?? "",
                                  beneficiary: beneficiary,
                                  intendedBenefit: intendedBenefit,
-                                 successCriterion: successCriterion)
+                                 successCriterion: successCriterion,
+                                 suggestedDependencies: suggestedDependencies)
         }
         Trace.log("prepare refused http=\(code)")
         let reason = ActionResult.refusalText(detail: detail)

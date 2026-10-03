@@ -18,7 +18,7 @@ is ever started that nobody pressed Start on.
   `MAX_BLOCKERS` = 8) and written by `board.join_ids`. It is in `_WRITABLE`,
   in `REVISED_COLUMNS` (so a link edit steps the card's `revision`) and, again,
   in `ApiServer._BOARD_FIELDS`: a thing a person states about their own card.
-  `create` never writes it; a link is set on a card that exists.
+  `create` and `_update_locked` both judge it through `_blocked_by_refusal`.
 - **Four refusals, at the store, for every writer** (`_update_locked`'s
   `blocked_by` branch): an id longer than `MAX_CARD_ID_CHARS` (64); a card
   cannot wait on itself; a list that closes a
@@ -143,6 +143,44 @@ A met flip is a column write or a `manual_check_due` flip, both already news
   among the same project's cards, Done included). One bad entry refuses the
   whole list; the card is filed regardless and the reply carries
   `dependencies_detail`.
+
+## Prepare suggests dependencies
+
+Idea-mode Prepare may name the cards a new card should wait on; the answer
+fills the composer's waits-on box and nothing reaches `board.db` until Create.
+
+- **Candidates** are built per press by `BobDaemon._dependency_candidates`
+  off `_board_state["cards"]`: same project (`dispatch.normalise_root`), not
+  Done, board order, titles collapsed and clipped to
+  `MAX_DEPENDENCY_TITLE_CHARS` (120) before they are offered and matched, at
+  most `MAX_DEPENDENCY_CHOICES` (40). A title shared by two cards
+  (case-insensitive, after the clip) and a title that reads as a section label
+  (`card_prepare.candidate_ok`) are left out. The phone's offline Prepare
+  builds the same list with `CardPrepareRules.candidates(from:root:)`.
+- **The block** (`_dependencies_block`) rides only in idea mode, only with at
+  least one candidate, after the folder block and before `IDEA:`; the brief and
+  `_areas_block()` are untouched and `AREA:` stays last. The legacy press and
+  an idea press without candidates are byte-identical to before.
+- **The reader** (`parse_dependencies(raw, candidates)`) takes the last
+  `DEPENDS ON:` label (heading and inline forms, like `AREA`), reads lines to
+  the first blank line or label, and matches each cleaned line to an offered
+  title (case-insensitive) or an offered id. `NONE`, no section, unknown lines
+  give nothing; de-duplicated, at most `MAX_BLOCKERS`. Only ids Dark Army
+  supplied come back; never a refusal of the press.
+- **The reply key** is `suggested_dependencies`, a list of ids, idea mode
+  only, `[]` on a refusal and from an older daemon (both mean no opinion).
+- **The apply rule** is `DependencySuggestion.decide(offer:current:listed:)`
+  in `Areas.swift` (byte-equal on both clients): nil unless the box is empty,
+  the offer filtered to the project's cards still listed and not Done, joined
+  by newlines. A project-picker move clears the box. The Mac's box is
+  `DependencyEditor`, also the saved card's WAITS ON control; the phone draws
+  its box only where `dependencies_supported`.
+- **Create carries the link**: `boardCreate(blockedBy:)` and the phone's
+  `fields["blocked_by"]` send it when non-empty; `BoardStore.create` runs
+  `_blocked_by_refusal`, the reading `_update_locked` shares, and writes the
+  column.
+- **Parity**: `test_phone_prepare_parity.py` compiles the phone's twin and
+  compares the prompt, the reader and the candidate list with the Mac's.
 
 ## The linker
 

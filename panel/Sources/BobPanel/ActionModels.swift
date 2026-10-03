@@ -106,6 +106,12 @@ struct PrepareResult {
     var beneficiary: String = ""
     var intendedBenefit: String = ""
     var successCriterion: String = ""
+    /// Ids of this project's own unfinished cards the helper named under
+    /// DEPENDS ON, from the list it was shown; idea mode only. Additive: an
+    /// older daemon sends no key, which arrives here as `[]`, and `[]` is no
+    /// opinion. The composer applies it only into an empty waits-on box
+    /// (`DependencySuggestion.decide`).
+    var suggestedDependencies: [String] = []
 }
 
 // MARK: - Usage

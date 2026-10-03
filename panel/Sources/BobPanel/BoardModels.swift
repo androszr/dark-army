@@ -816,12 +816,8 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// project whatever a picker offers.
     static func dependencyChoices(for card: BoardCard,
                                   in cards: [BoardCard]) -> [BoardCard] {
-        let listed = Set(card.linkedIds)
-        guard listed.count < maxDependencies else { return [] }
-        return cards.filter {
-            $0.root == card.root && $0.id != card.id
-                && !listed.contains($0.id) && $0.column != "done"
-        }
+        DependencyEditor.choices(root: card.root, selfId: card.id,
+                                 listed: card.linkedIds, in: cards)
     }
 
     /// The store's own bound on one card's list (`board.MAX_BLOCKERS`).

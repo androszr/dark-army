@@ -1030,6 +1030,7 @@ struct BoardCardSheet: View {
         summaryField
         modelField
         areaPicker
+        dependencyPicker
         priorityField
         instructionsField
         // The objective, typed before the card exists. Composer only:
@@ -1368,6 +1369,18 @@ struct BoardCardSheet: View {
         AreaGrid(selected: $state.draft.area)
     }
 
+    /// The waits-on box, composer only and only once the draft names a
+    /// project (the choices are that project's unfinished cards). The saved
+    /// card's WAITS ON section draws the same `DependencyEditor`. Prepare
+    /// fills it only while empty; Create sends it.
+    @ViewBuilder private var dependencyPicker: some View {
+        if isComposer, !state.draft.root.isEmpty {
+            Text("Waits on").font(Theme.mono(11, weight: .semibold))
+            DependencyEditor(selected: $state.draft.blockedBy,
+                             root: state.draft.root, cards: board.cards)
+        }
+    }
+
     /// Composer only: on a real card the declared stages already have
     /// `specialistObservation` and `CrewBand` speaking for them, and a face
     /// there would read as a stage that ran. Nothing at all is drawn while no
@@ -1700,7 +1713,20 @@ struct BoardCardSheet: View {
                 if let offered = AreaSuggestion.decide(offer: result.suggestedArea, current: state.draft.area) {
                     state.draft.area = offered
                 }
-                if let d = ProjectSuggestion.decide(
+                let boxBeforePrepare = state.draft.blockedBy
+                // The waits-on box, `AreaSuggestion`'s rule: only an empty
+                // box, only ids this project still lists. Before the project
+                // move below, which clears the box with the rest of the
+                // old project's choices.
+                if let offered = DependencySuggestion.decide(
+                    offer: result.suggestedDependencies,
+                    current: state.draft.blockedBy,
+                    listed: DependencyEditor.listedIds(
+                        root: state.draft.root, in: board.cards)) {
+                    state.draft.blockedBy = offered
+                }
+                if DependencySuggestion.allowsProjectMove(boxBeforePrepare: boxBeforePrepare),
+                   let d = ProjectSuggestion.decide(
                     root: result.suggestedRoot, current: state.draft.root,
                     projects: board.projects) {
                     selectProject(d.apply.root)
@@ -3213,57 +3239,27 @@ struct BoardCardSheet: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                     .tracking(0.6)
-                ForEach(live.dependencies) { dep in
-                    HStack(spacing: 8) {
-                        Text(dep.title.isEmpty ? "untitled" : dep.title)
-                            .font(.system(size: 11))
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(dependencyWord(dep))
-                            .font(.system(size: 10))
-                            .foregroundStyle(dep.met ? Theme.phosphor : Theme.dim)
-                        Spacer(minLength: 8)
-                        Button("\u{2715}") {
-                            setDependencies(live, live.linkedIds.filter { $0 != dep.id })
-                        }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Stop waiting on \(dep.title)")
-                        .clickable()
-                    }
-                }
+                DependencyEditor(
+                    selected: Binding(
+                        get: { live.linkedIds.joined(separator: "\n") },
+                        set: { setDependencies(live, BoardCard.stages($0)) }),
+                    root: live.root, cards: board.cards, selfId: live.id,
+                    resolved: live.dependencies,
+                    canAdd: live.column != "done")
                 if !live.dependentsLine.isEmpty {
                     Text(live.dependentsLine)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                let choices = dependencyChoices(live)
-                if live.column != "done", !choices.isEmpty {
-                    Menu("Add\u{2026}") {
-                        ForEach(choices) { other in
-                            Button(other.title.isEmpty ? "untitled" : other.title) {
-                                setDependencies(live, live.linkedIds + [other.id])
-                            }
-                        }
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .controlSize(.small)
-                    .accessibilityLabel("Add a card this one waits on")
-                    .clickable()
-                } else if live.dependencies.isEmpty, live.dependents.isEmpty {
+                if live.dependencies.isEmpty, live.dependents.isEmpty,
+                   live.column == "done" || dependencyChoices(live).isEmpty {
                     Text("Waits on nothing.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
             }
         }
-    }
-
-    /// The daemon's met bit in words — the same three `dependency_line`
-    /// uses. `met` is never re-derived here; the column only says *why*.
-    private func dependencyWord(_ dep: CardDependency) -> String {
-        if dep.column == "done" { return "done" }
-        return dep.met ? "check pending" : "not yet"
     }
 
     /// What **Add…** offers: this project's other cards, none in Done, none
@@ -3679,6 +3675,7 @@ struct BoardCardSheet: View {
         // daemon refuses it in words, which is a correction, not a loss.
         if isComposer, !state.draft.root.isEmpty, root != state.draft.root {
             state.draft.workflow = ""
+            state.draft.blockedBy = ""
         }
         state.draft.root = root
         state.draft.project = board.projects
@@ -3822,6 +3819,7 @@ struct BoardCardSheet: View {
                 priority: draft.priority,
                 area: draft.area,
                 kind: draft.kind,
+                blockedBy: draft.blockedBy,
                 startWhenPlanned: draft.startWhenPlanned)
             let stillComposer = state.editing == BoardState.newCard
                 && state.prepareGeneration == generation

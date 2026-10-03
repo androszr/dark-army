@@ -37,6 +37,26 @@ enum AreaSuggestion {
     }
 }
 
+enum DependencySuggestion {
+    /// Whether Prepare's folder suggestion may move the project: not while
+    /// the waits-on box holds a choice, because a move clears the box (its
+    /// cards were the old project's) and Prepare must leave a filled box
+    /// exactly as it was. Judged on the box as it stood before Prepare's own
+    /// fill, which a move may still clear.
+    static func allowsProjectMove(boxBeforePrepare: String) -> Bool {
+        boxBeforePrepare.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    /// The waits-on box Prepare may fill: nil unless `current` is empty, then
+    /// the offered ids the client can still see (`listed`: this project's
+    /// cards not in Done), in offer order, joined by newlines — the store's
+    /// own shape. A card done or deleted since the press never lands.
+    static func decide(offer: [String], current: String, listed: Set<String>) -> String? {
+        guard current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let kept = offer.filter { listed.contains($0) }
+        return kept.isEmpty ? nil : kept.joined(separator: "\n")
+    }
+}
+
 struct AreaGrid: View {
     @Binding var selected: String
 

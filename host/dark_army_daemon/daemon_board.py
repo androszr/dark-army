@@ -6354,6 +6354,12 @@ class BoardVerbsMixin:
                 continue
             seen_offer.add(candidate)
             offered.append(candidate)
+        # The closed list of this project's unfinished cards the helper may
+        # name under DEPENDS ON: same project only, not Done, board order,
+        # titles clipped before they are offered and matched, a title shared
+        # by two cards or shaped like a section label left out. Another
+        # in-memory read of the board snapshot, no executor hop.
+        candidates = self._dependency_candidates(root)
         if not os.path.isdir(root):
             return None, "that project folder is not there any more"
         rels = attachments.split_field(fields.get("attachments"))
@@ -6385,18 +6391,43 @@ class BoardVerbsMixin:
             self._preparing = True
             try:
                 return await self._prepare_card_text_locked(
-                    fields, root, roots=offered)
+                    fields, root, roots=offered, candidates=candidates)
             finally:
                 self._preparing = False
                 self._last_prepare_at = time.monotonic()
 
+    def _dependency_candidates(self, root: str) -> list:
+        """`[(card_id, title)]` the DEPENDS ON menu offers for `root`."""
+        counts: dict = {}
+        rows: list = []
+        for card in (self._board_state or {}).get("cards") or []:
+            if not isinstance(card, dict):
+                continue
+            if dispatch.normalise_root(str(card.get("root") or "")) != root:
+                continue
+            if str(card.get("column_name") or "") == "done":
+                continue
+            cid = str(card.get("id") or "")
+            title = " ".join(str(card.get("title") or "").split())[
+                :card_prepare.MAX_DEPENDENCY_TITLE_CHARS]
+            if not cid or not card_prepare.candidate_ok(title):
+                continue
+            counts[title.lower()] = counts.get(title.lower(), 0) + 1
+            rows.append((cid, title))
+        return [(cid, title) for cid, title in rows
+                if counts[title.lower()] == 1][
+                    :card_prepare.MAX_DEPENDENCY_CHOICES]
+
     async def _prepare_card_text_locked(self, fields: dict, root: str,
-                                        roots=()) -> tuple:
+                                        roots=(), candidates=()) -> tuple:
         """The body of `prepare_card_text`, under `_prepare_lock`. No other caller.
 
         `roots` is the closed set of folders the answer may name, keyword with
         an empty default so a caller that has no opinion asks for none — with
-        fewer than two the prompt is byte-identical to today's.
+        fewer than two the prompt is byte-identical to today's. `candidates`
+        (`[(card_id, title)]`) is the closed list of the project's unfinished
+        cards the idea-mode answer may name under DEPENDS ON; none means no
+        section is asked for.
         """
         # The card's own assistant writes its card, on that assistant's
         # cheap model; a name Dark Army cannot run headless falls back to claude.
@@ -6448,6 +6479,7 @@ class BoardVerbsMixin:
                     project=str(fields.get("project") or ""),
                     roster=roster,
                     roots=roots,
+                    candidates=candidates,
                     attachments=attached,
                     idea=str(fields.get("idea") or ""),
                     brief=brief.body,
@@ -6539,6 +6571,10 @@ class BoardVerbsMixin:
             # Possibly empty: both composers apply a suggestion only into an
             # empty box, and empty means "nothing offered".
             result.update(objective)
+            # Ids Dark Army itself offered, possibly `[]`; the clients apply
+            # it only into an empty waits-on box.
+            result["suggested_dependencies"] = \
+                card_prepare.parse_dependencies(raw, candidates)
         return result, ""
 
     def _log_prepare_refusal(self, reason: str, raw: str) -> None:

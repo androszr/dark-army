@@ -2886,6 +2886,49 @@ async def test_an_older_daemons_answer_reads_as_no_suggestion(server):
     assert json.loads(body)["suggested_root"] == ""
 
 
+@pytest.mark.asyncio
+async def test_prepare_card_publishes_suggested_dependencies_as_a_list(server):
+    srv, daemon = server
+
+    async def fake(fields):
+        return {"prompt": "Do the thing.", "workflow": "",
+                "suggested_dependencies": ["a1", "b2"]}, ""
+    daemon.prepare_card_text = fake
+
+    status, body = await fetch(
+        "/api/action",
+        json.dumps({"action": "prepare_card", "summary": "s"}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status == 200, body
+    assert json.loads(body)["suggested_dependencies"] == ["a1", "b2"]
+
+
+@pytest.mark.asyncio
+async def test_suggested_dependencies_is_empty_on_a_refusal_and_an_older_answer(
+        server):
+    srv, daemon = server
+
+    async def refuse(fields):
+        return None, "a card needs a description"
+    daemon.prepare_card_text = refuse
+    status, body = await fetch(
+        "/api/action",
+        json.dumps({"action": "prepare_card", "summary": ""}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status == 409
+    assert json.loads(body)["suggested_dependencies"] == []
+
+    async def older(fields):
+        return {"prompt": "Do the thing.", "workflow": ""}, ""
+    daemon.prepare_card_text = older
+    status, body = await fetch(
+        "/api/action",
+        json.dumps({"action": "prepare_card", "summary": "s"}).encode(),
+        {"X-Bob-Token": srv.token})
+    assert status == 200, body
+    assert json.loads(body)["suggested_dependencies"] == []
+
+
 def test_prepare_card_is_not_a_board_action():
     assert "prepare_card" not in ApiServer.BOARD_ACTIONS
 

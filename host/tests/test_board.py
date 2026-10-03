@@ -1465,6 +1465,41 @@ def test_a_card_cannot_wait_on_a_card_in_another_project(store):
     assert got is not None, detail
 
 
+def test_create_stores_blocked_by_and_starts_at_revision_zero(store):
+    a = _card(store, title="a", root="/tmp/bob")
+    b = _card(store, title="b", root="/tmp/bob")
+    made, detail = store.create({
+        "title": "new", "root": "/tmp/bob",
+        "blocked_by": f"{a['id']}\n{b['id']}"})
+    assert made is not None, detail
+    assert parse_ids(made["blocked_by"]) == [a["id"], b["id"]]
+    assert made["revision"] == 0
+    assert parse_ids(store.get(made["id"])["blocked_by"]) == [a["id"], b["id"]]
+
+
+def test_create_without_blocked_by_stores_nothing(store):
+    made, detail = store.create({"title": "new", "root": "/tmp/bob"})
+    assert made is not None, detail
+    assert store.get(made["id"])["blocked_by"] == ""
+
+
+def test_create_refuses_a_foreign_project_blocker_in_the_updates_words(store):
+    other = _card(store, title="elsewhere", root="/tmp/other")
+    before = store.total()
+    made, detail = store.create({
+        "title": "new", "root": "/tmp/bob", "blocked_by": other["id"]})
+    assert made is None
+    assert detail == "a card can only wait on a card in its own project"
+    assert store.total() == before
+
+
+def test_create_keeps_an_unknown_blocker_id(store):
+    made, detail = store.create({
+        "title": "new", "root": "/tmp/bob", "blocked_by": "gone0000"})
+    assert made is not None, detail
+    assert parse_ids(store.get(made["id"])["blocked_by"]) == ["gone0000"]
+
+
 def test_cards_by_id_returns_only_the_ids_that_exist(store):
     a = _card(store, title="a")
     b = _card(store, title="b")

@@ -145,7 +145,8 @@ final class ActionReplyTests: XCTestCase {
         {"ok": true, "prompt": "p", "workflow": "w", "title": "t",
          "summary": "s", "suggested_root": "/a/proj",
          "beneficiary": "b", "intended_benefit": "ib",
-         "success_criterion": "sc"}
+         "success_criterion": "sc",
+         "suggested_dependencies": ["c1", "c2"]}
         """, 200)
         XCTAssertTrue(answer.ok)
         XCTAssertEqual(answer.prompt, "p")
@@ -156,6 +157,7 @@ final class ActionReplyTests: XCTestCase {
         XCTAssertEqual(answer.beneficiary, "b")
         XCTAssertEqual(answer.intendedBenefit, "ib")
         XCTAssertEqual(answer.successCriterion, "sc")
+        XCTAssertEqual(answer.suggestedDependencies, ["c1", "c2"])
     }
 
     func testTheKeysAnOlderMacOmitsReadEmptyRatherThanNil() {
@@ -169,6 +171,7 @@ final class ActionReplyTests: XCTestCase {
         XCTAssertEqual(answer.beneficiary, "")
         XCTAssertEqual(answer.intendedBenefit, "")
         XCTAssertEqual(answer.successCriterion, "")
+        XCTAssertEqual(answer.suggestedDependencies, [])
     }
 
     // MARK: - the addresses
