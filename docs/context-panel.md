@@ -401,6 +401,9 @@ judged by the Start rule, and one armed-then-confirmed press sending
 **The agent sheet swipes to the next agent in Needs you** (28 Sep 2026) —
 in full in `docs/phone-contract.md`.
 
+**The agent sheet's header carries a "2 of 5" position mark** (29 Sep 2026) —
+in full in `docs/phone-contract.md`.
+
 **The Mac board's ticks outlive looking away too** (25 Sep 2026): a
 search, a project change or a fold keeps select mode and its ticks, the
 batch button counts every ticked card drawn or not, and the selecting row

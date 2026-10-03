@@ -400,6 +400,36 @@ struct PhoneSheetFrame: View {
         }
     }
 
+    /// The sheet's agent in the Needs you order, read from `waitingOrder` at
+    /// the moment of the draw so the mark moves as agents are answered; nil
+    /// for one waiter, an agent no longer waiting and every other sheet kind.
+    private var position: AgentSheetSwipe.Position? {
+        guard case .agent(let agent, _) = router.top?.subject else { return nil }
+        return AgentSheetSwipe.position(of: agent.sessionId, in: waitingOrder)
+    }
+
+    /// The mark is a run of the title, never a slot in the `HStack`, so Back,
+    /// the caption and Close keep their room and the name wraps as before; at
+    /// accessibility sizes the run is dropped, never the name.
+    private func titleText(_ position: AgentSheetSwipe.Position?) -> Text {
+        let title = router.top?.title ?? ""
+        let name = Text(title)
+        guard let position,
+              AgentSheetSwipe.showsMark(position, accessibilitySize: dynamicTypeSize.isAccessibilitySize)
+        else { return name }
+        return name + Text("  " + AgentSheetSwipe.mark(position))
+            .font(Theme.mono(12))
+            .foregroundStyle(Theme.dim)
+    }
+
+    /// The title as VoiceOver reads it: the name, then the position, at every
+    /// text size.
+    private func spokenTitle(_ position: AgentSheetSwipe.Position?) -> String {
+        let name = router.top?.title ?? ""
+        guard let position else { return name }
+        return name + ", " + AgentSheetSwipe.spokenMark(position)
+    }
+
     private func neighbour(_ direction: AgentSheetSwipe.Direction) -> (Agent, Category)? {
         guard case .agent(let agent, _) = router.top?.subject else { return nil }
         guard let id = AgentSheetSwipe.neighbour(of: agent.sessionId, in: waitingOrder, direction) else {
@@ -455,6 +485,7 @@ struct PhoneSheetFrame: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
+            let position = self.position
             HStack(alignment: .top, spacing: 10) {
                 if router.stack.count > 1 {
                     DecryptButton(action: { router.back() }) {
@@ -463,11 +494,12 @@ struct PhoneSheetFrame: View {
                     }
                     .accessibilityLabel("Back to \(router.stack[router.stack.count - 2].title)")
                 }
-                Text(router.top?.title ?? "")
+                titleText(position)
                     .font(Theme.mono(14, weight: .medium))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
+                    .accessibilityLabel(spokenTitle(position))
                     .accessibilityActions {
                         if neighbour(.next) != nil {
                             DecryptButton("Next waiting agent", action: { move(.next) })

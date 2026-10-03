@@ -136,6 +136,21 @@ a short name counts); VoiceOver has
 exists. The rules are Foundation-only in `AgentSheetSwipe.swift`, run by
 `host/tests/test_phone_sheet_swipe.py` and `AgentSheetSwipeTests.swift`.
 
+**The sheet's header says where you are in Needs you.** While the swipe is
+available — the sheet's agent is in the flattened Needs you order and that
+order holds two or more — the title carries a small dim `2 of 5` as a trailing
+run of the same text (`PhoneSheetFrame.titleText`, `AgentSheetSwipe.position` /
+`mark`), read from the same `waitingOrder` at the moment of the draw so it
+moves as agents are answered; hidden with one waiter, with a subject not in the
+list, and on every other sheet kind. It is a run, not a slot: Back, the
+caption and Close keep their room and the name wraps, never clips. At
+accessibility sizes (`AgentSheetSwipe.showsMark`, the environment's
+`isAccessibilitySize`, read not measured) the run is dropped and the name
+yields nothing; VoiceOver reads the title as `Elliot, 2 of 5 waiting` at every
+size (`spokenMark`), beside Next / Previous. Pinned by
+`host/tests/test_phone_sheet_position.py` and the position block of
+`AgentSheetSwipeTests.swift`.
+
 **A finished agent's report reads as on the Mac**: the sheet draws
 `work_report` through `WorkReport` (byte-pinned, `test_work_report_parse.py`)
 as labelled sections, Unchecked numbered; the status line and Needs you lead
@@ -1555,10 +1570,10 @@ call site asks for through `UIFontMetrics` off the nearest text style, so
 every screen tracks the system setting at once. There is **no cap** — no
 `maximumPointSize`, and **no view may call the `.dynamicTypeSize(_:)`
 modifier**, because clamping a subtree is that ceiling by another name.
-Layouts reflow instead: nine files read `@Environment(\.dynamicTypeSize)`
+Layouts reflow instead: ten files read `@Environment(\.dynamicTypeSize)`
 and fork on `isAccessibilitySize` (`Theme`, `ProcessTable`, `UsageView`,
 `PipelineView`, `RecentlyView`, `BrandBar`, `FleetView`, `BoardView`,
-`AgentDetailView`),
+`AgentDetailView`, `PhoneSheetHost`),
 the fleet row trading its five columns for labelled stacked lines.
 `AdaptiveStack` is the shared `HStack`-becomes-`VStack`; the threshold is
 always **read**, never measured off a `GeometryReader` or `UIScreen`.

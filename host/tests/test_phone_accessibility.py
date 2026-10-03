@@ -75,6 +75,7 @@ REFLOW = (
     "FleetView.swift",
     "BoardView.swift",
     "AgentDetailView.swift",
+    "PhoneSheetHost.swift",
 )
 
 #: The modifier that clamps a subtree's text size. Banned outright: a cap is
