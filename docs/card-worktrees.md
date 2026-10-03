@@ -227,9 +227,91 @@ mode kept, any `OSError` is one log line. Both paths derive from
 `~/.claude.json` is Claude Code's own file and it rewrites it whole; the
 worst race is the trust screen appearing once.
 
+## The pack copies
+
+A card's folder is made from the base commit, so a pack update the launch
+resync has written into the project's main checkout and nobody has committed
+yet (new `permissions.allow` rows, a new reference, a `.gitignore` line) would
+be missing there, and the agent would run under the old rules. `_sync_pack_copies`
+(executor only, `daemon_board.py`) carries it in, from `_finish_worktree`
+(after the exclude line, before the trust copies and the setup script) and on
+every reuse of a recorded folder.
+
+- **The gate.** Only a project with a row in the pack ledger
+  (`pack_ledger.entry(root)`). Dark Army's own checkout can never have one
+  (`_refuse_self`), and there a dirty `.claude/agents/*.md` or `CLAUDE.md` is
+  the person's work in progress that cards edit on purpose.
+- **What is compared.** `git status --porcelain -z --no-renames
+  --untracked-files=all` in the main checkout over `pack_install.pack_pathspecs()`,
+  decided by `worktrees.pack_copy_plan`: a regular file in main is copied, an
+  absent one is deleted in the folder, a link or a non-pack path is dropped.
+  The daemon spells `pack_install.is_pack_path` and `pack_pathspecs`, never
+  the destinations constant. The main checkout is only ever read; every write
+  (`add -N`, `update-index`) runs in the worktree on its own index.
+- **How a copy is kept off the branch.** Written to a fresh temp name in the
+  destination's folder (`O_EXCL | O_NOFOLLOW`) and `os.replace`d over the
+  name after a `realpath` containment check, so a symbolic or hard link at
+  the name is replaced, never written through (a branch that commits
+  `.claude` as a link is never written through either). Then marked `git
+  update-index --skip-worktree`; a new file is made `git add -N` first; a
+  deletion is the unlink plus the mark. `git status` is clean and `git add
+  -A` + commit leaves them out. Every pathspec goes literally
+  (`--literal-pathspecs`). git aborts a whole `update-index --skip-worktree`
+  over one path it cannot mark (verified), so a failed `add -N` drops only
+  the new copies, and a failed mark puts every carried file back to its HEAD
+  bytes and HEAD mode (new copies removed; a link at HEAD is left alone):
+  nothing is left committable. The manifest is written the same way (temp
+  file, mode 0600, `os.replace`); stale `.dark-army-pack-*.tmp` files a killed
+  write left are swept from each destination folder on the next carry; every
+  source and digest read opens `O_NOFOLLOW | O_NONBLOCK` and `fstat`s the
+  handle for a regular file. The manifest and the carry are keyed by the
+  **folder's** name (`card-<id8>`), so a batch's second card starting in its
+  head's folder finds the head's manifest.
+- **The manifest.** `<root>/.worktrees/card-<id8>.pack.json`
+  (`worktrees.manifest_text`): path, kind (`tracked`, `new`, `deleted`) and
+  the sha256 written, never content.
+  A folder created new first unlinks any manifest of that name, so one left by
+  a folder removed by hand never reads fresh HEAD bytes as edits.
+- **Refresh.** A second Start rewrites each carried file whose bytes still
+  match the manifest and leaves an edited one alone. A path the manifest does
+  not name is first checked with one `git status` in the folder: one that
+  already differs from the folder's HEAD is the previous run's own edit and is
+  not carried; so is a skip-worktree path the manifest does not name (git
+  status never lists those), which covers a lost manifest. The manifest is read through `is_pack_path` and never trusted
+  to name a path outside the pack.
+- **Only the pack's own writes?** Not enforced: `pack_digests` in the ledger
+  holds only the managed region of the project-filled files, not whole-file
+  bytes (and none for merged files such as `.claude/settings.json`), so it
+  cannot tell the pack's write from the person's own uncommitted edit under a
+  pack path. Every uncommitted change under a pack path travels.
+- **Release.** Before `git worktree remove`, `_unskip_edited_pack_copies`
+  un-marks every file whose bytes no longer match the manifest, so git refuses
+  and the folder is kept with `KEPT_NOTE`: nothing an agent wrote is thrown
+  away. When it cannot tell (the folder holds skip-worktree entries but the
+  manifest is missing or malformed, or git fails, or the un-mark fails) the
+  folder is kept as well, like the crew-output keep; a folder with no marked
+  entries releases as before. An untouched copy stays marked (un-marking an unchanged intent-to-add
+  entry shows ` A` and blocks the remove). The manifest is deleted after a
+  successful remove.
+- **Failure.** One log line, never a refusal; the setup script and the spawn go
+  ahead.
+- **A footgun for the push leg.** `git merge main` or `rebase` inside the
+  folder is refused while a carried path is marked and main's commit touches
+  it. The follow-up push / pull-request leg must first run `git update-index
+  --no-skip-worktree` over the manifest's paths. The reverse (main, its copy
+  still dirty, merging the card branch) succeeds, because the branch never
+  touched the path. An agent that edits a carried file sees `git add` stage
+  nothing (git prints the sparse-checkout advice); the release keeps the folder
+  so the person finds the diff.
+- **Verified** on Apple Git-155 (git 2.50.1), 28 Sep 2026: skip-worktree keeps
+  status clean and out of `add -A`; a per-worktree `info/exclude` is not read
+  and `extensions.worktreeConfig` would override the person's global ignore
+  file, so neither is used; `update-index` takes several paths after `--`.
+
 ## Release at Done
 
-`_maybe_release_worktree` removes a card's folder only when:
+`_maybe_release_worktree` removes a card's folder only when (carried pack
+copies are un-marked first when edited: *The pack copies*):
 
 - the card is in Done (or being deleted), and
 - its `link_state` is neither `live` nor `dispatching` — **never from under a

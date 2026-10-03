@@ -786,7 +786,9 @@ real columns and to what the prompt builders send.
   isolation on, Start prepares `card/<id8>-<slug>` in
   `<root>/.worktrees/card-<id8>/` (`worktrees.py`, `trust_marks.py`), records
   `worktree_path` / `worktree_branch` (`record_worktree`'s ring) and opens
-  the terminal there; the release at Done never uses `--force`. The switch is
+  the terminal there; the release at Done never uses `--force`; an uncommitted pack update on
+  main is carried into the folder and kept off the branch (*The pack copies*).
+  The switch is
   `board_isolation_by_root`. In full: `docs/card-worktrees.md`.
 
   Deliberately **not** passed: `--no-session-persistence`,

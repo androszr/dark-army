@@ -638,3 +638,18 @@ def test_install_names_the_app_after_the_xcodeproj_not_the_folder(
     text = (root / ".github" / "workflows" / "testflight.yml").read_text()
     assert "ios/Ledgerly.xcodeproj" in text
     assert "FinanceDemo" not in text
+
+
+def test_is_pack_path_mirrors_admissible_on_the_probes():
+    for key in ("../etc/passwd", "/etc/passwd", "scripts/../../secret",
+                "CLAUDE.md", ".claude/skills/ship/SKILL.md", "a.txt"):
+        assert pack_install.is_pack_path(key) == pack_install._admissible(key)
+    assert pack_install.is_pack_path("CLAUDE.md")
+    assert not pack_install.is_pack_path("a.txt")
+
+
+def test_pack_pathspecs_has_one_entry_per_destination_without_a_slash():
+    specs = pack_install.pack_pathspecs()
+    assert len(specs) == len(set(specs)) and ".claude/skills" in specs
+    assert not any(spec.endswith("/") for spec in specs)
+    assert all(pack_install.is_pack_path(spec) for spec in specs)

@@ -91,6 +91,18 @@ _ROOT_LOCKS_GUARD = threading.Lock()
 _ROOT_LOCKS: dict[str, threading.Lock] = {}
 
 
+def is_pack_path(key: str) -> bool:
+    """Whether ``key`` is a pack-owned path (the daemon's card worktrees
+    carry these, never the constant itself)."""
+    return _admissible(key)
+
+
+def pack_pathspecs() -> tuple:
+    """Each destination with its trailing ``/`` stripped — the pathspecs a
+    ``git status`` over the pack takes."""
+    return tuple(d.rstrip("/") for d in PACK_DESTINATIONS)
+
+
 def _admissible(key: str) -> bool:
     """Relative, no ``..``, no leading ``/``, and inside the allowlist."""
     if not key or key.startswith("/") or key.startswith("\\"):

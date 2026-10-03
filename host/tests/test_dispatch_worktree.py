@@ -1847,3 +1847,458 @@ def test_a_listing_over_its_own_cap_says_there_are_too_many_hidden_files(
     assert d._setup_script_git_refusal(repo) == \
         worktrees.SETUP_TOO_MANY_HIDDEN_REFUSAL.format(script)
 
+
+
+# --- the pack copies (`docs/card-worktrees.md`, *The pack copies*) ----------------------
+
+SETTINGS = ".claude/settings.json"
+SKILL = ".claude/skills/shunt/SKILL.md"
+LEAD = ".claude/leads/x.md"
+
+
+def _write(root, rel, text):
+    full = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w") as handle:
+        handle.write(text)
+
+
+def _pack_repo(repo, tmp_path, monkeypatch, *, ledger=True):
+    """The main checkout holds an uncommitted pack update: settings changed,
+    a new skill, a lead removed — and an own change to `a.txt`."""
+    from dark_army_daemon import paths
+    from dark_army_menubar import pack_ledger
+    monkeypatch.setattr(paths, "AGENT_PACK_PATH", tmp_path / "agent-pack.json")
+    _write(repo, SETTINGS, '{"old": true}\n')
+    _write(repo, LEAD, "lead\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "pack")
+    if ledger:
+        pack_ledger.remember(repo, profile="web")
+    _write(repo, SETTINGS, '{"new": true}\n')
+    _write(repo, SKILL, "skill\n")
+    os.unlink(os.path.join(repo, LEAD))
+    _write(repo, "a.txt", "mine\n")
+
+
+def _read(root, rel):
+    with open(os.path.join(root, rel)) as handle:
+        return handle.read()
+
+
+async def _done(d, store, card):
+    store.update(card["id"], {"session_id": "s1", "link_state": "live",
+                              "column_name": "done"}, bump=False)
+    _end(d, store, card["id"], "s1")
+    await d._flush_work_records()
+    await _released(d)
+
+
+@pytest.mark.asyncio
+async def test_an_uncommitted_pack_update_lands_in_the_worktree_and_stays_off_the_branch(
+        daemon, repo, monkeypatch, tmp_path):
+    import json
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    before = _git(repo, "status", "--porcelain", "--untracked-files=all")
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    assert _read(wt, SETTINGS) == '{"new": true}\n'
+    assert _read(wt, SKILL) == "skill\n"
+    assert not os.path.exists(os.path.join(wt, LEAD))
+    assert _read(wt, "a.txt") == "one\n"
+    assert _git(wt, "status", "--porcelain", "--untracked-files=all") == ""
+    flags = {line[2:].strip(): line[0]
+             for line in _git(wt, "ls-files", "-v").splitlines()}
+    assert flags[SETTINGS] == flags[SKILL] == flags[LEAD] == "S"
+    _write(wt, "agent.txt", "work\n")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-q", "-m", "work")
+    changed = _git(repo, "diff", "--name-only",
+                   f"main..{card['worktree_branch']}").split()
+    assert changed == ["agent.txt"]
+    assert _git(repo, "status", "--porcelain",
+                "--untracked-files=all") == before
+    manifest = worktrees.parse_manifest(open(
+        worktrees.pack_manifest_path(repo, card["id"])).read())
+    assert {r["path"]: r["kind"] for r in manifest} == {
+        SETTINGS: "tracked", SKILL: "new", LEAD: "deleted"}
+    json.loads(open(worktrees.pack_manifest_path(repo, card["id"])).read())
+
+
+@pytest.mark.asyncio
+async def test_a_project_without_a_pack_ledger_row_carries_no_pack_files(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch, ledger=False)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    assert _read(wt, SETTINGS) == '{"old": true}\n'
+    assert not os.path.exists(os.path.join(wt, SKILL))
+    assert os.path.exists(os.path.join(wt, LEAD))
+    assert not os.path.exists(worktrees.pack_manifest_path(repo, card["id"]))
+
+
+@pytest.mark.asyncio
+async def test_untouched_pack_copies_of_all_three_kinds_let_the_folder_go(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    await _done(d, store, card)
+    assert not os.path.exists(card["worktree_path"])
+    assert not os.path.exists(worktrees.pack_manifest_path(repo, card["id"]))
+    assert card["worktree_branch"] in _git(repo, "branch", "--list", "card/*")
+
+
+@pytest.mark.asyncio
+async def test_an_edited_pack_copy_keeps_the_folder_and_the_card_says_so(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    _write(wt, SETTINGS, '{"agent": true}\n')
+    _write(wt, SKILL, "agent skill\n")
+    await _done(d, store, card)
+    assert os.path.isdir(wt)
+    got = store.get(card["id"])
+    decorated = d._decorate_card_for_snapshot(got, {got["id"]: got},
+                                              active=set())
+    assert decorated["worktree_note"] == worktrees.KEPT_NOTE.format(wt)
+    status = _git(wt, "status", "--porcelain")
+    assert SETTINGS in status and SKILL in status
+    assert _read(wt, SETTINGS) == '{"agent": true}\n'
+
+
+@pytest.mark.asyncio
+async def test_a_second_start_refreshes_an_untouched_pack_copy_and_spares_an_edited_one(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    _write(repo, SETTINGS, '{"newest": true}\n')
+    _write(repo, SKILL, "main skill v2\n")
+    _write(wt, SKILL, "agent edit\n")
+    updated, _detail = await d.reset_card(
+        card["id"], {"column_name": "backlog"})
+    assert updated is not None
+    d._dispatch_attempts.clear()
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok and detail != worktrees.PREPARING_NOTE, detail
+    assert _read(wt, SETTINGS) == '{"newest": true}\n'
+    assert _read(wt, SKILL) == "agent edit\n"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_pack_carry_still_opens_the_terminal_and_logs_one_line(
+        daemon, repo, monkeypatch, tmp_path, caplog):
+    import logging
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    real = d._git_blocking
+
+    def fail_status(argv, root, **kw):
+        if "status" in argv and "--no-renames" in argv:
+            return False, b"", "failed"
+        return real(argv, root, **kw)
+
+    monkeypatch.setattr(d, "_git_blocking", fail_status)
+    opened: list = []
+    _stub(d, monkeypatch, repo, opened)
+    card = _make(store, repo)
+    with caplog.at_level(logging.INFO):
+        ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+        await _settle(d)
+    assert opened and worktrees.inside(repo, opened[0]["kw"]["cwd"])
+    assert not store.get(card["id"]).get("dispatch_error")
+    assert any("could not read the uncommitted pack update" in r.getMessage()
+               for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_pack_folder_committed_as_a_link_is_never_written_through(
+        daemon, repo, monkeypatch, tmp_path):
+    import shutil
+    from dark_army_daemon import paths
+    from dark_army_menubar import pack_ledger
+    monkeypatch.setattr(paths, "AGENT_PACK_PATH", tmp_path / "agent-pack.json")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    # The branch commits `.claude/skills` as a link out of the folder ...
+    os.makedirs(os.path.join(repo, ".claude"))
+    os.symlink(str(outside), os.path.join(repo, ".claude", "skills"))
+    _git(repo, "add", "-f", ".claude/skills")
+    _git(repo, "commit", "-q", "-m", "link")
+    pack_ledger.remember(repo, profile="web")
+    # ... while the main checkout holds a real folder with a new skill.
+    os.unlink(os.path.join(repo, ".claude", "skills"))
+    _write(repo, SKILL, "skill\n")
+    d, store = daemon
+    opened: list = []
+    _stub(d, monkeypatch, repo, opened)
+    card = _make(store, repo)
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    await _settle(d)
+    assert opened
+    assert os.listdir(outside) == []
+    shutil.rmtree(os.path.join(repo, ".claude"))
+
+
+@pytest.mark.asyncio
+async def test_the_pack_carry_only_reads_the_main_checkout(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    calls: list = []
+    real = d._git_blocking
+
+    def spy(argv, root, **kw):
+        calls.append((list(argv), os.path.realpath(str(root))))
+        return real(argv, root, **kw)
+
+    monkeypatch.setattr(d, "_git_blocking", spy)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = os.path.realpath(card["worktree_path"])
+    first = next(i for i, (argv, _r) in enumerate(calls)
+                 if "--no-renames" in argv)
+    main = [argv for argv, root in calls[first:]
+            if root == os.path.realpath(repo)]
+    assert main and all(
+        "status" in argv or ("worktree" in argv and "list" in argv)
+        for argv in main)
+    writes = [(argv, root) for argv, root in calls
+              if "update-index" in argv or "-N" in argv]
+    assert writes and all(root == wt for _argv, root in writes)
+
+
+@pytest.mark.asyncio
+async def test_a_reused_folders_uncommitted_edit_to_an_uncarried_pack_path_survives(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    # The agent changed a pack path no carry recorded; main now changes it too.
+    _write(repo, ".gitignore", "main\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-q", "-m", "ignore")
+    _write(wt, "CLAUDE.md", "agent wrote this\n")
+    _write(repo, "CLAUDE.md", "main wrote this\n")
+    await d.reset_card(card["id"], {"column_name": "backlog"})
+    d._dispatch_attempts.clear()
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    assert _read(wt, "CLAUDE.md") == "agent wrote this\n"
+    assert "CLAUDE.md" in _git(wt, "status", "--porcelain",
+                               "--untracked-files=all")
+
+
+@pytest.mark.asyncio
+async def test_a_missing_pack_manifest_keeps_a_folder_holding_marked_copies(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    _write(wt, SETTINGS, '{"agent": true}\n')
+    os.unlink(worktrees.pack_manifest_path(repo, card["id"]))
+    await _done(d, store, card)
+    assert os.path.isdir(wt)
+    assert _read(wt, SETTINGS) == '{"agent": true}\n'
+
+
+@pytest.mark.asyncio
+async def test_a_failed_pack_unmark_keeps_the_folder(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    _write(wt, SETTINGS, '{"agent": true}\n')
+    real = d._git_blocking
+
+    def fail_unmark(argv, root, **kw):
+        if "--no-skip-worktree" in argv:
+            return False, b"", "failed"
+        return real(argv, root, **kw)
+
+    monkeypatch.setattr(d, "_git_blocking", fail_unmark)
+    await _done(d, store, card)
+    assert os.path.isdir(wt)
+    assert _read(wt, SETTINGS) == '{"agent": true}\n'
+
+
+@pytest.mark.asyncio
+async def test_a_hard_link_at_a_carried_pack_path_is_never_written_through(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    outside = tmp_path / "outside.txt"
+    outside.write_text("precious\n")
+    dest = os.path.join(wt, SETTINGS)
+    os.unlink(dest)
+    os.link(str(outside), dest)
+    _write(repo, SETTINGS, '{"newest": true}\n')
+    # The link's bytes differ from the manifest, so refresh must not touch it
+    # at all; drop the manifest row's guard by matching the digest.
+    import hashlib
+    with open(worktrees.pack_manifest_path(repo, card["id"])) as handle:
+        rows = worktrees.parse_manifest(handle.read())
+    for row in rows:
+        if row["path"] == SETTINGS:
+            row["sha256"] = hashlib.sha256(b"precious\n").hexdigest()
+    with open(worktrees.pack_manifest_path(repo, card["id"]), "w") as handle:
+        handle.write(worktrees.manifest_text(rows))
+    await d.reset_card(card["id"], {"column_name": "backlog"})
+    d._dispatch_attempts.clear()
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    assert outside.read_text() == "precious\n"
+    assert _read(wt, SETTINGS) == '{"newest": true}\n'
+
+
+@pytest.mark.asyncio
+async def test_a_failed_pack_intent_to_add_still_marks_the_tracked_copies(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    real = d._git_blocking
+
+    def fail_add(argv, root, **kw):
+        if "add" in argv and "-N" in argv:
+            return False, b"", "failed"
+        return real(argv, root, **kw)
+
+    monkeypatch.setattr(d, "_git_blocking", fail_add)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    assert _git(wt, "status", "--porcelain", "--untracked-files=all") == ""
+    assert not os.path.exists(os.path.join(wt, SKILL))
+    flags = {line[2:].strip(): line[0]
+             for line in _git(wt, "ls-files", "-v").splitlines()}
+    assert flags[SETTINGS] == "S"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_pack_mark_puts_tracked_copies_back_to_head(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    real = d._git_blocking
+
+    def fail_mark(argv, root, **kw):
+        if "--skip-worktree" in argv:
+            return False, b"", "failed"
+        return real(argv, root, **kw)
+
+    monkeypatch.setattr(d, "_git_blocking", fail_mark)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    assert _read(wt, SETTINGS) == '{"old": true}\n'
+    assert os.path.exists(os.path.join(wt, LEAD))
+    assert not os.path.exists(os.path.join(wt, SKILL))
+    assert _git(wt, "status", "--porcelain", "--untracked-files=all") == ""
+
+
+@pytest.mark.asyncio
+async def test_a_second_cards_start_in_a_shared_folder_keys_the_pack_manifest_by_the_folder(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    first = await _prepared(d, store, repo, monkeypatch)
+    wt = first["worktree_path"]
+    second = _make(store, repo, title="second card")
+    store.record_worktree(second["id"], wt, first["worktree_branch"])
+    await d.reset_card(first["id"], {"column_name": "backlog"})
+    _write(wt, SKILL, "agent edit\n")
+    _write(repo, SKILL, "main skill v2\n")
+    d._dispatch_attempts.clear()
+    ok, detail = await d.dispatch_card(second["id"], allow_unplanned=True)
+    assert ok, detail
+    assert _read(wt, SKILL) == "agent edit\n"
+    assert not os.path.exists(worktrees.pack_manifest_path(repo, second["id"]))
+    assert os.path.exists(worktrees.pack_manifest_path(repo, first["id"]))
+
+
+@pytest.mark.asyncio
+async def test_a_folder_removed_by_hand_is_carried_fresh_not_by_its_stale_manifest(
+        daemon, repo, monkeypatch, tmp_path):
+    import shutil
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    assert os.path.exists(worktrees.pack_manifest_path(repo, card["id"]))
+    shutil.rmtree(wt)
+    await d.reset_card(card["id"], {"column_name": "backlog"})
+    d._dispatch_attempts.clear()
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    await _settle(d)
+    wt = store.get(card["id"])["worktree_path"]
+    assert os.path.isdir(wt)
+    assert _read(wt, SETTINGS) == '{"new": true}\n'
+    assert os.path.exists(os.path.join(wt, SKILL))
+    assert not os.path.exists(os.path.join(wt, LEAD))
+    assert _git(wt, "status", "--porcelain", "--untracked-files=all") == ""
+
+
+@pytest.mark.asyncio
+async def test_a_lost_pack_manifest_leaves_marked_copies_alone_on_a_second_start(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    _write(wt, SETTINGS, '{"agent": true}\n')
+    os.unlink(worktrees.pack_manifest_path(repo, card["id"]))
+    await d.reset_card(card["id"], {"column_name": "backlog"})
+    d._dispatch_attempts.clear()
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    assert _read(wt, SETTINGS) == '{"agent": true}\n'
+
+
+@pytest.mark.asyncio
+async def test_a_failed_pack_mark_restores_a_tracked_file_larger_than_the_default_cap(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    big = "x" * 600_000 + "\n"
+    _write(repo, ".gitignore", big)
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-q", "-m", "big")
+    _write(repo, ".gitignore", big + "more\n")
+    real = d._git_blocking
+
+    def fail_mark(argv, root, **kw):
+        if "--skip-worktree" in argv:
+            return False, b"", "failed"
+        return real(argv, root, **kw)
+
+    monkeypatch.setattr(d, "_git_blocking", fail_mark)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    assert _read(wt, ".gitignore") == big
+    assert _git(wt, "status", "--porcelain", "--untracked-files=all") == ""
+
+
+@pytest.mark.asyncio
+async def test_a_stale_pack_temp_file_is_swept_on_the_next_carry(
+        daemon, repo, monkeypatch, tmp_path):
+    d, store = daemon
+    _pack_repo(repo, tmp_path, monkeypatch)
+    card = await _prepared(d, store, repo, monkeypatch)
+    wt = card["worktree_path"]
+    stale = os.path.join(wt, ".claude", ".dark-army-pack-abc123.tmp")
+    _write(wt, ".claude/.dark-army-pack-abc123.tmp", "left over\n")
+    _write(repo, SETTINGS, '{"v3": true}\n')
+    await d.reset_card(card["id"], {"column_name": "backlog"})
+    d._dispatch_attempts.clear()
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert ok, detail
+    assert not os.path.exists(stale)

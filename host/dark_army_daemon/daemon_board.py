@@ -4015,6 +4015,14 @@ class BoardVerbsMixin:
             reuse = await self._reusable_worktree(head)
             if reuse:
                 cwd = reuse
+                # A second Start refreshes the carried pack files; the
+                # result is only logged (never a refusal).
+                note = await loop.run_in_executor(
+                    None, self._sync_pack_copies,
+                    dispatch.normalise_root(str(card.get("root") or "")),
+                    reuse, self._pack_card_id(reuse))
+                if note:
+                    logger.info("card %s: %s", str(card_id)[:8], note)
             elif str(head.get("id") or "") in (
                     getattr(self, "_worktree_preparing", None) or {}):
                 return False, dispatch.WORKTREE_PREPARING_REFUSAL
@@ -9530,6 +9538,14 @@ class BoardVerbsMixin:
                 # refuse the add, and a recorded path that is not a folder is
                 # never reused — prepare-record-refuse would loop for ever.
                 await self._run_git(worktrees.argv_worktree_prune(root), root)
+            # A folder made new has carried nothing: a manifest left by a
+            # folder that vanished without a release would read the fresh
+            # HEAD bytes as edits and keep the old pack.
+            try:
+                os.unlink(worktrees.pack_manifest_path(
+                    root, self._pack_card_id(path)))
+            except OSError:
+                pass  # no stale manifest
             # A failed fetch is one log line: the base is then what is local.
             has_remote, _o, _w = await self._run_git(
                 worktrees.argv_remote_url(root), root)
@@ -9580,8 +9596,411 @@ class BoardVerbsMixin:
             except (OSError, UnicodeError):
                 logger.info("could not add %s to %s", worktrees.EXCLUDE_LINE,
                             exclude, exc_info=True)
+        # An uncommitted pack update on the main checkout rides into the new
+        # folder, kept off the card's branch (`docs/card-worktrees.md`, *The
+        # pack copies*). A failure is one log line and never a refusal.
+        note = self._sync_pack_copies(root, path, self._pack_card_id(path))
+        if note:
+            logger.info("card %s: %s", str(card_id)[:8], note)
         trust_marks.mark(root, path)
         return self._run_worktree_setup(root, path, card_id, branch)
+
+    #: How the manifest is opened: never through a symbolic link planted at
+    #: its name. A carried file is written to a fresh temp name instead
+    #: (`_write_pack_file`), so a hard link planted at its name is never
+    #: written through.
+    _PACK_COPY_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+    _PACK_TEMP_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+
+    @staticmethod
+    def _pack_card_id(path: str) -> str:
+        """The id part of a worktree folder's name (`card-<id8>`), so a
+        batch's shared folder always finds its head's manifest."""
+        name = os.path.basename(str(path).rstrip(os.sep))
+        return name[len(worktrees.FOLDER_PREFIX):] \
+            if name.startswith(worktrees.FOLDER_PREFIX) else name
+
+    @staticmethod
+    def _open_regular(full: str):
+        """A binary read handle on a regular file: opened `O_NOFOLLOW |
+        O_NONBLOCK` (a FIFO never blocks the open) and `fstat`ed on the
+        handle, so what is read is what was checked. `OSError` otherwise."""
+        fd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if not stat_mod.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(f"{full} is not a regular file")
+        except OSError:
+            os.close(fd)
+            raise
+        return os.fdopen(fd, "rb")
+
+    @classmethod
+    def _sweep_pack_temps(cls, folder: str) -> None:
+        """Remove temp files a killed write left in `folder` (regular files
+        whose name begins with the exact temp prefix). Executor."""
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            return
+        for name in names:
+            if not (name.startswith(".dark-army-pack-")
+                    and name.endswith(".tmp")):
+                continue
+            full = os.path.join(folder, name)
+            try:
+                if stat_mod.S_ISREG(os.lstat(full).st_mode):
+                    os.unlink(full)
+            except OSError:
+                pass  # already gone, or not ours to remove
+
+    @staticmethod
+    def _pack_file_digest(full: str):
+        """sha256 of a regular, non-link file read in chunks; `""` when
+        absent; `None` for anything else (a link, a folder), an unreadable
+        file or one over `MAX_PACK_COPY_BYTES` (never read whole).
+        Executor."""
+        try:
+            st = os.lstat(full)
+        except FileNotFoundError:
+            return ""
+        except OSError:
+            return None
+        if not stat_mod.S_ISREG(st.st_mode) \
+                or st.st_size > worktrees.MAX_PACK_COPY_BYTES:
+            return None
+        try:
+            digest = hashlib.sha256()
+            with BoardVerbsMixin._open_regular(full) as handle:
+                while True:
+                    chunk = handle.read(65536)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            return digest.hexdigest()
+        except OSError:
+            return None
+
+    @staticmethod
+    def _read_pack_manifest(root: str, card_id: str) -> list:
+        """The manifest's rows, `[]` when missing or malformed. Executor."""
+        from dark_army_menubar import pack_install
+        manifest = worktrees.pack_manifest_path(root, card_id)
+        try:
+            with BoardVerbsMixin._open_regular(manifest) as handle:
+                data = handle.read(worktrees.MAX_PACK_COPY_BYTES)
+        except OSError:
+            return []
+        return worktrees.parse_manifest(data.decode("utf-8", "replace"),
+                                        pack_install.is_pack_path)
+
+    @classmethod
+    def _write_pack_file(cls, dest: str, data: bytes, mode: int) -> None:
+        """Write `data` at `dest` through a new temp file in its folder
+        (`O_EXCL | O_NOFOLLOW`) and `os.replace` it over the name: a link
+        (symbolic or hard) at `dest` is replaced, never written through.
+        Raises `OSError`."""
+        tmp = os.path.join(os.path.dirname(dest),
+                           f".dark-army-pack-{secrets.token_hex(6)}.tmp")
+        fd = os.open(tmp, cls._PACK_TEMP_FLAGS, mode & 0o777)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                os.fchmod(handle.fileno(), mode & 0o777)
+                handle.write(data)
+            os.replace(tmp, dest)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass  # the temp name is already gone
+            raise
+
+    def _sync_pack_copies(self, root: str, path: str, card_id: str) -> str:
+        """Carry the main checkout's **uncommitted pack update** into a card's
+        worktree and keep it off the card's branch. **Executor only**; `""`
+        or one sentence for the log, and it never raises past this boundary.
+
+        Gated on the project's pack-ledger row (Dark Army's own checkout
+        and a project that never took the pack carry nothing). Every git
+        call in the main checkout is a read (`status`); every write runs in
+        the worktree on its own index. Changed files are copied, new ones
+        are marked intent-to-add first, removed ones unlinked, then all are
+        marked skip-worktree; the manifest records what was written. A
+        file whose bytes no longer match the manifest, or that differs from
+        HEAD in the folder with no manifest row, was edited by the previous
+        run and is left alone."""
+        try:
+            return self._carry_pack_copies(root, path, card_id)
+        except Exception:  # noqa: BLE001 - the documented boundary: a failed carry never refuses a Start
+            logger.info("card %s: carrying the pack update failed",
+                        str(card_id)[:8], exc_info=True)
+            return "could not carry the uncommitted pack update into its folder"
+
+    def _carry_pack_copies(self, root: str, path: str,
+                           card_id: str) -> str:
+        from dark_army_menubar import pack_install, pack_ledger
+        if pack_ledger.entry(root) is None:
+            return ""
+        short = str(card_id)[:8]
+        failed = "could not read the uncommitted pack update in the main checkout"
+        ok, out, _why = self._git_blocking(
+            worktrees.argv_pack_status(root, pack_install.pack_pathspecs()),
+            root)
+        if not ok:
+            return failed
+
+        def exists(rel: str):
+            try:
+                st = os.lstat(os.path.join(root, rel))
+            except FileNotFoundError:
+                return False
+            except OSError:
+                return None
+            return True if stat_mod.S_ISREG(st.st_mode) else None
+
+        plan = worktrees.pack_copy_plan(
+            worktrees.parse_status_z(out), pack_install.is_pack_path, exists)
+        if not plan:
+            return ""
+        previous = {row["path"]: row for row in
+                    self._read_pack_manifest(root, card_id)}
+        wt_real = os.path.realpath(path)
+        # A path the manifest does not know may carry an uncommitted edit the
+        # previous run left in this folder: ask the worktree what differs
+        # from its HEAD and leave those alone.
+        fresh_paths = [i["path"] for i in plan if i["path"] not in previous]
+        edited_unknown: set = set()
+        if fresh_paths:
+            ok, dirty, _why = self._git_blocking(
+                worktrees.argv_pack_status(path, fresh_paths), path)
+            if not ok:
+                logger.info("card %s: could not tell which pack files the "
+                            "folder already changed; carrying only the "
+                            "files a previous carry recorded", short)
+                edited_unknown = set(fresh_paths)
+            else:
+                edited_unknown = {p for _c, p in
+                                  worktrees.parse_status_z(dirty)}
+        # `git status` never lists a skip-worktree file: a marked path the
+        # manifest does not name (a lost manifest) is unknown too.
+        ok, listing_marked, _why = self._git_blocking(
+            worktrees.argv_ls_files_marked(
+                path, pack_install.pack_pathspecs()), path)
+        if not ok:
+            edited_unknown |= {i["path"] for i in plan}
+        else:
+            edited_unknown |= {p for p in
+                               worktrees.parse_skipped(listing_marked)
+                               if p not in previous}
+        keep = []
+        for item in plan:
+            rel = item["path"]
+            row = previous.get(rel)
+            if row is None:
+                if rel in edited_unknown:
+                    logger.info("card %s: %s has changes in its folder; not "
+                                "carried", short, rel)
+                    continue
+            else:
+                now = self._pack_file_digest(os.path.join(path, rel))
+                if now != row["sha256"]:
+                    logger.info("card %s: %s was edited in its folder; not "
+                                "refreshed", short, rel)
+                    continue
+            keep.append(item)
+        plan = keep
+        if not plan:
+            return ""
+        ok, listing, _why = self._git_blocking(
+            worktrees.argv_ls_files(path, [i["path"] for i in plan]), path)
+        if not ok:
+            return "could not list the card folder's tracked files"
+        tracked = {e for e in listing.decode("utf-8", "surrogateescape")
+                   .split("\0") if e}
+
+        def contained(dest: str) -> bool:
+            parent = os.path.realpath(os.path.dirname(dest))
+            return parent == wt_real or parent.startswith(wt_real + os.sep)
+
+        rows: dict = {}
+        problem = ""
+        try:
+            for item in plan:
+                rel, dest = item["path"], os.path.join(path, item["path"])
+                if not contained(dest):
+                    logger.info("card %s: %s would land outside its folder; "
+                                "skipped", short, rel)
+                    continue
+                if item["action"] == "delete":
+                    if rel not in tracked:
+                        continue
+                    try:
+                        if stat_mod.S_ISREG(os.lstat(dest).st_mode):
+                            os.unlink(dest)
+                    except FileNotFoundError:
+                        pass
+                    rows[rel] = {"path": rel, "kind": "deleted", "sha256": ""}
+                    continue
+                src = os.path.join(root, rel)
+                st = os.lstat(src)
+                if not stat_mod.S_ISREG(st.st_mode) \
+                        or st.st_size > worktrees.MAX_PACK_COPY_BYTES:
+                    logger.info("card %s: %s is not carried (not a plain file "
+                                "or too large)", short, rel)
+                    continue
+                with self._open_regular(src) as handle:
+                    data = handle.read(worktrees.MAX_PACK_COPY_BYTES + 1)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                if not contained(dest):
+                    continue
+                self._sweep_pack_temps(os.path.dirname(dest))
+                self._write_pack_file(dest, data, st.st_mode)
+                prior = previous.get(rel)
+                is_new = rel not in tracked or (
+                    prior is not None and prior["kind"] == "new")
+                rows[rel] = {"path": rel, "kind": "new" if is_new else "tracked",
+                             "sha256": hashlib.sha256(data).hexdigest()}
+        except OSError:
+            logger.info("card %s: a pack file could not be carried", short,
+                        exc_info=True)
+            problem = "could not carry every uncommitted pack file"
+        # Whatever was written is marked, even after a failure, so nothing
+        # written is left showing as the agent's own change. An intent-to-add
+        # that fails must not take the other marks with it (git aborts the
+        # whole `update-index` over one path it cannot mark).
+        new_paths = [r for r, row in rows.items()
+                     if row["kind"] == "new" and r not in tracked]
+        if new_paths:
+            ok, _o, _why = self._git_blocking(
+                worktrees.argv_intent_to_add(path, new_paths), path)
+            if not ok:
+                problem = problem or "could not mark the new pack files"
+                self._undo_pack_copies(path, new_paths, rows, set(), short)
+        marked = list(rows)
+        if marked:
+            ok, _o, _why = self._git_blocking(
+                worktrees.argv_skip_worktree(path, marked, True), path)
+            if not ok:
+                problem = problem or "could not mark the carried pack files"
+                self._undo_pack_copies(path, marked, rows, tracked, short)
+        merged = dict(previous)
+        merged.update(rows)
+        if merged:
+            try:
+                self._write_pack_file(
+                    worktrees.pack_manifest_path(root, card_id),
+                    worktrees.manifest_text(list(merged.values())).encode(
+                        "utf-8"), 0o600)
+            except OSError:
+                logger.info("could not write the pack manifest for card %s",
+                            short, exc_info=True)
+                problem = problem or "could not record the carried pack files"
+        logger.info("card %s: carried %d uncommitted pack file(s) into %s",
+                    short, len(rows), path)
+        return problem
+
+    def _undo_pack_copies(self, path: str, rels: list, rows: dict,
+                          tracked: set, short: str) -> None:
+        """A carried file that could not be marked is never left committable:
+        a tracked or deleted one goes back to its HEAD bytes, a new one is
+        removed (and its intent-to-add entry dropped). `rows` loses them.
+        Executor."""
+        wt_real = os.path.realpath(path)
+        gone = []
+        for rel in list(rels):
+            dest = os.path.join(path, rel)
+            try:
+                parent = os.path.realpath(os.path.dirname(dest))
+                if not (parent == wt_real
+                        or parent.startswith(wt_real + os.sep)):
+                    continue
+                row = rows.get(rel)
+                if row is None:
+                    continue
+                if row["kind"] == "new" and rel not in tracked:
+                    try:
+                        if stat_mod.S_ISREG(os.lstat(dest).st_mode):
+                            os.unlink(dest)
+                    except FileNotFoundError:
+                        pass
+                    gone.append(rel)
+                else:
+                    ok, tree, _why = self._git_blocking(
+                        worktrees.argv_ls_tree(path, rel), path)
+                    head_mode = worktrees.parse_tree_mode(tree) if ok else ""
+                    if head_mode == "120000":
+                        logger.info("card %s: %s is a link at HEAD; left as "
+                                    "it is", short, rel)
+                    elif not head_mode:
+                        logger.info("card %s: could not put %s back", short,
+                                    rel)
+                    else:
+                        ok, blob, _why = self._git_blocking(
+                            worktrees.argv_cat_blob(path, rel), path,
+                            limit=worktrees.MAX_PACK_COPY_BYTES + 1)
+                        if ok:
+                            os.makedirs(os.path.dirname(dest), exist_ok=True)
+                            self._write_pack_file(
+                                dest, blob,
+                                0o755 if head_mode == "100755" else 0o644)
+                        else:
+                            logger.info("card %s: could not put %s back",
+                                        short, rel)
+                rows.pop(rel, None)
+            except OSError:
+                logger.info("card %s: could not undo the copy of %s", short,
+                            rel, exc_info=True)
+        if gone:
+            self._git_blocking(worktrees.argv_rm_cached(path, gone), path)
+
+    def _unskip_edited_pack_copies(self, root: str, path: str, card_id: str):
+        """Executor only. Un-mark every carried file whose bytes now differ
+        from the manifest (an edited copy, a removed file that exists again)
+        so `git worktree remove` refuses and keeps the folder — nothing an
+        agent wrote is thrown away. An untouched copy stays marked: an
+        un-marked intent-to-add entry would show as added and block the
+        remove. Returns the paths un-marked, or **None when it cannot tell**
+        (the folder holds skip-worktree entries but the manifest is missing
+        or malformed, git failed, or the un-mark failed): the release keeps
+        the folder then. A folder with no marked entries gives `[]`."""
+        try:
+            from dark_army_menubar import pack_install
+            short = str(card_id)[:8]
+            ok, listing, _why = self._git_blocking(
+                worktrees.argv_ls_files_marked(
+                    path, pack_install.pack_pathspecs()), path)
+            if not ok:
+                return None
+            marked = worktrees.parse_skipped(listing)
+            if not marked:
+                return []
+            rows = self._read_pack_manifest(root, card_id)
+            if not rows:
+                return None
+            mismatched = []
+            known = set()
+            for row in rows:
+                known.add(row["path"])
+                now = self._pack_file_digest(os.path.join(path, row["path"]))
+                if now is None or now != row["sha256"]:
+                    mismatched.append(row["path"])
+            # A marked entry the manifest does not name is nobody's record:
+            # make it visible too, so git decides.
+            mismatched += [p for p in marked if p not in known]
+            if not mismatched:
+                return []
+            ok, _o, _why = self._git_blocking(
+                worktrees.argv_skip_worktree(path, mismatched, False), path)
+            if not ok:
+                logger.info("card %s: could not un-mark edited pack copies",
+                            short)
+                return None
+            logger.info("card %s: edited pack copies left visible to git: %s",
+                        short, ", ".join(mismatched))
+            return mismatched
+        except Exception:  # noqa: BLE001 - the documented boundary: "cannot tell" keeps the folder
+            logger.info("card %s: could not check the carried pack copies",
+                        str(card_id)[:8], exc_info=True)
+            return None
 
     #: How the setup log is opened at both write sites: never through a
     #: symbolic link planted at its name, private to the person.
@@ -10006,6 +10425,15 @@ class BoardVerbsMixin:
                             "ignores (a report, plan or check)", cid[:8], path)
                 await self._publish_board()
                 return True
+            unmarked = await loop.run_in_executor(
+                None, self._unskip_edited_pack_copies, root, path,
+                self._pack_card_id(path))
+            if unmarked is None:
+                logger.info("card %s: kept %s — Dark Army could not tell "
+                            "whether its carried pack files were edited",
+                            cid[:8], path)
+                await self._publish_board()
+                return True
             removed, _o, why = await self._run_git(
                 worktrees.argv_worktree_remove(root, path), root,
                 timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
@@ -10018,6 +10446,11 @@ class BoardVerbsMixin:
             await self._board_call("clear_worktree",
                                    str(done.get("id") or ""))
         await loop.run_in_executor(None, trust_marks.unmark, path)
+        try:
+            os.unlink(worktrees.pack_manifest_path(
+                root, self._pack_card_id(path)))
+        except OSError:
+            pass  # no manifest was written, or it is already gone
         logger.info("card %s: removed its worktree %s; branch %s kept",
                     cid[:8], path, str(current.get("worktree_branch") or ""))
         await self._publish_board()

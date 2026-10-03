@@ -23,6 +23,7 @@ unsaved is ever destroyed, and the card says the folder was kept.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
@@ -53,6 +54,12 @@ FETCH_TIMEOUT_SECONDS = 20.0
 SETUP_TIMEOUT_SECONDS = 900.0
 #: How much of the setup script's output the log beside the worktree keeps.
 MAX_SETUP_LOG_BYTES = 256_000
+#: The record of what was carried into a card's folder from the main
+#: checkout's uncommitted pack update (`docs/card-worktrees.md`, *The pack
+#: copies*), beside the setup log.
+PACK_MANIFEST_SUFFIX = ".pack.json"
+#: A carried pack file larger than this is skipped (and logged), never read.
+MAX_PACK_COPY_BYTES = 1_000_000
 #: The card-title part of a branch name, in characters.
 MAX_SLUG_CHARS = 40
 #: How many characters of the card's id name its branch and folder.
@@ -168,6 +175,13 @@ def setup_log_path(root: str, card_id) -> str:
     the excluded folder, so it is never an untracked file anywhere."""
     return os.path.join(str(root), WORKTREES_DIR,
                         f"{FOLDER_PREFIX}{short_id(card_id)}.setup.log")
+
+
+def pack_manifest_path(root: str, card_id) -> str:
+    """`<root>/.worktrees/card-<id8>.pack.json` — beside the setup log, inside
+    the excluded folder, so it is never an untracked file anywhere."""
+    return os.path.join(str(root), WORKTREES_DIR,
+                        f"{FOLDER_PREFIX}{short_id(card_id)}{PACK_MANIFEST_SUFFIX}")
 
 
 def setup_script_path(root: str) -> str:
@@ -351,6 +365,77 @@ def argv_exclude_path(root: str) -> list:
     return work_record._git(root) + ["rev-parse", "--git-path", "info/exclude"]
 
 
+def argv_pack_status(root: str, pathspecs) -> list:
+    """What differs from the index among the pack's pathspecs in the main
+    checkout: changed, new and removed files, NUL-separated, one path per
+    entry (`--no-renames`), every untracked file listed. A read."""
+    return work_record._git(root) + [
+        "--literal-pathspecs", "status", "--porcelain", "-z", "--no-renames",
+        "--untracked-files=all", "--", *[str(p) for p in pathspecs]]
+
+
+def argv_ls_files(root: str, paths) -> list:
+    """Which of `paths` the index at `root` tracks, NUL-separated."""
+    return work_record._git(root) + [
+        "--literal-pathspecs", "ls-files", "-z", "--", *[str(p) for p in paths]]
+
+
+def argv_ls_files_marked(root: str, pathspecs) -> list:
+    """The index's per-file flag letters (`-v`) over the pack pathspecs,
+    NUL-separated: `S <path>` is a skip-worktree entry (`parse_skipped`)."""
+    return work_record._git(root) + [
+        "--literal-pathspecs", "ls-files", "-v", "-z", "--",
+        *[str(p) for p in pathspecs]]
+
+
+def argv_cat_blob(root: str, rel: str) -> list:
+    """`rel`'s committed bytes at HEAD, to put a carried file back when it
+    could not be marked."""
+    return work_record._git(root) + ["cat-file", "blob", f"HEAD:{rel}"]
+
+
+def argv_ls_tree(root: str, rel: str) -> list:
+    """`rel`'s tree entry at HEAD (`<mode> blob <sha>\\t<path>`, NUL-ended),
+    for the mode a restored file gets back (`parse_tree_mode`)."""
+    return work_record._git(root) + [
+        "--literal-pathspecs", "ls-tree", "-z", "HEAD", "--", str(rel)]
+
+
+def parse_tree_mode(output) -> str:
+    """The octal mode `argv_ls_tree` names (`100644`, `100755`, `120000`
+    for a link), or `""` when it names nothing."""
+    try:
+        text = bytes(output or b"").decode("utf-8", "surrogateescape")
+    except (TypeError, ValueError):
+        return ""
+    head = text.split("\0", 1)[0].split(" ", 1)[0]
+    return head if head.isdigit() else ""
+
+
+def argv_rm_cached(root: str, paths) -> list:
+    """Drop an intent-to-add entry whose copy was taken away again."""
+    return work_record._git(root) + [
+        "--literal-pathspecs", "rm", "--cached", "-q", "--ignore-unmatch",
+        "--", *[str(p) for p in paths]]
+
+
+def argv_intent_to_add(root: str, paths) -> list:
+    """Record an untracked-new carried file as intent-to-add, so that the
+    skip-worktree mark after it keeps `git status` clean (verified on Apple
+    Git 2.50.1: status clean, `git add -A` + commit leaves it out, and
+    `git worktree remove` succeeds)."""
+    return work_record._git(root) + [
+        "--literal-pathspecs", "add", "-N", "--", *[str(p) for p in paths]]
+
+
+def argv_skip_worktree(root: str, paths, skip: bool) -> list:
+    """Mark (or un-mark) paths skip-worktree on the worktree's own index.
+    Several paths ride one call after `--`."""
+    flag = "--skip-worktree" if skip else "--no-skip-worktree"
+    return work_record._git(root) + [
+        "update-index", flag, "--", *[str(p) for p in paths]]
+
+
 # --- the parsers and the text --------------------------------------------------
 
 def parse_worktree_list(text) -> set:
@@ -422,3 +507,98 @@ def setup_env(base, root: str, worktree: str, card_id: str,
     env["DARK_ARMY_CARD_ID"] = str(card_id)
     env["DARK_ARMY_BRANCH"] = str(branch)
     return env
+
+
+# --- the pack copies -----------------------------------------------------------
+
+def parse_status_z(output) -> list:
+    """`argv_pack_status`'s answer as `(XY, path)` pairs: each NUL-separated
+    entry is `XY<space>path`; ignored (`!!`) and empty or malformed entries
+    are dropped."""
+    try:
+        text = bytes(output or b"").decode("utf-8", "surrogateescape")
+    except (TypeError, ValueError):
+        return []
+    out = []
+    for entry in text.split("\0"):
+        if len(entry) < 4 or entry[2] != " ":
+            continue
+        code, path = entry[:2], entry[3:]
+        if code == "!!" or not path:
+            continue
+        out.append((code, path))
+    return out
+
+
+def pack_copy_plan(entries, is_pack_path, exists) -> list:
+    """The pure decision for the pack copies: `{"path", "action"}` per path,
+    `copy` when the main checkout holds it as a regular file, `delete` when
+    it is absent there. `exists(path)` is injected so this opens nothing:
+    True for a regular non-symlink file, False when absent, None when
+    something else is there (a link, a folder) — dropped, never followed.
+    A path `is_pack_path` refuses or that holds `..` is dropped; the git
+    letters never decide anything, only the file does."""
+    plan, seen = [], set()
+    for _code, path in entries or []:
+        path = str(path)
+        if path in seen or ".." in path.split("/") or path.startswith("/"):
+            continue
+        if not is_pack_path(path):
+            continue
+        seen.add(path)
+        found = exists(path)
+        if found is True:
+            plan.append({"path": path, "action": "copy"})
+        elif found is False:
+            plan.append({"path": path, "action": "delete"})
+    return plan
+
+
+def manifest_text(copies) -> str:
+    """The manifest's JSON: `{"version": 1, "copies": [{"path", "kind":
+    "tracked"|"new"|"deleted", "sha256"}]}`. Paths and digests only, never
+    content."""
+    rows = [{"path": str(c.get("path") or ""), "kind": str(c.get("kind") or ""),
+             "sha256": str(c.get("sha256") or "")}
+            for c in copies or [] if isinstance(c, dict) and c.get("path")]
+    return json.dumps({"version": 1, "copies": rows}, indent=1)
+
+
+def parse_skipped(output) -> list:
+    """The paths `argv_ls_files_marked` shows as skip-worktree (`S `)."""
+    try:
+        text = bytes(output or b"").decode("utf-8", "surrogateescape")
+    except (TypeError, ValueError):
+        return []
+    return [e[2:] for e in text.split("\0") if e.startswith("S ") and e[2:]]
+
+
+def parse_manifest(text, is_pack_path=None) -> list:
+    """The manifest's rows, or `[]` for anything malformed; unknown keys are
+    ignored and a row without a path or with an unknown kind is dropped. A
+    row whose path is absolute, holds `..` or (when `is_pack_path` is given)
+    is not a pack path is dropped too — the file sits where an agent can
+    write, so it is never trusted to name a path."""
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return []
+    rows = data.get("copies") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        path, kind = row.get("path"), row.get("kind")
+        if not isinstance(path, str) or not path \
+                or kind not in ("tracked", "new", "deleted"):
+            continue
+        if path.startswith("/") or ".." in path.split("/"):
+            continue
+        if is_pack_path is not None and not is_pack_path(path):
+            continue
+        digest = row.get("sha256")
+        out.append({"path": path, "kind": kind,
+                    "sha256": digest if isinstance(digest, str) else ""})
+    return out

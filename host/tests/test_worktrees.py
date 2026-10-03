@@ -331,3 +331,91 @@ def test_the_hidden_file_listing_has_its_own_larger_cap():
     assert worktrees.MAX_INDEX_DOTFILES_BYTES > work_record.MAX_GIT_OUTPUT_BYTES
     assert "too many hidden files" in worktrees.SETUP_TOO_MANY_HIDDEN_REFUSAL
     assert "APFS" in worktrees.SETUP_VOLUME_REFUSAL
+
+
+# --- the pack copies ------------------------------------------------------------
+
+def test_pack_manifest_sits_beside_the_setup_log():
+    manifest = worktrees.pack_manifest_path("/p", "abcdef1234")
+    assert manifest == "/p/.worktrees/card-abcdef12.pack.json"
+    assert os.path.dirname(manifest) == os.path.dirname(
+        worktrees.setup_log_path("/p", "abcdef1234"))
+
+
+def test_pack_argv_start_on_the_git_head_and_name_their_verb():
+    head = work_record._git("/p")
+    status = worktrees.argv_pack_status("/p", [".claude/settings.json"])
+    assert status[:len(head)] == head and "status" in status
+    assert "--no-renames" in status and "-z" in status
+    assert status[-2:] == ["--", ".claude/settings.json"]
+    ls = worktrees.argv_ls_files("/p", ["a"])
+    assert ls[:len(head)] == head and "ls-files" in ls
+    add = worktrees.argv_intent_to_add("/p", ["a"])
+    assert add[:len(head)] == head and add[len(head):len(head) + 3] == [
+        "--literal-pathspecs", "add", "-N"]
+    on = worktrees.argv_skip_worktree("/p", ["a", "b"], True)
+    off = worktrees.argv_skip_worktree("/p", ["a"], False)
+    assert "--skip-worktree" in on and on[-3:] == ["--", "a", "b"]
+    assert "--no-skip-worktree" in off and "update-index" in off
+
+
+def test_pack_status_parses_the_codes_and_drops_ignored_and_empty():
+    raw = b" M a.md\0?? b.md\0 D c.md\0MM d.md\0!! e.md\0\0"
+    assert worktrees.parse_status_z(raw) == [
+        (" M", "a.md"), ("??", "b.md"), (" D", "c.md"), ("MM", "d.md")]
+    assert worktrees.parse_status_z(b"") == []
+    assert worktrees.parse_status_z(None) == []
+
+
+def test_pack_copy_plan_copies_deletes_and_drops():
+    present = {"CLAUDE.md": True, ".claude/leads/x.md": False,
+               ".claude/skills/link": None, "a.txt": True}
+
+    def is_pack(path):
+        return path.startswith((".claude", "CLAUDE"))
+
+    entries = [(" M", "CLAUDE.md"), (" D", ".claude/leads/x.md"),
+               ("??", "a.txt"), (" M", ".claude/../x"),
+               (" M", ".claude/skills/link"), (" M", "CLAUDE.md")]
+    plan = worktrees.pack_copy_plan(entries, is_pack, present.get)
+    assert plan == [{"path": "CLAUDE.md", "action": "copy"},
+                    {"path": ".claude/leads/x.md", "action": "delete"}]
+
+
+def test_pack_manifest_round_trips_and_a_malformed_one_reads_empty():
+    rows = [{"path": "CLAUDE.md", "kind": "tracked", "sha256": "ab"},
+            {"path": ".claude/s.md", "kind": "new", "sha256": "cd"},
+            {"path": ".claude/l.md", "kind": "deleted", "sha256": ""}]
+    assert worktrees.parse_manifest(worktrees.manifest_text(rows)) == rows
+    assert worktrees.parse_manifest("{not json") == []
+    assert worktrees.parse_manifest('{"copies": 3}') == []
+    assert worktrees.parse_manifest(None) == []
+
+
+def test_pack_manifest_drops_rows_that_name_no_pack_path():
+    rows = [{"path": "CLAUDE.md", "kind": "tracked", "sha256": "a"},
+            {"path": "/etc/passwd", "kind": "tracked", "sha256": "b"},
+            {"path": ".claude/../x", "kind": "new", "sha256": "c"},
+            {"path": "a.txt", "kind": "new", "sha256": "d"}]
+    text = worktrees.manifest_text(rows)
+    got = worktrees.parse_manifest(text, lambda p: p == "CLAUDE.md")
+    assert [r["path"] for r in got] == ["CLAUDE.md"]
+    assert [r["path"] for r in worktrees.parse_manifest(text)] == [
+        "CLAUDE.md", "a.txt"]
+
+
+def test_pack_skipped_entries_are_the_s_rows_and_argv_are_literal():
+    assert worktrees.parse_skipped(b"H a\0S b\0s c\0S .claude/x\0") == [
+        "b", ".claude/x"]
+    for argv in (worktrees.argv_pack_status("/p", ["a"]),
+                 worktrees.argv_ls_files("/p", ["a"]),
+                 worktrees.argv_ls_files_marked("/p", ["a"]),
+                 worktrees.argv_intent_to_add("/p", ["a"])):
+        assert "--literal-pathspecs" in argv
+
+
+def test_pack_tree_mode_reads_the_ls_tree_entry():
+    assert worktrees.parse_tree_mode(b"100755 blob abc\tscripts/x.sh\0") == "100755"
+    assert worktrees.parse_tree_mode(b"120000 blob abc\tl\0") == "120000"
+    assert worktrees.parse_tree_mode(b"") == ""
+    assert "ls-tree" in worktrees.argv_ls_tree("/p", "a")

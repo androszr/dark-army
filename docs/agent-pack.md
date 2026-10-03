@@ -8,7 +8,9 @@ after a confirmed press per project.
   subprocess.
 - `pack_install` is the only module under `host/` that writes into a project
   root; `PACK_DESTINATIONS` is the allowlist, re-checked (enrolled,
-  contained, not-self) at the instant of the write.
+  contained, not-self) at the instant of the write. The daemon's card
+  worktrees under `<root>/.worktrees/` are Dark Army's own folders, and the
+  pack copies there are `docs/card-worktrees.md`'s.
 - Markers splice `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` /
   `docs/context.md` / `.claude/review.md`; `.claude/settings.json` is a key
   merge of owned `permissions.allow` rows.
