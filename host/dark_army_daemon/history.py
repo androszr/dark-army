@@ -108,6 +108,19 @@ _NOT_CODEX = "COALESCE(provider, 'claude') != 'codex'"
 # mistaken for a genuine mtime.
 _DIGEST_REBUILD_MTIME = -1.0
 
+# Fills the cache-write split on a turn already stored. It restates
+# `idx_turns_message`'s own WHERE word for word because SQLite uses a partial
+# index only when the query implies the index's condition, and `message_id = ?`
+# cannot imply `!= ''` for a bound parameter. Without the restatement every call
+# scanned the whole turns table: ~15 ms a turn at 150k turns, and the v7
+# re-read of every transcript pinned a core for 26 minutes (28 Sep 2026). The
+# trailing clause makes a re-read that finds the same split write nothing.
+_FILL_CACHE_SPLIT_SQL = (
+    "UPDATE turns SET cache_write_5m = ?, cache_write_1h = ?"
+    " WHERE message_id = ? AND message_id IS NOT NULL AND message_id != ''"
+    " AND (cache_write_5m IS NOT ? OR cache_write_1h IS NOT ?)"
+)
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
     key   TEXT PRIMARY KEY,
@@ -452,8 +465,12 @@ class HistoryStore:
                 # and every transcript is already recorded at its current mtime,
                 # so without forgetting those positions the scanner skips them all
                 # and the new column stays empty for as long as the database
-                # lives. Forgetting costs one cold scan and nothing else: turns
-                # dedup on message_id, so re-reading a file inserts no duplicates.
+                # lives. Forgetting costs one cold scan: turns dedup on
+                # message_id, so re-reading a file inserts no duplicates, and
+                # both statements a re-read drives — the insert and
+                # `_FILL_CACHE_SPLIT_SQL` — find their turn through the index.
+                # The fill did not until 28 Sep 2026, and a v7 re-read cost a
+                # full table scan per stored turn.
                 #
                 # But only *some* bumps. v4 added derived tables (digests, themes)
                 # that no transcript feeds, and a cold re-read of every transcript
@@ -688,9 +705,9 @@ class HistoryStore:
         )
         if not added and split and row["message_id"]:
             self._write(
-                "UPDATE turns SET cache_write_5m = ?, cache_write_1h = ?"
-                " WHERE message_id = ?",
-                (row["cache_write_5m"], row["cache_write_1h"], row["message_id"]),
+                _FILL_CACHE_SPLIT_SQL,
+                (row["cache_write_5m"], row["cache_write_1h"], row["message_id"],
+                 row["cache_write_5m"], row["cache_write_1h"]),
             )
         return added
 

@@ -3818,3 +3818,43 @@ def test_record_worktree_is_the_one_writer_and_moves_no_revision(tmp_path):
         assert store.clear_worktree(card["id"])[0] is None
     finally:
         store.close()
+
+
+# --- a card folder is never a card's root (28 Sep 2026) ----------------------
+
+def test_a_card_filed_with_a_card_folder_root_works_in_the_checkout(store):
+    """Filed from a session inside `<root>/.worktrees/card-…`, the card must
+    name the checkout: the card folder is released when its card finishes,
+    and every card naming it was then refused "no open window"."""
+    made = _card(store, root="/tmp/bob/.worktrees/card-746bc5e3/host")
+    assert made["root"] == "/tmp/bob"
+    card, detail = store.update(made["id"],
+                                {"root": "/tmp/bob/.worktrees/card-0aa025d2"})
+    assert card is not None, detail
+    assert store.get(made["id"])["root"] == "/tmp/bob"
+
+
+def test_opening_the_board_repairs_cards_already_filed_with_a_card_folder(tmp_path):
+    path = tmp_path / "board.db"
+    store = BoardStore(path)
+    store.connect()
+    bad = _card(store)
+    good = _card(store, root="/tmp/other")
+    before = store.get(bad["id"])["revision"]
+    store.close()
+
+    raw = sqlite3.connect(str(path))
+    raw.execute("UPDATE cards SET root = ? WHERE id = ?",
+                ("/tmp/bob/.worktrees/card-746bc5e3", bad["id"]))
+    raw.commit()
+    raw.close()
+
+    reopened = BoardStore(path)
+    reopened.connect()
+    try:
+        assert reopened.get(bad["id"])["root"] == "/tmp/bob"
+        # Nobody changed the card: its change number stays where it was.
+        assert reopened.get(bad["id"])["revision"] == before
+        assert reopened.get(good["id"])["root"] == "/tmp/other"
+    finally:
+        reopened.close()

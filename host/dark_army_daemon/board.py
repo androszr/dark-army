@@ -45,7 +45,7 @@ import uuid
 from pathlib import Path
 from typing import Iterable, Optional
 
-from . import attachments, board_outcomes, scout_report, work_record
+from . import attachments, board_outcomes, scout_report, work_record, worktrees
 from .board_lifecycle_store import LifecycleStoreMixin
 from .board_outcome_store import OutcomeStoreMixin
 from .board_queue import queue_key
@@ -1304,6 +1304,7 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         if _idx >= 0:
             self._conn.executescript(_SCHEMA[_idx:])
         self._migrate()
+        self._repair_worktree_roots()
         self._sweep_orphan_messages()
         self._sweep_orphan_runs()
         self._connect_outcomes()
@@ -1402,6 +1403,31 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         if cur.rowcount:
             logger.info("board.db: cleared %d leftover dependency list(s)",
                         cur.rowcount)
+
+    def _repair_worktree_roots(self) -> None:
+        """Point every card whose `root` names a card folder
+        (`<root>/.worktrees/card-…`) back at its checkout. On every open, not
+        a schema rung: an older build can still file such a card after a
+        downgrade, and the repair is idempotent. `revision` does not move —
+        nobody changed the card, Dark Army corrected where it works."""
+        like = f"%{worktrees.WORKTREES_DIR}/{worktrees.FOLDER_PREFIX}%"
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, root FROM cards WHERE root LIKE ?",
+                (like,)).fetchall()
+            fixed = 0
+            for row in rows:
+                home = worktrees.checkout_root(str(row["root"] or ""))
+                if home and home != row["root"]:
+                    self._conn.execute(
+                        "UPDATE cards SET root = ? WHERE id = ?",
+                        (home, row["id"]))
+                    fixed += 1
+            if fixed:
+                self._conn.commit()
+        if fixed:
+            logger.info("board.db: pointed %d card(s) filed from a card "
+                        "folder back at the checkout", fixed)
 
     def _sweep_orphan_messages(self) -> None:
         """Drop `card_messages` whose card is gone.
@@ -2263,7 +2289,10 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         card = {
             "id": uuid.uuid4().hex,
             "project": _clamp(fields.get("project"), 200),
-            "root": _clamp(fields.get("root"), 1024),
+            # The checkout, never a card folder: that folder is released when
+            # its card finishes (`worktrees.checkout_root`).
+            "root": _clamp(worktrees.checkout_root(
+                str(fields.get("root") or "")), 1024),
             "title": title,
             "summary": summary,
             "prompt": prompt,
@@ -2390,6 +2419,9 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             elif key == "tool":
                 if value not in TOOLS:
                     return None, f"unknown tool {value!r}"
+            elif key == "root":
+                # A card folder is never a card's root (`worktrees.checkout_root`).
+                value = worktrees.checkout_root(str(value or ""))
             elif key == "model":
                 # Checked against the *resolved* tool below rather than here:
                 # a write may name both in one go, and the pair has to be

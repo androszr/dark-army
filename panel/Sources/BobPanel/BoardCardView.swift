@@ -20,7 +20,13 @@ struct BoardCardView: View {
     /// inputs below differ, never because the client published a frame about
     /// somebody else.
     let client: DaemonClient
-    @ObservedObject var state: BoardState
+    /// Held for the verbs and their refusal writes, **not observed** — the
+    /// client's rule. What the face reads from it arrives as `facts`, so a
+    /// press on another card, a tick or a hover redraws only the tiles whose
+    /// facts it changed.
+    let state: BoardState
+    /// This card's slice of `BoardState` (`BoardTileFacts`).
+    let facts: BoardTileFacts
     let card: BoardCard
     /// The board-wide facts this face reads (`BoardChrome`), as a value.
     let chrome: BoardChrome
@@ -36,20 +42,20 @@ struct BoardCardView: View {
     /// session exists yet, so there is nothing a chip could aim at.
     let refinerAgent: FleetRow?
 
-    private var isArmed: Bool { state.armed == card.id }
-    private var isArmedHere: Bool { state.armedHere == card.id }
-    private var isDeleteArmed: Bool { state.deleteArmed == card.id }
-    private var isDoneArmed: Bool { state.doneArmed == card.id }
-    private var isStarting: Bool { state.starting.contains(card.id) }
+    private var isArmed: Bool { facts.armed }
+    private var isArmedHere: Bool { facts.armedHere }
+    private var isDeleteArmed: Bool { facts.deleteArmed }
+    private var isDoneArmed: Bool { facts.doneArmed }
+    private var isStarting: Bool { facts.starting }
     /// Confirmed Delete, not yet gone from a snapshot. Same rule as
     /// `RowActions.stopping`: the press has to change the screen immediately or
     /// it reads as dropped, and the second or so before the board agrees is
     /// exactly when a third press arrives.
-    private var isDeleting: Bool { state.deleting.contains(card.id) }
+    private var isDeleting: Bool { facts.deleting }
     /// Refine pressed (optimistic) or the snapshot says a refinement is
     /// underway. `isStarting`'s twin, drawn with the same spinner treatment.
     private var isRefining: Bool {
-        state.refining.contains(card.id) || card.isRefining
+        facts.refiningPressed || card.isRefining
     }
     @State private var jumpHover = false
     /// Which jump chip holds the keyboard focus, keyed by its row and its
@@ -64,7 +70,7 @@ struct BoardCardView: View {
     /// view. A brief phosphor ring, not a selection: the board has no card
     /// selection and this must not invent one, so it fades on the applier's
     /// own timer and leaves nothing behind.
-    private var isRevealed: Bool { state.revealedCard == card.id }
+    private var isRevealed: Bool { facts.revealed }
 
     /// Every condition, in one place. The button is drawn only if all of them
     /// hold; the daemon re-checks all of them again at the moment of dispatch,
@@ -131,8 +137,7 @@ struct BoardCardView: View {
     }
 
     private var isDropTarget: Bool {
-        if case .card(let id) = state.dropTarget { return id == card.id }
-        return false
+        facts.dropTargeted
     }
 
     /// Whether the assistant is still somebody's choice to make. Once a session
@@ -148,9 +153,8 @@ struct BoardCardView: View {
     /// a different project from the first card ticked). The Refine button
     /// stays where it is — the tick is an addition, never a replacement.
     private func rowTick(_ row: BoardColumn) -> some View {
-        let ticked = state.rowSelection.contains(card.id)
-        let admitted = ticked || RowSelection.admits(
-            row, card: card, given: state.rowSelectionCards, chrome: chrome)
+        let ticked = facts.ticked
+        let admitted = facts.tickAdmitted
         return Button {
             state.toggleRowSelection(card, chrome: chrome)
         } label: {
@@ -171,16 +175,22 @@ struct BoardCardView: View {
                            : "Ticks this card to refine with the others")
     }
 
+    /// The row in select mode, when it is this card's row.
+    private var selectingOwnRow: BoardColumn? { facts.selectingRow }
+
     #if DEBUG
     /// How many times any tile's `body` ran — the redraw tests' probe
     /// (`BoardScrollRedrawTests`). Debug builds only; a release panel
     /// counts nothing.
     @MainActor static var bodyEvaluations = 0
+    /// The ids whose last drawn face was armed — the arm test's probe.
+    @MainActor static var armedDrawn: Set<String> = []
     #endif
 
     var body: some View {
         #if DEBUG
         Self.bodyEvaluations += 1
+        if isArmed { Self.armedDrawn.insert(card.id) } else { Self.armedDrawn.remove(card.id) }
         #endif
         return VStack(alignment: .leading, spacing: 6) {
             statusBanner
@@ -204,9 +214,7 @@ struct BoardCardView: View {
                     .accessibilityLabel("Manual check needed")
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if let row = state.selectingRow, row.rawValue == card.column {
-                    rowTick(row)
-                }
+                let titleTicks = facts.tickAdmitted
                 Text(card.title)
                     .font(Theme.prose(14, weight: .semibold))
                     .foregroundStyle(Theme.text)
@@ -216,6 +224,17 @@ struct BoardCardView: View {
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(card.title)
+                    // In select mode the title is a second, larger tick box:
+                    // a click on it does exactly what the box beside it
+                    // does. Outside select mode the gesture is switched off,
+                    // so the tile's own clicks (double-click opens) are
+                    // untouched.
+                    .contentShape(Rectangle())
+                    .gesture(TapGesture().onEnded {
+                                 state.toggleRowSelection(card, chrome: chrome)
+                             },
+                             including: titleTicks ? .all : .subviews)
+                    .clickable(titleTicks)
                 if card.threadCount > 0 {
                     let label = card.threadCount == 1
                         ? "1 message" : "\(card.threadCount) messages"
@@ -246,7 +265,7 @@ struct BoardCardView: View {
             // project — `singleProject == nil`, which covers both "all" and
             // "several ticked". Under two or more ticks the projects mix, so
             // hiding the chip there would make them indistinguishable.
-            if state.singleProject == nil && !card.project.isEmpty {
+            if facts.showsProjectChip && !card.project.isEmpty {
                 Text(card.project)
                     .font(Theme.mono(10))
                     .foregroundStyle(Theme.faint)
@@ -367,7 +386,7 @@ struct BoardCardView: View {
                                                      live: liveStageNames,
                                                      crew: card.crew, lead: card.area,
                                                      promised: card.leadFace))
-            if let refusal = state.refusals[card.id], !refusal.isEmpty {
+            if case let refusal = facts.refusal, !refusal.isEmpty {
                 Text(refusal)
                     .font(.system(size: 10))
                     .foregroundStyle(.orange)
@@ -450,6 +469,19 @@ struct BoardCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Theme.cardRadius).fill(Theme.card))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(stroke, lineWidth: 1))
+        // The select-mode tick sits on the card's corner, **outside the
+        // layout**. Inline before the title it narrowed every title in the
+        // row the moment select mode began, titles re-wrapped, the cards
+        // above the reader grew and the one being read slid off the screen
+        // (28 Sep 2026). An overlay changes no card's size.
+        .overlay(alignment: .topLeading) {
+            if let row = selectingOwnRow {
+                rowTick(row)
+                    .padding(3)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Theme.card))
+                    .offset(x: -6, y: -6)
+            }
+        }
         // Above the ordinary border rather than instead of it: the card's own
         // stroke still says what state it is in, and this only says "here".
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
@@ -600,6 +632,8 @@ struct BoardCardView: View {
         if isDropTarget { return Theme.phosphor }
         if isDeleteArmed { return .red }
         if isArmed || isArmedHere || isDoneArmed { return .orange }
+        // Ticked for a batch: the whole card says so, not only its corner.
+        if facts.ticked { return Theme.phosphor }
         if isLive { return Theme.phosphor }
         return Theme.hair
     }
@@ -1299,5 +1333,17 @@ private struct DimVerbFocus<Content: View>: View {
             // The claim, from this wrapper's own focus: a second `.focused`
             // on one view would split it.
             .modifier(ClaimsKeyboardFocus(focused: focused))
+    }
+}
+
+/// A tile redraws when what it draws differs: its card, the board-wide
+/// chrome, the three fleet rows it names and its `BoardTileFacts`. The client
+/// and the state are the same objects for every tile and are held for the
+/// verbs, so they take no part (`.equatable()` at the call site).
+extension BoardCardView: Equatable {
+    static func == (a: BoardCardView, b: BoardCardView) -> Bool {
+        a.card == b.card && a.chrome == b.chrome && a.facts == b.facts
+            && a.agent == b.agent && a.authorAgent == b.authorAgent
+            && a.refinerAgent == b.refinerAgent
     }
 }

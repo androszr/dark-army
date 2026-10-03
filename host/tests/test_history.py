@@ -1746,6 +1746,74 @@ def test_a_second_insert_fills_the_split_and_rewrites_nothing_else(store):
     assert (row["cache_write_5m"], row["cache_write_1h"]) == (100, 200)
 
 
+def test_the_split_fill_uses_the_message_id_index(store):
+    from dark_army_daemon import history
+    plan = store._conn.execute(
+        "EXPLAIN QUERY PLAN " + history._FILL_CACHE_SPLIT_SQL, (1, 2, "m", 1, 2)
+    ).fetchall()
+    details = [row[-1] for row in plan]
+    assert any("USING INDEX idx_turns_message" in d for d in details), details
+    assert not any(d.startswith("SCAN turns") for d in details), details
+
+
+def _split_fill_steps(store, rows):
+    now = time.time()
+    with store._lock:
+        store._conn.executemany(
+            "INSERT INTO turns (message_id, session_id, ts, day) VALUES (?, 's', ?, '2026-09-28')",
+            [(f"m{i}", now) for i in range(rows)],
+        )
+        store._conn.commit()
+    steps = [0]
+
+    def count():
+        steps[0] += 1
+        return 0
+
+    store._conn.set_progress_handler(count, 1)
+    try:
+        store.add_turn("s", now, message_id="m7", cache_write_5m=1, cache_write_1h=2)
+    finally:
+        store._conn.set_progress_handler(None, 1)
+    return steps[0]
+
+
+def test_the_split_fill_does_bounded_work_on_a_large_table(tmp_path):
+    counts = []
+    for rows in (50, 5000):
+        s = HistoryStore(tmp_path / f"h{rows}.db")
+        s.connect()
+        try:
+            counts.append(_split_fill_steps(s, rows))
+        finally:
+            s.close()
+    small, large = counts
+    # A full scan costs at least a step per row, so it would exceed 5,000.
+    assert large < 2000, counts
+    assert large <= 2 * small, counts
+
+
+def test_an_unchanged_split_is_not_rewritten(store):
+    now = time.time()
+    store.add_turn("s", now, message_id="m1", cache_write_5m=3, cache_write_1h=4)
+    before = store._conn.total_changes
+    assert not store.add_turn("s", now, message_id="m1",
+                              cache_write_5m=3, cache_write_1h=4)
+    assert store._conn.total_changes == before
+
+
+def test_a_turn_with_an_empty_message_id_is_never_filled(store):
+    now = time.time()
+    store.add_turn("s", now, message_id="")
+    store.add_turn("s", now + 1, message_id="")
+    store.add_turn("s", now + 2, message_id="", cache_write_5m=5, cache_write_1h=6)
+    rows = store._query(
+        "SELECT cache_write_5m, cache_write_1h FROM turns WHERE message_id = ''"
+        " ORDER BY ts")
+    assert [(r["cache_write_5m"], r["cache_write_1h"]) for r in rows[:2]] == [
+        (None, None), (None, None)]
+
+
 def test_a_session_s_token_cost_is_split_by_the_turns_provider(store):
     """The run label can say codex for a Claude session; the split follows
     the turns that were priced."""

@@ -3344,6 +3344,16 @@ class BobDaemon(BoardVerbsMixin):
         # the id so a stale active_sessions.json entry cannot resurrect it.
         if hook == "SessionEnd" and msg.get("provider") == "grok" and session_id:
             self._grok_ended.add(session_id)
+        elif (event == "session_start" and msg.get("provider") == "grok"
+              and session_id):
+            # Grok says the id is alive again, so it is not ended. Grok hands
+            # a starting session to its background `grok agent leader`: the
+            # first process sends SessionEnd (reason=shutdown) and the leader
+            # a SessionStart (source=load) for the same id seconds later.
+            # Left on the list, the roster pass filtered the live record out
+            # and ended the revived row again — a running planning session
+            # shown under Finished (3 Oct 2026, Zosia).
+            self._grok_ended.discard(session_id)
 
         cur = self._session_states.get(session_id)
         if cur is not None and msg.get("provider") in ("grok", "claude"):

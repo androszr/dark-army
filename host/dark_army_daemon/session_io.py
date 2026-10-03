@@ -26,9 +26,14 @@ that ran on Dark Army's own pty is simply left open with its reason.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 from . import ptyhost, vscode_reveal
+
+#: The pause between a line's words and its Enter on Dark Army's own pty —
+#: the question burst's `QUESTION_KEY_GAP_SECONDS`, for the same reason.
+PTY_ENTER_GAP_SECONDS = 0.12
 
 
 def can_send_text(pid, tty: str = "") -> bool:
@@ -57,7 +62,20 @@ async def send_text(pid, tty: str, text: str, newline: bool = True) -> Optional[
         return None
     handle = ptyhost.owns(pid)
     if handle is not None:
-        return ptyhost.send(handle, text, newline)
+        if not newline:
+            return ptyhost.send(handle, text, False)
+        # The words, a pause, then Enter as its own write. One write of
+        # `text + "\r"` reaches the TUI as a single burst, which Claude Code
+        # reads as a paste: the Enter lands as a line break in the input box
+        # and nothing is submitted (3 Oct 2026 — four phone messages to a
+        # card agent shown "delivered", none ever submitted). The question
+        # burst already spaces its keys by the same gap.
+        typed = ptyhost.send(handle, text, False)
+        if not (typed and typed.get("sent")):
+            return typed
+        await asyncio.sleep(PTY_ENTER_GAP_SECONDS)
+        entered = ptyhost.send(handle, "\r", False)
+        return entered if entered else typed
     if newline:
         return await vscode_reveal.send_text(pid, tty, text)
     return await vscode_reveal.send_text(pid, tty, text, newline=False)

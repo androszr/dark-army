@@ -2945,3 +2945,43 @@ def test_codex_may_move_on_to_its_next_batch_card(monkeypatch):
     assert len(sent) == 1 and "card_id" not in sent[0]
     names = [t["name"] for t in cs.tools_for_host(cs.HOST_CODEX)]
     assert "dark_army_next_card" in names
+
+
+@pytest.mark.asyncio
+async def test_a_session_in_a_card_folder_files_its_card_for_the_checkout(
+        tmp_path, monkeypatch):
+    """28 Sep 2026: eight cards filed by sessions working in
+    `<root>/.worktrees/card-…` carried that folder as their root, and after
+    the folder was released Refine refused each with "no open window for
+    that project". The card belongs to the checkout."""
+    from dark_army_daemon.board import BoardStore
+    daemon = _daemon()
+    store = BoardStore(tmp_path / "board.db")
+    store.connect()
+    daemon._board = store
+    root = tmp_path / "dark-army"
+    side = root / ".worktrees" / "card-746bc5e3"
+    side.mkdir(parents=True)
+    checkout = os.path.realpath(root)
+    try:
+        _attach(daemon, port=51000, pid=1028, session_id="side-run",
+                cwd=str(side))
+        # No window has the checkout open; the only live session is the one
+        # in the card folder. The real `_known_project_roots` must admit the
+        # checkout from that session's cwd.
+        from dark_army_daemon import workspace
+        monkeypatch.setattr(workspace, "windows", lambda: [])
+        daemon._agents_snapshot_cache = {"running": [{
+            "session_id": "side-run", "cwd": str(side), "project": "dark-army",
+        }]}
+        assert checkout in daemon._known_project_roots()
+        daemon._board_projects = lambda: []
+        reply = await daemon._handle_board_card_request({
+            "type": "board_card_request", "port": 51000,
+            "title": "A follow-up the run noticed",
+            "summary": "Filed from inside a card folder",
+        })
+        assert reply["ok"] is True, reply
+        assert store.cards()[0]["root"] == checkout
+    finally:
+        store.close()

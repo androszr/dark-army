@@ -1566,6 +1566,12 @@ class BoardVerbsMixin:
                 cwd = row.get("cwd") or ""
                 if cwd:
                     roots.add(dispatch.normalise_root(cwd))
+                    # A session in a card folder is plainly working in its
+                    # checkout too, and the checkout is what a card it files
+                    # names (`worktrees.checkout_root`).
+                    home = worktrees.checkout_root(cwd)
+                    if home != cwd:
+                        roots.add(dispatch.normalise_root(home))
         roots.discard("")
         # Intersected with the enrolment ledger, at the instant of dispatch:
         # this is the "an unenrolled project cannot make Dark Army open a terminal"
@@ -7841,6 +7847,13 @@ class BoardVerbsMixin:
                 project = ""
         if not project:
             root = dispatch.normalise_root(own_cwd) if own_cwd else ""
+            # A session working in a card folder (`<root>/.worktrees/card-…`)
+            # files for the main checkout, never for its own folder: that
+            # folder goes when the card is released, and every card naming
+            # it is then refused with "no open window for that project"
+            # (28 Sep 2026, eight cards). `_known_project_roots` admits the
+            # checkout of every live session's card folder.
+            root = dispatch.normalise_root(worktrees.checkout_root(root))
             # A session working *inside* a project — `dark-army/host` — has a
             # cwd that is not itself a known root, and the payload below would
             # drop it to `""` after the name fallback had already been skipped.

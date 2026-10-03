@@ -24,6 +24,25 @@ struct BoardVisible: Equatable {
         byColumn[column] ?? []
     }
 
+    /// How many tiles a long row draws before it offers the rest.
+    static let rowTileCap = 24
+
+    /// The part of a row's cards the board draws, and how many it holds
+    /// back. A row past `rowTileCap` draws its first `rowTileCap` — the top
+    /// of the column's order, which is the importance order — and says how
+    /// many more there are, so a 63-card Prep is not 63 tiles laid out,
+    /// measured and re-estimated on every scroll (28 Sep 2026). Done is never
+    /// held back: its heading, its archive and its bulk clear already speak
+    /// for a bounded preview. A search draws everything — a reveal is a
+    /// search, and a match held back is a match that is not there — and so
+    /// does a row the person opened in full.
+    static func shown(_ cards: [BoardCard], column: BoardColumn,
+                      expanded: Bool, searching: Bool) -> (cards: [BoardCard], held: Int) {
+        guard column != .done, !expanded, !searching,
+              cards.count > rowTileCap else { return (cards, 0) }
+        return (Array(cards.prefix(rowTileCap)), cards.count - rowTileCap)
+    }
+
     /// The number a row's heading says, or nil when it cannot yet be known.
     ///
     /// Prep, Backlog and In progress arrive whole on every frame, so their
@@ -50,18 +69,15 @@ struct BoardVisible: Equatable {
         out.narrowed = !state.projectFilter.isEmpty
             || !state.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         for column in BoardColumn.allCases {
-            // The selecting row draws its ticked cards first, so a batch
-            // being gathered sits together at the top of Prep or Backlog.
-            let ticked = state.selectingRow == column
-                ? state.rowSelection : []
+            // A tick never reorders the row. Ticked cards used to lead the
+            // selecting row, and every tick moved the card just clicked to
+            // the top of Prep — out from under the pointer, off the screen
+            // the person was reading (28 Sep 2026). The batch control's
+            // count says what is gathered; the tiles stay where they were.
             let cards = board.cards(in: column.rawValue)
                 .filter { state.showsProject($0.project) }
                 .filter { state.matches($0) }
-                .sorted { a, b in
-                    let ta = ticked.contains(a.id), tb = ticked.contains(b.id)
-                    if ta != tb { return ta }
-                    return cardOrder(a, b, column: column)
-                }
+                .sorted { a, b in cardOrder(a, b, column: column) }
             out.byColumn[column] = cards
             if !cards.isEmpty { out.anyVisible = true }
         }
@@ -106,8 +122,31 @@ struct BoardVisible: Equatable {
     /// by the rows that body builds, carries it instead. Never observed and
     /// never a source of truth: it holds exactly what `compute` returned for
     /// the redraw in progress.
+    ///
+    /// It also remembers what the pass was made from, so the up-to-nine
+    /// callers of one redraw (`body` and each `BoardRowRedraw`) pay for one
+    /// filter-and-sort, and a redraw that changed none of the pass's inputs
+    /// — a tick, an arm, a hover, a card window opening — pays for none.
     @MainActor
     final class Slot {
         var value = BoardVisible()
+        private var inputs: Inputs?
+
+        /// What `compute` reads, and nothing else.
+        struct Inputs: Equatable {
+            let board: Board
+            let projectFilter: Set<String>
+            let query: String
+        }
+
+        /// `compute`'s answer for this board and state, reusing the last one
+        /// when its inputs are unchanged.
+        func refresh(board: Board, state: BoardState) {
+            let now = Inputs(board: board, projectFilter: state.projectFilter,
+                             query: state.query)
+            guard now != inputs else { return }
+            inputs = now
+            value = BoardVisible.compute(board: board, state: state)
+        }
     }
 }

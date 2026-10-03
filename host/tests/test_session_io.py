@@ -65,11 +65,29 @@ def test_send_text_types_into_the_pty_when_owned(monkeypatch):
     async def boom(*a, **k):
         raise AssertionError("vscode was asked for a pty session")
     monkeypatch.setattr(vscode_reveal, "send_text", boom)
+    slept = []
+
+    async def nap(seconds):
+        slept.append(seconds)
+    monkeypatch.setattr(session_io.asyncio, "sleep", nap)
     result = asyncio.run(session_io.send_text(42, "", "hello"))
     assert result["sent"] is True and result["matchedBy"] == "pty"
-    assert typed == [("pty-1", "hello", True)]
+    # The words and the Enter are two writes with a pause between them: one
+    # burst of "hello\r" reads as a paste and is never submitted.
+    assert typed == [("pty-1", "hello", False), ("pty-1", "\r", False)]
+    assert slept == [session_io.PTY_ENTER_GAP_SECONDS]
     asyncio.run(session_io.send_text(42, "", "1", newline=False))
     assert typed[-1] == ("pty-1", "1", False)
+    assert len(slept) == 1, "a single keystroke needs no pause"
+
+
+def test_a_pty_that_takes_no_words_gets_no_enter(monkeypatch):
+    typed = []
+    monkeypatch.setattr(ptyhost, "owns", lambda pid: "pty-1")
+    monkeypatch.setattr(ptyhost, "send",
+                        lambda handle, text, newline=True: typed.append(text) and None)
+    assert asyncio.run(session_io.send_text(42, "", "hello")) is None
+    assert typed == ["hello"], "an Enter after unsent words would submit a stale line"
 
 
 def test_send_text_falls_through_with_the_callers_positional_shape(monkeypatch):

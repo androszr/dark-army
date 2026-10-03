@@ -452,9 +452,10 @@ final class PhoneInboxTests: XCTestCase {
             $0.target.key == "c:m"
         })
         open(hosted, snapshot: snap, sheets: router, transport: &transport)
-        if case .card(let card) = router.top?.subject {
-            XCTAssertEqual(card.id, "m")
-        } else { XCTFail("hosted-session card must still open the card sheet") }
+        if case .agent(let agent, let category) = router.top?.subject {
+            XCTAssertEqual(agent.sessionId, "host2")
+            XCTAssertEqual(category, .running)
+        } else { XCTFail("a card whose agent is live must open the agent sheet") }
 
         let ended = try XCTUnwrap(snap.decisionItems.first { $0.target.key == "c:e" })
         open(ended, snapshot: snap, sheets: router, transport: &transport)
@@ -462,13 +463,13 @@ final class PhoneInboxTests: XCTestCase {
         XCTAssertTrue(transport.actions.isEmpty)
 
         router.close()
-        open(hosted, snapshot: snap, sheets: router, transport: &transport)
+        open(ended, snapshot: snap, sheets: router, transport: &transport)
         XCTAssertEqual(router.stack.count, 1)
         let entry = try XCTUnwrap(router.topState)
-        entry.cardDraft(for: "m").draftTitle = "Unsaved"
-        open(hosted, snapshot: snap, sheets: router, transport: &transport)
+        entry.cardDraft(for: "e").draftTitle = "Unsaved"
+        open(ended, snapshot: snap, sheets: router, transport: &transport)
         XCTAssertEqual(router.stack.count, 1)
-        XCTAssertEqual(router.topState?.cardDraft(for: "m").draftTitle, "Unsaved")
+        XCTAssertEqual(router.topState?.cardDraft(for: "e").draftTitle, "Unsaved")
         XCTAssertTrue(transport.actions.isEmpty)
     }
 

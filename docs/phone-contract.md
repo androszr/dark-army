@@ -388,6 +388,9 @@ by itself, and a finished or abandoned row is never an entry whatever it
 still carries — there is no phone-side dwell. A permission whose session
 has no agent row is still one read-only item; a later matching row upgrades
 that same key. A card is never merged with the session that worked it.
+A press on a card entry opens that session's agent sheet while the session
+is still in the fleet (`PhoneInboxRoute.sheet`; the Mac's `PanelView.open`
+does the same with the agent's row), and the card sheet once it is gone.
 
 The tab badge and the top bar both read `Snapshot.needsYouCount`, which is
 the length of that list: every entry blocks somebody. "nobody needs you"

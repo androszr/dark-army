@@ -223,6 +223,17 @@ struct RowBatchControl: View {
                     .buttonStyle(.plain)
                     .clickable()
                     .accessibilityHint("Leaves select mode; nothing is sent")
+                    // On the buttons' own line, never a line of its own: the
+                    // heading is pinned above the tiles, and a line that left
+                    // at the second tick shortened it and slid every card
+                    // under it (28 Sep 2026).
+                    if !ready {
+                        Text("tick at least \(RowSelection.minimum) cards of one project")
+                            .font(Theme.mono(10))
+                            .foregroundStyle(Theme.faint)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 } else {
                     Button(action: onSelect) {
                         Self.label("SELECT", lit: true)
@@ -231,12 +242,6 @@ struct RowBatchControl: View {
                     .clickable()
                     .accessibilityHint(selectHint)
                 }
-            }
-            if selecting && !ready {
-                Text("tick at least \(RowSelection.minimum) cards of one project")
-                    .font(Theme.mono(10))
-                    .foregroundStyle(Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             if selecting && !refusal.isEmpty {
                 Text(refusal)

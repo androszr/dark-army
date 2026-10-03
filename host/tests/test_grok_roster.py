@@ -1619,3 +1619,47 @@ def test_read_new_lines_takes_a_finished_record_awaiting_its_newline(tmp_path):
     torn.write_bytes(b'{"type": "assis')
     text, offset = grok_roster._read_new_lines(torn, 0)
     assert text == "" and offset == 0
+
+
+def test_a_leader_handoff_does_not_end_a_running_grok_session(
+    tmp_path, monkeypatch,
+):
+    """Grok hands a starting session to its background `grok agent leader`:
+    the first process sends SessionEnd (reason=shutdown), the leader a
+    SessionStart (source=load) for the same id seconds later. The end put
+    the id on `_grok_ended`, nothing took it off, and the next roster pass
+    ended the revived row again — a running planning session shown under
+    Finished (3 Oct 2026)."""
+    import asyncio
+    import time
+    from dark_army_daemon.daemon import BobDaemon
+
+    tui = 84629
+    roster = tmp_path / "active.json"
+    roster.write_text(json.dumps([{
+        "session_id": "g-run", "pid": tui, "cwd": "/tmp/run",
+        "opened_at": "2026-10-03T06:49:12Z",
+    }]))
+    monkeypatch.setattr(grok_roster, "ACTIVE_SESSIONS_PATH", roster)
+    monkeypatch.setattr("dark_army_daemon.daemon._still_our_process",
+                        lambda pid, provider=None: pid == tui)
+    monkeypatch.setattr("dark_army_daemon.daemon._process_cwd",
+                        lambda pid: "/tmp/run")
+
+    d = BobDaemon()
+    msg = {"session_id": "g-run", "provider": "grok", "project": "run"}
+
+    async def replay():
+        await d._handle_message({**msg, "event": "session_start", "pid": 84855})
+        await d._handle_message({**msg, "event": "dismiss",
+                                 "hook": "SessionEnd", "pid": 84855})
+        assert "g-run" in d._grok_ended, "a real end still stamps the list"
+        await d._handle_message({**msg, "event": "session_start", "pid": 86955})
+
+    asyncio.run(replay())
+    assert "g-run" not in d._grok_ended
+    d._session_states["g-run"]["last_event"] = time.time()
+    d._refresh_grok_records()
+    assert "g-run" in d._grok_records, "the live tab must stay on the roster"
+    assert "g-run" in d._session_states
+    assert "g-run" not in d._finished

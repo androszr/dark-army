@@ -490,3 +490,20 @@ def test_a_present_folder_without_its_git_file_is_blocked(repo, tmp_path):
     entries = worktrees.parse_worktree_entries(
         _run(worktrees.argv_worktree_list(repo)).stdout.decode())
     assert worktrees.prune_decision(entries, os.path.isdir) == ([], [hollow])
+
+
+# --- a card folder is never a card's root ------------------------------------
+
+@pytest.mark.parametrize("path, expected", [
+    ("/p/app/.worktrees/card-746bc5e3", "/p/app"),
+    ("/p/app/.worktrees/card-746bc5e3/host", "/p/app"),
+    ("/p/app", "/p/app"),
+    ("/p/app/host", "/p/app/host"),
+    ("/p/app/.worktrees/card-", "/p/app/.worktrees/card-"),
+    ("/p/app/.worktrees/other", "/p/app/.worktrees/other"),
+    ("", ""),
+])
+def test_checkout_root_maps_a_card_folder_to_its_checkout(path, expected):
+    """The folder is gone once the card is released, so nothing is resolved:
+    the mapping is textual and works on a path that no longer exists."""
+    assert worktrees.checkout_root(path) == expected

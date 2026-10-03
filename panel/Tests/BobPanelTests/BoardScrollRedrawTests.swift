@@ -150,6 +150,33 @@ final class BoardScrollRedrawTests: XCTestCase {
         #endif
     }
 
+    /// Arming a tile's START redraws that tile. The tile observes nothing
+    /// (`BoardTileFacts`), so its row has to recompute its facts and hand
+    /// them in; a row that does not leaves "START" drawn, and the second
+    /// press — read from the stale face — only arms again (2 Oct 2026:
+    /// "START and the rest do nothing in the Backlog").
+    func testArmingStartRedrawsThatTile() throws {
+        let (_, state, window, host) = hostedBoard()
+        defer { window.close() }
+        settle(host, 0.6)
+        #if DEBUG
+        BoardCardView.bodyEvaluations = 0
+        BoardCardView.armedDrawn = []
+        #endif
+        state.arm(String(format: "%032x", 1))
+        settle(host)
+        #if DEBUG
+        XCTAssertGreaterThan(BoardCardView.bodyEvaluations, 0, "arming redrew no tile")
+        XCTAssertEqual(BoardCardView.armedDrawn, [String(format: "%032x", 1)],
+                       "the armed tile must draw its armed face")
+        #endif
+        state.disarm()
+        settle(host)
+        #if DEBUG
+        XCTAssertEqual(BoardCardView.armedDrawn, [], "disarming must redraw the face")
+        #endif
+    }
+
     /// An agents-only frame mid-scroll redraws no tile: the board observes
     /// `BoardFeed`, which that frame does not reach, and no tile observes
     /// the client.

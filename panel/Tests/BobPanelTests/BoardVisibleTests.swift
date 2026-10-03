@@ -117,18 +117,61 @@ final class BoardVisibleTests: XCTestCase {
         XCTAssertEqual(folded.cards(.done).map(\.id), ["d2", "d1"])
     }
 
-    /// The selecting row draws its ticked cards first, in the column's own
-    /// order among themselves; another row's order is untouched.
-    func testTickedCardsLeadTheSelectingRow() {
+    /// A tick never reorders the row: the card just clicked stays under the
+    /// pointer. Ticked cards used to lead the selecting row, which moved the
+    /// card being read off the screen on every tick (28 Sep 2026).
+    func testTickingNeverReordersTheSelectingRow() {
         let state = openState()
         state.enterRowSelection(.backlog)
         state.rowSelection = ["b3", "b2"]
         let visible = BoardVisible.compute(board: board, state: state)
-        XCTAssertEqual(visible.cards(.backlog).map(\.id), ["b2", "b3", "b1"])
-        XCTAssertEqual(visible.cards(.done).map(\.id), ["d2", "d1"])
+        XCTAssertEqual(visible.cards(.backlog).map(\.id), ["b1", "b2", "b3"])
         state.exitRowSelection()
         let plain = BoardVisible.compute(board: board, state: state)
         XCTAssertEqual(plain.cards(.backlog).map(\.id), ["b1", "b2", "b3"])
+    }
+
+    /// The slot recomputes only when the board, the project filter or the
+    /// query changed — a tick, an arm or a hover reuses the last pass.
+    func testTheSlotReusesThePassUntilItsInputsChange() {
+        let state = openState()
+        let slot = BoardVisible.Slot()
+        slot.refresh(board: board, state: state)
+        XCTAssertEqual(slot.value.cards(.backlog).count, 3)
+        slot.value = BoardVisible()                     // a sentinel
+        state.enterRowSelection(.backlog)
+        state.rowSelection = ["b1"]
+        state.armed = "b2"
+        slot.refresh(board: board, state: state)
+        XCTAssertFalse(slot.value.anyVisible, "nothing the pass reads changed")
+        state.query = "Wire"
+        slot.refresh(board: board, state: state)
+        XCTAssertEqual(slot.value.cards(.inProgress).map(\.id), ["i1"])
+        var moved = board
+        moved.cards.removeAll { $0.id == "i1" }
+        slot.refresh(board: moved, state: state)
+        XCTAssertFalse(slot.value.anyVisible, "a new board is a new pass")
+    }
+
+    /// A long row draws its first `rowTileCap` cards and says how many it
+    /// holds back; Done, a search and an opened row draw everything.
+    func testALongRowIsHeldBackUntilOpenedOrSearched() {
+        let cap = BoardVisible.rowTileCap
+        let many = (0..<(cap + 5)).map { card("c\($0)", .prep) }
+        let short = BoardVisible.shown(many, column: .prep, expanded: false, searching: false)
+        XCTAssertEqual(short.cards.map(\.id), many.prefix(cap).map(\.id))
+        XCTAssertEqual(short.held, 5)
+        for (column, expanded, searching) in [(BoardColumn.prep, true, false),
+                                              (.prep, false, true),
+                                              (.done, false, false)] {
+            let all = BoardVisible.shown(many, column: column,
+                                         expanded: expanded, searching: searching)
+            XCTAssertEqual(all.cards.count, many.count)
+            XCTAssertEqual(all.held, 0)
+        }
+        let few = Array(many.prefix(cap))
+        XCTAssertEqual(BoardVisible.shown(few, column: .backlog, expanded: false,
+                                          searching: false).held, 0)
     }
 
     /// The heading that read 47 on a project holding 3: Done's heading was

@@ -184,7 +184,7 @@ struct BoardView: View {
     /// a row redrawn on its own reads the current filter, never the pass
     /// of whichever body last ran.
     private func refreshVisible() {
-        visibleSlot.value = BoardVisible.compute(board: board, state: state)
+        visibleSlot.refresh(board: board, state: state)
     }
 
     var body: some View {
@@ -818,11 +818,14 @@ struct BoardView: View {
         let selecting = state.selectingRow == column
         if RowSelection.verb(column, count: 0).isEmpty {
             EmptyView()
-        } else if selecting || (state.selectingRow == nil
-                                && chrome.dispatchEnabled
+        } else if selecting || (chrome.dispatchEnabled
                                 && RowSelection.offersSelect(
                                     column, cards: visible.cards(column),
                                     chrome: chrome)) {
+            // Another row's SELECT stays drawn while one row selects: taking
+            // it away shortened that heading and moved every card below it
+            // (28 Sep 2026). Pressing it moves select mode to that row, which
+            // `enterRowSelection` already does cleanly.
             RowBatchControl(
                 column: column,
                 count: state.rowSelection.count,
@@ -919,21 +922,40 @@ struct BoardView: View {
     /// beside the last tile on a half-filled line included — lands on
     /// `.column`.
     private func rowTiles(_ column: BoardColumn) -> some View {
-        let cards = visible.cards(column)
+        let all = visible.cards(column)
+        let (cards, held) = BoardVisible.shown(
+            all, column: column, expanded: state.expandedRows.contains(column),
+            searching: !state.query.isEmpty)
+        // With cards held back, the row's trailing gap drops before the first
+        // of them — where the drop visibly lands — never after the last card
+        // of the whole column, which is off the screen.
+        let tailBefore = held > 0 ? all[cards.count].id : ""
         let targeted = state.dropTarget?.row == column
         return VStack(alignment: .leading, spacing: 0) {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: PanelMetrics.boardTileMin,
                                                    maximum: PanelMetrics.boardColumn),
                                          spacing: 12, alignment: .top)],
                       alignment: .leading, spacing: 8) {
-                ForEach(cards) { card in
+                // The facts ride in the data, never only in the closure:
+                // the grid skips content whose data is unchanged
+                // (`BoardTileItem`).
+                ForEach(cards.map { card in
+                    BoardTileItem(card: card,
+                                  facts: BoardTileFacts(card: card, state: state,
+                                                        chrome: feed.chrome),
+                                  chrome: feed.chrome)
+                }) { item in
+                    let card = item.card
                     HStack(alignment: .top, spacing: 0) {
                         gapView(column, beforeId: card.id, axis: .vertical)
-                        BoardCardView(client: client, state: state, card: card,
-                                      chrome: feed.chrome,
+                        BoardCardView(client: client, state: state,
+                                      facts: item.facts,
+                                      card: card,
+                                      chrome: item.chrome,
                                       agent: agent(for: card),
                                       authorAgent: authorAgent(for: card),
                                       refinerAgent: refinerAgent(for: card))
+                            .equatable()
                             // The payload is the card id, not the card: a
                             // drop is resolved against the *current*
                             // snapshot on the way in, so a card that moved
@@ -966,7 +988,22 @@ struct BoardView: View {
                     }
                 }
             }
-            gapView(column, beforeId: "", axis: .horizontal)
+            gapView(column, beforeId: tailBefore, axis: .horizontal)
+            if held > 0 {
+                Button {
+                    state.expandedRows.insert(column)
+                } label: {
+                    Text("show all \(all.count) — \(held) more")
+                        .font(Theme.mono(10, weight: .semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(Theme.phosphor)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .clickable()
+                .accessibilityLabel("Show all \(all.count) cards in \(column.title)")
+            }
             Rectangle().fill(Theme.hair).frame(height: 1)
         }
         .padding(.horizontal, 12)

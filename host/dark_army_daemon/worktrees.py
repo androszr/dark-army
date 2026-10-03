@@ -170,6 +170,24 @@ def worktree_dir(root: str, card_id) -> str:
                         f"{FOLDER_PREFIX}{short_id(card_id)}")
 
 
+def checkout_root(path: str) -> str:
+    """The main checkout that owns a card folder: `<root>` for
+    `<root>/.worktrees/card-<id8>[/…]`, else `path` unchanged.
+
+    A card's `root` is the checkout, never a card folder (`worktree_dir`'s
+    rule). An agent working in a card folder files follow-up cards from its
+    own cwd, and a card that names the card folder is refused once the
+    folder is released ("no open window for that project"). The filing path
+    and the board's open-time repair both map through here. Textual, on
+    purpose: the folder may be gone already, so nothing is resolved."""
+    text = str(path or "")
+    marker = os.sep + WORKTREES_DIR + os.sep + FOLDER_PREFIX
+    at = text.find(marker)
+    if at <= 0 or len(text) == at + len(marker):
+        return text
+    return text[:at]
+
+
 def setup_log_path(root: str, card_id) -> str:
     """`<root>/.worktrees/card-<id8>.setup.log` — beside the worktree, inside
     the excluded folder, so it is never an untracked file anywhere."""

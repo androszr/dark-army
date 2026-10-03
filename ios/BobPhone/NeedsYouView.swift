@@ -460,6 +460,16 @@ enum PhoneInboxRoute {
             else { return nil }
             return .agent(agent, category)
         case .card(let id):
+            // A card whose assistant is still in the fleet opens that agent —
+            // its Main / Conversation / Details tabs, with OPEN CARD one press
+            // away — because the entry is about what the agent did (3 Oct
+            // 2026: "tapping Needs you should lead to the agent view with
+            // tabs"). The card sheet is the fallback once the agent is gone.
+            if !item.sessionId.isEmpty,
+               let (agent, category) = PhoneInbox.uniqueAgent(
+                   session: item.sessionId, agents: snapshot.agents) {
+                return .agent(agent, category)
+            }
             guard let card = snapshot.board.cards.first(where: { $0.id == id })
             else { return nil }
             return .card(card)

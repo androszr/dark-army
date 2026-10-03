@@ -334,6 +334,10 @@ final class BoardState: ObservableObject {
     /// (`RowSelection`), so a second select mode would be a second press
     /// fighting the first for the same tick boxes.
     @Published var selectingRow: BoardColumn? = nil
+    /// Rows the person opened past `BoardVisible.rowTileCap` with
+    /// "show all". View state for this window only: a fresh panel starts
+    /// every long row short again.
+    @Published var expandedRows: Set<BoardColumn> = []
     /// The cards ticked in that row, by id. Pruned against every snapshot, so
     /// a card that stops being tickable — refined by somebody else, moved,
     /// deleted — falls out of the batch by itself.
