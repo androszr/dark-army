@@ -344,9 +344,10 @@ real columns and to what the prompt builders send.
   `check_same_thread=False` behind a `threading.Lock`, WAL capped at
   `WAL_SIZE_LIMIT_BYTES` (8 MiB, `journal_size_limit`, so the coalesce
   `VACUUM` leaves no 177 MB `-wal` behind), `busy_timeout=5000`, an idempotent `_SCHEMA`, `_ADDED_COLUMNS` and a
-  forward-only `SCHEMA_VERSION` (31; the retired `initiatives` columns
+  forward-only `SCHEMA_VERSION` (33; the retired `initiatives` columns
   are emptied, never dropped — **there is no folder concept on the board
-  now**). Four columns:
+  now**; v33 adds the action journal's three tables,
+  `docs/action-journal.md`). Four columns:
   `prep` / `backlog` / `in_progress` / `done` (the SQL column is
   `column_name`). **Forward compatibility is the standing rule**: reads are
   `SELECT *` into a dict that ignores unknown keys, writes never drop a

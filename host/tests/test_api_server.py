@@ -235,6 +235,16 @@ async def _noop(_value=None):
     return None
 
 
+def _recorded_stop(answer, called=None):
+    """A stand-in for `stop_session_recorded`, the awaited verb the handler
+    now calls (`docs/action-journal.md`)."""
+    async def stop(sid):
+        if called is not None:
+            called.append(sid)
+        return answer
+    return stop
+
+
 def test_codex_action_routing_without_a_socket():
     """Hermetic contract for sandboxes that deny even loopback bind."""
     daemon = BobDaemon()
@@ -301,7 +311,7 @@ async def test_stop_session_answers_the_outcome(server):
     """Synchronous for the same reason as delete: signalled or refused, and the
     row alone cannot tell those apart."""
     srv, daemon = server
-    daemon.stop_session = lambda sid: (True, "stopping")
+    daemon.stop_session_recorded = _recorded_stop((True, "stopping"))
 
     status, body = await fetch("/api/action",
                                b'{"action":"stop_session","session_id":"z"}',
@@ -313,8 +323,8 @@ async def test_stop_session_answers_the_outcome(server):
 @pytest.mark.asyncio
 async def test_a_refused_stop_is_409_with_the_reason(server):
     srv, daemon = server
-    daemon.stop_session = lambda sid: (False, "PID 4242 is no longer a Claude "
-                                              "session")
+    daemon.stop_session_recorded = _recorded_stop(
+        (False, "PID 4242 is no longer a Claude session"))
     status, body = await fetch("/api/action",
                                b'{"action":"stop_session","session_id":"x"}',
                                {"X-Bob-Token": srv.token})
@@ -403,7 +413,7 @@ async def test_stop_session_needs_the_token(server):
     reach localhost must not be able to reach this."""
     srv, daemon = server
     called = []
-    daemon.stop_session = lambda sid: (called.append(sid), (True, "stopping"))[1]
+    daemon.stop_session_recorded = _recorded_stop((True, "stopping"), called)
 
     status, _ = await fetch("/api/action",
                             b'{"action":"stop_session","session_id":"z"}')
@@ -4420,3 +4430,11 @@ async def test_the_phones_sealed_state_carries_the_dependency_links_whole(
             b["id"], c["id"]]
         assert cards[b["id"]]["dependents_line"] == 'Unblocks: "a"'
         assert json.loads(body)["board"]["dependencies_supported"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_phone_stop_refuses_a_non_string_session_id(server):
+    srv, daemon = server
+    daemon.stop_session_recorded = _recorded_stop((True, "stopping"))
+    status, _ctype, body = await srv._lan_run("stop_session", {"session_id": 5})
+    assert status == 400

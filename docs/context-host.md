@@ -60,6 +60,9 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   *The handler*. `NOTIFY_SCRIPT` is a string in `dark_army_menubar/hooks.py`,
   written to `~/.dark-army/` on install; edit the string.
 
+- **Action journal** — intents logged, recovered on launch
+  (`docs/action-journal.md`).
+
 - **dark_army_daemon/** — Async Python daemon (asyncio): session state
   tracking with staleness eviction and subagent lifecycle tracking. The board
   verbs are `daemon_board.BoardVerbsMixin`, a pure move that `BobDaemon`

@@ -466,6 +466,12 @@ emptied by leaving Done through `update()`'s documented bypass) and
 leaving Done and age by `review_tip`). None is in `_WRITABLE`,
 `ApiServer._BOARD_FIELDS` or `REVISED_COLUMNS`.
 
+The `add` and `record` steps of a Start's preparation are journalled
+(`docs/action-journal.md`). A restart in the middle of either writes
+`RESTART_DURING_PREPARE_NOTE` on the card, dequeues a queued press, records
+the folder when it exists and leaves it for the next Start to reuse; recovery
+runs no git command and does not start the card.
+
 A card's `root` is never a card folder: `worktrees.checkout_root`,
 `_repair_worktree_roots`.
 

@@ -4201,11 +4201,31 @@ class BoardVerbsMixin:
         # `cwd` only where it differs from the root, so a start in the main
         # checkout is the call the spawners always received.
         where = {"cwd": cwd} if cwd and cwd != card["root"] else {}
-        spawned, spawn_detail, shell_pid = await spawner(
-            card["root"], argv, name,
-            stamp=origin.stamp("card-start", card["id"], next_stage),
-            **where)
+        # The intent is written, and committed, before the terminal opens; a
+        # restart between here and the update below finds it with no result
+        # and never opens a second terminal (`docs/action-journal.md`).
+        journal_action = await self._journal_begin("card_start", card["id"])
+        spawn_intent = await self._journal_intent(
+            journal_action, "card_start", card["id"], "spawn", {
+                "card_id": card["id"], "root": card["root"],
+                "cwd": cwd or "", "tool": card["tool"], "use_own": bool(use_own),
+                "queued_replay": bool(queued_replay),
+                "pre_start_column": ("backlog" if card.get("plan_path")
+                                     else "prep"),
+                "batch": batch is not None})
+        try:
+            spawned, spawn_detail, shell_pid = await spawner(
+                card["root"], argv, name,
+                stamp=origin.stamp("card-start", card["id"], next_stage),
+                **where)
+        except Exception:
+            # The spawner raised rather than refused: no terminal opened in
+            # this process, so say so, and the next launch does not put a
+            # restart note on a card no restart interrupted.
+            await self._journal_result(spawn_intent, "refused", "raised")
+            raise
         if not spawned:
+            await self._journal_result(spawn_intent, "refused", spawn_detail)
             if spawn_detail == dispatch.WORKTREE_WINDOW_REFUSAL:
                 # Not transient: the window stays too old until somebody
                 # reloads it, so a queued replay is dequeued with the words
@@ -4219,6 +4239,10 @@ class BoardVerbsMixin:
         getattr(self, "_own_terminal_dispatch", set()).discard(card["id"])
 
         now = time.time()
+        await self._journal_result(spawn_intent, "spawned", "", {
+            "shell_pid": int(shell_pid or 0) if not use_own else 0,
+            "pty_pid": int(shell_pid or 0) if use_own else 0,
+            "now": now, "use_own": bool(use_own)})
         self._dispatch_attempts[card["id"]] = now
         self._dispatch_baseline[card["id"]] = baseline
         self._forget_worktree_state(str(card["id"]))
@@ -4268,8 +4292,14 @@ class BoardVerbsMixin:
             self._last_batch_token = secrets.token_hex(8)
             fields["batch_id"] = self._last_batch_token
             fields["batch_rank"] = "1"
+        record_intent = await self._journal_intent(
+            journal_action, "card_start", card["id"], "record", {
+                "card_id": card["id"], "now": now, "cwd": cwd or "",
+                "root": str(card.get("root") or ""),
+                "batch": batch is not None})
         await self._board_call("update", card["id"], fields, bump=False)
         await self._publish_board()
+        await self._journal_result(record_intent, "completed")
         # Where this project stood the moment work started, so the record
         # written at the end has something to measure against. Scheduled and
         # **never awaited**: it is one `git rev-parse` and a slow or missing
@@ -9505,7 +9535,14 @@ class BoardVerbsMixin:
         cid = str(head.get("id") or "")
         try:
             path, branch, error = await self._prepare_worktree(head, root)
+            prepare_action = self.__dict__.get("_prepare_journal", {}).pop(cid, "")
             if error:
+                # The folder step ended in words, not a crash: close the
+                # action so the next launch does not read it as a lost press.
+                await self._journal_result(
+                    await self._journal_intent(
+                        prepare_action, "worktree_prepare", cid, "record",
+                        {"card_id": cid}), "skipped", str(error)[:200])
                 logger.info("card %s: worktree not ready: %s", cid[:8], error)
                 if await self._board_call("get", cid) is None:
                     # Deleted while this ran: nobody will record or release
@@ -9516,8 +9553,15 @@ class BoardVerbsMixin:
                     return
                 await self._fail_prepare(cid, error, replay)
                 return
+            record_intent = await self._journal_intent(
+                prepare_action, "worktree_prepare", cid, "record", {
+                    "card_id": cid, "root": root, "path": path,
+                    "branch": branch,
+                    "queued_replay": bool(replay.get("queued_replay"))})
             recorded, why = await self._board_call(
                 "record_worktree", cid, path, branch) or (None, "")
+            await self._journal_result(
+                record_intent, "gone" if recorded is None else "completed")
             if recorded is None:
                 logger.info("card %s: worktree ready but not recorded (%s)",
                             cid[:8], why)
@@ -9560,6 +9604,7 @@ class BoardVerbsMixin:
                              cid[:8], exc_info=True)
         finally:
             self._pop_preparing(cid, token)
+            self.__dict__.get("_prepare_journal", {}).pop(cid, None)
             try:
                 await self._publish_board()
             except Exception:
@@ -9744,6 +9789,26 @@ class BoardVerbsMixin:
         registered = os.path.realpath(path) in listed
         present = registered and await loop.run_in_executor(
             None, os.path.isdir, path)
+        # Journalled (`docs/action-journal.md`): every preparation leaves the
+        # same shape, an `add` intent and its result, `reused` when the folder
+        # was already there. Only a Start's own preparation carries `start`,
+        # so a merge or review that makes the folder again leaves no note on
+        # the card after a restart.
+        starting = cid in (getattr(self, "_worktree_preparing", None) or {})
+        # Only a Start's own preparation is journalled: a merge, Fix or Review
+        # that remakes the folder has no `record` step to close the action.
+        journal_action = (await self._journal_begin("worktree_prepare", cid)
+                          if starting else "")
+        if starting and journal_action:
+            self.__dict__.setdefault("_prepare_journal", {})[cid] = journal_action
+        add_payload = {
+            "card_id": cid, "root": root, "path": path, "branch": branch,
+            "start": starting,
+            "queued_replay": str(head.get("queue_state") or "") == "queued"}
+        if present:
+            reused = await self._journal_intent(
+                journal_action, "worktree_prepare", cid, "add", add_payload)
+            await self._journal_result(reused, "reused")
         if not present:
             if registered:
                 # Registered but gone from disk (removed by hand): git would
@@ -9771,10 +9836,15 @@ class BoardVerbsMixin:
             base = await self._worktree_base(root)
             existing, _o, _w = await self._run_git(
                 worktrees.argv_branch_exists(root, branch), root)
+            add_intent = await self._journal_intent(
+                journal_action, "worktree_prepare", cid, "add", add_payload)
             added, _o, why = await self._run_git(
                 worktrees.argv_worktree_add(root, path, branch, base,
                                             existing=existing),
                 root, timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
+            await self._journal_result(
+                add_intent, "added" if added else "refused",
+                "" if added else str(why or ""))
             if not added:
                 logger.info("card %s: git worktree add refused in %s (%s)",
                             cid[:8], root, why)

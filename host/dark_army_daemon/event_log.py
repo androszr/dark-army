@@ -86,6 +86,9 @@ KINDS = (
     "card_merged",
     "card_merge_blocked",
     "card_review_verdict",
+    # A step Dark Army was in the middle of when it was restarted and will
+    # not repeat (`docs/action-journal.md`). Words only.
+    "action_interrupted",
 )
 
 #: Every key an entry may carry. The phone's `LogEntry` decodes exactly these
@@ -252,6 +255,13 @@ def sentence(kind: str, **fields) -> str:
         verdict = str(merged.get("verdict") or "").upper()
         word = {"SHIP": "ship it", "STOP": "stop"}.get(verdict, "no verdict")
         return f"The review of {title or 'a card'} says {word}"
+    if kind == "action_interrupted":
+        from .action_journal import INTERRUPTED_WORDS
+        words = INTERRUPTED_WORDS.get(str(merged.get("kind") or ""), "an action")
+        who = str(merged.get("nickname") or "").strip()
+        if not who:
+            return f"{words[:1].upper()}{words[1:]} was interrupted by a Dark Army restart"
+        return f"{who}: {words} interrupted by a Dark Army restart"
     if kind == "access_burst":
         # `door` is the label (`access_log.door_label`, "Wi-Fi") and the
         # sentence supplies the noun; `peer` is an address or a paired
