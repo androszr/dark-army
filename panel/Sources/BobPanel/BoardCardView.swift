@@ -46,6 +46,8 @@ struct BoardCardView: View {
     private var isArmedHere: Bool { facts.armedHere }
     private var isDeleteArmed: Bool { facts.deleteArmed }
     private var isDoneArmed: Bool { facts.doneArmed }
+    private var isMergeArmed: Bool { facts.mergeArmed }
+    private var isFixArmed: Bool { facts.fixArmed }
     private var isStarting: Bool { facts.starting }
     /// Confirmed Delete, not yet gone from a snapshot. Same rule as
     /// `RowActions.stopping`: the press has to change the screen immediately or
@@ -104,6 +106,35 @@ struct BoardCardView: View {
     private var canPromote: Bool {
         card.isScout && !card.reportPath.isEmpty
             && card.column == BoardColumn.done.rawValue
+    }
+
+    /// Review and merge on a Done card (`CardMerge`, one rule on the Mac and
+    /// the phone). The daemon re-checks the hand-check, the folder and the
+    /// main checkout at the press; these only hide a control that cannot
+    /// succeed.
+    private var mergeOffered: Bool {
+        CardMerge.offered(column: card.column, branch: card.worktreeBranch,
+                          mergeState: card.mergeState,
+                          manualDue: card.needsManualCheck,
+                          daemonOffers: card.mergeOffered)
+    }
+    private var fixOffered: Bool {
+        CardMerge.fixOffered(mergeState: card.mergeState,
+                             daemonOffers: card.mergeOffered)
+    }
+    private var reviewOffered: Bool {
+        CardMerge.reviewOffered(column: card.column, branch: card.worktreeBranch,
+                                reviewRunning: card.reviewRunning,
+                                manualDue: card.needsManualCheck,
+                                daemonOffers: card.mergeOffered)
+    }
+    private var isMerging: Bool {
+        card.column == BoardColumn.done.rawValue && card.mergeState == "merging"
+    }
+    /// The merge line is amber where the person is wanted ("Merge needs
+    /// you"), dim otherwise.
+    private var mergeNeedsYou: Bool {
+        ["blocked", "conflict", "checks_failed"].contains(card.mergeState)
     }
 
     /// Whether a confirmed Start would skip the plan gate — the armed label
@@ -414,6 +445,23 @@ struct BoardCardView: View {
                 // The daemon's own words about the folder — preparing, or
                 // kept because it holds unsaved work. Verbatim.
                 Text(card.worktreeNote)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !card.mergeLine.isEmpty {
+                // What the last MERGE press came to, the daemon's words
+                // verbatim: dim while it works or once it landed, amber
+                // where it needs you.
+                Text(card.mergeLine)
+                    .font(.system(size: 10))
+                    .foregroundStyle(mergeNeedsYou ? Theme.amber : Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let verdict = CardMerge.verdictLine(
+                verdict: card.reviewVerdict, running: card.reviewRunning,
+                current: true) {
+                Text(verdict)
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.dim)
                     .fixedSize(horizontal: false, vertical: true)
@@ -889,8 +937,74 @@ struct BoardCardView: View {
     private var actions: some View {
         if (BoardColumn(rawValue: card.column) ?? .backlog) == .prep {
             prepActions
+        } else if mergeOffered || fixOffered || reviewOffered || isMerging {
+            // A Done card with a branch to land: the merge verbs take a
+            // line of their own beneath the usual ones, or the row wraps
+            // mid-word (`prepActions`' reason).
+            VStack(alignment: .leading, spacing: 6) {
+                otherActions
+                mergeActions
+            }
         } else {
             otherActions
+        }
+    }
+
+    /// MERGE (armed, then confirmed), Fix (armed, then confirmed) and Run
+    /// review (one press), all dim words: `CardActionWeight` names no verb
+    /// for Done, and an absent primary promotes nothing.
+    @ViewBuilder
+    private var mergeActions: some View {
+        HStack(spacing: 8) {
+            if mergeOffered {
+                dimVerb(CardMerge.mergeLabel(mergeState: card.mergeState,
+                                             armed: isMergeArmed),
+                        armed: isMergeArmed) {
+                    if isMergeArmed {
+                        state.disarm()
+                        merge()
+                    } else {
+                        state.armMerge(card.id)
+                    }
+                }
+            } else if isMerging {
+                Text(CardMerge.mergeLabel(mergeState: "merging", armed: false))
+                    .foregroundStyle(Theme.dim)
+            }
+            if fixOffered {
+                dimVerb(CardMerge.fixLabel(armed: isFixArmed), armed: isFixArmed) {
+                    if isFixArmed {
+                        state.disarm()
+                        fixMerge()
+                    } else {
+                        state.armFix(card.id)
+                    }
+                }
+            }
+            if reviewOffered {
+                dimVerb("Review", armed: false) {
+                    state.disarm()
+                    runReview()
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .font(Theme.mono(10))
+    }
+
+    /// A dim word that is really a button, `weighted`'s dim branch for a
+    /// verb `CardActionWeight` does not name. Not built on `small`, which
+    /// disarms before it acts.
+    private func dimVerb(_ title: String, armed: Bool,
+                         _ action: @escaping () -> Void) -> some View {
+        DimVerbFocus { hovered, focused in
+            Button(title, action: action)
+                .buttonStyle(.plain)
+                .controlSize(.small)
+                .foregroundStyle(armed ? Color.orange : Theme.dim)
+                .underline(hovered || focused,
+                           color: armed ? Color.orange : Theme.dim)
+                .clickable()
         }
     }
 
@@ -1281,6 +1395,40 @@ struct BoardCardView: View {
         state.refusals[card.id] = ""
         Task { @MainActor in
             let result = await client.boardPromote(card.id)
+            if !result.ok { state.refusals[card.id] = result.detail }
+            await client.refresh()
+        }
+    }
+
+    /// MERGE, confirmed: land the card's branch on the local main line. The
+    /// daemon answers at once and works in the background, so a refusal in
+    /// words is the only thing that comes back here; the progress and the
+    /// result ride the card's `merge_line`.
+    private func merge() {
+        state.refusals[card.id] = ""
+        Task { @MainActor in
+            let result = await client.boardMerge(card.id)
+            if !result.ok { state.refusals[card.id] = result.detail }
+            await client.refresh()
+        }
+    }
+
+    /// Fix, confirmed: start the card's assistant in the card's folder.
+    private func fixMerge() {
+        state.refusals[card.id] = ""
+        Task { @MainActor in
+            let result = await client.boardMergeFix(card.id)
+            if !result.ok { state.refusals[card.id] = result.detail }
+            await client.refresh()
+        }
+    }
+
+    /// Run review. Unarmed, `promote`'s shape: it changes no files, and a
+    /// second press is refused in words while one is running.
+    private func runReview() {
+        state.refusals[card.id] = ""
+        Task { @MainActor in
+            let result = await client.boardReviewRun(card.id)
             if !result.ok { state.refusals[card.id] = result.detail }
             await client.refresh()
         }

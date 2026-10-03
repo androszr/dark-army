@@ -39,6 +39,23 @@ final class BoardTileFactsTests: XCTestCase {
         XCTAssertEqual(facts.refusal, "no")
     }
 
+    /// MERGE and Fix arm on the state and reach the face only through the
+    /// facts; a tile that held a stale copy would never show the confirm.
+    func testArmingMergeOrFixReachesOnlyThatTile() {
+        let state = openState()
+        let chrome = BoardChrome(Board())
+        let a = card("a", .done), b = card("b", .done)
+        let before = BoardTileFacts(card: b, state: state, chrome: chrome)
+        state.armMerge("a")
+        XCTAssertTrue(BoardTileFacts(card: a, state: state, chrome: chrome).mergeArmed)
+        XCTAssertEqual(BoardTileFacts(card: b, state: state, chrome: chrome), before)
+        state.armFix("a")
+        let fixed = BoardTileFacts(card: a, state: state, chrome: chrome)
+        XCTAssertTrue(fixed.fixArmed)
+        XCTAssertFalse(fixed.mergeArmed, "arming Fix disarms MERGE")
+        XCTAssertEqual(BoardTileFacts(card: b, state: state, chrome: chrome), before)
+    }
+
     func testSelectModeReachesOnlyItsOwnRow() {
         let state = openState()
         let chrome = BoardChrome(Board())

@@ -390,3 +390,21 @@ final class CardSectionsTests: XCTestCase {
         XCTAssertEqual(CardSections.statusLine, "Finished — waiting on your check")
     }
 }
+
+/// CHANGES (review and merge, `plans/2026-10-03-review-and-merge-done-card.md`):
+/// a folded section in the Done and ended orders, behind MORE, never a lead
+/// and never pinned, so the git read it opens is a press and not a default.
+final class CardSectionsChangesTests: XCTestCase {
+    func testChangesIsFoldedBehindMoreInDoneAndEnded() {
+        for stage in [CardSections.Stage.done, .ended] {
+            let order = CardSections.order(for: stage)
+            XCTAssertEqual(order.filter { $0 == .changes }.count, 1, "\(stage)")
+            XCTAssertGreaterThan(order.firstIndex(of: .changes)!,
+                                 order.firstIndex(of: .more)!, "\(stage)")
+            XCTAssertFalse(CardSections.leads(for: stage).contains(.changes))
+            XCTAssertFalse(CardSections.pinned.contains(.changes))
+        }
+        XCTAssertEqual(CardSections.rowText(.changes, facts: CardSections.Facts()),
+                       "CHANGES")
+    }
+}

@@ -350,3 +350,10 @@ def test_tty_path_of_this_process_or_none():
     the contract: "" rather than a guess."""
     out = tt.tty_path_for(os.getpid())
     assert out == "" or out.startswith("/dev/")
+
+
+def test_a_review_and_a_merge_fix_tab_keep_their_verbs():
+    for by, prefix in (("card-review", "review: "), ("card-merge-fix", "fix: ")):
+        assert tt.ORIGIN_PREFIX[by] == prefix
+        row = {"nickname": NAMES[0], "name": "Add the thing", "origin_by": by}
+        assert tt.title_for(row).endswith(f"{prefix}Add the thing")

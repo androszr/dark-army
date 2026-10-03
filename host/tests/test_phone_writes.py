@@ -23,6 +23,7 @@ ABSENT = (
 
 #: Every `Arm.Slot`. `manualClear` and `review` are the card screen's Mark
 #: checked / Mark reviewed — their own slots so Start cannot re-aim one.
+#: `merge` and `mergeFix` are the Done card's MERGE and Fix (3 Oct 2026).
 ARM_SLOTS = (
     "start",
     "startHere",
@@ -36,6 +37,8 @@ ARM_SLOTS = (
     "lowPriority",
     "clearDone",
     "manualClear",
+    "merge",
+    "mergeFix",
     # Passed / Failed on a card flagged with a check file (25 Sep 2026, the
     # manual check folder plan): its own slot, so a Mark checked arm can
     # never confirm an outcome.

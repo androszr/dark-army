@@ -17,6 +17,10 @@ struct BoardTileFacts: Equatable {
     var armedHere = false
     var deleteArmed = false
     var doneArmed = false
+    /// MERGE or Fix pressed once and awaiting the confirm (`BoardState.mergeArmed`,
+    /// `.fixArmed`).
+    var mergeArmed = false
+    var fixArmed = false
     var starting = false
     var deleting = false
     /// Refine pressed and not yet on a snapshot (`BoardState.refining`).
@@ -41,6 +45,8 @@ struct BoardTileFacts: Equatable {
         armedHere = state.armedHere == id
         deleteArmed = state.deleteArmed == id
         doneArmed = state.doneArmed == id
+        mergeArmed = state.mergeArmed == id
+        fixArmed = state.fixArmed == id
         starting = state.starting.contains(id)
         deleting = state.deleting.contains(id)
         refiningPressed = state.refining.contains(id)

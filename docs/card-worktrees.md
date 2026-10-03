@@ -379,9 +379,12 @@ and that copy is the one the card and the Checks list hold.
 So it survives a restart, is absent during a new run after a reset, and
 goes when the folder is removed by hand. The person removes a kept folder
 by hand. On
-success every card sharing the folder has its pair cleared
-(`clear_worktree`) and the trust copies are taken back. **The branch is never
-deleted**: it is there to merge.
+success every card sharing the folder has its **folder** cleared
+(`clear_worktree`, which keeps the branch name unless a landed merge asks for
+both) and the trust copies are taken back. **The branch is not deleted here**
+and the card keeps the memory of it: it is there to merge, and MERGE is the one
+verb that deletes it (*Review and merge*). A folder a merge or a helper holds
+(`_merge_hold`) is deferred, never removed.
 
 ## Stale registrations
 
@@ -449,19 +452,32 @@ emptied by `clear_worktree` alone (`SINGLE_WRITER`). Neither is in
 `_WRITABLE`, `ApiServer._BOARD_FIELDS` or `REVISED_COLUMNS`: daemon
 bookkeeping, `batch_id`'s ring, and a surface that could write the path could
 aim the release at a folder Dark Army never made. The release also refuses a
-path not under `<root>/.worktrees/` (`worktrees.inside`).
+path not under `<root>/.worktrees/` (`worktrees.inside`). `clear_worktree`
+empties the folder only; the branch name stays on the card until a landed
+merge calls it with `branch=True`, and `record_worktree` accepts an empty path
+with a branch (a finished card whose folder is gone, or whose branch the
+backfill found by name).
+
+Schema v31 adds four more `TEXT NOT NULL DEFAULT ''` columns, the same ring:
+`merge_state` and `merge_note` (written by `record_merge` alone, `merges.STATES`,
+emptied by leaving Done through `update()`'s documented bypass) and
+`review_verdict` and `review_tip` (written by `record_review_verdict` alone,
+`merges.VERDICTS` and the full hash of the branch version judged; they survive
+leaving Done and age by `review_tip`). None is in `_WRITABLE`,
+`ApiServer._BOARD_FIELDS` or `REVISED_COLUMNS`.
 
 A card's `root` is never a card folder: `worktrees.checkout_root`,
 `_repair_worktree_roots`.
 
 ## The git argv
 
-Two pure modules name the `git` executable — `work_record.py` and
-`worktrees.py`, the second built on the first's `_git` head, so
-`--no-optional-locks` and `core.quotePath=false` ride every call — and every
+Three pure modules name the `git` executable — `work_record.py`,
+`worktrees.py` and `merges.py`, the second and third built on the first's
+`_git` head, so `--no-optional-locks` and `core.quotePath=false` ride every call — and every
 call runs through `BobDaemon._run_git` (`subprocess.run` on the executor,
-bounded, `git_env()`). `_run_git` takes a wider `timeout` for the add and the
-fetch only.
+bounded, `git_env()`). `_run_git` takes a wider `timeout` for the add, the
+fetch and the merge, and an `env` (`merges.merge_env`) for the merge and the
+fast-forward only.
 
 ## The excludes
 
@@ -477,9 +493,11 @@ analyzer honours `.gitignore`.
 
 ## What a downgrade sees
 
-An older build reads past the two columns (`SELECT *` into a dict) and never
-removes a worktree: the folders and branches stay until the newer build
-returns. `preferences.json` gains one dict key an older build ignores.
+An older build reads past the six columns (`SELECT *` into a dict) and never
+removes a worktree or lands a branch: the folders and branches stay until the
+newer build returns. A card finished on the newer build keeps its branch name in
+`worktree_branch`, which the older build ignores; a phone paired with an older
+Mac sees none of the merge controls (no marker, no keys). `preferences.json` gains one dict key an older build ignores.
 
 ## Committing on the card branch, and what is not yet done
 
@@ -491,6 +509,205 @@ returns. `preferences.json` gains one dict key an older build ignores.
   `CLAUDE.md`'s invariant). Both `settings.json` files allow `git add` and
   `git commit` for it. A folder with anything left uncommitted is still
   kept at release (`KEPT_NOTE`).
-- **Follow-up legs**: pushing the branch and opening a pull request (with
-  merge detection and branch deletion), a warning when two in-flight cards
-  plan to change one file, and the phone's copy of the switch.
+- **What is not yet done**: pushing the branch and opening a pull request
+  is a later card (*Review and merge*, last paragraph), a warning when two
+  in-flight cards plan to change one file, and the phone's copy of the
+  isolation switch. Landing the branch locally is *Review and merge* below.
+
+## Review and merge
+
+`plans/2026-10-03-review-and-merge-done-card.md` (it supersedes the 28 Sep
+plan, which wanted a rebase, a new crew member and no phone). A Done card that
+remembers its branch (`merges.py` is the pure half; `daemon_board.py` performs
+it) offers three presses on the Mac's tile, the Mac's card window and the
+phone's card screen: **Changes** (a read, below), **Run review** and **MERGE**,
+plus **Fix** where a merge stopped. **MERGE is the person's own verb, not an
+agent run**: the press is a deliberate, armed-then-confirmed gesture, so none
+of the rules about agents committing apply to it. Nothing here ever pushes, and
+the main line moves by no route but a confirmed MERGE.
+
+**The gate** (`_merge_gate_sync`, executor), in this order, taken at the press
+and again by each verb that acts, at the moment it fires: the board is open; the
+card exists; its column is Done; it records a branch; `merge_state` is not
+`merged`; the hand-check is **settled** — `manual_steps` empty, and where
+`manual_check_path` names a file `_manual_check_place` admits, its `Status` is
+not `failed` (recording an outcome clears the steps on Passed *and* Failed, so
+the outcome is only in the file; a file the place rule no longer admits counts
+as settled, and the person can Reopen); the root is enrolled and a git
+checkout; and, for the busy rungs (left out of the Changes page's
+`merge_offered`), the link is not live or dispatching, no spawn receipt, not
+preparing, no review consult, no helper hold and no session inside the folder,
+no release queued; then not merging (`MERGE_RUNNING`, and one merge per project
+at a time, `PROJECT_MERGING`); then the phone's `expected_tip` echo, when
+sent, must equal the branch's tip (`TIP_CHANGED`). Each refusal is one
+sentence in `merges.py`.
+
+**Remembering the branch.** A release empties the folder, not the branch name
+(*Release at Done*), so a Done card keeps its branch. A card finished before
+that, or after a restart, gets it back from `_consider_standing_branch` /
+`_flush_branch_backfill`: once per process per card, one `argv_branch_exists`
+for the branch its name implies; one that exists and is not yet part of the
+trunk is recorded (no folder); one already contained reads *merged*
+(`ALREADY_MERGED_NOTE`); none leaves the card as it was.
+
+**The merge** (`merge_card`, `_merge_run`) answers at once with `MERGING_NOTE`
+and works as a detached task in `_merge_tasks` (the panel's POST times out at
+five seconds); `_merging` is replaced, never mutated, and the task's `finally`
+pops it by token. The commit is built in the card's **own folder**, never the
+main checkout: the recorded folder is reused or made again exactly as Start
+makes it (`_reusable_worktree` / `_prepare_worktree`, the setup script
+included), then it must be mid-nothing (`MERGE_HEAD`, `rebase-merge`,
+`rebase-apply`) and clean; the trunk is `origin/HEAD`'s branch when it exists
+locally, else `main`; the folder is detached at the trunk's tip and
+`git merge --no-ff -m "Merge card/<id8>: <title>"` merges the branch tip into
+it under `merge_env` (so the history gets the same merge commit as
+`f1b5465`; the card branch is never rewritten). A branch already part of the
+trunk skips the commit and goes to the cleanup. A conflict lists the files,
+aborts, puts the folder back on its branch and records `conflict`
+(`CONFLICT_NOTE`).
+
+**Carried pack files.** A folder that carried pack files holds them as skip-worktree
+index entries (new files also intent-to-add; *The pack copies*), and git refuses
+the detach and the merge over them: `Entry … not uptodate` (exit 128), `local
+changes would be overwritten` for a tracked file the trunk has since changed
+(even with identical bytes), `untracked … would be overwritten` for a new file the
+trunk now tracks. So just before the detach `_merge_uncarry_sync` releases
+**every** manifest row, one path at a time and only for paths actually in the
+index (`ls-files -t`): the marks are cleared, tracked and deleted rows go back to
+the folder's `HEAD` bytes (`checkout HEAD --`), new copies whose bytes still
+match the manifest are deleted, and the manifest goes; a path this `HEAD` tracks
+is never `rm --cached` (no deletion is staged). A copy whose bytes no longer
+match was edited in the folder: the press is refused (`DIRTY_FOLDER_REFUSAL`)
+before anything is touched. It then verifies no `S` entry remains. On every way
+back to the branch the carry is applied again by the routine Start uses
+(`_sync_pack_copies`), so the folder is as a Start would leave it; after a
+landed merge the folder is already clean and the release removes it. The Fix
+helper's folder is released the same way before it is spawned, since the helper
+merges the main line into the branch there.
+
+**The checks.** `<root>/.dark-army/merge-check.sh`, optional, the person's own
+file, runs in the folder at the merge commit under **exactly the setup
+script's rules** (*The setup script*: APFS, a trusted project, a real private
+`.dark-army`, a regular untracked file the person owns that nobody else can
+write) through the same `_exec_setup_script`, with
+`MERGE_CHECK_TIMEOUT_SECONDS` (1800) and its log at
+`<root>/.worktrees/card-<id8>.merge.log`. A refused script is a refused merge in
+words (`blocked`), never a silent skip; a non-zero exit or the time limit is
+`checks_failed` with the exit code and the log's path; **no script merges, and
+the card says no checks ran** (`MERGED_UNCHECKED_NOTE`). The folder must still
+be clean afterwards.
+
+**Moving the trunk** (`_merge_checkout_gate`), after the card is judged once
+more (`_merge_recheck_sync`: still Done, hand-check still settled, branch still
+at the tip the commit was built from): (a) the trunk's tip is still the one the
+commit was built on (`TRUNK_MOVED`); (b) the main checkout holds none of
+`MERGE_HEAD`, `rebase-merge`, `rebase-apply`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`,
+`BISECT_LOG` (`ROOT_BUSY`); (c) the trunk is not checked out in some *other*
+folder, read by branch name from `git worktree list`, never by count
+(`TRUNK_ELSEWHERE`); (d) where the main checkout is on the trunk, its
+uncommitted files (`argv_status`, both sides of a rename, every untracked file)
+must not meet the files the merge changes (`argv_incoming`) — `OVERLAP` names
+them, and nothing has moved — then `git merge --ff-only`, which git itself
+refuses over a local change; (e) where the trunk is checked out nowhere, only
+the pointer moves, `update-ref` with the old value, which cannot lose a race.
+The main checkout's uncommitted files are never touched. An ignored file at a
+path the merge adds is overwritten silently — git's rule, not Dark Army's.
+"What is the main checkout on" is asked twice, of `git worktree list` and of
+`symbolic-ref`; both must be readable and agree (a detached `HEAD` is `""` in
+the list and a failed `symbolic-ref`), else `ROOT_UNSURE_REFUSAL` and nothing
+moves. Any refusal puts the folder back on its branch (the merge commit is
+dropped; the next press rebuilds it) and records `blocked` with the words;
+when the folder **cannot** be put back, the card says it is left detached at
+the merge commit (`DETACHED_NOTE`) and is `blocked`, so Fix is not offered.
+
+**While it runs.** The folder is detached, so Start on the card and moving it
+out of Done (`update_card`, `reorder_card`, `reset_card`) are refused in words
+while `cid in _merging` (`START_WHILE_MERGING_REFUSAL`,
+`MOVE_WHILE_MERGING_REFUSAL`). A folder found detached and clean on the next
+Start or merge (a restart cut a merge short) is put back on its recorded branch
+(`_restore_detached_folder`); one with anything uncommitted is left. The
+phone's `expected_tip`, when the press carries one, must be a whole commit hash
+(`None` is no guard; an empty or short value is refused as `TIP_CHANGED`) and is
+checked again by the task against the fresh branch tip before anything is
+touched.
+
+**The one fact the surfaces draw from.** A Done card with a branch publishes
+`merge_offered` on the snapshot: the gate without its busy rungs (Done, a
+branch, not merged, hand-check settled, enrolled, a checkout, not merging),
+decided on the executor with the check file's `Status` memoised by
+`(mtime, size)` — no git on the snapshot path. `CardMerge.offered`, `fixOffered`
+and `reviewOffered` all take it (`daemonOffers`), so a Failed or open hand-check
+offers none of MERGE, Fix and Run review on the tile, the card window or the
+phone; an older daemon publishes no key and reads as not offered.
+
+**After it lands**, the folder is removed through the release's own gates
+(`_maybe_release_worktree(merging=True)`: the crew-output keep, the pack
+copies, no `--force`), then the branch ref is deleted with `git update-ref -d
+refs/heads/<branch> <tip merged>` — old-value guarded, never `-D`, and not
+`branch -d`, which judges the branch against whatever the main checkout has
+checked out and refused whenever that was not the trunk — after checking the
+tip is part of the trunk and that no folder (the main checkout included) has
+the branch checked out; `clear_worktree(branch=True)` empties the card's
+memory. A folder the release kept is put back on its branch and keeps the
+branch (`FOLDER_KEPT_SUFFIX`, in neutral words because the release has several
+reasons — uncommitted work, crew output git ignores, a batch sibling, a
+session — and does not say which; `BRANCH_KEPT_SUFFIX`). The card reads *merged* with
+`MERGED_NOTE`, the `card_merged` line goes to the diary (`event_log`, words
+only, no path).
+
+**Fix** (`fix_merge_card`) is offered where `merge_state` is `conflict` or
+`checks_failed`, behind `board_dispatch`, the gate and `_dispatch_lock`
+(`dispatch.helper_guard`, `consult_guard` generalised over the pseudo-entry
+prefix and the tool): it starts **the card's own assistant** in the card's
+folder, stamped `card-merge-fix`, with orders (`dispatch.merge_fix_prompt`) to
+bring the main line into the card branch, resolve or repair there, commit on
+the card branch, never switch to the trunk, never `reset --hard`, never touch
+the main checkout, never merge into the trunk, never push, and end with
+`## Merge ready` or `## Merge needs you`. It is not bound to the card; the
+folder is *held* (`_merge_helpers`, the bind window) and then `_session_inside`
+is what the release and MERGE read, so MERGE and the release wait for it. The
+Fix helper commits on the card branch inside the card's folder — the existing
+exception to "never commit from an agent run".
+
+**Run review** (`run_card_review`) starts the project's review routine
+(`.claude/skills/review/SKILL.md`, `/review <branch>`) in the card's folder
+with orders to change no files and file no cards, as a **Claude** helper on
+every card — only Claude's channel has `dark_army_answer_card`, so this
+press, alone, does not use the card's own tool. It takes the consult ladder
+(`_consults[cid]` with `purpose: "review"` and the branch tip judged), so the
+answer lands on the card's thread as the consultant's message and
+`answer_card_by_session` reads the first non-empty line
+(`merges.parse_verdict`, `VERDICT: SHIP` or `VERDICT: STOP — …`) into
+`record_review_verdict` with the version judged; no such first line records
+nothing (the message stays on the thread). `review_running` is a `_consults`
+lookup; the card reads *Review: SHIP* or *Review: STOP*, with "reviewed at an
+earlier version" in the Changes view when the branch moved since. A running
+review blocks `ask_card` on that card, as any consult does.
+
+**The card says so.** Decoration (`_decorate_merge`) publishes `merge_state`
+(`merging` while the task runs), `merge_line` (composed on the daemon, with
+`HELPER_AT_WORK_SUFFIX` or `PRESS_AGAIN_SUFFIX` on a stop), `review_verdict`
+and `review_running` where non-empty; the stored `merge_note` and `review_tip`
+never ride a snapshot. No git runs on the snapshot path. `_worktree_note`
+returns `""` while `merge_state` is `conflict` or `checks_failed`.
+
+**The Changes read** (`card_changes`, loopback `GET /api/card-changes?card=`
+and the sealed kind on both doors, `docs/transport-contract.md`) is on demand
+only — a few read-only git calls under `_changes_lock`, from the project's root
+so it works with the folder released: the commits since the merge base
+(`argv_log`, at most 100), the files with added and removed counts
+(`argv_numstat_range`, at most `work_record.MAX_FILES`), ahead and behind, the
+review with `current`, and `merge_offered` with the gate's words. A file's
+changes are fetched by the listing's integer **index** and the `tip` the list
+was read at (`CHANGES_MOVED`, 409, if the branch moved), path-contained in the
+real root, cut at `MAX_DIFF_BYTES`. Nothing rides `/api/state`, SSE or the
+phone's poll.
+
+**Not here**: pushing, pull requests, tagging, squash, rebase, cherry-picks,
+resolving conflicts inside the daemon, a per-project switch for the check
+script. A later card, *Card branches can become GitHub pull requests*, would
+push the branch and open a pull request with `gh` (argv only, a fixed
+allowlist) and notice the merge to release folder and branch; the person chose
+the local button (28 Sep, 3 Oct 2026). The frozen bundle needs nothing:
+`merges.py` sits inside the `dark_army_daemon` package py2app already freezes.
+

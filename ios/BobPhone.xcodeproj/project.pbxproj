@@ -55,6 +55,7 @@
 		7B0B0E1A0000000000000199 /* Receipts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000198 /* Receipts.swift */; };
 		7B0B0E1A000000000000019B /* WorkRecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000019A /* WorkRecordView.swift */; };
 		7B0B0E1A000000000000004D /* CardDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000003E /* CardDetailView.swift */; };
+		C0DE0A31000000000000000B /* CardMerge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE0A31000000000000000A /* CardMerge.swift */; };
 		7B0B0E1A000000000000004E /* Actions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A000000000000003F /* Actions.swift */; };
 		7B0B0E1A0000000000000082 /* Arm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000080 /* Arm.swift */; };
 		7B0B0E1A0000000000000083 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0B0E1A0000000000000081 /* ComposerView.swift */; };
@@ -247,6 +248,7 @@ DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 		7B0B0E1A0000000000000198 /* Receipts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Receipts.swift; sourceTree = "<group>"; };
 		7B0B0E1A000000000000019A /* WorkRecordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkRecordView.swift; sourceTree = "<group>"; };
 		7B0B0E1A000000000000003E /* CardDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardDetailView.swift; sourceTree = "<group>"; };
+		C0DE0A31000000000000000A /* CardMerge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardMerge.swift; sourceTree = "<group>"; };
 		7B0B0E1A000000000000003F /* Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Actions.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000080 /* Arm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Arm.swift; sourceTree = "<group>"; };
 		7B0B0E1A0000000000000081 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
@@ -452,6 +454,7 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				7B0B0E1A0000000000000034 /* FleetView.swift */,
 				7B0B0E1A0000000000000035 /* BoardView.swift */,
 				7B0B0E1A000000000000003E /* CardDetailView.swift */,
+				C0DE0A31000000000000000A /* CardMerge.swift */,
 				7B0B0E1A000000000000003F /* Actions.swift */,
 				7B0B0E1A0000000000000080 /* Arm.swift */,
 				7B0B0E1A0000000000000081 /* ComposerView.swift */,
@@ -796,6 +799,7 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				7B0B0E1A0000000000000044 /* FleetView.swift in Sources */,
 				7B0B0E1A0000000000000045 /* BoardView.swift in Sources */,
 				7B0B0E1A000000000000004D /* CardDetailView.swift in Sources */,
+				C0DE0A31000000000000000B /* CardMerge.swift in Sources */,
 				7B0B0E1A000000000000004E /* Actions.swift in Sources */,
 				7B0B0E1A0000000000000082 /* Arm.swift in Sources */,
 				7B0B0E1A0000000000000083 /* ComposerView.swift in Sources */,

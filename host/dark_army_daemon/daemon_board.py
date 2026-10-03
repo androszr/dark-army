@@ -48,6 +48,7 @@ from . import grok_roster
 from . import identity
 from . import inbox_ack
 from . import manual_check
+from . import merges
 from . import mission
 from . import origin
 from . import paths
@@ -798,6 +799,18 @@ class BoardVerbsMixin:
             # MESSAGE is drawn *absent* rather than present and 404ing inside
             # the sealed reply.
             "card_message_writable": True,
+            # And a twelfth, on `queue_writable`'s argument once more: this
+            # daemon serves the sealed `card_changes` read, and carries
+            # `board_merge`, `board_merge_fix` and `board_review_run` on both
+            # phone tuples. Three markers, so a phone draws the Changes view
+            # against a Mac that has it and each press against a Mac that
+            # honours it; an older Mac sends none, which decodes false, so
+            # all of it is drawn *absent* rather than present and 404ing
+            # inside the sealed reply (`docs/card-worktrees.md`, *Review and
+            # merge*).
+            "card_changes_supported": True,
+            "merge_writable": True,
+            "review_run_writable": True,
             # And a sixth, on `queue_writable`'s argument once more: this
             # daemon knows the `start_when_planned` card column, and an
             # older one simply sends no key — which decodes false, so the
@@ -1131,6 +1144,9 @@ class BoardVerbsMixin:
             out, by_id, cards=worktree_cards)
         if wt_note:
             out["worktree_note"] = wt_note
+        # Review and merge (`docs/card-worktrees.md`): the four keys, where
+        # non-empty, composed here and drawn verbatim by both clients.
+        self._decorate_merge(out)
         # Mission Control asked for this card to be started. Published only
         # while the ask is fresh and the card could still take a Start —
         # a card already started, starting or finished shows no ask, so the
@@ -2115,6 +2131,9 @@ class BoardVerbsMixin:
         async with self._board_write_lock:
             before = await self._board_call("get", card_id) or {}
             dest = str((fields or {}).get("column_name") or "")
+            refusal = self._merge_move_refusal(before, dest)
+            if refusal:
+                return None, refusal
             if (not allow_unplanned and dest == "in_progress"
                     and str(before.get("column_name") or "") != "in_progress"):
                 refusal = await self._plan_gate_refusal(before)
@@ -3316,6 +3335,10 @@ class BoardVerbsMixin:
         })
         async with self._dispatch_lock, self._board_write_lock:
             before = await self._board_call("get", card_id)
+            refusal = self._merge_move_refusal(
+                before, str(update.get("column_name") or ""))
+            if refusal:
+                return None, refusal
             # Judged before the write, which clears the card's own mark.
             loop = asyncio.get_running_loop()
             owns = await loop.run_in_executor(None, self._batch_owned_by, before)
@@ -3491,6 +3514,9 @@ class BoardVerbsMixin:
             if current is None:
                 return None, "no such card"
             dest = str(column or "") or str(current.get("column_name") or "")
+            refusal = self._merge_move_refusal(current, dest)
+            if refusal:
+                return None, refusal
             if (not allow_unplanned and dest == "in_progress"
                     and str(current.get("column_name") or "") != "in_progress"):
                 refusal = await self._plan_gate_refusal(current)
@@ -4018,6 +4044,9 @@ class BoardVerbsMixin:
         head = batch[0] if batch else card
         wants = await loop.run_in_executor(None, self._wants_worktree, cwd)
         if wants:
+            if str(head.get("id") or "") in (
+                    getattr(self, "_merging", None) or {}):
+                return False, merges.START_WHILE_MERGING_REFUSAL
             reuse = await self._reusable_worktree(head)
             if reuse:
                 cwd = reuse
@@ -5702,6 +5731,21 @@ class BoardVerbsMixin:
                 "id": f"consult:{cid}",
                 "project": entry.get("project") or "",
             })
+        # A fix helper started in a Done card's folder
+        # (`docs/card-worktrees.md`, *Review and merge*): a launch like the
+        # consult's, listed while it can still be binding — the bind window,
+        # then the session itself is what `_session_inside` sees.
+        for cid, entry in list(
+                (getattr(self, "_merge_helpers", None) or {}).items()):
+            if (entry or {}).get("kind") != "fix":
+                continue
+            if now - float(entry.get("since") or 0.0) \
+                    > dispatch.DISPATCH_BIND_WINDOW:
+                continue
+            in_flight.append({
+                "id": f"merge-fix:{cid}",
+                "project": str(entry.get("project") or ""),
+            })
         for lid, entry in list(self._adhoc_launches.items()):
             handle = str(entry.get("handle") or "")
             spent = now - float(entry.get("at") or 0.0) \
@@ -6676,6 +6720,7 @@ class BoardVerbsMixin:
             # once per process (`docs/card-worktrees.md`, *Release at Done*).
             try:
                 self._consider_standing_worktree(card)
+                self._consider_standing_branch(card)
             except Exception:
                 logger.debug("worktree consideration failed for %s", cid,
                              exc_info=True)
@@ -7762,6 +7807,10 @@ class BoardVerbsMixin:
                     self._consults.pop(cid, None)
                 return None, detail
             self._consults.pop(cid, None)
+            if entry.get("purpose") == "review":
+                # A review's answer: the verdict off its first line, with
+                # the branch version it judged.
+                await self._record_review_from_answer(cid, entry, text)
             await self._publish_board()
             return (await self._board_call("get", cid)), "answered"
 
@@ -8920,7 +8969,8 @@ class BoardVerbsMixin:
 
     async def _run_git(self, argv: list, root: str, *,
                        truncate: bool = False,
-                       timeout: Optional[float] = None) -> tuple:
+                       timeout: Optional[float] = None,
+                       env: Optional[dict] = None) -> tuple:
         """`(ok, output, reason)` for one bounded git call. Never raises.
 
         ``truncate`` decides what an over-long reading means. For the two
@@ -8948,15 +8998,20 @@ class BoardVerbsMixin:
         ``timeout`` widens the bound for the two worktree calls that write a
         tree or talk to a remote (`worktrees.WORKTREE_ADD_TIMEOUT_SECONDS`,
         `FETCH_TIMEOUT_SECONDS`); absent is `GIT_TIMEOUT_SECONDS`, as always.
+
+        ``env`` replaces `work_record.git_env()` for the one caller that
+        needs more of it: the merge (`merges.merge_env`, which keeps git
+        from ever opening an editor).
         """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, functools.partial(
             self._git_blocking, argv, root, truncate=truncate,
-            timeout=timeout))
+            timeout=timeout, env=env))
 
     def _git_blocking(self, argv: list, root: str, *, truncate: bool = False,
                       timeout: Optional[float] = None,
-                      limit: Optional[int] = None) -> tuple:
+                      limit: Optional[int] = None,
+                      env: Optional[dict] = None) -> tuple:
         """`_run_git`'s runner: the same bounded call, for code that is
         already on the executor (the setup script's last look, which runs
         immediately before the script). Every git call still goes through
@@ -8967,12 +9022,13 @@ class BoardVerbsMixin:
         `work_record.MAX_GIT_OUTPUT_BYTES`."""
         limit = int(limit or work_record.MAX_GIT_OUTPUT_BYTES)
         bound = float(timeout or work_record.GIT_TIMEOUT_SECONDS)
+        environment = env if env is not None else work_record.git_env()
 
         def call() -> tuple:
             try:
                 done = subprocess.run(
                     list(argv), cwd=str(root), stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL, env=work_record.git_env(),
+                    stderr=subprocess.DEVNULL, env=environment,
                     timeout=bound)
             except subprocess.TimeoutExpired:
                 logger.debug("git %s timed out in %s", argv[-2:], root)
@@ -9226,7 +9282,28 @@ class BoardVerbsMixin:
         if not ok:
             return ""
         listed = worktrees.parse_worktree_list(out.decode("utf-8", "replace"))
-        return path if os.path.realpath(path) in listed else ""
+        if os.path.realpath(path) not in listed:
+            return ""
+        await self._restore_detached_folder(head, path)
+        return path
+
+    async def _restore_detached_folder(self, head: dict, path: str) -> None:
+        """A card folder found detached and clean (a merge that a restart cut
+        short) is put back on its recorded branch and its carried pack files
+        restored, so a Start or a Fix never opens on a bare commit. A folder
+        a merge is working in, or one with anything uncommitted, is left."""
+        cid = str((head or {}).get("id") or "")
+        branch = str((head or {}).get("worktree_branch") or "")
+        if not branch or cid in (getattr(self, "_merging", None) or {}):
+            return
+        ok, _o, _w = await self._run_git(merges.argv_head_branch(path), path)
+        if ok:
+            return  # on a branch already
+        if await self._merge_markers(path, merges.MID_MERGE_MARKERS):
+            return  # a rebase or merge is under way: not ours to disturb
+        ok, status, _w = await self._run_git(merges.argv_status(path), path)
+        if ok and not status:
+            await self._merge_back_to_branch(path, branch)
 
     def _start_worktree_prepare(self, head: dict, root: str,
                                 replay: dict) -> None:
@@ -9395,7 +9472,8 @@ class BoardVerbsMixin:
             return origin
         return "main" if has_main else "HEAD"
 
-    async def _setup_script_refusal(self, root: str, tool: str) -> str:
+    async def _setup_script_refusal(self, root: str, tool: str, *,
+                                    rel: str = worktrees.SETUP_SCRIPT) -> str:
         """The gate on the person's setup script, checked **before** any
         folder is made. `""` where there is no script or it may run; the
         words otherwise — never a silent skip.
@@ -9410,7 +9488,7 @@ class BoardVerbsMixin:
         """
         loop = asyncio.get_running_loop()
         verdict = await loop.run_in_executor(
-            None, self._setup_script_file_check, root)
+            None, self._setup_script_file_check, root, rel)
         if verdict is None:
             return ""
         if verdict:
@@ -9420,9 +9498,10 @@ class BoardVerbsMixin:
         if not trusted:
             return worktrees.SETUP_UNTRUSTED_REFUSAL
         return await loop.run_in_executor(
-            None, self._setup_script_git_refusal, root)
+            None, self._setup_script_git_refusal, root, rel)
 
-    def _setup_script_git_refusal(self, root: str) -> str:
+    def _setup_script_git_refusal(self, root: str,
+                                  rel: str = worktrees.SETUP_SCRIPT) -> str:
         """The git half of the setup script's gate, **executor only**, taken
         at the Start and again immediately before the script runs (a pull in
         the gap is judged afresh). `""` when git says the script is nobody's
@@ -9447,11 +9526,11 @@ class BoardVerbsMixin:
           (a Yarn cache alone passes the shared one), and over it the words
           say so (`worktrees.SETUP_TOO_MANY_HIDDEN_REFUSAL`).
         """
-        script = worktrees.setup_script_path(root)
+        script = worktrees.setup_script_path(root, rel)
         refusal = worktrees.SETUP_UNSAFE_REFUSAL.format(script)
         ok, out, _w = self._git_blocking(
-            worktrees.argv_setup_status(root, worktrees.SETUP_SCRIPT), root)
-        if not ok or not worktrees.setup_status_allows(out):
+            worktrees.argv_setup_status(root, rel), root)
+        if not ok or not worktrees.setup_status_allows(out, rel):
             return refusal
         ok, out, why = self._git_blocking(
             worktrees.argv_index_dotfiles(root), root,
@@ -9465,7 +9544,7 @@ class BoardVerbsMixin:
         except OSError:
             return refusal
         ids = []
-        for entry in worktrees.index_script_candidates(out):
+        for entry in worktrees.index_script_candidates(out, rel):
             try:
                 info = os.lstat(os.path.join(root, entry))
             except OSError:
@@ -9476,7 +9555,7 @@ class BoardVerbsMixin:
         return ""
 
     @staticmethod
-    def _setup_script_file_check(root: str):
+    def _setup_script_file_check(root: str, rel: str = worktrees.SETUP_SCRIPT):
         """The file half of the setup script's gate, **executor only**, and
         re-made at the moment it runs. `None`: no script. `""`: it may run.
         The refusal words otherwise.
@@ -9491,7 +9570,7 @@ class BoardVerbsMixin:
         project and the folder must be on an APFS disk
         (`setup_volume_type`, `worktrees.SETUP_VOLUME_REFUSAL`).
         """
-        script = worktrees.setup_script_path(root)
+        script = worktrees.setup_script_path(root, rel)
         try:
             info = os.lstat(script)
         except OSError:
@@ -9523,7 +9602,7 @@ class BoardVerbsMixin:
                                                    uid):
             return refusal
         if os.path.realpath(script) != worktrees.setup_script_where(
-                os.path.realpath(root)):
+                os.path.realpath(root), rel):
             return refusal
         return ""
 
@@ -10027,7 +10106,9 @@ class BoardVerbsMixin:
     _SETUP_LOG_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
 
     def _run_worktree_setup(self, root: str, path: str, card_id: str,
-                            branch: str) -> str:
+                            branch: str, *, rel: str = worktrees.SETUP_SCRIPT,
+                            log_path: Optional[str] = None,
+                            timeout: Optional[float] = None) -> str:
         """Run `<root>/.dark-army/worktree-setup.sh` in the new worktree, if
         the person wrote one. `""` on success or when there is none; the
         refusal words otherwise. Executor only.
@@ -10037,26 +10118,48 @@ class BoardVerbsMixin:
         a timeout kills the whole group (`npm install` included). Output
         goes to `worktrees.setup_log_path`, opened `O_NOFOLLOW` at 0600 and
         cut to its last `MAX_SETUP_LOG_BYTES`.
+
+        `rel`, `log_path` and `timeout` let the merge's check script
+        (`merges.MERGE_CHECK_SCRIPT`) run under exactly the same rules
+        (`_exec_setup_script`); the defaults are the setup script's own.
         """
-        script = worktrees.setup_script_path(root)
-        verdict = self._setup_script_file_check(root)
+        refusal, failure, log = self._exec_setup_script(
+            root, path, card_id, branch, rel=rel, log_path=log_path,
+            timeout=timeout)
+        if refusal:
+            return refusal
+        if failure:
+            return worktrees.SETUP_FAILED_REFUSAL.format(failure, log)
+        return ""
+
+    def _exec_setup_script(self, root: str, path: str, card_id: str,
+                           branch: str, *, rel: str = worktrees.SETUP_SCRIPT,
+                           log_path: Optional[str] = None,
+                           timeout: Optional[float] = None) -> tuple:
+        """`(refusal, failure, log_path)` for one run of a project script.
+        Executor only. `refusal` is the gate's words (no run happened);
+        `failure` is `exit N`, `timed out` or `could not run` (it ran or
+        tried, and the log is at `log_path`); both empty is success, or no
+        script at all."""
+        script = worktrees.setup_script_path(root, rel)
+        log_path = log_path or worktrees.setup_log_path(root, card_id)
+        bound = float(timeout or worktrees.SETUP_TIMEOUT_SECONDS)
+        verdict = self._setup_script_file_check(root, rel)
         if verdict is None:
-            return ""
+            return "", "", log_path
         if verdict:
-            return verdict
+            return verdict, "", log_path
         # And git's half again, immediately before it runs: a pull between
         # the Start and now is judged afresh.
-        verdict = self._setup_script_git_refusal(root)
+        verdict = self._setup_script_git_refusal(root, rel)
         if verdict:
-            return verdict
-        log_path = worktrees.setup_log_path(root, card_id)
+            return verdict, "", log_path
         try:
             fd = os.open(log_path, self._SETUP_LOG_FLAGS, 0o600)
         except OSError:
             logger.info("could not open the setup log %s", log_path,
                         exc_info=True)
-            return worktrees.SETUP_FAILED_REFUSAL.format(
-                "could not write its log", log_path)
+            return "", "could not write its log", log_path
         code = "timed out"
         returncode = None
         try:
@@ -10067,8 +10170,7 @@ class BoardVerbsMixin:
                     stdin=subprocess.DEVNULL, stdout=log,
                     stderr=subprocess.STDOUT, start_new_session=True)
                 try:
-                    returncode = proc.wait(
-                        timeout=worktrees.SETUP_TIMEOUT_SECONDS)
+                    returncode = proc.wait(timeout=bound)
                     code = f"exit {returncode}"
                 except subprocess.TimeoutExpired:
                     try:
@@ -10079,8 +10181,7 @@ class BoardVerbsMixin:
         except OSError:
             logger.info("could not run the worktree setup script in %s", path,
                         exc_info=True)
-            return worktrees.SETUP_FAILED_REFUSAL.format("could not run",
-                                                         log_path)
+            return "", "could not run", log_path
         try:
             size = os.path.getsize(log_path)
             if size > worktrees.MAX_SETUP_LOG_BYTES:
@@ -10094,12 +10195,12 @@ class BoardVerbsMixin:
         except OSError:
             logger.debug("could not trim %s", log_path, exc_info=True)
         if returncode == 0:
-            logger.info("card %s: worktree setup script ran in %s",
-                        card_id[:8], path)
-            return ""
-        logger.info("card %s: worktree setup script failed (%s)",
-                    card_id[:8], code)
-        return worktrees.SETUP_FAILED_REFUSAL.format(code, log_path)
+            logger.info("card %s: worktree script %s ran in %s",
+                        card_id[:8], rel, path)
+            return "", "", log_path
+        logger.info("card %s: worktree script %s failed (%s)",
+                    card_id[:8], rel, code)
+        return "", code, log_path
 
     def _session_inside(self, path: str) -> bool:
         """Whether a live session in the cached agents snapshot works in
@@ -10170,6 +10271,9 @@ class BoardVerbsMixin:
             return worktrees.PREPARING_NOTE
         path = str(card.get("worktree_path") or "")
         if not path or str(card.get("column_name") or "") != "done":
+            return ""
+        if str(card.get("merge_state") or "") in merges.FIX_STATES:
+            # The card's own line says what to do (`merge_line`).
             return ""
         if str(card.get("link_state") or "") in ("live", "dispatching"):
             return ""
@@ -10417,7 +10521,8 @@ class BoardVerbsMixin:
                                "failed", cid[:8], exc_info=True)
 
     async def _release_still_safe(self, cid: str, path: str,
-                                  deleting: bool) -> str:
+                                  deleting: bool, *,
+                                  merging: bool = False) -> str:
         """The release's last look, taken immediately before `git worktree
         remove`. `"ok"`; `"wait"` (a live session or a held receipt — try
         again later); or why the folder is someone's again. A deleted card
@@ -10439,6 +10544,8 @@ class BoardVerbsMixin:
                 return "the card is running"
         if cid in (getattr(self, "_worktree_preparing", None) or {}):
             return "the card is being prepared"
+        if not merging and self._merge_hold(cid):
+            return "wait"
         if cid in (getattr(self, "_spawn_shell_pids", None) or {}) \
                 or cid in (getattr(self, "_spawn_pty_pids", None) or {}):
             return "wait"
@@ -10448,7 +10555,8 @@ class BoardVerbsMixin:
         return "ok"
 
     async def _maybe_release_worktree(self, card: dict, *,
-                                      deleting: bool = False) -> bool:
+                                      deleting: bool = False,
+                                      merging: bool = False) -> bool:
         """Remove a finished card's worktree when nothing runs in it and
         nothing unsaved is in it. Loop. False when the release was deferred
         to a later pass.
@@ -10462,7 +10570,12 @@ class BoardVerbsMixin:
         test alone, since no row is left to watch. `git worktree remove`
         **without `--force`**: git refuses a tree with modified or untracked
         files, and that refusal keeps the folder; the card then says so
-        (`_worktree_note`, derived). The branch is never deleted here.
+        (`_worktree_note`, derived). The branch is never deleted here — the
+        card keeps the memory of it (`clear_worktree` empties the folder
+        only) until a landed MERGE deletes it.
+
+        A folder a merge or a helper holds (`_merge_hold`) is deferred, never
+        removed; the merge's own cleanup passes `merging=True`.
         """
         cid = str((card or {}).get("id") or "")
         if not cid:
@@ -10475,6 +10588,9 @@ class BoardVerbsMixin:
             return True
         if not deleting and str(current.get("column_name") or "") != "done":
             return True
+        if not merging and self._merge_hold(cid):
+            self._defer_worktree_release(current, deleting)
+            return False
         if str(current.get("link_state") or "") in ("live", "dispatching"):
             if deleting:
                 self._defer_worktree_release(current, deleting)
@@ -10506,7 +10622,8 @@ class BoardVerbsMixin:
         # The destructive verb re-checks at the moment it fires: every await
         # above was a gap in which the card could have been dragged out of
         # Done and started again in this very folder.
-        verdict = await self._release_still_safe(cid, path, deleting)
+        verdict = await self._release_still_safe(cid, path, deleting,
+                                                 merging=merging)
         if verdict == "wait":
             self._defer_worktree_release(current, deleting)
             return False
@@ -10556,10 +10673,1273 @@ class BoardVerbsMixin:
                 root, self._pack_card_id(path)))
         except OSError:
             pass  # no manifest was written, or it is already gone
-        logger.info("card %s: removed its worktree %s; branch %s kept",
+        logger.info("card %s: removed its worktree %s; branch %s kept on the card",
                     cid[:8], path, str(current.get("worktree_branch") or ""))
         await self._publish_board()
         return True
+
+    # --- Review and merge (docs/card-worktrees.md, *Review and merge*) ---
+    #
+    # A Done card keeps the memory of its branch. Three presses act on it:
+    # MERGE (armed, confirmed; the person's own verb, never an agent run),
+    # Fix and Run review (one assistant each, started in the card's own
+    # folder). The decisions are `merges.py`'s; every git call runs through
+    # `_run_git` / `_git_blocking`; nothing here pushes.
+
+    def _merge_hold(self, card_id: str) -> bool:
+        """Whether the card's folder is spoken for by a merge or a helper
+        Dark Army started in it: the release defers meanwhile. A helper's
+        entry holds for the bind window, after which `_session_inside` sees
+        the session itself."""
+        cid = str(card_id or "")
+        if cid in (getattr(self, "_merging", None) or {}):
+            return True
+        entry = (getattr(self, "_merge_helpers", None) or {}).get(cid)
+        if entry:
+            return (time.time() - float(entry.get("since") or 0.0)
+                    <= dispatch.DISPATCH_BIND_WINDOW)
+        return False
+
+    def _merge_move_refusal(self, before, dest) -> str:
+        """Moving a card out of Done while its merge runs would leave a
+        detached folder under a card that is no longer finished: refused in
+        words until the task is over."""
+        before = before or {}
+        cid = str(before.get("id") or "")
+        if cid and cid in (getattr(self, "_merging", None) or {}) \
+                and str(before.get("column_name") or "") == "done" \
+                and dest and str(dest) != "done":
+            return merges.MOVE_WHILE_MERGING_REFUSAL
+        return ""
+
+    def _merging_refusal(self, card_id: str, root: str) -> str:
+        """`MERGE_RUNNING` / `PROJECT_MERGING`, or `""`. Pure dict lookups;
+        the loop calls it again with no await before it records the merge,
+        which is what makes two presses at once lose one."""
+        merging = getattr(self, "_merging", None) or {}
+        if str(card_id) in merging:
+            return merges.MERGE_RUNNING_REFUSAL
+        for other, entry in merging.items():
+            if other != str(card_id) and (entry or {}).get("root") == root:
+                return merges.PROJECT_MERGING_REFUSAL
+        return ""
+
+    def _manual_failed(self, path: str, *, cached: bool) -> bool:
+        """Whether the check file at `path` says `Status: failed`. With
+        `cached` (the snapshot path) the answer is memoised by the file's
+        `(mtime, size)`, so a frame of Done cards is a stat each, not a read;
+        the press always reads afresh. **Executor.**"""
+        memo = getattr(self, "_manual_failed_memo", None)
+        if memo is None:
+            memo = self._manual_failed_memo = {}
+        key = None
+        if cached:
+            try:
+                info = os.stat(path)
+                key = (info.st_mtime_ns, info.st_size)
+            except OSError:
+                return False
+            hit = memo.get(path)
+            if hit and hit[0] == key:
+                return hit[1]
+        resolved, refusal = self._manual_check_place(path)
+        failed = bool(resolved and not refusal and manual_check.read_header(
+            resolved).get("status", "") == "failed")
+        if key is not None:
+            if len(memo) > 2000:
+                memo.clear()
+            memo[path] = (key, failed)
+        return failed
+
+    def _merge_manual_refusal(self, card: dict, *, cached: bool = False) -> str:
+        """The hand-check rung of the gate, read from the card and the check
+        file **at the press**. **Executor.** Open steps refuse; so does a
+        file whose `Status` is `failed` (recording an outcome clears the
+        steps on Passed *and* Failed, so the outcome is only in the file).
+        A file the place rule no longer admits counts as settled."""
+        if str(card.get("manual_steps") or "").strip():
+            return merges.MANUAL_OPEN_REFUSAL
+        path = str(card.get("manual_check_path") or "")
+        if path and self._manual_failed(path, cached=cached):
+            return merges.MANUAL_FAILED_REFUSAL
+        return ""
+
+    def _merge_gate_sync(self, card, *, expected_tip: str = "",
+                         busy: bool = True, cached: bool = False) -> tuple:
+        """`(refusal, root, branch, path)` — whether this Done card's branch
+        may be reviewed, fixed or merged right now. **Blocking; executor
+        only.** The refusal is the first rung that fails, in order: board,
+        card, Done, a recorded branch, not merged, the hand-check settled,
+        enrolled, a git checkout, then the busy rungs (`busy=False` leaves
+        those out — the Changes page asks whether the branch *could* be
+        merged), then not merging, then the tip echo.
+
+        Taken at the press and again, by the verbs that act, at the moment
+        each fires (`docs/card-worktrees.md`, *Review and merge*)."""
+        if self._board is None:
+            return merges.BOARD_CLOSED_REFUSAL, "", "", ""
+        if not isinstance(card, dict) or not card:
+            return merges.NO_CARD_REFUSAL, "", "", ""
+        cid = str(card.get("id") or "")
+        root = dispatch.normalise_root(str(card.get("root") or ""))
+        branch = str(card.get("worktree_branch") or "")
+        path = str(card.get("worktree_path") or "")
+        out = (root, branch, path)
+        if str(card.get("column_name") or "") != "done":
+            return (merges.NOT_DONE_REFUSAL,) + out
+        if not branch:
+            return (merges.NO_BRANCH_REFUSAL,) + out
+        if str(card.get("merge_state") or "") == "merged":
+            return (merges.ALREADY_MERGED_REFUSAL,) + out
+        refusal = self._merge_manual_refusal(card, cached=cached)
+        if refusal:
+            return (refusal,) + out
+        if not root or not enrollment.root_enrolled(root):
+            return (merges.NOT_ENROLLED_REFUSAL,) + out
+        if not self._git_checkout(root):
+            return (merges.NOT_A_CHECKOUT_REFUSAL,) + out
+        if busy:
+            if str(card.get("link_state") or "") in ("live", "dispatching") \
+                    or cid in (getattr(self, "_spawn_shell_pids", None) or {}) \
+                    or cid in (getattr(self, "_spawn_pty_pids", None) or {}):
+                return (merges.CARD_LIVE_REFUSAL,) + out
+            if cid in (getattr(self, "_worktree_preparing", None) or {}):
+                return (merges.PREPARING_REFUSAL,) + out
+            if cid in self._consults:
+                return (merges.REVIEW_RUNNING_REFUSAL,) + out
+            helper = (getattr(self, "_merge_helpers", None) or {}).get(cid)
+            if (helper and time.time() - float(helper.get("since") or 0.0)
+                    <= dispatch.DISPATCH_BIND_WINDOW) \
+                    or (path and self._session_inside(path)):
+                return (merges.SESSION_INSIDE_REFUSAL,) + out
+            if cid in (getattr(self, "_worktree_release_queue", None) or []) \
+                    or cid in (getattr(self, "_worktree_releasing", None)
+                               or set()):
+                return (merges.RELEASE_PENDING_REFUSAL,) + out
+        refusal = self._merging_refusal(cid, root)
+        if refusal:
+            return (refusal,) + out
+        if expected_tip:
+            ok, tip, _why = self._git_blocking(
+                merges.argv_tip(root, f"refs/heads/{branch}"), root)
+            if not ok or tip.decode("utf-8", "replace").strip() != expected_tip:
+                return (merges.TIP_CHANGED_REFUSAL,) + out
+        return ("",) + out
+
+    def _merge_trunk_sync(self, root: str) -> str:
+        """The local trunk's name: `origin/HEAD`'s branch when it exists
+        locally, else `main` when that does, else `""`. **Executor.**"""
+        ok, out, _why = self._git_blocking(worktrees.argv_base_ref(root), root)
+        named = merges.trunk_from(out) if ok else ""
+        for candidate in (named, merges.TRUNK_DEFAULT):
+            if not candidate:
+                continue
+            found, _o, _w = self._git_blocking(
+                worktrees.argv_branch_exists(root, candidate), root)
+            if found:
+                return candidate
+        return ""
+
+    async def _merge_trunk(self, root: str) -> str:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._merge_trunk_sync, root)
+
+    async def _merge_tip(self, root: str, ref: str) -> str:
+        """The commit `ref` names in `root`, or `""`."""
+        ok, out, _why = await self._run_git(merges.argv_tip(root, ref), root)
+        return out.decode("utf-8", "replace").strip() if ok else ""
+
+    async def _merge_markers(self, path: str, names) -> list:
+        """Which of git's in-progress markers exist for the work tree at
+        `path`. A failed read answers every name (fail closed)."""
+        ok, out, _why = await self._run_git(
+            merges.argv_git_path(path, *names), path)
+        if not ok:
+            return list(names)
+        lines = out.decode("utf-8", "replace").splitlines()
+        loop = asyncio.get_running_loop()
+
+        def present() -> list:
+            found = []
+            for name, line in zip(names, lines):
+                where = line if os.path.isabs(line) else os.path.join(path, line)
+                if os.path.lexists(where):
+                    found.append(name)
+            return found
+        return await loop.run_in_executor(None, present)
+
+    async def _merge_back_to_branch(self, path: str, branch: str) -> bool:
+        """Put the card's folder back on its branch after any outcome but a
+        landed merge — the merge commit, if one was made, is dropped (the
+        next press rebuilds it) — and put the carried pack files back as
+        they were (`_merge_recarry`). One door for every failure leg, or the
+        Fix helper would open on a detached folder. False when git refused."""
+        ok, _o, why = await self._run_git(
+            merges.argv_checkout_branch(path, branch), path,
+            timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
+        if not ok:
+            logger.info("could not put %s back on %s (%s)", path, branch, why)
+            return False
+        await self._merge_recarry(path)
+        return True
+
+    async def _merge_abandon(self, card_id: str, path: str, branch: str,
+                             state: str, note: str) -> None:
+        """A stop: the folder goes back on its branch and the stop is
+        recorded. When the folder cannot be put back it says so, as
+        `blocked` — never `conflict` / `checks_failed`, which offer Fix, and
+        an assistant opened on a detached folder commits onto nothing."""
+        if await self._merge_back_to_branch(path, branch):
+            await self._merge_stop(card_id, state, note)
+        else:
+            await self._merge_stop(card_id, "blocked",
+                                   merges.DETACHED_NOTE.format(path))
+
+    def _root_of_folder(self, path: str) -> str:
+        """The project root a card folder (`<root>/.worktrees/card-<id8>`)
+        belongs to."""
+        return os.path.dirname(os.path.dirname(str(path).rstrip(os.sep)))
+
+    async def _merge_carried(self, path: str) -> list:
+        """The carry manifest's rows for this folder (`[]` when none)."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._read_pack_manifest, self._root_of_folder(path),
+            self._pack_card_id(path))
+
+    def _merge_uncarry_sync(self, root: str, path: str) -> str:
+        """Take **every** carried pack file out of the folder before the
+        merge, so nothing in its index can refuse the detach or the merge.
+        Executor. `""` when done; the refusal words when a carried copy was
+        edited in the folder (nothing is touched then) or a mark would not
+        clear.
+
+        A carried new file is an intent-to-add, skip-worktree entry and a
+        carried tracked one is skip-worktree over the folder's own bytes; git
+        refuses `checkout --detach` and `merge` over either (`Entry … not
+        uptodate`, `local changes would be overwritten`, `untracked …
+        would be overwritten` when the trunk now tracks the path), even with
+        identical bytes. One path at a time and only for paths actually in
+        the index: tracked and deleted rows go back to the folder's `HEAD`
+        bytes, new copies whose bytes still match the manifest are deleted
+        (an edited copy refuses, `DIRTY_FOLDER_REFUSAL`), and the manifest
+        goes. The carry is applied again by the existing routine
+        (`_sync_pack_copies`) once the folder is back on its branch. A
+        deletion is never staged for a path `HEAD` tracks."""
+        card_id = self._pack_card_id(path)
+        rows = self._read_pack_manifest(root, card_id)
+        if not rows:
+            return ""
+        rels = [r["path"] for r in rows]
+        wt_real = os.path.realpath(path)
+        # Pass one, touching nothing: an edited copy is the person's.
+        for row in rows:
+            dest = os.path.join(path, row["path"])
+            parent = os.path.realpath(os.path.dirname(dest))
+            if not (parent == wt_real or parent.startswith(wt_real + os.sep)):
+                return merges.DIRTY_FOLDER_REFUSAL
+            now = self._pack_file_digest(dest)
+            if now is None:
+                return merges.DIRTY_FOLDER_REFUSAL
+            if row["kind"] == "deleted":
+                if now != "":
+                    return merges.DIRTY_FOLDER_REFUSAL
+            elif now not in ("", row["sha256"]):
+                return merges.DIRTY_FOLDER_REFUSAL
+        ok, out, _why = self._git_blocking(
+            merges.argv_ls_files_tagged(path, rels), path)
+        if not ok:
+            return merges.GIT_FAILED_REFUSAL.format(work_record.GIT_FAILED_REASON)
+        indexed = merges.parse_tagged(out)
+        in_head = set()
+        for rel in rels:
+            ok, tree, _why = self._git_blocking(worktrees.argv_ls_tree(path, rel),
+                                                path)
+            if not ok:
+                return merges.GIT_FAILED_REFUSAL.format(
+                    work_record.GIT_FAILED_REASON)
+            if worktrees.parse_tree_mode(tree):
+                in_head.add(rel)
+        marked = [r for r in rels if "S" in indexed.get(r, ())]
+        if marked:
+            ok, _o, _why = self._git_blocking(
+                worktrees.argv_skip_worktree(path, marked, False), path)
+            if not ok:
+                return merges.GIT_FAILED_REFUSAL.format(
+                    "a carried file could not be released")
+        added = [r for r in rels if r in indexed and r not in in_head]
+        if added:
+            self._git_blocking(worktrees.argv_rm_cached(path, added), path)
+        for row in rows:
+            rel = row["path"]
+            if rel in in_head:
+                continue
+            try:
+                os.unlink(os.path.join(path, rel))
+            except OSError:
+                pass  # already gone, or not a plain file: nothing to remove
+        back = [r for r in rels if r in in_head]
+        if back:
+            ok, _o, _why = self._git_blocking(
+                merges.argv_restore_head(path, back), path)
+            if not ok:
+                return merges.GIT_FAILED_REFUSAL.format(
+                    "a carried file could not be put back")
+        ok, out, _why = self._git_blocking(
+            merges.argv_ls_files_tagged(path, rels), path)
+        if not ok or any("S" in tags for tags in merges.parse_tagged(out).values()):
+            return merges.GIT_FAILED_REFUSAL.format(
+                "a carried file is still marked")
+        try:
+            os.unlink(worktrees.pack_manifest_path(root, card_id))
+        except OSError:
+            pass  # no manifest left to remove
+        return ""
+
+    async def _merge_uncarry(self, path: str) -> str:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._merge_uncarry_sync, self._root_of_folder(path), path)
+
+    async def _merge_recarry(self, path: str) -> None:
+        """The carry again, by the routine Start uses (`_sync_pack_copies`):
+        the main checkout's uncommitted pack update is copied into the
+        folder, marked and recorded. Run on every way back to the branch."""
+        loop = asyncio.get_running_loop()
+        note = await loop.run_in_executor(
+            None, self._sync_pack_copies, self._root_of_folder(path), path,
+            self._pack_card_id(path))
+        if note:
+            logger.info("merge: %s", note)
+
+    def _pop_merging(self, card_id: str, token: str) -> None:
+        """Replace, never mutate: the executor reads the map. Only the entry
+        carrying `token` goes."""
+        current = getattr(self, "_merging", None) or {}
+        if (current.get(card_id) or {}).get("token") == token:
+            self._merging = {k: v for k, v in current.items()
+                             if k != card_id}
+
+    async def merge_card(self, card_id: str, expected_tip=None) -> tuple:
+        """The MERGE press. `(ok, detail)` — answers at once with
+        `merges.MERGING_NOTE` and works in the background (the panel's POST
+        times out at five seconds).
+
+        The person's own verb, not an agent run: a confirmed press, with
+        the gate (`_merge_gate_sync`) taken here and the folder, the main
+        checkout and the trunk's tip re-checked by the task at the moment
+        each is touched. `expected_tip` is the phone's current-state echo
+        (absent: no guard)."""
+        if self._board is None:
+            return False, merges.BOARD_CLOSED_REFUSAL
+        cid = str(card_id or "")
+        # `None` is no guard (the Mac's plain press). A value that is present
+        # is a guard and must be a whole commit hash: an empty or short one
+        # is never read as "absent".
+        if expected_tip is not None and not merges.is_tip(expected_tip):
+            return False, merges.TIP_CHANGED_REFUSAL
+        card = await self._board_call("get", cid)
+        loop = asyncio.get_running_loop()
+        refusal, root, _branch, _path = await loop.run_in_executor(
+            None, functools.partial(
+                self._merge_gate_sync, card,
+                expected_tip=str(expected_tip or "")))
+        if refusal:
+            return False, refusal
+        # No await between this look and the record below: of two presses
+        # arriving together, one finds the other's entry.
+        refusal = self._merging_refusal(cid, root)
+        if refusal:
+            return False, refusal
+        token = secrets.token_hex(8)
+        merging = dict(getattr(self, "_merging", None) or {})
+        merging[cid] = {"root": root, "since": time.time(), "token": token}
+        self._merging = merging
+        task = asyncio.ensure_future(self._merge_card_task(
+            cid, root, token, str(expected_tip or "")))
+        self._merge_tasks.add(task)
+        task.add_done_callback(self._merge_tasks.discard)
+        await self._board_call("record_merge", cid, "", "")
+        await self._publish_board()
+        return True, merges.MERGING_NOTE
+
+    async def _merge_card_task(self, card_id: str, root: str,
+                               token: str, expected_tip: str = "") -> None:
+        """The detached merge. Loop; never raises. `finally` pops the
+        `_merging` entry it made and publishes."""
+        try:
+            await self._merge_run(card_id, root, expected_tip)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("the merge of card %s failed", card_id[:8],
+                           exc_info=True)
+            try:
+                await self._merge_stop(
+                    card_id, "blocked",
+                    merges.GIT_FAILED_REFUSAL.format("an unexpected error"))
+            except Exception:
+                logger.debug("could not record the failed merge",
+                             exc_info=True)
+        finally:
+            self._pop_merging(card_id, token)
+            try:
+                await self._publish_board()
+            except Exception:
+                logger.debug("could not publish after a merge", exc_info=True)
+
+    async def _merge_stop(self, card_id: str, state: str, note: str) -> None:
+        """A merge that did not land: record why, log one line (no path)."""
+        await self._board_call("record_merge", card_id, state, note)
+        card = await self._board_call("get", card_id)
+        if card is not None:
+            self._log_card_event(card, "card_merge_blocked", state=state)
+        logger.info("merge of card %s stopped (%s): %s", card_id[:8], state,
+                    note[:200])
+
+    async def _merge_run(self, card_id: str, root: str,
+                          expected_tip: str = "") -> None:
+        """Steps 5 to 7 of the contract: the folder, the merge commit, the
+        checks, the move of the trunk, the cleanup. Loop (git hops to the
+        executor). `expected_tip`, when the press carried one, is checked
+        again against the fresh branch tip before anything is touched."""
+        cid = str(card_id)
+        loop = asyncio.get_running_loop()
+        card = await self._board_call("get", cid)
+        if card is None:
+            return
+        branch = str(card.get("worktree_branch") or "")
+        found, _o, why = await self._run_git(
+            worktrees.argv_branch_exists(root, branch), root)
+        if not branch or not found:
+            await self._merge_stop(cid, "blocked",
+                                   merges.NO_BRANCH_REFUSAL)
+            return
+        # The folder: the recorded one when it is still one, else made again
+        # exactly as Start makes it (the setup script runs again).
+        path = await self._reusable_worktree(card)
+        if not path:
+            path, _b, error = await self._prepare_worktree(card, root)
+            if error:
+                await self._merge_stop(
+                    cid, "blocked", merges.FOLDER_FAILED_REFUSAL.format(error))
+                return
+            recorded, _why = await self._board_call(
+                "record_worktree", cid, path, branch) or (None, "")
+            if recorded is None:
+                await self._merge_stop(cid, "blocked",
+                                       merges.NO_CARD_REFUSAL)
+                return
+        if await self._merge_markers(path, merges.MID_MERGE_MARKERS):
+            await self._merge_stop(cid, "blocked", merges.MID_MERGE_REFUSAL)
+            return
+        ok, status, _why = await self._run_git(merges.argv_status(path), path)
+        if not ok or status:
+            await self._merge_stop(cid, "blocked", merges.DIRTY_FOLDER_REFUSAL)
+            return
+        trunk = await self._merge_trunk(root)
+        if not trunk:
+            await self._merge_stop(cid, "blocked", merges.NO_TRUNK_REFUSAL)
+            return
+        base_tip = await self._merge_tip(root, f"refs/heads/{trunk}")
+        branch_tip = await self._merge_tip(root, f"refs/heads/{branch}")
+        if not base_tip or not branch_tip:
+            await self._merge_stop(
+                cid, "blocked", merges.GIT_FAILED_REFUSAL.format(
+                    work_record.GIT_FAILED_REASON))
+            return
+        # The phone's echo, again at the moment the branch is first touched:
+        # the press checked it, but the folder may have been made again and a
+        # commit may have landed since.
+        if expected_tip and branch_tip != expected_tip:
+            await self._merge_stop(cid, "blocked", merges.TIP_CHANGED_REFUSAL)
+            return
+        contained, _o, _w = await self._run_git(
+            worktrees.argv_is_ancestor(root, branch_tip, base_tip), root)
+        if contained:
+            await self._merge_land(card, root, path, branch, trunk,
+                                   merges.ALREADY_MERGED_NOTE,
+                                   branch_tip=branch_tip)
+            return
+        # The merge commit, built detached at the trunk's tip in the card's
+        # own folder: the main checkout is never mid-anything and never
+        # holds a merge commit it did not fast-forward to.
+        refusal = await self._merge_uncarry(path)
+        if refusal:
+            await self._merge_abandon(cid, path, branch, "blocked", refusal)
+            return
+        ok, _o, why = await self._run_git(
+            merges.argv_checkout_detach(path, base_tip), path,
+            timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
+        if not ok:
+            await self._merge_abandon(cid, path, branch, "blocked",
+                                      merges.GIT_FAILED_REFUSAL.format(why))
+            return
+        ok, _o, why = await self._run_git(
+            merges.argv_merge(path, branch_tip, merges.merge_subject(card)),
+            path, timeout=merges.MERGE_TIMEOUT_SECONDS,
+            env=merges.merge_env())
+        if not ok:
+            _r, listing, _w = await self._run_git(
+                merges.argv_unmerged(path), path)
+            files = merges.parse_paths_z(listing)
+            await self._run_git(merges.argv_merge_abort(path), path)
+            if files:
+                await self._merge_abandon(
+                    cid, path, branch, "conflict",
+                    merges.conflict_note(trunk, files))
+            else:
+                await self._merge_abandon(
+                    cid, path, branch, "blocked",
+                    merges.MERGE_FAILED_REFUSAL.format(why, trunk))
+            return
+        merge_tip = await self._merge_tip(path, "HEAD")
+        if not merge_tip:
+            await self._merge_abandon(
+                cid, path, branch, "blocked", merges.GIT_FAILED_REFUSAL.format(
+                    work_record.GIT_FAILED_REASON))
+            return
+        # The project's own checks, in the folder, at the merge commit.
+        unchecked = False
+        verdict = await loop.run_in_executor(
+            None, self._setup_script_file_check, root,
+            merges.MERGE_CHECK_SCRIPT)
+        if verdict is None:
+            unchecked = True
+        else:
+            refusal = await self._setup_script_refusal(
+                root, str(card.get("tool") or ""),
+                rel=merges.MERGE_CHECK_SCRIPT)
+            if refusal:
+                await self._merge_abandon(cid, path, branch, "blocked", refusal)
+                return
+            log_path = merges.merge_log_path(root, cid)
+            refusal, failure, log = await loop.run_in_executor(
+                None, functools.partial(
+                    self._exec_setup_script, root, path, cid, branch,
+                    rel=merges.MERGE_CHECK_SCRIPT, log_path=log_path,
+                    timeout=merges.MERGE_CHECK_TIMEOUT_SECONDS))
+            if refusal:
+                await self._merge_abandon(cid, path, branch, "blocked", refusal)
+                return
+            if failure:
+                await self._merge_abandon(
+                    cid, path, branch, "checks_failed",
+                    merges.CHECKS_FAILED_NOTE.format(failure, log))
+                return
+            ok, status, _why = await self._run_git(
+                merges.argv_status(path), path)
+            if not ok or status:
+                await self._merge_abandon(cid, path, branch, "blocked",
+                                          merges.DIRTY_FOLDER_REFUSAL)
+                return
+        # The card may have been dragged out of Done, its check reopened or
+        # its branch moved while the checks ran: the move of the trunk is
+        # destructive, so the card is judged again at the moment it fires.
+        fresh = await self._board_call("get", cid)
+        refusal = await loop.run_in_executor(
+            None, self._merge_recheck_sync, fresh, branch_tip)
+        if refusal:
+            await self._merge_abandon(cid, path, branch, "blocked", refusal)
+            return
+        refusal = await self._merge_checkout_gate(root, trunk, base_tip,
+                                                  merge_tip)
+        if refusal:
+            await self._merge_abandon(cid, path, branch, "blocked", refusal)
+            return
+        await self._merge_land(card, root, path, branch, trunk,
+                               merges.MERGED_NOTE.format(trunk, merge_tip[:8]),
+                               unchecked=unchecked, branch_tip=branch_tip)
+
+    def _merge_recheck_sync(self, card, branch_tip: str) -> str:
+        """The refusal words, or `""`: the gate's card-side rungs read afresh
+        from inside the running task (Done, a branch, the hand-check still
+        settled, the project still watched) and the branch still at the tip
+        the merge commit was built from. The busy rungs are the task's own
+        and left out. **Executor.**"""
+        if not isinstance(card, dict) or not card:
+            return merges.NO_CARD_REFUSAL
+        if str(card.get("column_name") or "") != "done":
+            return merges.NOT_DONE_REFUSAL
+        branch = str(card.get("worktree_branch") or "")
+        if not branch:
+            return merges.NO_BRANCH_REFUSAL
+        refusal = self._merge_manual_refusal(card)
+        if refusal:
+            return refusal
+        root = dispatch.normalise_root(str(card.get("root") or ""))
+        if not root or not enrollment.root_enrolled(root):
+            return merges.NOT_ENROLLED_REFUSAL
+        ok, tip, _why = self._git_blocking(
+            merges.argv_tip(root, f"refs/heads/{branch}"), root)
+        if not ok or tip.decode("utf-8", "replace").strip() != branch_tip:
+            return merges.TIP_CHANGED_REFUSAL
+        return ""
+
+    async def _merge_checkout_gate(self, root: str, trunk: str,
+                                   base_tip: str, merge_tip: str) -> str:
+        """The last look at the main checkout, then the move. `""` when the
+        trunk moved forward onto `merge_tip`; the refusal words otherwise,
+        with **nothing changed**.
+
+        (a) the trunk still at the tip the merge was built on; (b) the main
+        checkout in the middle of nothing; (c) the trunk not checked out in
+        some other folder; (d) the trunk checked out in the main checkout:
+        its uncommitted files must not meet the files the merge changes,
+        then `--ff-only`; (e) checked out nowhere: only the pointer moves,
+        and only from the old value."""
+        if await self._merge_tip(root, f"refs/heads/{trunk}") != base_tip:
+            return merges.TRUNK_MOVED_REFUSAL.format(trunk)
+        if await self._merge_markers(root, merges.ROOT_BUSY_MARKERS):
+            return merges.ROOT_BUSY_REFUSAL
+        ok, out, why = await self._run_git(
+            worktrees.argv_worktree_list(root), root)
+        if not ok:
+            return merges.GIT_FAILED_REFUSAL.format(why)
+        loop = asyncio.get_running_loop()
+        real_root = await loop.run_in_executor(None, os.path.realpath, root)
+        listed = merges.parse_worktree_branches(out.decode("utf-8", "replace"))
+        for where, held in listed.items():
+            if held == trunk and where != real_root:
+                return merges.TRUNK_ELSEWHERE_REFUSAL.format(trunk, where)
+        # Two independent answers to "what is the main checkout on": the
+        # worktree list and `symbolic-ref`. Both must be readable and agree
+        # (a detached HEAD is `""` in the list and a failed `symbolic-ref`);
+        # otherwise nothing moves — a guess here would pick `update-ref`
+        # under a checkout that is really on the trunk.
+        if real_root not in listed:
+            return merges.ROOT_UNSURE_REFUSAL
+        listed_branch = listed[real_root]
+        ok, head, _why = await self._run_git(merges.argv_head_branch(root),
+                                             root)
+        if ok:
+            if head.decode("utf-8", "replace").strip() != listed_branch:
+                return merges.ROOT_UNSURE_REFUSAL
+        elif listed_branch:
+            return merges.ROOT_UNSURE_REFUSAL
+        on_trunk = listed_branch == trunk
+        if on_trunk:
+            ok, listing, why = await self._run_git(merges.argv_status(root),
+                                                   root)
+            if not ok:
+                return merges.GIT_FAILED_REFUSAL.format(why)
+            ok, incoming, why = await self._run_git(
+                merges.argv_incoming(root, base_tip, merge_tip), root)
+            if not ok:
+                return merges.GIT_FAILED_REFUSAL.format(why)
+            clash = merges.overlap(merges.parse_status_paths(listing),
+                                   merges.parse_paths_z(incoming))
+            if clash:
+                return merges.OVERLAP_REFUSAL.format(merges.listed(clash))
+            ok, _o, why = await self._run_git(
+                merges.argv_ff(root, merge_tip), root,
+                timeout=merges.FF_TIMEOUT_SECONDS, env=merges.merge_env())
+            if not ok:
+                return merges.FF_FAILED_REFUSAL.format(trunk, why)
+            return ""
+        ok, _o, why = await self._run_git(
+            merges.argv_update_ref(root, trunk, merge_tip, base_tip), root)
+        if not ok:
+            return merges.TRUNK_MOVED_REFUSAL.format(trunk)
+        return ""
+
+    async def _merge_delete_branch(self, root: str, branch: str,
+                                   branch_tip: str, trunk: str) -> bool:
+        """Delete the landed branch's ref, guarded by the tip that was
+        merged (`update-ref -d <ref> <old>`; never `branch -D`). `branch -d`
+        judges a branch against whatever the main checkout has checked out,
+        so it refused whenever that was not the trunk. Kept (False) when the
+        tip is not part of the trunk after all, when the main checkout or
+        another folder has the branch checked out, or when the ref moved."""
+        contained, _o, _w = await self._run_git(
+            worktrees.argv_is_ancestor(root, branch_tip, f"refs/heads/{trunk}"),
+            root)
+        if not contained:
+            return False
+        ok, out, _why = await self._run_git(
+            worktrees.argv_worktree_list(root), root)
+        if not ok:
+            return False
+        if branch in merges.parse_worktree_branches(
+                out.decode("utf-8", "replace")).values():
+            return False
+        ok, _o, why = await self._run_git(
+            merges.argv_branch_delete_ref(root, branch, branch_tip), root)
+        if not ok:
+            logger.info("could not delete %s (%s)", branch, why)
+        return ok
+
+    async def _merge_land(self, card: dict, root: str, path: str,
+                          branch: str, trunk: str, note: str, *,
+                          unchecked: bool = False,
+                          branch_tip: str = "") -> None:
+        """After the trunk holds the branch: remove the folder through the
+        release's own gates (no `--force`), delete the branch (guarded by
+        the tip merged), clear the card's memory of both, and say so. A
+        folder the release kept is put back on its branch and keeps it."""
+        cid = str(card.get("id") or "")
+        await self._maybe_release_worktree({"id": cid}, merging=True)
+        after = await self._board_call("get", cid) or {}
+        folder_kept = bool(str(after.get("worktree_path") or ""))
+        branch_kept = folder_kept
+        if folder_kept:
+            await self._merge_back_to_branch(
+                str(after.get("worktree_path") or path), branch)
+        else:
+            tip = branch_tip or await self._merge_tip(
+                root, f"refs/heads/{branch}")
+            if tip and await self._merge_delete_branch(root, branch, tip,
+                                                       trunk):
+                await self._board_call("clear_worktree", cid, branch=True)
+            else:
+                branch_kept = True
+        line = note
+        if unchecked:
+            line += merges.MERGED_UNCHECKED_NOTE
+        if folder_kept:
+            line += merges.FOLDER_KEPT_SUFFIX
+        if branch_kept:
+            line += merges.BRANCH_KEPT_SUFFIX
+        await self._board_call("record_merge", cid, "merged", line)
+        done = await self._board_call("get", cid)
+        if done is not None:
+            self._log_card_event(done, "card_merged", trunk=trunk)
+        logger.info("card %s: merged %s into %s", cid[:8], branch, trunk)
+
+    # -- Fix and Run review: an assistant in the card's folder --
+
+    async def _merge_folder(self, card: dict, root: str) -> tuple:
+        """`(path, error)` — the card's folder for a helper: the recorded
+        one while it is still one, else made again as Start makes it and
+        recorded. Loop; the caller holds `_dispatch_lock`."""
+        cid = str(card.get("id") or "")
+        path = await self._reusable_worktree(card)
+        if path:
+            return path, ""
+        found, _o, _w = await self._run_git(
+            worktrees.argv_branch_exists(
+                root, str(card.get("worktree_branch") or "")), root)
+        if not found:
+            return "", merges.NO_BRANCH_REFUSAL
+        path, branch, error = await self._prepare_worktree(card, root)
+        if error:
+            return "", merges.FOLDER_FAILED_REFUSAL.format(error)
+        recorded, _why = await self._board_call(
+            "record_worktree", cid, path, branch) or (None, "")
+        if recorded is None:
+            return "", merges.NO_CARD_REFUSAL
+        return path, ""
+
+    def _hold_folder(self, card_id: str, root: str, project: str,
+                     kind: str) -> None:
+        """Mark the card's folder as spoken for before it is recreated, so
+        the release cannot remove it between the record and the spawn.
+        Replaced, never mutated."""
+        held = dict(getattr(self, "_merge_helpers", None) or {})
+        held[str(card_id)] = {"root": str(root), "project": str(project),
+                              "since": time.time(), "kind": kind}
+        self._merge_helpers = held
+
+    def _drop_hold(self, card_id: str) -> None:
+        held = getattr(self, "_merge_helpers", None) or {}
+        if str(card_id) in held:
+            self._merge_helpers = {k: v for k, v in held.items()
+                                   if k != str(card_id)}
+
+    async def _helper_gate(self, card_id: str, *, fix: bool) -> tuple:
+        """`(refusal, card, root, branch, path)` for Fix and Run review:
+        board open, the gate, the dispatch switch. Not under the lock yet."""
+        if self._board is None:
+            return merges.BOARD_CLOSED_REFUSAL, None, "", "", ""
+        card = await self._board_call("get", str(card_id or ""))
+        loop = asyncio.get_running_loop()
+        refusal, root, branch, path = await loop.run_in_executor(
+            None, functools.partial(self._merge_gate_sync, card))
+        if refusal:
+            return refusal, card, root, branch, path
+        if fix and str(card.get("merge_state") or "") \
+                not in merges.FIX_STATES:
+            return merges.FIX_NOT_NEEDED_REFUSAL, card, root, branch, path
+        if not self.board_dispatch_enabled:
+            return merges.DISPATCH_OFF_REFUSAL, card, root, branch, path
+        return "", card, root, branch, path
+
+    async def fix_merge_card(self, card_id: str) -> tuple:
+        """The Fix press: start the card's own assistant in the card's
+        folder to bring the main line into the card branch and repair it
+        there. `(ok, detail)`. Behind `board_dispatch`, the gate, and
+        `_dispatch_lock` — a launch like any other."""
+        refusal, card, _root, _branch, _path = await self._helper_gate(
+            card_id, fix=True)
+        if refusal:
+            return False, refusal
+        async with self._dispatch_lock:
+            return await self._spawn_merge_fix_locked(str(card_id))
+
+    async def _spawn_merge_fix_locked(self, card_id: str) -> tuple:
+        # Everything is read afresh under the lock: the first look was a
+        # moment ago and a launch spends a terminal.
+        refusal, card, root, branch, _path = await self._helper_gate(
+            card_id, fix=True)
+        if refusal:
+            return False, refusal
+        cid = str(card.get("id") or "")
+        tool = str(card.get("tool") or "claude")
+        loop = asyncio.get_running_loop()
+        self._hold_folder(cid, root, str(card.get("project") or ""), "fix")
+        spawned = False
+        try:
+            path, error = await self._merge_folder(card, root)
+            if error:
+                return False, error
+            trunk = await self._merge_trunk(root)
+            if not trunk:
+                return False, merges.NO_TRUNK_REFUSAL
+            # The helper brings the main line into the card branch in this
+            # folder, which the carried pack files would refuse: release them
+            # first (an edited one refuses the press, in words).
+            refusal = await self._merge_uncarry(path)
+            if refusal:
+                return False, refusal
+            state = str(card.get("merge_state") or "")
+            prompt = dispatch.merge_fix_prompt(
+                card, branch=branch, worktree=path, trunk=trunk, state=state,
+                detail=str(card.get("merge_note") or ""),
+                log=(merges.merge_log_path(root, cid)
+                     if state == "checks_failed" else ""))
+            roots = await loop.run_in_executor(None, self._known_project_roots)
+            in_flight = [c for c in self._launch_inflight(
+                await self._board_call("cards") or [])
+                if c.get("id") != f"merge-fix:{cid}"]
+            ok, detail = dispatch.helper_guard(
+                card, roots=roots, in_flight=in_flight, now=time.time(),
+                last_attempt=self._merge_attempts.get(cid), key="merge-fix",
+                tool=tool, prompt=prompt)
+            if not ok:
+                return False, detail
+            executable = await loop.run_in_executor(
+                None, dispatch.resolve_executable, tool)
+            if not executable:
+                return False, merges.HELPER_TOOL_MISSING_REFUSAL.format(tool)
+            argv = dispatch.argv_for(
+                tool, executable, prompt,
+                model=self._agent_model_for(root, tool, "main"))
+            name = ("fix: " + (card.get("title") or "card"))[:40]
+            spawner = (dispatch.spawn_local
+                       if self._uses_own_terminal(cid, None)
+                       else dispatch.spawn)
+            where = {"cwd": path} if path and path != root else {}
+            ok, spawn_detail, _pid = await spawner(
+                root, argv, name, stamp=origin.stamp("card-merge-fix", cid),
+                **where)
+            if not ok:
+                return False, spawn_detail
+            spawned = True
+            self._hold_folder(cid, root, str(card.get("project") or ""),
+                              "fix")
+            self._merge_attempts[cid] = time.time()
+            await self._publish_board()
+            logger.info("card %s: started %s in %s to fix its merge",
+                        cid[:8], tool, path)
+            return True, spawn_detail
+        finally:
+            if not spawned:
+                self._drop_hold(cid)
+
+    async def run_card_review(self, card_id: str) -> tuple:
+        """The Run review press: an assistant reviews the card's branch and
+        answers onto the card's thread, where the first line is read.
+        `(ok, detail)`. Claude on every card — only Claude's channel has
+        `dark_army_answer_card`."""
+        refusal, _card, _root, _branch, _path = await self._helper_gate(
+            card_id, fix=False)
+        if refusal:
+            return False, refusal
+        async with self._dispatch_lock:
+            return await self._spawn_card_review_locked(str(card_id))
+
+    async def _spawn_card_review_locked(self, card_id: str) -> tuple:
+        refusal, card, root, branch, _path = await self._helper_gate(
+            card_id, fix=False)
+        if refusal:
+            return False, refusal
+        cid = str(card.get("id") or "")
+        loop = asyncio.get_running_loop()
+        self._hold_folder(cid, root, str(card.get("project") or ""), "review")
+        spawned = False
+        try:
+            path, error = await self._merge_folder(card, root)
+            if error:
+                return False, error
+            trunk = await self._merge_trunk(root)
+            if not trunk:
+                return False, merges.NO_TRUNK_REFUSAL
+            tip = await self._merge_tip(root, f"refs/heads/{branch}")
+            if not tip:
+                return False, merges.NO_BRANCH_REFUSAL
+            prompt = dispatch.review_prompt(card, branch=branch, trunk=trunk,
+                                            worktree=path)
+            roots = await loop.run_in_executor(None, self._known_project_roots)
+            in_flight = self._launch_inflight(
+                await self._board_call("cards") or [])
+            ok, detail = dispatch.helper_guard(
+                card, roots=roots, in_flight=in_flight, now=time.time(),
+                last_attempt=self._review_attempts.get(cid), key="consult",
+                tool="claude", prompt=prompt)
+            if not ok:
+                return False, detail
+            executable = await loop.run_in_executor(
+                None, dispatch.resolve_executable, "claude")
+            if not executable:
+                return False, dispatch.NOT_INSTALLED_REFUSAL.format(
+                    tool="claude")
+            argv = dispatch.argv_for(
+                "claude", executable, prompt,
+                model=self._agent_model_for(root, "claude", "main"))
+            name = ("review: " + (card.get("title") or "card"))[:40]
+            baseline = self._live_session_ids()
+            spawner = (dispatch.spawn_local
+                       if self._uses_own_terminal(cid, None)
+                       else dispatch.spawn)
+            where = {"cwd": path} if path and path != root else {}
+            ok, spawn_detail, shell_pid = await spawner(
+                root, argv, name, stamp=origin.stamp("card-review", cid),
+                **where)
+            if not ok:
+                return False, spawn_detail
+            spawned = True
+            now = time.time()
+            self._review_attempts[cid] = now
+            self._consults[cid] = {
+                "card_id": cid,
+                "project": card.get("project") or "",
+                "root": root,
+                "tool": "claude",
+                "baseline": baseline,
+                "started": now,
+                "session_id": "",
+                "shell_pid": shell_pid,
+                "purpose": "review",
+                "tip": tip,
+            }
+            await self._publish_board()
+            logger.info("card %s: started a review of %s", cid[:8], branch)
+            return True, spawn_detail
+        finally:
+            if not spawned:
+                self._drop_hold(cid)
+
+    async def _record_review_from_answer(self, card_id: str, entry: dict,
+                                         text: str) -> None:
+        """A retired review consult's answer: read the verdict off its first
+        line and remember it with the branch version it judged. No
+        `VERDICT:` line leaves the columns untouched (the message stays on
+        the thread)."""
+        verdict = merges.parse_verdict(text)
+        if not verdict:
+            return
+        tip = str((entry or {}).get("tip") or "")
+        await self._board_call("record_review_verdict", card_id, verdict, tip)
+        card = await self._board_call("get", card_id)
+        if card is not None:
+            self._log_card_event(card, "card_review_verdict", verdict=verdict)
+
+    # -- The card says so --
+
+    def _review_running(self, card_id: str) -> bool:
+        entry = self._consults.get(str(card_id))
+        return bool(entry and entry.get("purpose") == "review")
+
+    def _merge_line(self, card: dict) -> str:
+        """The sentence a card draws about its merge, or `""`. **Executor.**
+        Composed here and drawn verbatim by both clients: the running words
+        while merging, else the stored note — with, for a state the Fix
+        press answers, whether an assistant is already at work in the
+        folder."""
+        cid = str(card.get("id") or "")
+        if cid in (getattr(self, "_merging", None) or {}):
+            return merges.MERGING_NOTE
+        state = str(card.get("merge_state") or "")
+        note = str(card.get("merge_note") or "")
+        if state not in merges.STATES or not state or not note:
+            return ""
+        if state in merges.FIX_STATES:
+            path = str(card.get("worktree_path") or "")
+            at_work = self._merge_hold(cid) or bool(
+                path and self._session_inside(path))
+            note += (merges.HELPER_AT_WORK_SUFFIX if at_work
+                     else merges.PRESS_AGAIN_SUFFIX)
+        return note
+
+    def _decorate_merge(self, out: dict) -> None:
+        """Publish the card's four review-and-merge keys where non-empty and
+        take the stored bookkeeping off the copy: `merge_state` (with
+        `merging` while the task runs), `merge_line`, `review_verdict` and
+        `review_running`. `merge_note` and `review_tip` never ride."""
+        cid = str(out.get("id") or "")
+        stored = str(out.get("merge_state") or "")
+        line = self._merge_line(out)
+        out.pop("merge_note", None)
+        out.pop("review_tip", None)
+        if cid in (getattr(self, "_merging", None) or {}):
+            out["merge_state"] = merges.SNAPSHOT_MERGING
+        elif not stored:
+            out.pop("merge_state", None)
+        if line:
+            out["merge_line"] = line
+        if not str(out.get("review_verdict") or ""):
+            out.pop("review_verdict", None)
+        if self._review_running(cid):
+            out["review_running"] = True
+        # The one fact every surface draws MERGE, Fix and Run review from:
+        # the gate without its busy rungs (Done, a branch, not merged, the
+        # hand-check settled — a Failed one reads from the check file,
+        # memoised by its mtime — enrolled, a checkout, not merging).
+        # Published only on a Done card that has a branch; no git here.
+        if str(out.get("column_name") or "") == "done" \
+                and str(out.get("worktree_branch") or ""):
+            try:
+                refusal = self._merge_gate_sync(out, busy=False, cached=True)[0]
+            except Exception:
+                logger.debug("merge_offered could not be decided",
+                             exc_info=True)
+                refusal = "unknown"
+            out["merge_offered"] = not refusal
+
+    # -- Remembering the branch of a card finished before this existed --
+
+    def _consider_standing_branch(self, card: dict) -> None:
+        """Once per process per card: a Done card of a git project that
+        names neither a folder nor a branch and has no merge state may have
+        a branch its name implies. Queued for the loop to look. **Executor,
+        no git** (a stat for the checkout, nothing else)."""
+        card = card if isinstance(card, dict) else {}
+        cid = str(card.get("id") or "")
+        if not cid or str(card.get("column_name") or "") != "done":
+            return
+        if card.get("worktree_branch") or card.get("worktree_path") \
+                or card.get("merge_state"):
+            return
+        if cid in self._branch_backfill_seen:
+            return
+        # Seen first: a project that is not a git checkout is asked once too.
+        self._branch_backfill_seen = self._branch_backfill_seen | {cid}
+        root = dispatch.normalise_root(str(card.get("root") or ""))
+        if not root or not self._git_checkout(root):
+            return
+        self._branch_backfill_queue = self._branch_backfill_queue + [
+            {"id": cid, "root": root, "title": str(card.get("title") or "")}]
+
+    async def _flush_branch_backfill(self) -> None:
+        """Look for the queued cards' branches as one detached task, one in
+        flight. A branch that exists and is not yet part of the trunk is
+        recorded on the card (no folder); one already contained reads
+        merged; none leaves the card as it was."""
+        if not self._branch_backfill_queue:
+            return
+        task = getattr(self, "_branch_backfill_task", None)
+        if task is not None and not task.done():
+            return
+        queue, self._branch_backfill_queue = self._branch_backfill_queue, []
+        try:
+            self._branch_backfill_task = asyncio.ensure_future(
+                self._backfill_branches(queue))
+        except RuntimeError:
+            self._branch_backfill_queue = queue
+
+    async def _backfill_branches(self, queue: list) -> None:
+        changed = False
+        trunks: dict = {}
+        for item in queue:
+            try:
+                cid, root = item["id"], item["root"]
+                branch = worktrees.branch_name(
+                    {"id": cid, "title": item.get("title")})
+                found, _o, _w = await self._run_git(
+                    worktrees.argv_branch_exists(root, branch), root)
+                if not found:
+                    continue
+                if root not in trunks:
+                    trunks[root] = await self._merge_trunk(root)
+                trunk = trunks[root]
+                merged = False
+                if trunk:
+                    merged, _o, _w = await self._run_git(
+                        worktrees.argv_is_ancestor(root, branch, trunk), root)
+                if merged:
+                    result = await self._board_call(
+                        "record_merge", cid, "merged",
+                        merges.ALREADY_MERGED_NOTE)
+                else:
+                    result = await self._board_call(
+                        "record_worktree", cid, "", branch)
+                changed = changed or bool(result and result[0])
+            except Exception:
+                logger.debug("branch backfill failed for %s",
+                             item.get("id"), exc_info=True)
+        if changed:
+            await self._publish_board()
+        if self._branch_backfill_queue:
+            await self._flush_branch_backfill()
+
+    # -- The Changes read: on demand only, never the snapshot path --
+
+    def _changes_empty(self, card_id: str, reason: str) -> dict:
+        return {"available": False, "card_id": str(card_id), "branch": "",
+                "trunk": "", "merge_base": "", "branch_tip": "", "ahead": 0,
+                "behind": 0, "commits": [], "files": [], "files_total": 0,
+                "files_truncated": False, "commits_truncated": False,
+                "merge_offered": False, "merge_refusal": "",
+                "merge_state": "", "merge_note": "",
+                "review": {"verdict": "", "tip": "", "current": False},
+                "generated_at": time.time(), "reason": reason}
+
+    def _changes_context(self, card_id: str) -> tuple:
+        """`(unavailable_body_or_None, context)`. **Executor**, under
+        `_changes_lock`. The card is re-read, the root's enrolment and
+        checkout re-checked, and the trunk, both tips and the merge base
+        read — the git every page needs."""
+        cid = str(card_id or "")
+        if self._board is None:
+            return self._changes_empty(cid, merges.BOARD_CLOSED_REFUSAL), {}
+        card = self._board.get(cid)
+        if card is None:
+            return self._changes_empty(cid, merges.NO_CARD_REFUSAL), {}
+        branch = str(card.get("worktree_branch") or "")
+        if not branch:
+            return self._changes_empty(cid, merges.NO_BRANCH_REFUSAL), {}
+        root = dispatch.normalise_root(str(card.get("root") or ""))
+        if not root or not enrollment.root_enrolled(root):
+            return self._changes_empty(
+                cid, merges.NOT_ENROLLED_REFUSAL), {}
+        if not self._git_checkout(root):
+            return self._changes_empty(
+                cid, merges.NOT_A_CHECKOUT_REFUSAL), {}
+        trunk = self._merge_trunk_sync(root)
+        if not trunk:
+            return self._changes_empty(cid, merges.NO_TRUNK_REFUSAL), {}
+        tips = []
+        for ref in (f"refs/heads/{trunk}", f"refs/heads/{branch}"):
+            ok, out, why = self._git_blocking(merges.argv_tip(root, ref), root)
+            tip = out.decode("utf-8", "replace").strip() if ok else ""
+            if not tip:
+                return self._changes_empty(
+                    cid, merges.GIT_FAILED_REFUSAL.format(why)), {}
+            tips.append(tip)
+        base_tip, branch_tip = tips
+        ok, out, why = self._git_blocking(
+            merges.argv_merge_base(root, base_tip, branch_tip), root)
+        merge_base = out.decode("utf-8", "replace").strip() if ok else ""
+        if not merge_base:
+            return self._changes_empty(
+                cid, merges.GIT_FAILED_REFUSAL.format(why)), {}
+        return None, {"card": card, "root": root, "branch": branch,
+                      "trunk": trunk, "base_tip": base_tip,
+                      "branch_tip": branch_tip, "merge_base": merge_base}
+
+    def _changes_files(self, ctx: dict) -> tuple:
+        """`(rows, truncated, total, reason)` for the branch against the
+        merge base — the one listing both the page and a file's index use."""
+        ok, out, why = self._git_blocking(
+            merges.argv_numstat_range(ctx["root"], ctx["merge_base"],
+                                      ctx["branch_tip"]), ctx["root"])
+        if not ok:
+            return [], False, 0, why or work_record.GIT_FAILED_REASON
+        rows, truncated, total = merges.parse_numstat_z(out)
+        return rows, truncated, total, ""
+
+    def _card_changes_sync(self, card_id: str) -> dict:
+        """The Changes page: commits, files with added/removed counts, what
+        MERGE would say. **Executor.** Read-only git against the merge base,
+        bounded, serialised by `_changes_lock`, and never part of any
+        snapshot."""
+        with self._changes_lock:
+            body, ctx = self._changes_context(card_id)
+            if body is not None:
+                return body
+            root = ctx["root"]
+            card = ctx["card"]
+            ok, out, _why = self._git_blocking(
+                merges.argv_ahead_behind(root, ctx["base_tip"],
+                                         ctx["branch_tip"]), root)
+            behind, ahead = merges.parse_ahead_behind(out) if ok else (0, 0)
+            ok, out, _why = self._git_blocking(
+                merges.argv_log(root, ctx["merge_base"], ctx["branch_tip"]),
+                root)
+            commits, commits_cut = merges.parse_log(out) if ok else ([], False)
+            files, files_cut, total, reason = self._changes_files(ctx)
+            refusal, _r, _b, _p = self._merge_gate_sync(card, busy=False)
+            verdict = str(card.get("review_verdict") or "")
+            review_tip = str(card.get("review_tip") or "")
+            return {
+                "available": True, "card_id": str(card.get("id") or ""),
+                "branch": ctx["branch"], "trunk": ctx["trunk"],
+                "merge_base": merges.sha8(ctx["merge_base"]),
+                "branch_tip": ctx["branch_tip"], "ahead": ahead,
+                "behind": behind, "commits": commits, "files": files,
+                "files_total": total, "files_truncated": files_cut,
+                "commits_truncated": commits_cut,
+                "merge_offered": not refusal, "merge_refusal": refusal,
+                "merge_state": (merges.SNAPSHOT_MERGING
+                                if str(card.get("id")) in
+                                (getattr(self, "_merging", None) or {})
+                                else str(card.get("merge_state") or "")),
+                "merge_note": self._merge_line(card),
+                "review": {"verdict": verdict,
+                           "tip": merges.sha8(review_tip) if verdict else "",
+                           "current": bool(verdict) and merges.review_current(
+                               review_tip, ctx["branch_tip"])},
+                "generated_at": time.time(), "reason": reason}
+
+    def _card_change_diff_sync(self, card_id: str, index: int,
+                               tip: str) -> tuple:
+        """`(status, body)` for one file's changes. `tip` must be the branch
+        tip the list was read at (`CHANGES_MOVED`, 409); `index` indexes the
+        listing recomputed in the same hop; the path is contained in the
+        real root (`workspace._contains`) though git produced it."""
+        with self._changes_lock:
+            body, ctx = self._changes_context(card_id)
+            if body is not None:
+                return 200, {"available": False, "path": "", "text": "",
+                             "truncated": False,
+                             "reason": body.get("reason", "")}
+            if str(tip or "") != ctx["branch_tip"]:
+                return 409, {"error": merges.CHANGES_MOVED_REFUSAL}
+            rows, _cut, _total, reason = self._changes_files(ctx)
+            if reason:
+                return 200, {"available": False, "path": "", "text": "",
+                             "truncated": False, "reason": reason}
+            if not (0 <= int(index) < len(rows)):
+                return 404, {"error": merges.NO_SUCH_FILE_REFUSAL}
+            rel = str(rows[int(index)]["path"])
+            real_root = os.path.realpath(ctx["root"])
+            target = os.path.realpath(os.path.join(real_root, rel))
+            if not workspace._contains(real_root, target):
+                return 404, {"error": "that file is outside the card's own "
+                                      "project"}
+            ok, out, why = self._git_blocking(
+                merges.argv_range_file_diff(
+                    ctx["root"], ctx["merge_base"], ctx["branch_tip"], rel),
+                ctx["root"], truncate=True)
+            if not ok and not out:
+                return 200, {"available": False, "path": rel, "text": "",
+                             "truncated": False,
+                             "reason": why or work_record.GIT_FAILED_REASON}
+            text, truncated = work_record.clamp_diff(out)
+            return 200, {"available": True, "path": rel, "text": text,
+                         "truncated": truncated, "reason": ""}
+
+    async def card_changes_report(self, card_id: str) -> dict:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._card_changes_sync, str(card_id or ""))
+
+    async def card_change_diff(self, card_id: str, index: int,
+                               tip: str) -> tuple:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._card_change_diff_sync, str(card_id or ""),
+            int(index), str(tip or ""))
 
     # --- The per-project parallel dial ---
 

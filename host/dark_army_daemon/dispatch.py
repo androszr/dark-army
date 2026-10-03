@@ -1089,25 +1089,31 @@ def consult_brief(card: dict, question: str) -> str:
     return "\n".join(parts)
 
 
-def consult_guard(card: dict, *, roots: Iterable[str], in_flight: Iterable[dict],
-                  now: float, last_attempt: Optional[float] = None,
-                  question: str = "") -> tuple:
+def helper_guard(card: dict, *, roots: Iterable[str], in_flight: Iterable[dict],
+                 now: float, last_attempt: Optional[float] = None,
+                 key: str = "consult", tool: str = "claude",
+                 prompt: str = "") -> tuple:
     """Whether a helper may be launched for this card right now. `(ok, detail)`.
 
     `refine_guard`'s sibling: the same root membership, machine-wide bound,
     one-per-project rule and cooldown, but it does **not** require a startable
     column or an empty `session_id` — a Done or in-progress card may be asked
-    about. At most one pending consult per card (`in_flight` id
-    `consult:<card_id>`). Does not exclude this card from `pending`, so a
+    about. At most one pending helper of this kind per card (`in_flight` id
+    `<key>:<card_id>`). Does not exclude this card from `pending`, so a
     dispatching card in the same project (including this one) is seen.
+
+    `consult_guard` is this with `key="consult"` and claude's prompt rules;
+    the merge-fix helper (`key="merge-fix"`, the card's own tool) and the
+    review helper (`key="consult"`, claude — it answers through the same
+    channel tool) use it too (`docs/card-worktrees.md`, *Review and merge*).
     """
     if not card:
         return False, "no such card"
     cid = str(card.get("id") or "")
-    if any(c.get("id") == f"consult:{cid}" for c in in_flight):
+    if any(c.get("id") == f"{key}:{cid}" for c in in_flight):
         return False, "a helper is already looking at this card"
 
-    refusal = prompt_refusal("claude", consult_brief(card, question))
+    refusal = prompt_refusal(tool, prompt)
     if refusal:
         return False, refusal
 
@@ -1130,6 +1136,95 @@ def consult_guard(card: dict, *, roots: Iterable[str], in_flight: Iterable[dict]
     if not os.path.isdir(root):
         return False, "that project folder is not there any more"
     return True, ""
+
+
+def consult_guard(card: dict, *, roots: Iterable[str], in_flight: Iterable[dict],
+                  now: float, last_attempt: Optional[float] = None,
+                  question: str = "") -> tuple:
+    """`helper_guard` for an ask: claude, `consult:<card_id>`, and the brief
+    built from the question."""
+    return helper_guard(
+        card, roots=roots, in_flight=in_flight, now=now,
+        last_attempt=last_attempt, key="consult", tool="claude",
+        prompt=consult_brief(card, question))
+
+
+#: Fixed lead of the merge-fix helper's brief (a leading `-` in the card's
+#: text is structurally impossible). The orders ride here and again at the end.
+MERGE_FIX_PREAMBLE = (
+    "You are fixing the merge of one Dark Army board card's branch into the "
+    "project's main line. Work only in the folder named below, on the card's "
+    "own branch. Never touch the main line.\n\n"
+)
+
+
+def merge_fix_prompt(card: dict, *, branch: str, worktree: str, trunk: str,
+                     state: str, detail: str, log: str = "") -> str:
+    """The prompt the Fix helper opens with. Preamble first; the card's words
+    after; the standing orders repeat last so a long note cannot bury them."""
+    card = card or {}
+    title = str(card.get("title") or "").strip()
+    parts = [MERGE_FIX_PREAMBLE.rstrip(), ""]
+    if title:
+        parts.append("Card title: " + title)
+    parts.append("Card branch: " + str(branch))
+    parts.append("Folder: " + str(worktree))
+    parts.append("Main line: " + str(trunk))
+    if state == "checks_failed":
+        parts.append("What happened: the project's merge checks failed.")
+        if log:
+            parts.append("The checks' log: " + str(log))
+    else:
+        parts.append("What happened: merging the main line into this branch "
+                     "stopped on conflicts.")
+    if detail:
+        parts.append("Dark Army's note: " + str(detail))
+    parts.append("")
+    parts.append(
+        f"Orders: in this folder run `git merge {trunk}` into the card "
+        "branch. Resolve every conflict, `git add` the files and commit with "
+        "a real message. If the checks failed, run the project's check "
+        "script (.dark-army/merge-check.sh in the main checkout) if there is "
+        "one and repair the branch until it passes. Commit on the card "
+        f"branch ({branch}) only. Never switch to {trunk}, never "
+        "`git reset --hard`, never touch the main checkout, never merge into "
+        f"{trunk}, never push, tag, install, release or delete a branch. "
+        "Use no bob-tldr or bob-actions blocks. End your last message with "
+        "the heading `## Merge ready` when the branch is ready for the "
+        "person to press MERGE again, or `## Merge needs you` with what is "
+        "left.")
+    return "\n".join(parts)
+
+
+#: The review helper's lead: it only reads, and answers through the channel.
+REVIEW_PREAMBLE = (
+    "You are reviewing one Dark Army board card's branch. Change no files. "
+    f"Answer only through {CONSULT_ANSWER_TOOL}. File no cards. Never commit "
+    "or push.\n\n"
+)
+
+
+def review_prompt(card: dict, *, branch: str, trunk: str, worktree: str) -> str:
+    """The prompt the review helper opens with: the project's review routine
+    (`/review <branch>`) on the card's branch, orders to change nothing, and
+    the answer's first line as the verdict the daemon reads."""
+    card = card or {}
+    title = str(card.get("title") or "").strip()
+    parts = [REVIEW_PREAMBLE.rstrip(), ""]
+    if title:
+        parts.append("Card title: " + title)
+    parts.append("Card branch: " + str(branch))
+    parts.append("Folder (checked out on that branch): " + str(worktree))
+    parts.append("")
+    parts.append(
+        f"Review the branch the way the project's review routine does "
+        f"(`/review {branch}`, in .claude/skills/review/SKILL.md), comparing "
+        f"it against {trunk}. Change no files, file no cards, never commit "
+        f"or push. Answer once, through {CONSULT_ANSWER_TOOL}: the first "
+        "line of your answer must be `VERDICT: SHIP` or `VERDICT: STOP — "
+        "<the reason in a few words>`, then the review itself. Use no "
+        "bob-tldr or bob-actions blocks.")
+    return "\n".join(parts)
 
 
 async def spawn(root: str, argv: list, name: str, *, stamp: str = "",

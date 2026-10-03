@@ -509,3 +509,26 @@ def test_closing_the_card_window_disarms_the_tiles_slots():
     disarm = _block(text, "func disarm() {")
     for slot in ("armed = nil", "doneArmed = nil", "armedHere = nil"):
         assert slot in disarm, slot
+
+
+# --- CHANGES (review and merge) is tabled in both copies ----------------------------
+
+
+def test_changes_is_a_folded_section_in_both_copies():
+    """`plans/2026-10-03-review-and-merge-done-card.md`: CHANGES sits behind
+    MORE in the Done and ended orders, is never a lead or pinned, and is the
+    same line in the panel's rule and the phone's copy."""
+    for src in (_read(RULE), _read(PHONE_VIEW)):
+        block = _code(_block(src, ENUM))
+        assert 'case changes = "CHANGES"' in block
+        assert block.count('case changes = "CHANGES"') == 1
+        assert ".workRecord, .changes, .run," in " ".join(block.split())
+    panel = _code(_read(RULE))
+    ended = _block(panel, "case .ended:\n            return [")
+    assert ".changes" in ended and ended.index(".more") < ended.index(".changes")
+    done = _block(panel, "case .done:\n            return [")
+    assert done.index(".more") < done.index(".changes")
+    assert ("static let pinned: Set<Section> = "
+            "[.status, .verbs, .queue, .dependencies]") in panel
+    leads = _block(panel, "static func leads(for stage: Stage)")
+    assert ".changes" not in leads

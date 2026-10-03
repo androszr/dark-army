@@ -344,7 +344,7 @@ real columns and to what the prompt builders send.
   `check_same_thread=False` behind a `threading.Lock`, WAL capped at
   `WAL_SIZE_LIMIT_BYTES` (8 MiB, `journal_size_limit`, so the coalesce
   `VACUUM` leaves no 177 MB `-wal` behind), `busy_timeout=5000`, an idempotent `_SCHEMA`, `_ADDED_COLUMNS` and a
-  forward-only `SCHEMA_VERSION` (30; the retired `initiatives` columns
+  forward-only `SCHEMA_VERSION` (31; the retired `initiatives` columns
   are emptied, never dropped — **there is no folder concept on the board
   now**). Four columns:
   `prep` / `backlog` / `in_progress` / `done` (the SQL column is
@@ -505,7 +505,7 @@ real columns and to what the prompt builders send.
   shape is **refused**; `run_headlines` selects `length(report)`, never
   `report`. The decision half is `work_record.py` — every bound, both
   parsers, the verdict rule, the sentences both clients draw verbatim, and
-  **the git argv, in `work_record.py` and `worktrees.py`**. The daemon reaches the table only
+  **the git argv, in `work_record.py`, `worktrees.py` and `merges.py`**. The daemon reaches the table only
   through the store's verbs: `_schedule_work_baseline` at the end of
   `_dispatch_card_locked` (never awaited), `_consider_work_record` at
   `_reconcile_board`'s one `mark_ended` seam, `_flush_work_records` /
@@ -792,6 +792,15 @@ real columns and to what the prompt builders send.
   process per enrolled git project, never a present folder
   (`docs/card-worktrees.md`, *Stale registrations*). In full:
   `docs/card-worktrees.md`.
+
+  **A Done card can be reviewed and merged** (v31, `merges.py`): the card
+  keeps its branch after the folder goes, and a confirmed MERGE builds a
+  `Merge card/<id8>: <title>` commit in the card's own folder, runs the
+  project's optional check script there and only then fast-forwards the local
+  main line — never a push, the main checkout's unsaved work never touched;
+  a conflict or red check reads "merge needs you" with a Fix press that starts
+  the card's own assistant in the folder. Gate, steps and read:
+  `docs/card-worktrees.md`, *Review and merge*.
 
   Deliberately **not** passed: `--no-session-persistence`,
   `--setting-sources ""`, `--strict-mcp-config`, and

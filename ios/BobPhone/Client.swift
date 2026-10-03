@@ -1308,6 +1308,9 @@ final class PhoneClient: ObservableObject {
             effect = .replyHold(sessionId: scopeKey,
                                 questionId: waiting.question.id)
         }
+        // MERGE and Run review are judged against what the person was
+        // looking at; the snapshot is the only place that is.
+        effect = Self.reviewAndMergeBaseline(effect, in: snapshot)
         // A row verb pressed on a row that is already out of the live
         // buckets (a Hide or Close offered on a finished row) is judged by
         // the row leaving every list: `.rowGone` would read as landed on
@@ -2898,6 +2901,77 @@ final class PhoneClient: ObservableObject {
               let page = try? JSONDecoder().decode(CardFull.self, from: answer.body)
         else { return nil }
         return page
+    }
+
+    /// Fills in the merge state and line, and the review verdict, that
+    /// `ReceiptLedger.effect(for:)` cannot see: the card as the snapshot
+    /// holds it at the press. Pure.
+    static func reviewAndMergeBaseline(_ effect: ReceiptEffect,
+                                       in snapshot: Snapshot) -> ReceiptEffect {
+        switch effect {
+        case .cardMergeState(let cardId, _, _):
+            guard let card = snapshot.board.cards.first(where: { $0.id == cardId })
+            else { return effect }
+            return .cardMergeState(cardId: cardId, before: card.mergeState,
+                                   line: card.mergeLine)
+        case .cardReviewRunning(let cardId, _):
+            guard let card = snapshot.board.cards.first(where: { $0.id == cardId })
+            else { return effect }
+            return .cardReviewRunning(cardId: cardId, verdict: card.reviewVerdict)
+        default:
+            return effect
+        }
+    }
+
+    /// A Done card's branch against the main line (`card_changes`), or one
+    /// file's changes when `file` and `tip` are given.
+    ///
+    /// `fetchCard`'s shape exactly, and for its reason: a read on the sealed
+    /// doors, so it widens no action tuple and checks no away lease. Called
+    /// from the card screen when its CHANGES row opens and from **nowhere
+    /// else** — never from `poll`, never from `backgroundRefresh`, never the
+    /// widget — because a screen nobody is looking at has no branch to read.
+    /// `card`, `file` and `tip` ride the sealed body, never a query string.
+    ///
+    /// A 404 is an older Mac that has never heard of the kind: nil.
+    func fetchCardChanges(_ cardId: String) async -> CardChangesReport? {
+        guard let data = await cardChangesAnswer(["card": cardId]) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(CardChangesReport.self, from: data)
+    }
+
+    /// One file's changes, by its index in the page and the tip it was read
+    /// at (a moved branch is refused by the Mac, not drawn).
+    func fetchCardChangeDiff(_ cardId: String, file: Int,
+                             tip: String) async -> CardChangeDiff? {
+        guard let data = await cardChangesAnswer(
+            ["card": cardId, "file": file, "tip": tip]) else { return nil }
+        return try? JSONDecoder().decode(CardChangeDiff.self, from: data)
+    }
+
+    private func cardChangesAnswer(_ body: [String: Any]) async -> Data? {
+        guard let record, !backgroundRun, !(body["card"] as? String ?? "").isEmpty
+        else { return nil }
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "card_changes", body: body,
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(
+                kind: "card_changes", body: body, host: record.host,
+                port: record.port, timeout: 15)
+        } else {
+            return nil
+        }
+        guard record.token == self.record?.token else { return nil }
+        guard let answer else { return nil }
+        if answer.status == 403 {
+            forgetPairing()
+            return nil
+        }
+        guard answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return answer.body
     }
 
     /// Many cards in full, plus the plan documents that moved — the delta

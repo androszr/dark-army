@@ -428,7 +428,10 @@ async def test_the_mark_ended_seam_removes_a_done_cards_folder(
     await _released(d)
     assert not os.path.exists(card["worktree_path"])
     got = store.get(card["id"])
-    assert got["worktree_path"] == "" and got["worktree_branch"] == ""
+    # The folder is gone and the card keeps the memory of its branch: a
+    # finished card's branch is what MERGE lands (`merges.py`).
+    assert got["worktree_path"] == ""
+    assert got["worktree_branch"] == card["worktree_branch"]
     assert unmarked == [card["worktree_path"]]
     # The branch is there to merge.
     assert card["worktree_branch"] in _git(repo, "branch", "--list", "card/*")

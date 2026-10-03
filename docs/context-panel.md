@@ -409,10 +409,7 @@ judged by the Start rule, and one armed-then-confirmed press sending
 **The agent sheet swipes to the next agent in Needs you** (28 Sep 2026) —
 in full in `docs/phone-contract.md`.
 
-**A Prep or Backlog card swipes on the phone too** (3 Oct 2026): START or Refine and a dots menu holding a confirmed Delete, the card screen's own presses behind a sideways swipe; in full in `docs/phone-contract.md`.
-
-**The agent sheet's header carries a "2 of 5" position mark** (29 Sep 2026) —
-in full in `docs/phone-contract.md`.
+**A Prep or Backlog card swipes on the phone too** (3 Oct 2026): START or Refine and a dots menu holding a confirmed Delete, the card screen's own presses behind a sideways swipe; in full, with the agent sheet's "2 of 5" mark, in `docs/phone-contract.md`.
 
 **The Mac board's ticks outlive looking away too** (25 Sep 2026): a
 search, a project change or a fold keeps select mode and its ticks, the
@@ -565,6 +562,8 @@ tile's; `closeEditor()` disarms. Phone copy byte-equal
 draws the file in its manual-check section with **Passed** / **Failed** and
 **Open in Checks** (the Checks window, `ManualChecksWindow.swift`, from
 Settings → Projects), where Mark checked is hidden.
+**Done-card review and merge**: `CardMerge.swift` (pinned with the phone's),
+`docs/card-worktrees.md`.
 
 The composer is the same view with `card == nil`, plus three things a card
 could never show. **The documents the card points at**: `BoardDocuments` pulls
