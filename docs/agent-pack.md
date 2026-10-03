@@ -40,6 +40,8 @@ after a confirmed press per project.
   `test_agent_pack_adapted.py`. The shipped entitlements guard also finds its
   Debug twin under either `{{APP}}-Debug.entitlements` or
   `{{APP}}.entitlements`.
+- A profile's `after_steps` (`[id, label, how]`; absent means commit and push)
+  ride the ledger row for the Review section (`docs/review-runs.md`).
 - The ledger is `~/.dark-army/agent-pack.json` (`paths.AGENT_PACK_PATH`,
   in `_PRIVATE_FILES`, 0600).
 - Three `PANEL_ACTIONS` (`install_agent_pack`, `stop_agent_pack_sync`,

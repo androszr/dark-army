@@ -247,3 +247,27 @@ def test_check_exit_codes(tmp_path, monkeypatch, capsys):
 
     canonical.unlink()
     assert sync_review_skill.main(["--check"]) == 2
+
+
+# --- the Review section's handoff (docs/review-runs.md) -------------------------
+
+TEMPLATE = ROOT / "host/dark_army_menubar/agent_pack/template/.claude/skills/review/SKILL.md"
+
+
+@pytest.mark.parametrize("path", [CANONICAL, TEMPLATE], ids=["canonical", "template"])
+def test_both_texts_carry_the_dark_army_handoff(path):
+    text = path.read_text(encoding="utf-8")
+    assert text.count("## When Dark Army runs it") == 1
+    assert text.index("## When Dark Army runs it") < text.index("## Ending the turn")
+    for needle in ("/review remote", "findings.md", "picks.json", "steps.md",
+                   "STEP ", "DONE", "@{u}", "pty broker"):
+        assert needle in text, needle
+    flat = " ".join(text.split())
+    assert "authorised steps are the only ones" in flat
+    assert "a step the block does not list is a step the person did not ask for" in flat
+
+
+def test_the_template_keeps_the_grade_list_once_too():
+    text = TEMPLATE.read_text(encoding="utf-8")
+    for line in GRADE_LINES:
+        assert text.count(line) == 1, line

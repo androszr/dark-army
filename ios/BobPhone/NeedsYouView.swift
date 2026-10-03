@@ -473,17 +473,28 @@ enum PhoneInboxRoute {
             guard let card = snapshot.board.cards.first(where: { $0.id == id })
             else { return nil }
             return .card(card)
+        case .review:
+            // A run opens on the Menu tab's Review screen, not in a sheet.
+            return nil
         }
     }
 
     /// Whether a press on this entry has anywhere to go — false for an
     /// orphan permission, which is read where it is.
     static func opens(_ item: PhoneInboxItem, snapshot: Snapshot) -> Bool {
-        sheet(for: item, snapshot: snapshot) != nil
+        if case .review(let id) = item.target {
+            return snapshot.review.run(id: id) != nil
+        }
+        return sheet(for: item, snapshot: snapshot) != nil
     }
 
     static func open(_ item: PhoneInboxItem, snapshot: Snapshot,
                      sheets: PhoneSheetRouter) {
+        // A press on a run only moves the screen: it posts no action.
+        if case .review(let id) = item.target {
+            PhoneRouter.shared.openReview(runId: id)
+            return
+        }
         if let sheet = sheet(for: item, snapshot: snapshot) {
             sheets.show(sheet)
         }

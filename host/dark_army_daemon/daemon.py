@@ -72,6 +72,7 @@ from . import relay
 from . import rebuild_state
 from . import relay_client
 from . import relay_ws
+from . import review_run
 from . import run_health
 from . import samples
 from . import session_registry
@@ -102,6 +103,7 @@ from . import worktrees
 from .session_store import save_sessions, load_sessions, load_pending_questions
 from .paths import PID_PATH, LOCK_PATH, STATE_DIR, ensure_state_dir
 from .daemon_board import BoardVerbsMixin
+from .daemon_review import ReviewVerbsMixin
 
 @dataclass(frozen=True)
 class RefinementCloseReceipt:
@@ -1605,7 +1607,7 @@ class _HookStep(NamedTuple):
     now_mono: float
 
 
-class BobDaemon(BoardVerbsMixin):
+class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
     def __init__(
         self,
         observer: Optional["DaemonObserver"] = None,
@@ -2271,6 +2273,20 @@ class BobDaemon(BoardVerbsMixin):
         # When Mission Control was last accepted, for DISPATCH_COOLDOWN —
         # `_adhoc_attempt`'s shape, for the same reason.
         self._mission_attempt: float = 0.0
+        # Review runs (review_run.py, docs/review-runs.md): the records, the
+        # unbound-launch entries `_launch_inflight` sweeps (`_adhoc_launches`'
+        # shape and reason), the last accepted Start for DISPATCH_COOLDOWN, the
+        # drift memo, the lock the loop and the executor pass share, the
+        # run ids with a Continue in flight, and the loop-composed pty facts
+        # the executor pass reads.
+        self._review_runs: list = review_run.load_records(
+            paths_mod.REVIEW_RUNS_PATH)
+        self._review_launches: dict = {}
+        self._review_attempt: float = 0.0
+        self._review_seen: dict = {}
+        self._review_lock = threading.Lock()
+        self._review_busy: set = set()
+        self._review_pty_facts: dict = {}
         # The terminals Dark Army owns. One host per daemon, installed as the
         # module-level answer `session_io` asks (`ptyhost.owns`). It hands
         # each child this daemon's hook door, so the child reports here.
@@ -2585,6 +2601,9 @@ class BobDaemon(BoardVerbsMixin):
             cid = str(card.get("id") or "")
             if cid:
                 keys.add("c:" + cid)
+        with self._review_lock:
+            for rec in self._review_runs:
+                keys.add("r:" + str(rec.get("id") or ""))
         return keys
 
     def _inbox_session_entry(self, sid: str):
@@ -2656,6 +2675,16 @@ class BobDaemon(BoardVerbsMixin):
                 if isinstance(card, dict) and str(card.get("id") or "") == cid:
                     return inbox_ack.card_kind_and_fp(card)
             return None
+        if key.startswith("r:"):
+            rid = key[2:]
+            with self._review_lock:
+                rec = self._review_find(rid)
+                rec = dict(rec) if rec is not None else None
+            if rec is None or rec.get("state") != "picks":
+                return None
+            return "review_picks", inbox_ack.fingerprint(
+                "review_picks", inbox_ack.review_picks_material(
+                    rid, rec.get("findings_at")))
         return None
 
     async def ack_inbox(self, key, kind, fingerprint) -> tuple[bool, str]:
@@ -10403,6 +10432,9 @@ class BobDaemon(BoardVerbsMixin):
             handle = self._mission_handle_if_named(session_id)
             if handle is not None:
                 return handle
+            handle = self._review_handle_if_named(session_id)
+            if handle is not None:
+                return handle
         st = self._session_states.get(session_id)
         pid = st.get("pid") if st else None
         if not pid:
@@ -10892,7 +10924,17 @@ class BobDaemon(BoardVerbsMixin):
             # seconds for the CLI to read the previous one was the stall.
             blob = data if data is not None else (text or "").encode("utf-8", "replace")
             return self._terminal_raw_input(handle, blob, session_id)
-        if session_id in self._prompts_by_session():
+        return await self._terminal_line_input(
+            handle, text, session_id, from_phone=from_phone)
+
+    async def _terminal_line_input(self, handle: str, text: str,
+                                   session_id: str = "", *,
+                                   from_phone: bool = False) -> tuple[bool, str]:
+        """`terminal_input`'s line leg, by terminal handle: every refusal and
+        the drain exactly as they were. A caller with no session id (a review
+        run's Continue, typed by the handle it recorded) skips only the
+        permission-prompt lookup, which is keyed on a session."""
+        if session_id and session_id in self._prompts_by_session():
             return False, TERMINAL_PROMPT_REFUSAL
         text = str(text or "")
         if text.endswith("\n"):
@@ -10920,7 +10962,8 @@ class BobDaemon(BoardVerbsMixin):
         if not await self._pty.drain(handle, TERMINAL_DRAIN_SECONDS):
             return False, TERMINAL_BUSY_REFUSAL
         logger.info("typed %d chars into the terminal of %s%s",
-                    len(text), session_id[:12], " (phone)" if from_phone else "")
+                    len(text), (session_id or handle)[:12],
+                    " (phone)" if from_phone else "")
         return True, ""
 
     def _alert_suppressed(self, snapshot: Optional[dict] = None) -> set:
@@ -11613,6 +11656,9 @@ class BobDaemon(BoardVerbsMixin):
         # time-based leg (the grace, the bind window, lifecycle samples) runs.
         if full:
             try:
+                # The review runs' pty facts, composed here on the loop: the
+                # executor pass below never touches the host.
+                self._review_pty_facts = self._review_compose_facts()
                 # The pass's own ledger writes do not move the key: the
                 # store's `change_counter` leaves them out.
                 changed = await loop.run_in_executor(
@@ -11626,6 +11672,13 @@ class BobDaemon(BoardVerbsMixin):
                 # this path freezes all of it until the daemon is restarted, and
                 # at debug level it did that in silence for a day.
                 logger.warning("board reconcile failed", exc_info=True)
+            # The review runs, in a step of their own: skipped neither by a
+            # closed board nor by a raise in the pass above.
+            try:
+                if await loop.run_in_executor(None, self._reconcile_review):
+                    self._review_notify()
+            except Exception:
+                logger.warning("review reconcile failed", exc_info=True)
         # The queue the reconcile just decided on. Immediately after it and
         # before everything else here, because it is the only one of these
         # flushes that opens a window on somebody's screen — a person watching
@@ -13716,6 +13769,7 @@ class BobDaemon(BoardVerbsMixin):
         # not come back with the broker is dead, and drawing it would say
         # "runs in the editor" about a terminal that never was there.
         self._retire_hostless_sessions()
+        self._adopt_review_terminals()
 
         self._staleness_task = asyncio.create_task(self._staleness_checker())
         self._liveness_task = asyncio.create_task(self._liveness_checker())

@@ -63,13 +63,14 @@ final class SnapshotStreamTests: XCTestCase {
         (.inbox, "inbox", #"{"available": true, "acks": []}"#),
         (.security, "security", #"{"available": true, "alerts": []}"#),
         (.mission, "mission", #"{"available": true, "alive": false}"#),
+        (.review, "review", #"{"available": true, "runs": []}"#),
     ]
 
     func testEverySectionIsCoveredByTheCarryRule() {
         // The set the decoder marks and the set the client copies are the
-        // same twelve — the daemon's `_OMITTABLE_SECTIONS` minus `mesh` and `power`,
+        // same thirteen — the daemon's `_OMITTABLE_SECTIONS` minus `mesh` and `power`,
         // which the panel does not decode.
-        XCTAssertEqual(Snapshot.Section.allCases.count, 12)
+        XCTAssertEqual(Snapshot.Section.allCases.count, 13)
         XCTAssertEqual(Set(Self.sectionSamples.map(\.0)),
                        Set(Snapshot.Section.allCases))
     }
@@ -81,8 +82,8 @@ final class SnapshotStreamTests: XCTestCase {
             """.utf8))
             XCTAssertFalse(snap.carried.contains(section),
                            "\(key) was present and must not be carried")
-            // The other eleven were absent, so they are.
-            XCTAssertEqual(snap.carried.count, 11, key)
+            // The other twelve were absent, so they are.
+            XCTAssertEqual(snap.carried.count, 12, key)
         }
     }
 
@@ -207,7 +208,7 @@ final class SnapshotStreamTests: XCTestCase {
         {"generated_at": 42, "counts": {}, "notifications": [],
          "agents": {"running":[]}, "signals": [], "mesh": [], "collaboration": {"version":1,"available":false},
          "permissions": [], "board": {}, "enrollment": {}, "devices": {}, "inbox": {},
-         "security": {}, "mission": {}}
+         "security": {}, "mission": {}, "review": {}}
         """.utf8))
         let applied = fill(frame, store: &store, stamps: &stamps)
         XCTAssertTrue(applied.carried.isEmpty)

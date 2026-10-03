@@ -61,10 +61,12 @@ def test_one_sheet_and_one_full_screen_terminal():
         covers.extend([path.name] * code.count(".fullScreenCover("))
         links.extend([path.name] * code.count("NavigationLink"))
     assert sheets == ["BobPhoneApp.swift"]
-    # Two covers, both the terminal: the agent sheet's and the Comm tab's
+    # Three covers, all the terminal: the agent sheet's, the Comm tab's
     # (Mission Control's live screen; the tab is a root, not a sheet, so
-    # `terminalPresented` is untouched by it).
-    assert sorted(covers) == ["AgentDetailView.swift", "CommView.swift"]
+    # `terminalPresented` is untouched by it) and a Review run's, pushed from
+    # the Menu on the same stack and opened with the Terminal button.
+    assert sorted(covers) == ["AgentDetailView.swift", "CommView.swift",
+                              "ReviewRunView.swift"]
     # Profile links to the knowledge notes and to the phone doors' access log.
     # The composer links to Profile ("Add a key under Profile").
     assert Counter(links) == Counter({"BoardView.swift": 1, "UsageView.swift": 2,

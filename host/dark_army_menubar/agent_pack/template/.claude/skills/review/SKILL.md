@@ -15,11 +15,12 @@ Point it at a change. It works out what that change can break, says so in plain
 words, grades each thing it finds, recommends a fix, opens with one verdict, and
 offers to put the ones you pick onto Dark Army's board.
 
-**Four inputs, one pipeline.** `/review` with nothing **asks** what to review —
+**Five inputs, one pipeline.** `/review` with nothing **asks** what to review —
 the working tree, one of the last five commits, a branch, or a pull request —
 before it reads anything. `/review <sha>` reviews a commit. `/review #42`
-reviews a pull request. `/review <branch>` reviews a branch. Everything after
-step 1 is identical.
+reviews a pull request. `/review <branch>` reviews a branch. `/review remote`
+reviews everything not yet on the remote branch. Everything after step 1 is
+identical.
 
 **Three assistants, one text.** Claude, Codex and Grok all run this file. Every
 GitNexus call below is written twice on one line — the MCP call **or** its CLI
@@ -188,6 +189,12 @@ not waiting on anybody.
 | `<sha>` | `git show <sha>` | `<sha>^` |
 | `#<n>` | `gh pr diff <n>` | merge-base with the default branch |
 | `<branch>` | `git diff <base>...<branch>` | merge-base with the default branch |
+| `remote` | `git diff @{u}` **plus untracked files** | `@{u}` (the branch's upstream) |
+
+`/review remote` is the working tree measured against the upstream branch, so
+it covers the commits not yet pushed and the uncommitted work together. A
+branch with no upstream has nothing to measure against: say so in one line and
+review the working tree instead.
 
 **Untracked files are collected explicitly** (`git status --porcelain` for `??`).
 `git diff HEAD` does not show them, and a review that silently skips an entire
@@ -397,6 +404,42 @@ clean was stale forty minutes later, and the next review would have paid for it.
 
 This never blocks the findings. Print the report first, then refresh. The reader
 is waiting on the verdict, not on an index.
+
+## When Dark Army runs it
+
+Dark Army's Review section opens this skill as `/review remote` in a terminal it
+keeps, with a block that begins `Dark Army review run:`. When that block is in
+your first message, the turn has a handoff, and everything above still holds
+for the review itself:
+
+1. **The folder.** The block names a run folder, `~/.dark-army/review-runs/<id>/`,
+   outside the project. Dark Army never writes into the project for a review and
+   neither do you: the folder is the only place the handoff files live.
+2. **The findings file.** Write `findings.md` in that folder in the report's own
+   format, `VERDICT:` line first, then the graded findings. End the turn there.
+   Do not ask anything and put no question markers on it: Dark Army reads the
+   file, shows the findings as a checklist and lists the run for the person.
+3. **Wait.** Do nothing more until a line from Dark Army tells you to continue.
+4. **The picks.** Read `picks.json` in the same folder. Its `fix` list holds the
+   finding numbers the person ticked, in the order of the report, and `fixes`
+   repeats each one's grade and line; match the picks on that text, not on the
+   number alone, and fix those and no others, leaving the rest as they are.
+5. **The authorised steps.** The block lists the steps the person ticked, in
+   order, each with how to do it. Perform exactly those, in that order. The
+   authorised steps are the only ones: a step the block does not list is a step
+   the person did not ask for, so do not commit, push, install, restart, ship or
+   trigger a build unless it is listed.
+6. **The step ledger.** After each step append one line to `steps.md` in the run
+   folder: `STEP <id>: done`, `STEP <id>: failed`, `STEP <id>: skipped` or
+   `STEP <id>: started`, then ` — ` and one plain line. A step that failed or
+   could not run says so in words; never write `done` for a step you did not
+   finish. Once the fixes and every listed step are complete, always write `DONE` as
+   the last line, even when no step was listed.
+7. **The restart.** A step that restarts Dark Army quits the app and opens it
+   again; the terminal you are in lives in a helper that outlives the app, so
+   you keep running. Never stop, signal or kill that helper (the pty broker)
+   and never sweep processes by name. After the app is back, carry on with the
+   next step and its ledger line.
 
 ## Ending the turn
 

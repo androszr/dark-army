@@ -8,7 +8,7 @@ import WebKit
 enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     // `case rebuild` (raw value `rebuild`) is Rebuild & restart's tile, kept in
     // the one list below so the grid's order and every pin on it stay a single line.
-    case usage, history, comm, scouting, checks, plans, rebuild, designSystem
+    case usage, history, comm, scouting, checks, plans, rebuild, designSystem, review
 
     var id: String { rawValue }
 
@@ -23,6 +23,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         case .plans: return "Plans"
         case .rebuild: return "Rebuild & restart"
         case .designSystem: return "Design system"
+        case .review: return "Review"
         }
     }
 
@@ -36,6 +37,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         case .plans: return "doc.text"
         case .rebuild: return "arrow.triangle.2.circlepath"
         case .designSystem: return "square.grid.2x2"
+        case .review: return "doc.text.magnifyingglass"
         }
     }
 
@@ -46,7 +48,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     /// light through `lit(scoutReports:manualChecks:plans:historyWeek:)`.
     var built: Bool {
         switch self {
-        case .usage, .comm, .designSystem: return true
+        case .usage, .comm, .designSystem, .review: return true
         case .scouting, .checks, .plans, .history, .rebuild: return false
         }
     }
@@ -61,8 +63,9 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     /// (`RebuildRules.canPress`'s two terms), every other section as `built`.
     func lit(scoutReports: Bool, manualChecks: Bool = false,
              plans: Bool = false, historyWeek: Bool = false,
-             rebuild: Bool = false) -> Bool {
+             rebuild: Bool = false, review: Bool = true) -> Bool {
         switch self {
+        case .review: return review
         case .scouting: return scoutReports
         case .checks: return manualChecks
         case .plans: return plans
@@ -126,7 +129,8 @@ struct MenuView: View {
             manualChecks: client.snapshot.board.manualChecksSupported,
             plans: client.snapshot.board.plansSupported,
             historyWeek: client.snapshot.board.historyWeekSupported,
-            rebuild: client.snapshot.rebuild.available && client.via != .relay)
+            rebuild: client.snapshot.rebuild.available && client.via != .relay,
+            review: client.snapshot.board.reviewSupported)
         return DecryptButton(action: { open = section }) {
             VStack(spacing: 8) {
                 Image(systemName: section.symbol)
@@ -243,6 +247,9 @@ struct MenuSectionScreen: View {
         case .designSystem:
             SignalWorkshopPhone()
                 .navigationTitle("Design system")
+        case .review:
+            ReviewView(client: client)
+                .navigationTitle("review")
         }
     }
 }

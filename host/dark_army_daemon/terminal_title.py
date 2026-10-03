@@ -154,7 +154,8 @@ def compose(nickname: str, name: str, project: str = "") -> str:
 #: building is the default reading of a card's name.
 ORIGIN_PREFIX = {"card-refine": "refine: ", "card-consult": "ask: ",
                  "card-review": "review: ",
-                 "card-merge-fix": "fix: "}
+                 "card-merge-fix": "fix: ",
+                 "review": "review: "}
 
 #: `daemon.UNNAMED_SESSION`, spelled here rather than imported: this module
 #: is pure and the daemon imports it, not the other way round.

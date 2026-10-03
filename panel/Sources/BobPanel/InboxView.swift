@@ -325,6 +325,8 @@ struct InboxView: View {
                 questions = []
             }
             return InboxFingerprint.value(wire: item.wire, questions: questions)
+        case .reviewPicks:
+            return InboxFingerprint.value(wire: item.wire, material: item.material)
         default:
             return InboxFingerprint.value(wire: item.wire, card: card(item))
         }

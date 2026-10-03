@@ -38,6 +38,18 @@ def test_three_kinds_named_by_what_you_do_over_five_wire_names():
     assert "var dismissable: Bool { self != .permission }" in INBOX
 
 
+def test_review_picks_is_the_sixth_wire_name_and_an_answer():
+    """A review run waiting on picks (`r:<run id>`): the sixth wire name,
+    appended last so every stored id is unchanged, an ANSWER, dismissable,
+    with its own target and a fingerprint made of the run id and the second
+    its findings landed — the daemon's `review_picks_material`."""
+    assert 'case .reviewPicks: return "review_picks"' in INBOX
+    assert ".permission, .question, .startAsked, .reviewPicks: return .answer" in INBOX
+    assert 'case .review(let id): return "r:" + id' in INBOX
+    assert "ReviewRules.picksEntry(" in INBOX
+    assert "ReviewRules.fingerprintMaterial(" in INBOX
+
+
 def test_the_published_flags_are_consumed():
     assert "needsYou" in INBOX
     assert "manualCheckDue" in INBOX
@@ -89,3 +101,11 @@ def test_the_inbox_reads_the_report_headline_and_parses_nothing():
             assert not re.search(r"(?<![A-Za-z])" + label, text), (name, label)
         assert "workReport?.headline" in text, name
     assert INBOX.count("workReport") >= 2
+
+
+def test_the_phone_reducer_carries_the_same_review_entry():
+    assert 'case .reviewPicks: return "review_picks"' in PHONE_INBOX
+    assert 'case .review(let id): return "r:" + id' in PHONE_INBOX
+    assert "ReviewRules.picksEntry(" in PHONE_INBOX
+    assert "ReviewRules.fingerprintMaterial(" in PHONE_INBOX
+    assert "reviewPicks" in PHONE_INBOX.split("static func value(wire:")[1]

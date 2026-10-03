@@ -629,6 +629,11 @@ hold: the lines ship in code, the reveal is a pure function of `now - began`
 under a `TimelineView`, a caption is never replaced (only the spinner), and
 `ProgressView` stays at **zero** across both clients.
 
+**The Review tab** (`PanelView.Tab.review`; `ReviewRail`, `ReviewPane`,
+`ReviewRules`) picks a project, provider and after-steps and draws a run's
+findings checklist; source of truth `snapshot.review`
+(`Snapshot.Section.review`): `docs/review-runs.md`.
+
 **The Comm tab talks to Mission Control** (`PanelView.Tab.comm`,
 `CommRail.swift`, `CommRules.swift`): the wide pane is the board **with
 Mission Control's terminal column beside it** (`RailLayout.LeftPane

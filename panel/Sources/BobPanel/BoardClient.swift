@@ -250,6 +250,28 @@ extension DaemonClient {
         await post(["action": "mission_end"])
     }
 
+    /// Start a review run (docs/review-runs.md). `post` sends strings only,
+    /// so the ticked step ids ride as one comma-joined `steps` in the order
+    /// given; the daemon re-runs every guard under its dispatch lock and
+    /// answers a refusal in `detail`'s words. The detail of a success is the
+    /// new run's id.
+    func reviewStart(root: String, tool: String, steps: [String]) async -> ActionResult {
+        await post(["action": "review_start", "root": root, "tool": tool,
+                    "steps": steps.joined(separator: ",")])
+    }
+
+    /// The second deliberate press: the ticked finding numbers (the daemon
+    /// checks each is on the list), comma-joined.
+    func reviewContinue(runId: String, fix: [Int]) async -> ActionResult {
+        await post(["action": "review_continue", "run_id": runId,
+                    "fix": fix.map(String.init).joined(separator: ",")])
+    }
+
+    /// End a run: closes its terminal and nothing else.
+    func reviewEnd(runId: String) async -> ActionResult {
+        await post(["action": "review_end", "run_id": runId])
+    }
+
     /// Dispatch a *planning* session onto a Prep card — the Refine button.
     /// The daemon guards it exactly as a dispatch (same preference, same
     /// bounds), and the card does not move: `refine_state` is what changes.

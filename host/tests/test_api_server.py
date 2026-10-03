@@ -1156,6 +1156,7 @@ def test_the_omittable_sections_are_state_s_own_sections():
     """The list is auditable in one place, and it is exactly `state()`'s
     top level minus the clock and the two scalars."""
     assert len(api_mod._OMITTABLE_SECTIONS) == 15
+    assert "review" in api_mod._OMITTABLE_SECTIONS
     assert "inbox" in api_mod._OMITTABLE_SECTIONS
     assert "security" in api_mod._OMITTABLE_SECTIONS
     assert "mission" in api_mod._OMITTABLE_SECTIONS

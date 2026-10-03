@@ -40,6 +40,9 @@ enum PhoneInboxWireKind: Int, Hashable {
     /// Mission Control asked for this card to be started — the Mac's
     /// `InboxWireKind.startAsked`, last for the same reason.
     case startAsked
+    /// A review run waiting on the person's picks — the Mac's
+    /// `InboxWireKind.reviewPicks`, last for the same reason.
+    case reviewPicks
 
     var name: String {
         switch self {
@@ -49,12 +52,13 @@ enum PhoneInboxWireKind: Int, Hashable {
         case .manualCheck: return "manual_check"
         case .waiting: return "waiting"
         case .startAsked: return "start_asked"
+        case .reviewPicks: return "review_picks"
         }
     }
 
     var kind: PhoneInboxKind {
         switch self {
-        case .permission, .question, .startAsked: return .answer
+        case .permission, .question, .startAsked, .reviewPicks: return .answer
         case .endedWork, .manualCheck: return .look
         case .waiting: return .stopped
         }
@@ -68,11 +72,14 @@ enum PhoneInboxWireKind: Int, Hashable {
 enum PhoneInboxTarget: Hashable {
     case session(String)
     case card(String)
+    /// A review run (`r:<run id>`).
+    case review(String)
 
     var key: String {
         switch self {
         case .session(let id): return "s:" + id
         case .card(let id): return "c:" + id
+        case .review(let id): return "r:" + id
         }
     }
 }
@@ -92,6 +99,9 @@ struct PhoneInboxItem: Identifiable, Hashable {
     /// nothing on the wire dates it (every card: the phone carries no
     /// finished clock). Read against a live clock, never an age.
     var since: Double = 0
+    /// What Dismiss's fingerprint is made of, for the entries whose subject
+    /// is neither a session nor a card (a review run's picks).
+    var material: String = ""
 
     var kind: PhoneInboxKind { wire.kind }
 
@@ -124,7 +134,7 @@ enum InboxFingerprint {
     }
 
     static func value(wire: PhoneInboxWireKind, agent: Agent? = nil,
-                      card: BoardCard? = nil) -> String {
+                      card: BoardCard? = nil, material: String = "") -> String {
         let name = wire.name
         switch wire {
         case .waiting:
@@ -136,6 +146,8 @@ enum InboxFingerprint {
             return value(kind: name, material: card?.manualSteps ?? "")
         case .startAsked:
             return value(kind: name, material: card?.startAskId ?? "")
+        case .reviewPicks:
+            return value(kind: name, material: material)
         case .permission, .endedWork:
             return value(kind: name, material: "")
         }
@@ -153,6 +165,7 @@ enum PhoneInbox {
         var out: [PhoneInboxItem] = []
         out.append(contentsOf: sessionItems(from: snapshot))
         out.append(contentsOf: cardItems(from: snapshot))
+        out.append(contentsOf: reviewItems(from: snapshot))
         let acks = snapshot.inbox.available ? snapshot.inbox.acks : []
         if !acks.isEmpty {
             out.removeAll { item in
@@ -183,7 +196,8 @@ enum PhoneInbox {
     static func fingerprint(_ item: PhoneInboxItem, snapshot: Snapshot) -> String {
         InboxFingerprint.value(wire: item.wire,
                                agent: item.agent(in: snapshot),
-                               card: item.card(in: snapshot))
+                               card: item.card(in: snapshot),
+                               material: item.material)
     }
 
     /// Grouped under project headings in the desktop order; the view draws
@@ -340,6 +354,14 @@ enum PhoneInbox {
                 wire = .question
                 detail = question.header.isEmpty
                     ? question.text : "\(question.header): \(question.text)"
+            } else if snapshot.review.runs.contains(where: {
+                ReviewRules.coveredStates.contains($0.state)
+                    && ReviewRules.isReviewRow(sessionId: id,
+                                               runSessions: [$0.sessionId])
+            }) {
+                // A review run's terminal waiting between steps: the run's
+                // own entry (or its report) carries the decision.
+                continue
             } else {
                 wire = .waiting
                 // What the agent last said in one line, where it left one;
@@ -396,6 +418,27 @@ enum PhoneInbox {
             }
         }
         return ""
+    }
+
+    /// One entry per run waiting on picks — `ReviewRules.picksEntry`, the
+    /// rule both clients read.
+    private static func reviewItems(from snapshot: Snapshot) -> [PhoneInboxItem] {
+        var out: [PhoneInboxItem] = []
+        for run in snapshot.review.runs {
+            guard let entry = ReviewRules.picksEntry(
+                runId: run.id, state: run.state, scopeLine: run.scopeLine,
+                findingCount: run.findings.count) else { continue }
+            let name = run.project.isEmpty ? run.root : run.project
+            out.append(PhoneInboxItem(
+                wire: .reviewPicks, project: run.project,
+                title: "Review · \(name)", detail: entry.detail,
+                target: .review(run.id), cardId: "", sessionId: run.sessionId,
+                category: nil,
+                since: run.findingsAt > 0 ? run.findingsAt : run.startedAt,
+                material: ReviewRules.fingerprintMaterial(
+                    runId: run.id, findingsAt: run.findingsAt)))
+        }
+        return out
     }
 
     private static func cardItems(from snapshot: Snapshot) -> [PhoneInboxItem] {

@@ -18,6 +18,14 @@
     "| `/security-pass [url]` | dependency audit, secret scan, bundle leak, headers, then the security reviewer | a verdict |",
     "| `/deploy-web` | runbook for CI, preview and production deploys (push to main = deploy) | confirmation the deploy landed |"
   ],
+  "after_steps": [
+    ["lint", "Lint", "run pnpm lint and report its result"],
+    ["typecheck", "Typecheck", "run pnpm typecheck and report its result"],
+    ["test", "Test", "run pnpm test and report its result"],
+    ["build", "Build", "run pnpm build and report its result"],
+    ["commit", "Commit", "make one commit of the working tree in the repository's whole-sentence style"],
+    ["push", "Push to the remote", "git push to the upstream branch; a push to main deploys"]
+  ],
   "settings_allow": [
     "Bash(pnpm lint)",
     "Bash(pnpm typecheck)",

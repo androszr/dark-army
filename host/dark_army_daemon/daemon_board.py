@@ -881,6 +881,15 @@ class BoardVerbsMixin:
             # *absent* rather than present and 404ing.
             "manual_clear_writable": True,
             "review_writable": True,
+            # The Review section (docs/review-runs.md): this daemon serves
+            # `state.review` and GET /api/review and carries three review
+            # actions on both phone tuples. Two markers on `queue_writable`'s
+            # argument: the name "Mark reviewed" took above is taken, so the
+            # press marker is `review_section_writable` (`review_run_writable`
+            # is the Done card's Run review). An older Mac sends neither,
+            # which decodes false, so the tile says so in a sentence.
+            "review_supported": True,
+            "review_section_writable": True,
             # Two more on the same argument: this daemon serves the Checks
             # section (GET /api/manual-checks and the sealed `manual_checks`
             # kind) and carries `board_manual_outcome` on both phone tuples.
@@ -5782,6 +5791,10 @@ class BoardVerbsMixin:
                 "id": str(cid),
                 "project": str((entry or {}).get("project") or ""),
             })
+        # The fifth kind: a review run whose terminal is still binding
+        # (`daemon_review`). `_adhoc_launches`' shape and reason, swept in
+        # `_review_inflight_entries` the same way.
+        in_flight.extend(self._review_inflight_entries())
         return in_flight
 
     async def open_adhoc_terminal(self, root: str, tool: str) -> tuple:
@@ -6855,6 +6868,20 @@ class BoardVerbsMixin:
             logger.warning("queueing the worktree prunes failed",
                            exc_info=True)
         return changed
+
+    def _reconcile_review(self) -> bool:
+        """The review runs' own executor step, beside `_reconcile_board` and
+        independent of it: the findings file landing, a step line, a
+        terminal ending. It runs with no board open and after a raise in
+        the board's pass. The pty facts were composed on the loop before
+        the hop; nothing here touches the host."""
+        try:
+            changed = self._observe_review_runs(self._review_pty_facts)
+            changed |= self._review_drifted()
+            return changed
+        except Exception:
+            logger.warning("review reconcile failed", exc_info=True)
+            return False
 
     def _run_health_drifted(self, cards: list, snapshot: dict) -> bool:
         """Buy a board frame when a card's run-health line moved.

@@ -53,6 +53,11 @@ final class Arm: ObservableObject {
         /// Rebuild & restart, on the Menu screen and on an agent's screen. Its
         /// own slot, so nothing else armed can confirm a Mac restart.
         case rebuild
+        /// Continue on a Review run: the second deliberate press. Its own
+        /// slot, armed on the run id.
+        case reviewContinue
+        /// End on a Review run: closes that run's terminal.
+        case reviewEnd
     }
 
     @Published private(set) var start: String?
@@ -75,6 +80,8 @@ final class Arm: ObservableObject {
     @Published private(set) var refineBatch: String?
     @Published private(set) var startBatch: String?
     @Published private(set) var rebuild: String?
+    @Published private(set) var reviewContinue: String?
+    @Published private(set) var reviewEnd: String?
 
     /// Card detail hangs plan-gate pending flags here so a timeout cannot
     /// leave `skip_plan_gate` armed for the next Menu tap.
@@ -104,6 +111,8 @@ final class Arm: ObservableObject {
         refineBatch = nil
         startBatch = nil
         rebuild = nil
+        reviewContinue = nil
+        reviewEnd = nil
         switch slot {
         case .start: start = id
         case .startHere: startHere = id
@@ -125,6 +134,8 @@ final class Arm: ObservableObject {
         case .refineBatch: refineBatch = id
         case .startBatch: startBatch = id
         case .rebuild: rebuild = id
+        case .reviewContinue: reviewContinue = id
+        case .reviewEnd: reviewEnd = id
         }
         timeoutTask = Task { [weak self] in
             let nanos = UInt64(Self.timeoutSeconds * 1_000_000_000)
@@ -167,6 +178,8 @@ final class Arm: ObservableObject {
         case .refineBatch: armed = refineBatch
         case .startBatch: armed = startBatch
         case .rebuild: armed = rebuild
+        case .reviewContinue: armed = reviewContinue
+        case .reviewEnd: armed = reviewEnd
         }
         guard let armedId = armed, id.isEmpty || armedId == id else {
             return false
@@ -198,6 +211,8 @@ final class Arm: ObservableObject {
         refineBatch = nil
         startBatch = nil
         rebuild = nil
+        reviewContinue = nil
+        reviewEnd = nil
         onDisarm?()
     }
 }

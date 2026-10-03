@@ -28,8 +28,11 @@ logger = logging.getLogger("dark-army")
 # refused as an unknown kind, never honoured.
 # `start_asked` is Mission Control asking for a card to be started: Dismiss
 # is the person's No, and the daemon drops the ask with it.
+# `review_picks` is a review run waiting on the person's picks (key `r:<run id>`,
+# docs/review-runs.md); its fingerprint is `review_picks_material`, so a run
+# whose findings arrive again unhides.
 ACK_KINDS = frozenset({"question", "waiting", "ended_work", "manual_check",
-                       "start_asked"})
+                       "start_asked", "review_picks"})
 NEVER_KINDS = frozenset({"permission"})
 MAX_INBOX_ACKS = 64
 
@@ -44,6 +47,16 @@ def fingerprint(kind: str, material: str) -> str:
         return "waiting"
     digest = hashlib.sha256((material or "").encode("utf-8")).hexdigest()
     return f"{kind}:{digest}"
+
+
+def review_picks_material(run_id: str, findings_at) -> str:
+    """The fingerprint material of a run waiting on picks: the run id and the
+    whole second its findings landed, spelled the same on both clients."""
+    try:
+        stamp = int(float(findings_at or 0))
+    except (TypeError, ValueError):
+        stamp = 0
+    return f"{run_id}:{stamp}"
 
 
 def question_material(questions: list) -> str:
@@ -97,7 +110,8 @@ def ack_set(records) -> set[tuple[str, str, str]]:
 
 def valid_key(key: str) -> bool:
     return isinstance(key, str) and (
-        (key.startswith("s:") or key.startswith("c:")) and len(key) > 2)
+        (key.startswith("s:") or key.startswith("c:")
+         or key.startswith("r:")) and len(key) > 2)
 
 
 def session_kind_and_fp(*, permission: bool, questions: list,

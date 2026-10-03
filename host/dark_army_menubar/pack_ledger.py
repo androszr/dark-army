@@ -45,6 +45,11 @@ _DEFAULTS = {
     # wrote has none, so a region that differs from today's render reads as
     # the project's own and is left alone.
     "pack_digests": {},
+    # The review section's after-steps (`review_steps`): `[id, label, how]`
+    # triples the profile declares, written at every install and resync so the
+    # offer follows the profile. A row an older build wrote has none and reads
+    # as none (the daemon then offers the generic commit and push).
+    "after_steps": [],
     "installed_at": 0.0,
     "last_sync_at": 0.0,
     "last_result": "",
@@ -139,7 +144,7 @@ def _apply(row: dict, *, profile=None, prefix=None, project=None,
            app=None, gitnexus_repo=None, settings_allow_owned=None,
            settings_deny_owned=None,
            gitignore_offered=None, pack_digests=None, last_result=None, last_sync_at=None, installed_at=None,
-           touch: bool = True) -> None:
+           after_steps=None, touch: bool = True) -> None:
     if profile is not None:
         row["profile"] = str(profile)
     if prefix is not None:
@@ -158,6 +163,10 @@ def _apply(row: dict, *, profile=None, prefix=None, project=None,
         row["gitignore_offered"] = [str(item) for item in gitignore_offered]
     if pack_digests is not None:
         row["pack_digests"] = digests_of({"pack_digests": pack_digests})
+    if after_steps is not None:
+        row["after_steps"] = [[str(x) for x in step] for step in after_steps
+                              if isinstance(step, (list, tuple))
+                              and len(step) == 3]
     if last_result is not None:
         row["last_result"] = str(last_result)
     if installed_at is not None:
@@ -232,6 +241,7 @@ def update(
     last_result: Optional[str] = None,
     last_sync_at: Optional[float] = None,
     installed_at: Optional[float] = None,
+    after_steps: Optional[list] = None,
 ) -> Optional[dict]:
     """Update an existing row. None if Stop syncing already dropped it.
 
@@ -253,7 +263,7 @@ def update(
                gitignore_offered=gitignore_offered,
                pack_digests=pack_digests,
                last_result=last_result, last_sync_at=last_sync_at,
-               installed_at=installed_at, touch=True)
+               installed_at=installed_at, after_steps=after_steps, touch=True)
         data["projects"] = projects
         _write(data)
         return dict(row)

@@ -208,6 +208,24 @@ enum PhoneActions {
     /// and puts SHIP or STOP on the card. One press, changes no files.
     /// Drawn only against a Mac whose board says `review_run_writable`.
     static let boardReviewRun = "board_review_run"
+    /// Route: `BobDaemon.start_review` — open the chosen assistant on the
+    /// Mac to review what is not yet on the project's remote, with the
+    /// ticked after-steps as the only authorised ones. `root`, `tool` and
+    /// `steps` (comma-joined, in the order drawn). The Mac re-runs the
+    /// launcher switch, the folder, the cooldown and the launch bounds, and
+    /// answers a refusal in its own words. Queued, not awaited. Drawn only
+    /// where the board says `review_section_writable`.
+    static let reviewStart = "review_start"
+    /// Route: `BobDaemon.continue_review` — the second deliberate press:
+    /// `run_id` and the ticked finding numbers, comma-joined in `fix`. The
+    /// Mac checks each is on the run's list, writes the picks beside the
+    /// findings and types one line into that run's terminal. Armed then
+    /// confirmed here.
+    static let reviewContinue = "review_continue"
+    /// Route: `BobDaemon.end_review` — close that run's terminal and
+    /// nothing else, guarded by identity at the moment it fires. Armed then
+    /// confirmed; a second End is refused in words.
+    static let reviewEnd = "review_end"
 
     /// The sealed home route every read and action rides. Named here so no
     /// other file spells it.

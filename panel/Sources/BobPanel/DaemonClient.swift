@@ -414,6 +414,7 @@ final class DaemonClient: ObservableObject {
         case .inbox: target.inbox = source.inbox  // case inbox
         case .security: target.security = source.security  // case security
         case .mission: target.mission = source.mission  // case mission
+        case .review: target.review = source.review  // case review
         }
     }
 

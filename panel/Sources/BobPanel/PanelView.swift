@@ -35,6 +35,10 @@ struct PanelView: View {
         /// Talk to Mission Control: the board beside its terminal column,
         /// the chips and composer in the rail (`CommRail.swift`).
         case comm = "Comm"
+        /// Pick a project, a provider and the after-steps, read the findings
+        /// as a checklist and tick the fixes: the form in the rail and the
+        /// open run in the wide pane (`ReviewRail`, `ReviewPane`).
+        case review = "Review"
         /// The desk-only report over `history.db`. Back on 20 Sep 2026 after
         /// a same-day removal; the phone never had it and still does not.
         case history = "History"
@@ -45,6 +49,8 @@ struct PanelView: View {
     }
 
     @State private var tab: Tab = .inbox
+    /// The Review tab's form and open run, held across rail rebuilds.
+    @StateObject private var review = ReviewState()
     /// The one-line shortcut legend under the brand bar, opened by the
     /// **keys** chip or `?` (`TriageLegend`, drawn from `TriageKeys`).
     @State private var keysLegendShown = false
@@ -317,7 +323,8 @@ struct PanelView: View {
                     // and freeze the age `InboxView` draws from it.
                     now: snapshot.agentsStamp,
                     acks: snapshot.inbox.available ? snapshot.inbox.acks : [],
-                    fleet: snapshot.agents)
+                    fleet: snapshot.agents,
+                    review: snapshot.review)
     }
 
     private var inboxGroups: [InboxGroup] { Inbox.groups(inboxItems) }
@@ -362,6 +369,16 @@ struct PanelView: View {
                 return
             }
             showCard(card: card)
+        case .review(let id):
+            // A run waiting on picks opens in the Review tab's wide pane.
+            guard snapshot.review.run(id: id) != nil else {
+                Trace.log("inbox — review gone \(id.prefix(8))")
+                return
+            }
+            selected = nil
+            tab = .review
+            review.open(runId: id)
+            syncKeyFlags()
         }
     }
 
@@ -521,7 +538,7 @@ struct PanelView: View {
     /// arrow keys have to walk: the process table, in arrival order with
     /// waiters in place. History draws no rows, so the arrows walk nothing.
     private var visibleItems: [VisibleItem] {
-        if tab == .history || tab == .comm || tab == .reports { return [] }
+        if tab == .history || tab == .comm || tab == .reports || tab == .review { return [] }
         return processRows.map { VisibleItem(row: $0, region: .list) }
     }
 
@@ -884,6 +901,11 @@ struct PanelView: View {
             syncKeyFlags()
         case .leaveReports:
             leaveReports()
+        case .closeReviewRun:
+            review.close()
+            syncKeyFlags()
+        case .leaveReview:
+            leaveReview()
         case .open:
             if let item = selectedItem {
                 if item.region == .band {
@@ -992,7 +1014,7 @@ struct PanelView: View {
         let count = all.count
         let next = all[(i + step % count + count) % count]
         actions.disarm()
-        if next == .history || next == .reports { selected = nil }
+        if next == .history || next == .reports || next == .review { selected = nil }
         tab = next
     }
 
@@ -1034,6 +1056,8 @@ struct PanelView: View {
         keys.historyOpen = tab == .history
         keys.reportOpen = tab == .reports && !openReportPath.isEmpty
         keys.reportsOpen = tab == .reports
+        keys.reviewRunOpen = tab == .review && !review.openRunId.isEmpty
+        keys.reviewOpen = tab == .review
     }
 
     /// Leave History the way the Board control does: the board comes back,
@@ -1055,6 +1079,16 @@ struct PanelView: View {
         openReportPath = ""
         reportsHits = ScoutReportIndex()
         reportsSearching = false
+        selected = nil
+        tab = .inbox
+        syncKeyFlags()
+    }
+
+    /// Leave the Review tab the way Reports is left: the board comes back
+    /// and the open run closes. The form is kept, so a return finds it as it
+    /// was.
+    private func leaveReview() {
+        review.close()
         selected = nil
         tab = .inbox
         syncKeyFlags()
@@ -1128,6 +1162,14 @@ struct PanelView: View {
                     // follows the open report.
                     .onChange(of: openReportPath) { _, _ in syncKeyFlags() }
             }
+            if case .review = workspacePane {
+                ReviewPane(client: client, state: review,
+                           onInputFocus: { setStripEditing($0) },
+                           onTerminalFocus: { keys.terminalFocused = $0 })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Escape's run rung follows the open run.
+                    .onChange(of: review.openRunId) { _, _ in syncKeyFlags() }
+            }
             if let row = detailRow {
                 let bound = client.snapshot.board
                     .card(forSession: row.agent.sessionId)
@@ -1165,7 +1207,7 @@ struct PanelView: View {
     private var boardCovered: Bool {
         switch workspacePane {
         case .detail, .history: return true
-        case .reports: return true
+        case .reports, .review: return true
         case .board, .mission: return false
         }
     }
@@ -1849,6 +1891,9 @@ struct PanelView: View {
                             person: $historyPerson, day: $historyDay,
                             run: $historyRun, onBoard: leaveHistory)
                     .frame(maxHeight: .infinity)
+            } else if tab == .review {
+                ReviewRail(client: client, state: review)
+                    .frame(maxHeight: .infinity)
             } else if tab == .reports {
                 ScoutReportsRail(index: reportsIndex,
                                  hits: reportsHits,
@@ -2203,7 +2248,7 @@ struct PanelView: View {
         return HStack(spacing: 0) {
             ForEach(Tab.allCases, id: \.self) { item in
                 Button {
-                    if item == .history || item == .reports { selected = nil }
+                    if item == .history || item == .reports || item == .review { selected = nil }
                     tab = item
                 } label: {
                     HStack(spacing: 4) {

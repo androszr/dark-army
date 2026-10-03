@@ -75,6 +75,9 @@
 		A1B2010A0000000000000002 /* Inbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2010A0000000000000001 /* Inbox.swift */; };
 		C0F1600E0000000000000002 /* RunFigures.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F1600E0000000000000001 /* RunFigures.swift */; };
 		C0FFEE0C0000000000000004 /* CommView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0C0000000000000003 /* CommView.swift */; };
+		ABCDEF0A5E0000000000012 /* ReviewRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0A5E0000000000011 /* ReviewRules.swift */; };
+		ABCDEF0A5E0000000000022 /* ReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0A5E0000000000021 /* ReviewView.swift */; };
+		ABCDEF0A5E0000000000032 /* ReviewRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0A5E0000000000031 /* ReviewRunView.swift */; };
 		C0FFEE0C0000000000000002 /* CommRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0C0000000000000001 /* CommRules.swift */; };
 		C0FFEE5B0000000000000002 /* RebuildRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE5B0000000000000001 /* RebuildRules.swift */; };
 		C0FFEE5B0000000000000004 /* RebuildView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE5B0000000000000003 /* RebuildView.swift */; };
@@ -267,6 +270,9 @@ DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 		A1B2010A0000000000000001 /* Inbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Inbox.swift; sourceTree = "<group>"; };
 		C0F1600E0000000000000001 /* RunFigures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunFigures.swift; sourceTree = "<group>"; };
 		C0FFEE0C0000000000000003 /* CommView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommView.swift; sourceTree = "<group>"; };
+		ABCDEF0A5E0000000000011 /* ReviewRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewRules.swift; sourceTree = "<group>"; };
+		ABCDEF0A5E0000000000021 /* ReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewView.swift; sourceTree = "<group>"; };
+		ABCDEF0A5E0000000000031 /* ReviewRunView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewRunView.swift; sourceTree = "<group>"; };
 		C0FFEE0C0000000000000001 /* CommRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommRules.swift; sourceTree = "<group>"; };
 		C0FFEE5B0000000000000001 /* RebuildRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RebuildRules.swift; sourceTree = "<group>"; };
 		C0FFEE5B0000000000000003 /* RebuildView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RebuildView.swift; sourceTree = "<group>"; };
@@ -477,6 +483,9 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				A1B2010A0000000000000001 /* Inbox.swift */,
 				C0F1600E0000000000000001 /* RunFigures.swift */,
 				C0FFEE0C0000000000000003 /* CommView.swift */,
+				ABCDEF0A5E0000000000011 /* ReviewRules.swift */,
+				ABCDEF0A5E0000000000021 /* ReviewView.swift */,
+				ABCDEF0A5E0000000000031 /* ReviewRunView.swift */,
 				C0FFEE0C0000000000000001 /* CommRules.swift */,
 				C0FFEE5B0000000000000001 /* RebuildRules.swift */,
 				C0FFEE5B0000000000000003 /* RebuildView.swift */,
@@ -818,6 +827,9 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				A1B2010A0000000000000002 /* Inbox.swift in Sources */,
 				C0F1600E0000000000000002 /* RunFigures.swift in Sources */,
 				C0FFEE0C0000000000000004 /* CommView.swift in Sources */,
+				ABCDEF0A5E0000000000012 /* ReviewRules.swift in Sources */,
+				ABCDEF0A5E0000000000022 /* ReviewView.swift in Sources */,
+				ABCDEF0A5E0000000000032 /* ReviewRunView.swift in Sources */,
 				C0FFEE0C0000000000000002 /* CommRules.swift in Sources */,
 				C0FFEE5B0000000000000002 /* RebuildRules.swift in Sources */,
 				C0FFEE5B0000000000000004 /* RebuildView.swift in Sources */,
