@@ -25,6 +25,10 @@ enum SettingsModelsTable {
         /// Assistant → its cell. An assistant with nothing to offer for a
         /// slot has no cell.
         var cells: [String: Cell]
+        /// Assistant → its effort cell, where the slot has one (the
+        /// `info:agent-effort:*` row's pick run on `set_agent_effort`). Never
+        /// the reason a slot has a row: a slot is a row for its model cells.
+        var effortCells: [String: Cell] = [:]
         /// The slot's `info:agent-model:*` rows, one per assistant — search
         /// hits the table's label cell anchors and flashes.
         var infoIds: [String] = []
@@ -44,6 +48,7 @@ enum SettingsModelsTable {
     }
 
     static let infoPrefix = "info:agent-model:"
+    static let effortInfoPrefix = "info:agent-effort:"
     static let providerPrefix = "submenu:agent-models:"
 
     /// `submenu:agent-models:<provider>[:<root>]` → the provider.
@@ -64,6 +69,15 @@ enum SettingsModelsTable {
         return (String(parts[0]), String(parts[1]))
     }
 
+    /// `info:agent-effort:<provider>:<slot>[:<root>]` → provider and slot.
+    static func parseEffortInfoId(_ id: String) -> (provider: String, slot: String)? {
+        guard id.hasPrefix(effortInfoPrefix) else { return nil }
+        let parts = id.dropFirst(effortInfoPrefix.count)
+            .split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count >= 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
+        return (String(parts[0]), String(parts[1]))
+    }
+
     /// Walk the entries: each slot's `info` row opens a cell, and the pick run
     /// after it (one `SettingsSearch.runKey`) fills it. Anything else closes
     /// the cell, so a stray pick never joins the wrong slot.
@@ -71,7 +85,9 @@ enum SettingsModelsTable {
         var slotOrder: [String] = []
         var labels: [String: String] = [:]
         var cells: [String: [String: Cell]] = [:]
+        var effortCells: [String: [String: Cell]] = [:]
         var current: (provider: String, slot: String)?
+        var currentIsEffort = false
         var currentKey: String?
         var infoIds: [String: [String]] = [:]
         var providerIds: [String: String] = [:]
@@ -83,8 +99,16 @@ enum SettingsModelsTable {
                 currentKey = nil
                 continue
             }
+            if let parsed = parseEffortInfoId(entry.id) {
+                current = parsed
+                currentIsEffort = true
+                currentKey = nil
+                infoIds[parsed.slot, default: []].append(entry.id)
+                continue
+            }
             if let parsed = parseInfoId(entry.id) {
                 current = parsed
+                currentIsEffort = false
                 currentKey = nil
                 infoIds[parsed.slot, default: []].append(entry.id)
                 if labels[parsed.slot] == nil {
@@ -93,9 +117,11 @@ enum SettingsModelsTable {
                 }
                 continue
             }
+            let wanted = currentIsEffort ? SettingsMenuModel.agentEffortAction
+                                         : SettingsMenuModel.agentModelAction
             guard let open = current,
                   case .pick(let action, _, let selected) = entry.row.kind,
-                  action == SettingsMenuModel.agentModelAction else {
+                  action == wanted else {
                 current = nil
                 currentKey = nil
                 continue
@@ -106,6 +132,14 @@ enum SettingsModelsTable {
                 continue
             }
             currentKey = key
+            if currentIsEffort {
+                var cell = effortCells[open.slot]?[open.provider]
+                    ?? Cell(action: action, choices: [], selected: nil)
+                cell.choices.append(entry)
+                if selected && cell.selected == nil { cell.selected = entry }
+                effortCells[open.slot, default: [:]][open.provider] = cell
+                continue
+            }
             var cell = cells[open.slot]?[open.provider]
                 ?? Cell(action: action, choices: [], selected: nil)
             cell.choices.append(entry)
@@ -116,6 +150,7 @@ enum SettingsModelsTable {
         let rows = slotOrder.compactMap { slot -> SlotRow? in
             guard let byProvider = cells[slot], !byProvider.isEmpty else { return nil }
             return SlotRow(id: slot, label: labels[slot] ?? slot, cells: byProvider,
+                           effortCells: effortCells[slot] ?? [:],
                            infoIds: infoIds[slot] ?? [])
         }
         let providers = DaemonClient.AgentModels.providers.filter { provider in

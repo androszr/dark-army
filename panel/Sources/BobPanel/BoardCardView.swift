@@ -789,7 +789,8 @@ struct BoardCardView: View {
     /// after a session binds — the menu is what goes away, not the record of
     /// what ran.
     private var toolChipLabel: String {
-        BoardCardView.toolChipLabel(tool: card.tool, model: card.model)
+        BoardCardView.toolChipLabel(tool: card.tool, model: card.model,
+                                    effort: card.effort)
     }
 
     /// The label rule, pure so a test can hold it. `""` for the tool is the
@@ -806,15 +807,24 @@ struct BoardCardView: View {
     /// required to start with a letter: `claude-opus-5` → `opus-5` still says
     /// which model it is, while `grok-4.5` → `4.5` is a bare version number
     /// that names nothing, and losing the word is worse than repeating it.
-    static func toolChipLabel(tool: String, model: String) -> String {
+    ///
+    /// The card's effort, when it names one, follows as ` · <effort>`
+    /// (`claude · opus · high`); Default adds nothing, so a card from before
+    /// the setting reads exactly as it did.
+    static func toolChipLabel(tool: String, model: String,
+                              effort: String = "") -> String {
         if tool.isEmpty { return "assign…" }
-        guard !model.isEmpty else { return tool }
-        var shown = model
-        if shown.hasPrefix(tool + "-") {
-            let rest = shown.dropFirst(tool.count + 1)
-            if rest.first?.isLetter == true { shown = String(rest) }
+        var label = tool
+        if !model.isEmpty {
+            var shown = model
+            if shown.hasPrefix(tool + "-") {
+                let rest = shown.dropFirst(tool.count + 1)
+                if rest.first?.isLetter == true { shown = String(rest) }
+            }
+            label = tool + " · " + shown
         }
-        return tool + " · " + shown
+        if !effort.isEmpty { label += " · " + effort }
+        return label
     }
 
     /// What the *fleet* says the session is doing. Read off the agents snapshot

@@ -22,6 +22,7 @@ extension DaemonClient {
                      column: String, workflow: String = "",
                      attachments: String = "",
                      model: String = "",
+                     effort: String = "",
                      createToken: String = "",
                      refine: Bool = false,
                      beneficiary: String = "",
@@ -37,6 +38,7 @@ extension DaemonClient {
                     "project": project, "root": root, "tool": tool,
                     "column_name": column, "workflow": workflow,
                     "attachments": attachments, "model": model,
+                    "effort": effort,
                     "start_when_planned": startWhenPlanned ? "1" : ""]
         if !createToken.isEmpty { body["create_token"] = createToken }
         if refine { body["refine"] = "true" }

@@ -145,7 +145,7 @@ def test_compose_a_full_row_is_the_exact_dict():
     assert out == {
         "class": "large", "basis": "default", "turns": 80, "tokens_k": 2100,
         "ctx_pct": 65, "asks": 3, "refusals": 1, "attempts": 2, "returns": 1,
-        "fix_rounds": 2, "attention": False, "live": True,
+        "fix_rounds": 2, "attention": False, "live": True, "effort": "",
     }
 
 
@@ -960,3 +960,33 @@ def test_the_ledger_file_is_in_the_private_ring():
     from dark_army_daemon import paths
     assert paths.RUN_HEALTH_PATH.name == "run-health.json"
     assert "run-health.json" in paths._PRIVATE_FILES
+
+
+def test_effort_compose_reads_the_observed_effort_off_the_row():
+    row = _row()
+    row["stats"]["effort"] = "high"
+    out = rh.compose(row, {}, None, DEFAULT_CUTS)
+    assert out["effort"] == "high"
+
+
+def test_effort_compose_without_one_is_empty_not_absent():
+    row = _row()
+    row["stats"].pop("effort", None)
+    assert rh.compose(row, {}, None, DEFAULT_CUTS)["effort"] == ""
+    row["stats"]["effort"] = None
+    assert rh.compose(row, {}, None, DEFAULT_CUTS)["effort"] == ""
+
+
+def test_effort_a_frozen_entry_keeps_it_and_an_old_one_reads_empty():
+    ledger = rh.Ledger()
+    row = _row()
+    row["stats"]["effort"] = "xhigh"
+    reading = rh.compose(row, {}, None, DEFAULT_CUTS)
+    assert ledger.freeze("c1", "/r", reading, 1.0, now=10.0)
+    frozen = rh.compose(None, {"attempts": 1, "returns": 0},
+                        ledger.entry_for("c1"), DEFAULT_CUTS)
+    assert frozen["effort"] == "xhigh" and frozen["live"] is False
+    old = {"card_id": "c2", "root": "/r", "at": 1.0, "dispatched_at": 1.0,
+           "reading": {"class": "typical", "turns": 5}}
+    out = rh.compose(None, {}, old, DEFAULT_CUTS)
+    assert out["effort"] == ""

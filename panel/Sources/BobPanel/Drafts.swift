@@ -25,6 +25,8 @@ struct CardDraft: Identifiable, Equatable {
     /// Banked with the draft; decoded tolerant, default `""`.
     var kind: String
     var model: String
+    /// The reasoning effort banked with the draft; decoded tolerant, `""`.
+    var effort: String
     var attachments: [String]
     var updatedAt: Double
     /// The objective typed before the card exists — the same three lines
@@ -49,7 +51,7 @@ struct CardDraft: Identifiable, Equatable {
          prompt: String = "", workflow: String = "", idea: String = "",
          tool: String = "",
          kind: String = "",
-         model: String = "", attachments: [String] = [],
+         model: String = "", effort: String = "", attachments: [String] = [],
          updatedAt: Double = 0, priority: String = "", area: String = "",
          beneficiary: String = "", intendedBenefit: String = "",
          successCriterion: String = "",
@@ -65,6 +67,7 @@ struct CardDraft: Identifiable, Equatable {
         self.tool = tool
         self.kind = kind
         self.model = model
+        self.effort = effort
         self.attachments = attachments
         self.updatedAt = updatedAt
         self.beneficiary = beneficiary
@@ -95,6 +98,7 @@ struct CardDraft: Identifiable, Equatable {
             tool: dict["tool"] as? String ?? "",
             kind: dict["kind"] as? String ?? "",
             model: dict["model"] as? String ?? "",
+            effort: dict["effort"] as? String ?? "",
             attachments: (dict["attachments"] as? [Any])?
                 .compactMap { $0 as? String } ?? [],
             updatedAt: (dict["updated_at"] as? NSNumber)?.doubleValue ?? 0,
@@ -119,6 +123,7 @@ struct CardDraft: Identifiable, Equatable {
             "tool": tool,
             "kind": kind,
             "model": model,
+            "effort": effort,
             "attachments": attachments,
             "updated_at": updatedAt,
             "beneficiary": beneficiary,

@@ -66,7 +66,13 @@ after a confirmed press per project.
   and integration reviewer; Astra for planner, bug auditor and security
   reviewer; and Luna for card preparer and shunt worker. Explicit global and
   project choices retain the precedence above, and an explicit card model
-  still wins for Start.
+  still wins for Start. **The effort rides beside it** (`render(efforts=)`,
+  `agent_efforts` / `agent_efforts_by_root`): `effort:` after `model:` in a
+  Claude brief and a Grok shim, `model_reasoning_effort` in the Codex shim,
+  and Default removes the line. The Codex shims keep today's shipped level,
+  `SHIPPED_CODEX_EFFORT` (`high`), unless somebody chooses otherwise. The
+  lines are written; the CLIs document reading them, and a real spawn
+  confirms each (a manual check, outcome not yet recorded).
 - The master tree ships as `dark_army_menubar/agent_pack` through
   `setup.py` `resources`.
 - **The generic `/ship` skill is an adapter plus three references** (20 Sep

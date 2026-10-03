@@ -30,7 +30,7 @@ ROOT_B = "/tmp/project-b"
 
 
 def test_schema_version_is_twenty_two():
-    assert SCHEMA_VERSION == 31
+    assert SCHEMA_VERSION == 32
 
 
 def test_a_fresh_store_has_no_notes(store):

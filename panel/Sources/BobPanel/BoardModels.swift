@@ -490,6 +490,10 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// also what an older daemon's cards decode to, which is why every model
     /// chooser is gated on a non-empty catalogue rather than on this.
     var model = ""
+    /// The reasoning effort the card's session launches at. `""` is
+    /// **Default** — no effort flag — and what an older daemon's cards decode
+    /// to, which is why the effort chooser gates on the catalogue, not on this.
+    var effort = ""
     var column = "backlog"
     var sessionId = ""
     /// `""`, `dispatching`, `live`, `ended`. Never a session *category* — that
@@ -933,6 +937,7 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case sessionEndedAt = "session_ended_at"
         case doneAt = "done_at"
         case model
+        case effort
         case workflow
         case agentTrail = "agent_trail"
         case crew
@@ -1005,6 +1010,7 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         prompt = c.value(.prompt, "")
         tool = c.value(.tool, "")
         model = c.value(.model, "")
+        effort = c.value(.effort, "")
         column = c.value(.column, "backlog")
         sessionId = c.value(.sessionId, "")
         linkState = c.value(.linkState, "")
@@ -1242,6 +1248,9 @@ struct RunHealth: Decodable, Equatable {
     var attempts = 0
     var returns = 0
     var fixRounds: Int?
+    /// The effort the running session itself reported (`stats.effort`), `""`
+    /// where unknown or from an older daemon — drawn verbatim, never derived.
+    var effort = ""
     /// The daemon's amber bit. Never the only signal: the word comes first.
     var attention = false
     /// Whether the reading came off a live row on this frame rather than
@@ -1250,7 +1259,7 @@ struct RunHealth: Decodable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case sizeClass = "class"
-        case basis, turns, asks, refusals, attempts, returns, attention, live
+        case basis, turns, asks, refusals, attempts, returns, attention, live, effort
         case tokensK = "tokens_k"
         case ctxPct = "ctx_pct"
         case fixRounds = "fix_rounds"
@@ -1268,6 +1277,7 @@ struct RunHealth: Decodable, Equatable {
         attempts = c.value(.attempts, 0)
         returns = c.value(.returns, 0)
         fixRounds = c.maybe(.fixRounds)
+        effort = c.value(.effort, "")
         attention = c.value(.attention, false)
         live = c.value(.live, false)
     }
@@ -1325,6 +1335,19 @@ struct Board: Decodable, Equatable {
     /// re-derives nothing. Empty from an older daemon, which is exactly the
     /// gate every model chooser keys off: absent, never blank.
     var models: [String: [String]] = [:]
+    /// The effort levels per assistant and model — the daemon's own
+    /// `dispatch.effort_catalogue()`: `{tool: {"": [...], "<model>": [...]}}`,
+    /// where `""` is the assistant's own default model. Empty from an older
+    /// daemon, which is the gate every effort chooser keys off.
+    var efforts: [String: [String: [String]]] = [:]
+
+    /// The effort levels on offer for one assistant on one model: the model's
+    /// own entry, else the assistant's `""` entry, else nothing — in which
+    /// case the chooser is *absent* rather than empty.
+    static func effortOptions(efforts: [String: [String: [String]]],
+                              tool: String, model: String) -> [String] {
+        efforts[tool]?[model] ?? efforts[tool]?[""] ?? []
+    }
 
     /// The models on offer for one assistant, and the whole of the panel's
     /// model logic. Empty for `""` (no assistant chosen), for a tool the
@@ -1498,7 +1521,7 @@ struct Board: Decodable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case cards, counts, available, tools, installed, models, projects
+        case cards, counts, available, tools, installed, models, efforts, projects
         case doneClearToken = "done_clear_token"
         case doneViewToken = "done_view_token"
         case generatedAt = "generated_at"
@@ -1534,6 +1557,7 @@ struct Board: Decodable, Equatable {
         tools = c.value(.tools, [])
         installed = c.value(.installed, [:])
         models = c.value(.models, [:])
+        efforts = c.value(.efforts, [:])
         projects = c.value(.projects, [])
     }
 

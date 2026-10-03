@@ -1009,6 +1009,7 @@ final class BoardState: ObservableObject {
                          tool: draft.tool,
                          kind: draft.kind,
                          model: draft.model,
+                         effort: draft.effort,
                          attachments: stagedAttachments,
                          updatedAt: Date().timeIntervalSince1970,
                          priority: draft.priority,
@@ -1067,6 +1068,7 @@ final class BoardState: ObservableObject {
         next.tool = d.tool
         next.kind = d.kind
         next.model = d.model
+        next.effort = d.effort
         next.workflow = d.workflow
         next.idea = d.idea
         next.outcome.beneficiary = d.beneficiary
@@ -1145,7 +1147,7 @@ final class BoardState: ObservableObject {
             draft.title, draft.summary, draft.prompt, draft.workflow,
             draft.outcome.beneficiary, draft.outcome.intendedBenefit,
             draft.outcome.successCriterion, draft.priority, draft.model,
-            draft.area, draft.blockedBy])
+            draft.effort, draft.area, draft.blockedBy])
     }
     func revealPhaseTwo() { draft.expanded = true }
 
@@ -1366,6 +1368,10 @@ struct BoardDraft {
     /// the store's own clear-on-retool — so a model from the wrong provider
     /// can never be left behind on a draft.
     var model = ""
+    /// The reasoning effort, `""` meaning Default. Reset to `""` whenever the
+    /// tool changes or the model's list no longer offers it (see
+    /// `BoardCardSheet`) — the draft-side mirror of the store's own clears.
+    var effort = ""
     /// How important this card is, `"0"`..`"100"`, or `""` for "no opinion".
     /// A string rather than an `Int?` all the way to the wire: the store's
     /// column is TEXT, and `_board_fields` turns a JSON integer `0` into
@@ -1427,6 +1433,7 @@ struct BoardDraft {
         tool = card.tool
         kind = card.kind
         model = card.model
+        effort = card.effort
         priority = card.priority
         area = card.area
         blockedBy = card.blockedBy

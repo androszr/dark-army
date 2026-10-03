@@ -1751,3 +1751,60 @@ async def test_a_dependency_held_card_pressed_during_the_cooldown_names_the_depe
                       "is done")
     assert store.get(card["id"])["queue_state"] == "queued"
     assert opened == []
+
+
+# --- an effort the launch model refuses (plans/2026-10-03) --------------------
+
+
+@pytest.mark.asyncio
+async def test_a_queued_card_whose_effort_the_launch_model_refuses_is_dequeued_and_the_next_runs(
+        daemon, project, monkeypatch):
+    """Default-model Codex card at `max`, main slot gpt-5.5: `guard()` passes
+    it (model ""), so it can sit in the queue; on replay the launch-model check
+    refuses it. It must leave the queue with the reason on the card —
+    otherwise the reconcile re-picks it every pass and jams the cards behind."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    monkeypatch.setattr(dispatch, "resolve_executable", lambda tool: "/bin/codex")
+    d.set_agent_models({"codex": {"main": "gpt-5.5"}})
+    doomed = _make(store, root=str(project), title="doomed", tool="codex",
+                   effort="max")
+    after = _make(store, root=str(project), title="after", tool="codex")
+    for card, at in ((doomed, 1.0), (after, 2.0)):
+        store.update(card["id"], {"queue_state": "queued", "queued_at": at})
+
+    ok, detail = await d.dispatch_card(doomed["id"], queued_replay=True)
+    assert not ok
+    assert detail == dispatch.EFFORT_REFUSAL.format(tool="codex")
+    got = store.get(doomed["id"])
+    assert got["queue_state"] == ""
+    assert got["dispatch_error"] == detail
+    assert opened == []
+
+    ok, detail = await d.dispatch_card(after["id"], queued_replay=True)
+    assert ok, detail
+    assert opened == ["after"]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_effort_never_triggers_worktree_preparation(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, opened, project)
+    monkeypatch.setattr(dispatch, "resolve_executable", lambda tool: "/bin/codex")
+    d.set_agent_models({"codex": {"main": "gpt-5.5"}})
+    prepared: list = []
+
+    async def never(*a, **k):
+        prepared.append(a)
+
+    monkeypatch.setattr(d, "_wants_worktree", lambda cwd: True)
+    monkeypatch.setattr(d, "_prepare_worktree_then_dispatch", never)
+    card = _make(store, root=str(project), title="refused", tool="codex",
+                 effort="max")
+    ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
+    assert not ok
+    assert detail == dispatch.EFFORT_REFUSAL.format(tool="codex")
+    assert prepared == [] and opened == []

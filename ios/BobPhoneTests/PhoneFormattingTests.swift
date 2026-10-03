@@ -375,3 +375,27 @@ final class PhoneFormattingTests: XCTestCase {
         XCTAssertEqual(conflict.detail, "this card changed on the Mac")
     }
 }
+
+
+final class PhoneEffortCatalogueTests: XCTestCase {
+    private func board(_ json: String) throws -> Board {
+        try JSONDecoder().decode(Board.self, from: Data(json.utf8))
+    }
+
+    func testEffortOptionsNarrowByModelAndFallBackToTheToolsEntry() throws {
+        let decoded = try board(
+            #"{"efforts":{"codex":{"":["low","max"],"gpt-5.5":["low"]}}}"#)
+        XCTAssertEqual(decoded.effortOptions(for: "codex", model: "gpt-5.5"), ["low"])
+        XCTAssertEqual(decoded.effortOptions(for: "codex", model: ""), ["low", "max"])
+        XCTAssertEqual(decoded.effortOptions(for: "codex", model: "gpt-6-sol"), ["low", "max"])
+        XCTAssertTrue(decoded.effortOptions(for: "", model: "").isEmpty)
+    }
+
+    func testAnOlderMacSendsNoEffortsAndTheCardReadsDefault() throws {
+        let older = try board(#"{"available": true}"#)
+        XCTAssertTrue(older.effortOptions(for: "claude", model: "").isEmpty)
+        let card = try JSONDecoder().decode(
+            BoardCard.self, from: Data(#"{"id":"a","tool":"claude"}"#.utf8))
+        XCTAssertEqual(card.effort, "")
+    }
+}

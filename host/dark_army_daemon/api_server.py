@@ -5410,6 +5410,9 @@ class ApiServer:
     _BOARD_FIELDS = ("title", "summary", "prompt", "project", "root", "tool",
                      "column_name", "author", "workflow",
                      "attachments", "model",
+                     # The reasoning effort, `model`'s neighbour: the same
+                     # store-side judgement (`dispatch.efforts_for`), no new door.
+                     "effort",
                      # The standing "start it when its plan lands" tick.
                      # Here on `model`'s side of the line: a thing a person
                      # states about their own card. It arms nothing on its

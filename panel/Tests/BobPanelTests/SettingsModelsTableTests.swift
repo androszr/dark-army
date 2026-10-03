@@ -136,6 +136,159 @@ final class SettingsModelsTableTests: XCTestCase {
         XCTAssertNil(SettingsModelsTable.parseInfoId("info:agent-model:claude"))
     }
 
+    // MARK: - The effort beside the model
+
+    /// `modelsRaw` plus the effort keys: levels only for `planner`.
+    private func effortSettings() -> DaemonClient.Settings {
+        var raw = SettingsMenuModelTests.modelsRaw
+        raw["agent_efforts"] = [
+            "claude": ["planner": "low"], "codex": ["planner": "high"],
+            "grok": ["planner": ""],
+        ]
+        raw["agent_efforts_by_root"] = ["/Users/me/proj": ["claude": ["planner": "max"]]]
+        raw["agent_effort_options"] = [
+            "claude": ["planner": ["low", "medium", "high", "xhigh", "max"]],
+            "codex": ["planner": ["low", "medium", "high", "xhigh", "max"]],
+            "grok": ["planner": ["minimal", "low", "medium", "high", "xhigh"]],
+        ]
+        raw["agent_effort_slots"] = ["main", "planner"]
+        return DaemonClient.Settings(raw, base: DaemonClient.Settings())
+    }
+
+    private func effortTree(enrolled: Bool = false) -> [SettingsRow] {
+        var enrollment = Enrollment()
+        if enrolled {
+            enrollment.available = true
+            enrollment.enrolled = [EnrolledProject(root: root, label: "proj")]
+        }
+        return SettingsMenuModel.rows(
+            settings: effortSettings(), context: DaemonClient.PanelContext(),
+            enrollment: enrollment, recordingShortcut: false, unenrolArmed: nil)
+    }
+
+    private func effortMachineWide() -> SettingsModelsTable.Table {
+        let group = SettingsSearch.groups(effortTree())
+            .first { $0.id == SettingsMenuModel.agentModelsRowId }!
+        return SettingsModelsTable.build(entries: group.entries)
+    }
+
+    func testEffortCellsAppearOnlyForSlotsTheOptionsList() {
+        let rows = Dictionary(uniqueKeysWithValues: effortMachineWide().rows.map { ($0.id, $0) })
+        XCTAssertEqual(Set(rows["planner"]?.effortCells.keys ?? [:].keys),
+                       Set(DaemonClient.AgentModels.providers))
+        // `main` is a drawable effort slot but lists no levels here, and the
+        // preparer is no effort slot at all.
+        XCTAssertTrue(rows["main"]?.effortCells.isEmpty ?? false)
+        XCTAssertTrue(rows["card-preparer"]?.effortCells.isEmpty ?? false)
+    }
+
+    func testAnOlderMenuBarWithNoEffortKeysDrawsNoEffortCell() {
+        for row in machineWide().rows { XCTAssertTrue(row.effortCells.isEmpty, row.id) }
+    }
+
+    func testEffortCellsAreTheSlotsRunOnTheEffortActionWithDefaultFirst() {
+        let planner = effortMachineWide().rows.first { $0.id == "planner" }!
+        for (provider, cell) in planner.effortCells {
+            XCTAssertEqual(cell.action, SettingsMenuModel.agentEffortAction)
+            XCTAssertEqual(cell.choices.first?.row.title, SettingsMenuModel.defaultModelLabel)
+            for choice in cell.choices {
+                guard case .pick(_, .map(let record), _) = choice.row.kind else {
+                    return XCTFail("\(choice.id) is not a map pick")
+                }
+                XCTAssertEqual(record["provider"], provider)
+                XCTAssertEqual(record["slot"], "planner")
+                XCTAssertNotNil(record["effort"])
+                XCTAssertNil(record["model"])
+            }
+        }
+        XCTAssertEqual(planner.effortCells["claude"]?.selected?.row.title, "low")
+        XCTAssertEqual(planner.effortCells["codex"]?.selected?.row.title, "high")
+        XCTAssertEqual(planner.effortCells["grok"]?.selected?.row.title,
+                       SettingsMenuModel.defaultModelLabel)
+    }
+
+    func testTheModelCellsAreUnchangedByTheEffortRows() {
+        let with = effortMachineWide()
+        let without = machineWide()
+        XCTAssertEqual(with.rows.map(\.id), without.rows.map(\.id))
+        for (a, b) in zip(with.rows, without.rows) {
+            XCTAssertEqual(a.cells.mapValues { $0.choices.map(\.row.title) },
+                           b.cells.mapValues { $0.choices.map(\.row.title) }, a.id)
+            XCTAssertEqual(a.cells.mapValues { $0.selected?.row.title },
+                           b.cells.mapValues { $0.selected?.row.title }, a.id)
+        }
+    }
+
+    func testAProjectsEffortCellLeadsWithInheritAndCarriesTheRoot() {
+        let block = SettingsMenuModel.flattened(effortTree(enrolled: true))
+            .first { $0.id == SettingsMenuModel.projectAgentModelsPrefix + root }!
+        guard case .submenu(_, let nested) = block.kind else {
+            return XCTFail("the project's Agent models row is not a submenu")
+        }
+        let planner = SettingsModelsTable.build(rows: nested).rows.first { $0.id == "planner" }!
+        for (_, cell) in planner.effortCells {
+            XCTAssertEqual(cell.choices.first?.row.title, SettingsMenuModel.inheritLabel)
+            XCTAssertEqual(cell.choices.dropFirst().first?.row.title,
+                           SettingsMenuModel.defaultModelLabel)
+            for choice in cell.choices {
+                guard case .pick(_, .map(let record), _) = choice.row.kind else {
+                    return XCTFail("\(choice.id) is not a map pick")
+                }
+                XCTAssertEqual(record["root"], root)
+            }
+        }
+        XCTAssertEqual(planner.effortCells["claude"]?.selected?.row.title, "max")
+        XCTAssertEqual(planner.effortCells["codex"]?.selected?.row.title,
+                       SettingsMenuModel.inheritLabel)
+    }
+
+    func testAProjectsEffortCellOffersThatProjectsLevelsNotTheMachineWideOnes() {
+        var raw = SettingsMenuModelTests.modelsRaw
+        raw["agent_effort_options"] = [
+            "codex": ["planner": ["low", "high", "max"]],
+        ]
+        raw["agent_effort_slots"] = ["planner"]
+        // This project's planner model has no `max`; a root with no entry
+        // falls back to the machine-wide list.
+        raw["agent_effort_options_by_root"] = [
+            "/Users/me/proj": ["codex": ["planner": ["low", "high"]]],
+        ]
+        let settings = DaemonClient.Settings(raw, base: DaemonClient.Settings())
+        let models = settings.agentModels
+        XCTAssertEqual(models.allowedEfforts(provider: "codex", slot: "planner"),
+                       ["low", "high", "max"])
+        XCTAssertEqual(models.allowedEfforts(provider: "codex", slot: "planner",
+                                             root: "/Users/me/proj"), ["low", "high"])
+        XCTAssertEqual(models.allowedEfforts(provider: "codex", slot: "planner",
+                                             root: "/elsewhere"), ["low", "high", "max"])
+        let rows = SettingsMenuModel.agentModelRows(models, root: "/Users/me/proj")
+        let titles = SettingsMenuModel.flattened(rows).filter {
+            if case .pick(let action, _, _) = $0.kind {
+                return action == SettingsMenuModel.agentEffortAction
+            }
+            return false
+        }.map(\.title)
+        XCTAssertFalse(titles.contains("max"))
+        XCTAssertTrue(titles.contains("high"))
+        // A reverse case: the project's list may offer a level the global lacks.
+        raw["agent_effort_options_by_root"] = [
+            "/Users/me/proj": ["codex": ["planner": ["low", "high", "max", "xhigh"]]],
+        ]
+        let wider = DaemonClient.Settings(raw, base: DaemonClient.Settings()).agentModels
+        XCTAssertTrue(wider.allowedEfforts(provider: "codex", slot: "planner",
+                                           root: "/Users/me/proj").contains("xhigh"))
+    }
+
+    func testTheEffortInfoIdParsesProviderAndSlotWithOrWithoutARoot() {
+        XCTAssertEqual(SettingsModelsTable.parseEffortInfoId("info:agent-effort:codex:planner")?.slot,
+                       "planner")
+        let withRoot = SettingsModelsTable.parseEffortInfoId("info:agent-effort:claude:main:/a:b/c")
+        XCTAssertEqual(withRoot?.provider, "claude")
+        XCTAssertEqual(withRoot?.slot, "main")
+        XCTAssertNil(SettingsModelsTable.parseEffortInfoId("info:agent-model:claude:main"))
+        XCTAssertNil(SettingsModelsTable.parseInfoId("info:agent-effort:claude:main"))
+    }
+
     // MARK: - Search targets and widths
 
     /// Every entry a Models search can land on is anchored by a drawn cell:

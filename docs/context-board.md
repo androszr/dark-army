@@ -813,6 +813,12 @@ real columns and to what the prompt builders send.
   `dark_army_add_card` gains no model argument. Dark Army's own helpers keep their own
   settings: the card's model applies to Start alone.
 
+  **A card may name the effort** (v32, `effort`) its session thinks at, from
+  `dispatch.EFFORTS` / `efforts_for(tool, model)`; `argv_for(effort=)` puts
+  the CLI's own flag before any `--`, and Default is no flag at all. The
+  store refuses an off-list level and clears it on a retool or a model
+  change that no longer offers it; `guard()` refuses it in words.
+
   **A Default card runs on the model chosen for its assistant**: two
   preference keys, `agent_models` (`{provider: {slot: model}}`) and
   `agent_models_by_root` (the per-project override), both written by
@@ -826,6 +832,11 @@ real columns and to what the prompt builders send.
   plus `card_prepare.HELPER_MODELS` for the preparer slot alone; the
   settings window draws only slots the pack can write
   (`shipped_roles()`).
+
+  **A Default card's effort follows the same shape**: `agent_efforts` /
+  `agent_efforts_by_root`, written by `_set_agent_effort`, resolved by
+  `_agent_effort_for(root, provider, slot)` (Start reads the card's `effort`
+  first; `""` is no flag) at every launch site but the preparer.
 
   **A card is never moved to Done by the daemon.** The bound session may
   declare it through `dark_army_close_card`, recorded with its author.

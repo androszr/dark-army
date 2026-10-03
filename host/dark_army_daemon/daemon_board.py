@@ -554,6 +554,7 @@ class BoardVerbsMixin:
                     # `api_server._CLOCK_FIELDS`, which is for fields that
                     # change without being news. This one never changes.
                     "models": {t: list(m) for t, m in dispatch.MODELS.items()},
+                    "efforts": dispatch.effort_catalogue(),
                     "done_clear_token": "",
                     "done_view_token": "",
                     **self._pipeline_writable()}
@@ -695,6 +696,7 @@ class BoardVerbsMixin:
                                                "available": False, "tools": [],
                                                "installed": dispatch.installed_tools(),
                                                "models": {},
+                                               "efforts": {},
                                                "done_clear_token": "",
                                                "done_view_token": "",
                                                **self._pipeline_writable()}
@@ -756,6 +758,9 @@ class BoardVerbsMixin:
             # daemon's snapshot stays the single source of truth for what a
             # card may name, exactly as `tools` is for who may take it.
             "models": {t: list(m) for t, m in dispatch.MODELS.items()},
+            # And which effort levels each tool (and each of its models) may
+            # be run at: static like `models`, `dispatch.effort_catalogue()`.
+            "efforts": dispatch.effort_catalogue(),
             # The projects a card may be filed against, with the folder each
             # would dispatch into. Published rather than left to the board to
             # guess, because the guard refuses a root it does not recognise —
@@ -4054,6 +4059,27 @@ class BoardVerbsMixin:
         if not executable:
             return False, dispatch.NOT_INSTALLED_REFUSAL.format(tool=card['tool'])
 
+        # The card's own effort is judged against the model this launch will
+        # really use — its own, else the main slot's — because `guard()` can
+        # only see the card's field: a Default-model card whose slot resolves
+        # to gpt-5.5 must not carry `max`, which Codex refuses at spawn.
+        # Refused in words, never trimmed, and **before** the worktree block
+        # so a refused card spends no fetch or setup. Through
+        # `_queue_hard_refusal` like `guard`'s own refusals: a queued replay
+        # is dequeued with the reason on the card, never left at the head of
+        # the queue for the reconcile to re-pick (and `_prepare_worktree_then_
+        # dispatch`'s silent return on a queued card cannot strand it — this
+        # check runs on that re-entry too, before any preparation).
+        launch_model = (str(card.get("model") or "")
+                        or self._agent_model_for(card.get("root"), card["tool"],
+                                                 "main"))
+        card_effort = str(card.get("effort") or "")
+        if card_effort and card_effort not in dispatch.efforts_for(
+                card["tool"], launch_model):
+            return await self._queue_hard_refusal(
+                card, dispatch.EFFORT_REFUSAL.format(tool=card["tool"]),
+                queued_replay)
+
         # Card isolation (`docs/card-worktrees.md`): where the terminal
         # opens. Every gate above has passed, on the card's own `root` —
         # property 4 is untouched, the worktree is derived from the root and
@@ -4135,11 +4161,17 @@ class BoardVerbsMixin:
         # main-session model chosen for this assistant in this project
         # (`_agent_model_for`, the one resolution seam), which is `""` —
         # no flag, today's argv byte for byte — until somebody picks one.
+        launch_model = (str(card.get("model") or "")
+                        or self._agent_model_for(card.get("root"), card["tool"],
+                                                 "main"))
+        card_effort = str(card.get("effort") or "")
         argv = dispatch.argv_for(
             card["tool"], executable, prompt,
-            model=(str(card.get("model") or "")
-                   or self._agent_model_for(card.get("root"), card["tool"],
-                                            "main")))
+            model=launch_model,
+            effort=(card_effort
+                    or self._agent_effort_for(
+                        card.get("root"), card["tool"], "main",
+                        model=launch_model)))
         name = (card.get("title") or "agent")[:40]
         if batch is not None:
             name = (f"batch: {len(batch)} cards")[:40]
@@ -4838,7 +4870,8 @@ class BoardVerbsMixin:
         prompt += dispatch.objective_block(card)
         argv = dispatch.argv_for(
             tool, executable, prompt,
-            model=self._agent_model_for(card.get("root"), tool, "main"))
+            model=self._agent_model_for(card.get("root"), tool, "main"),
+            effort=self._agent_effort_for(card.get("root"), tool, "main"))
         name = ("refine: " + (card.get("title") or "card"))[:40]
         # Before the spawn await, for `_dispatch_card_locked`'s stated reason:
         # a SessionStart that beats the extension reply must not land in the
@@ -5029,7 +5062,8 @@ class BoardVerbsMixin:
         root = str(cards[0].get("root") or "")
         argv = dispatch.argv_for(
             tool, executable, prompt,
-            model=self._agent_model_for(root, tool, "main"))
+            model=self._agent_model_for(root, tool, "main"),
+            effort=self._agent_effort_for(root, tool, "main"))
         n = len(cards)
         name = (f"refine: {n} cards")[:40]
         # Before the spawn await, `_refine_card_locked`'s stated reason.
@@ -5530,7 +5564,8 @@ class BoardVerbsMixin:
         # for this project — the same seam as Start and Refine.
         argv = dispatch.argv_for(
             "claude", executable, brief,
-            model=self._agent_model_for(card.get("root"), "claude", "main"))
+            model=self._agent_model_for(card.get("root"), "claude", "main"),
+            effort=self._agent_effort_for(card.get("root"), "claude", "main"))
         name = ("ask: " + (card.get("title") or "card"))[:40]
         # Before the spawn await, for `_dispatch_card_locked`'s stated reason:
         # a SessionStart that beats the extension reply must not land in the
@@ -11759,7 +11794,8 @@ class BoardVerbsMixin:
                 return False, merges.HELPER_TOOL_MISSING_REFUSAL.format(tool)
             argv = dispatch.argv_for(
                 tool, executable, prompt,
-                model=self._agent_model_for(root, tool, "main"))
+                model=self._agent_model_for(root, tool, "main"),
+                effort=self._agent_effort_for(root, tool, "main"))
             name = ("fix: " + (card.get("title") or "card"))[:40]
             spawner = (dispatch.spawn_local
                        if self._uses_own_terminal(cid, None)
@@ -11831,7 +11867,8 @@ class BoardVerbsMixin:
                     tool="claude")
             argv = dispatch.argv_for(
                 "claude", executable, prompt,
-                model=self._agent_model_for(root, "claude", "main"))
+                model=self._agent_model_for(root, "claude", "main"),
+                effort=self._agent_effort_for(root, "claude", "main"))
             name = ("review: " + (card.get("title") or "card"))[:40]
             baseline = self._live_session_ids()
             spawner = (dispatch.spawn_local
@@ -12654,6 +12691,71 @@ class BoardVerbsMixin:
             return ""
         return chosen if agent_models.validate(provider, slot, chosen) else ""
 
+    def set_agent_efforts(self, mapping) -> None:
+        """The machine-wide effort table, `{provider: {slot: level}}`, as
+        stored — `set_agent_models`' twin, same replace-never-mutate rule."""
+        self.agent_efforts = agent_models.clean_efforts(mapping)
+
+    def set_agent_effort_override(self, root: str, mapping) -> None:
+        """One project's own effort table; `None` or empty removes it."""
+        key = dispatch.normalise_root(str(root or ""))
+        if not key:
+            logger.info("ignoring a per-project agent effort with no project")
+            return
+        current = dict(self.agent_effort_overrides)
+        cleaned = agent_models.clean_efforts(mapping, override=True)
+        if cleaned:
+            current[key] = cleaned
+        else:
+            current.pop(key, None)
+        self.agent_effort_overrides = current
+
+    def set_agent_effort_overrides(self, mapping) -> None:
+        """The whole stored effort override map at once — the startup feed."""
+        built = agent_models.clean_effort_overrides(mapping)
+        self.agent_effort_overrides = built
+        if built:
+            logger.info("Per-project agent efforts loaded for %d project(s)",
+                        len(built))
+
+    def _agent_effort_for(self, root, provider: str, slot: str,
+                          model=None) -> str:
+        """The effort `provider`'s `slot` runs at in *this* project.
+
+        `_agent_model_for`'s twin: override, else the machine-wide table, else
+        `agent_models.SHIPPED_EFFORTS`. `""` (Default: no flag) for anything
+        off-list, judged against `model` — the model the launch will really
+        use, which the caller passes when a card named its own and which
+        otherwise is the slot's own resolved model — so a hand-edited
+        `preferences.json`, or a model change that no longer offers the stored
+        level, can never put an unoffered level on an argv.
+        """
+        provider = str(provider or "")
+        slot = str(slot or "")
+        if (provider not in agent_models.PROVIDERS
+                or slot not in agent_models.EFFORT_SLOTS):
+            return ""
+        chosen = None
+        key = dispatch.normalise_root(str(root or ""))
+        if key:
+            table = self.agent_effort_overrides.get(key) or {}
+            row = table.get(provider) or {}
+            if slot in row:
+                chosen = row[slot]
+        if chosen is None:
+            row = self.agent_efforts.get(provider) or {}
+            if slot in row:
+                chosen = row[slot]
+        if chosen is None:
+            chosen = agent_models.SHIPPED_EFFORTS[provider][slot]
+        chosen = str(chosen or "")
+        if chosen in ("", agent_models.INHERIT):
+            return ""
+        if model is None:
+            model = self._agent_model_for(root, provider, slot)
+        return chosen if agent_models.validate_effort(
+            provider, slot, chosen, model=model) else ""
+
 
     def _record_outcome_binding(self, card, sid, phase, *, late=False):
         try:
@@ -12825,7 +12927,7 @@ class BoardVerbsMixin:
     #: never `messages`, never attachments, never the outcome ring: the 409
     #: body is sealed and a prompt is already up to `MAX_PROMPT_CHARS`.
     STATED_FIELDS = ("revision", "title", "summary", "prompt", "workflow",
-                     "column_name", "tool", "model", "priority", "area")
+                     "column_name", "tool", "model", "effort", "priority", "area")
 
     async def card_stated_fields(self, card_id) -> dict:
         """The Mac's own copy of the fields a save may name. `{}` if gone.

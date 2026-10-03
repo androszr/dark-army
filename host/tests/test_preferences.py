@@ -226,6 +226,8 @@ def test_typed_reply_defaults_off():
 def test_agent_model_keys_default_to_empty_tables():
     assert DEFAULTS["agent_models"] == {}
     assert DEFAULTS["agent_models_by_root"] == {}
+    assert DEFAULTS["agent_efforts"] == {}
+    assert DEFAULTS["agent_efforts_by_root"] == {}
 
 
 def test_agent_model_tables_survive_a_save_of_an_unrelated_key(prefs_file):

@@ -375,6 +375,11 @@ enum SettingsMenuModel {
     static let inheritLabel = "Inherit"
     static let defaultModelLabel = "Default"
     static let agentModelAction = "set_agent_model"
+    static let agentEffortAction = "set_agent_effort"
+    static func agentEffortTooltip(provider: String, slot: String,
+                                   root: String?) -> String {
+        "\(agentModelTooltip(provider: provider, slot: slot, root: root)) · effort"
+    }
     /// What a slot is called on its row. `main` is the session Dark Army
     /// opens; `worker` is the shunt skill's cheap helper (the model
     /// `bulk_read.py` / `code_write.py` run on, written into each project's
@@ -549,6 +554,39 @@ enum SettingsMenuModel {
                     rows.append(pick(name, action: agentModelAction,
                                      value: .map(value), selected: chosen == name,
                                      tooltip: help))
+                }
+                // The effort beside the model, only where the menu bar lists
+                // levels for this slot: its own info row (so the two pick
+                // runs never merge) and an Inherit / Default / levels run on
+                // its own action, `{provider, slot, effort, root?}`.
+                let levels = models.allowedEfforts(provider: provider, slot: slot, root: root)
+                if !levels.isEmpty {
+                    rows.append(info("\(slotLabel(slot)) effort",
+                                     id: "info:agent-effort:\(provider):\(slot)\(suffix)"))
+                    let picked = root.map {
+                        models.effortOverride(root: $0, provider: provider, slot: slot)
+                    } ?? models.chosenEffort(provider: provider, slot: slot)
+                    let effortHelp = agentEffortTooltip(provider: provider, slot: slot,
+                                                        root: root)
+                    if root != nil {
+                        var value = base
+                        value["effort"] = "inherit"
+                        rows.append(pick(inheritLabel, action: agentEffortAction,
+                                         value: .map(value), selected: picked == nil,
+                                         tooltip: effortHelp))
+                    }
+                    var defaultEffort = base
+                    defaultEffort["effort"] = ""
+                    rows.append(pick(defaultModelLabel, action: agentEffortAction,
+                                     value: .map(defaultEffort), selected: picked == "",
+                                     tooltip: effortHelp))
+                    for level in levels {
+                        var value = base
+                        value["effort"] = level
+                        rows.append(pick(level, action: agentEffortAction,
+                                         value: .map(value), selected: picked == level,
+                                         tooltip: effortHelp))
+                    }
                 }
             }
             return submenu(provider, id: "submenu:agent-models:\(provider)\(suffix)",

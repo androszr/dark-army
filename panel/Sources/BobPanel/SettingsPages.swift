@@ -340,7 +340,8 @@ struct SettingsModelsGrid: View {
                 }
                 ForEach(table.rows) { slot in
                     let ids = slot.infoIds + table.providers.flatMap { provider in
-                        slot.cells[provider]?.choices.map(\.id) ?? []
+                        (slot.cells[provider]?.choices.map(\.id) ?? [])
+                            + (slot.effortCells[provider]?.choices.map(\.id) ?? [])
                     }
                     GridRow {
                         Text(slot.label)
@@ -352,9 +353,20 @@ struct SettingsModelsGrid: View {
                             .settingsMarked(ids, state: state)
                         ForEach(table.providers, id: \.self) { provider in
                             if let cell = slot.cells[provider] {
-                                SettingsPopUp(cell: cell, actions: actions)
-                                    .id("\(slot.id)|\(provider)|"
-                                        + (cell.choices.first.flatMap(SettingsSearch.runKey) ?? ""))
+                                // The effort pop-up stacks under the model's, so
+                                // the column keeps the width the window's
+                                // minimum is measured against; absent where the
+                                // menu bar lists no levels for the slot.
+                                VStack(alignment: .leading, spacing: 4) {
+                                    SettingsPopUp(cell: cell, actions: actions)
+                                        .id("\(slot.id)|\(provider)|"
+                                            + (cell.choices.first.flatMap(SettingsSearch.runKey) ?? ""))
+                                    if let effort = slot.effortCells[provider] {
+                                        SettingsPopUp(cell: effort, actions: actions)
+                                            .id("\(slot.id)|\(provider)|effort|"
+                                                + (effort.choices.first.flatMap(SettingsSearch.runKey) ?? ""))
+                                    }
+                                }
                             } else {
                                 Text("—").foregroundStyle(Theme.muted)
                             }

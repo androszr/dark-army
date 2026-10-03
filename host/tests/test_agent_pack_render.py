@@ -680,3 +680,95 @@ def test_the_scout_skill_renders_on_both_trees_and_ship_keeps_an_alias(profile):
     ship = mapping[".claude/skills/ship/SKILL.md"].decode()
     assert "`/ship scout <brief>` is an alias" in ship
     assert "`.claude/skills/scout/SKILL.md`" in ship
+
+
+# --- The per-role effort, written into the briefs and the shims -------------
+
+def _effort_lines(data: bytes) -> list[str]:
+    return re.findall(r"^(?:effort:|model_reasoning_effort =).*$",
+                      data.decode("utf-8"), re.M)
+
+
+def _efforts():
+    from dark_army_daemon import agent_models
+    return agent_models.resolve_efforts({}, "/tmp/sample")
+
+
+def test_effort_render_with_no_table_is_byte_identical_and_codex_still_says_high():
+    assert _mapping("both") == _mapping("both", efforts=None)
+    mapping = _mapping("both")
+    assert _effort_lines(mapping[".codex/agents/xx-planner.toml"]) == [
+        'model_reasoning_effort = "high"']
+    assert _effort_lines(mapping[".claude/agents/xx-planner.md"]) == []
+    assert _effort_lines(mapping[".grok/agents/xx-planner.md"]) == []
+
+
+def test_effort_render_with_the_shipped_table_is_byte_identical():
+    assert _mapping("both", models=_shipped(), efforts=_efforts()) == _mapping(
+        "both", models=_shipped())
+
+
+def test_effort_a_chosen_level_lands_in_all_three_files_where_each_cli_reads_it():
+    table = _efforts()
+    for provider in ("claude", "codex", "grok"):
+        table[provider]["verifier"] = "low"
+    mapping = _mapping("web", models=_shipped(), efforts=table)
+    claude = mapping[".claude/agents/xx-verifier.md"].decode("utf-8").split("\n")
+    assert claude[1] == "name: xx-verifier"
+    assert claude[2] == "model: sonnet"
+    assert claude[3] == "effort: low"
+    assert _effort_lines(mapping[".codex/agents/xx-verifier.toml"]) == [
+        'model_reasoning_effort = "low"']
+    grok = mapping[".grok/agents/xx-verifier.md"].decode("utf-8").split("\n")
+    at = next(i for i, line in enumerate(grok) if line.startswith("model: "))
+    assert grok[at + 1] == "effort: low"
+    assert grok[at + 2] == "---"
+
+
+def test_effort_default_removes_the_line_in_all_three_files():
+    table = _efforts()
+    for provider in ("claude", "codex", "grok"):
+        table[provider]["planner"] = ""
+    mapping = _mapping("web", models=_shipped(), efforts=table)
+    for key in (".claude/agents/xx-planner.md", ".codex/agents/xx-planner.toml",
+                ".grok/agents/xx-planner.md"):
+        assert _effort_lines(mapping[key]) == [], key
+    # A neighbour keeps the shipped Codex level.
+    assert _effort_lines(mapping[".codex/agents/xx-verifier.toml"]) == [
+        'model_reasoning_effort = "high"']
+
+
+def test_effort_shipped_codex_effort_is_the_agent_models_shipped_level():
+    from dark_army_daemon import agent_models
+    for role in agent_models.EFFORT_SLOTS[1:]:
+        assert pack_render.SHIPPED_CODEX_EFFORT == (
+            agent_models.SHIPPED_EFFORTS["codex"][role])
+
+
+def test_effort_pin_effort_replaces_rather_than_adding_a_second_line():
+    text = "---\nname: xx-planner\nmodel: opus\neffort: low\ndescription: d\n---\n\nbody\n"
+    pinned = pack_render.pin_effort(text, "high")
+    assert pinned.count("effort:") == 1
+    assert pinned == ("---\nname: xx-planner\nmodel: opus\neffort: high\n"
+                      "description: d\n---\n\nbody\n")
+    assert pack_render.pin_effort(pinned, "") == (
+        "---\nname: xx-planner\nmodel: opus\ndescription: d\n---\n\nbody\n")
+    assert pack_render.pin_effort("no frontmatter\n", "low") == "no frontmatter\n"
+    # No model line: after the name.
+    assert pack_render.pin_effort("---\nname: n\ndescription: d\n---\nb", "low") == (
+        "---\nname: n\neffort: low\ndescription: d\n---\nb")
+
+
+def test_effort_pin_toml_effort_replaces_inserts_and_removes():
+    shim = pack_render.codex_shim("xx-a", {"description": "d"}, "read-only",
+                                  model="gpt-6-sol")
+    low = pack_render.pin_toml_effort(shim, "low")
+    assert low.count("model_reasoning_effort") == 1
+    assert 'model_reasoning_effort = "low"' in low
+    assert pack_render.pin_toml_effort(shim, "high") == shim
+    removed = pack_render.pin_toml_effort(shim, "")
+    assert "model_reasoning_effort" not in removed
+    assert pack_render.pin_toml_effort(removed, "high") == shim
+    assert pack_render.pin_toml_effort(removed, "") == removed
+    assert pack_render.codex_shim("xx-a", {"description": "d"}, "read-only",
+                                  model="gpt-6-sol", effort="") == removed

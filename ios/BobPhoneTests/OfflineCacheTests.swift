@@ -914,6 +914,30 @@ final class OfflineCacheTests: XCTestCase {
                        approval)
     }
 
+    /// The effort is judged the way the model is: by the card naming the
+    /// level asked for (`""` is Default), and a card the board no longer lists
+    /// proves nothing.
+    func testEffortIsJudgedByTheCard() {
+        let effect = ReceiptLedger.effect(for: PhoneActions.boardUpdate,
+                                          fields: ["card_id": "a", "effort": "high"],
+                                          scope: "a")
+        XCTAssertEqual(effect, .cardEffort(cardId: "a", effort: "high"))
+        XCTAssertEqual(ReceiptLedger.effect(for: PhoneActions.boardUpdate,
+                                            fields: ["card_id": "a", "effort": ""],
+                                            scope: "a"),
+                       .cardEffort(cardId: "a", effort: ""))
+        let before = try! JSONDecoder().decode(BoardCard.self, from: Data("""
+        {"id": "a", "revision": 1, "column_name": "prep", "tool": "claude"}
+        """.utf8))
+        XCTAssertEqual(before.effort, "")
+        XCTAssertFalse(ReceiptLedger.landed(effect, in: snapshot(board: board([before]))))
+        XCTAssertFalse(ReceiptLedger.landed(effect, in: snapshot(board: board([]))))
+        let after = try! JSONDecoder().decode(BoardCard.self, from: Data("""
+        {"id": "a", "revision": 2, "column_name": "prep", "tool": "claude", "effort": "high"}
+        """.utf8))
+        XCTAssertTrue(ReceiptLedger.landed(effect, in: snapshot(board: board([after]))))
+    }
+
     /// The card screen's two one-field toggles and Refine used to settle
     /// as `.none` on the Mac's 200, so the pressed control snapped back
     /// to the card's *old* value until the next board frame — from away,

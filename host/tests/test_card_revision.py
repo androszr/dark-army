@@ -49,7 +49,7 @@ def test_the_create_and_alter_spellings_agree_on_revision():
     assert ("revision", "INTEGER NOT NULL DEFAULT 0") \
         in BoardStore._ADDED_COLUMNS["cards"]
     assert "revision INTEGER NOT NULL DEFAULT 0" in board_mod._SCHEMA
-    assert SCHEMA_VERSION == 31
+    assert SCHEMA_VERSION == 32
 
 
 def test_a_v15_shaped_file_gains_the_column_and_keeps_its_cards(tmp_path):
@@ -92,7 +92,7 @@ def test_a_v15_shaped_file_gains_the_column_and_keeps_its_cards(tmp_path):
         assert row["revision"] == 0
         meta = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(meta["value"]) == SCHEMA_VERSION == 31
+        assert int(meta["value"]) == SCHEMA_VERSION == 32
     finally:
         store.close()
 
@@ -415,3 +415,9 @@ def test_writing_a_priority_moves_the_revision_and_arms_the_guard(store):
     assert refused is None
     assert detail == CARD_CHANGED_REFUSAL
     assert store.get(card["id"])["title"] == card["title"]
+
+
+def test_effort_is_a_board_field_and_a_revised_column():
+    from dark_army_daemon.board import REVISED_COLUMNS
+    assert "effort" in ApiServer._BOARD_FIELDS
+    assert "effort" in REVISED_COLUMNS

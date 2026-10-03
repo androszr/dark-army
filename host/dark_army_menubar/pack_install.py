@@ -599,12 +599,16 @@ def install_pack(
     app: str = "",
     gitnexus_repo: str = "",
     models=None,
+    efforts=None,
 ) -> tuple[bool, str, list[str]]:
     """Render and write one project. Returns (ok, detail, owned allow rows).
 
     ``models`` is the resolved per-role model table for this project
     (``agent_models.resolve``), handed straight to ``pack_render.render``;
-    the renderer stays pure and this module reads no preference.
+    the renderer stays pure and this module reads no preference. ``efforts``
+    is the same shape for the per-role effort table
+    (``agent_models.resolve_efforts``); ``None`` renders no effort lines beyond
+    the Codex shipped one.
     """
     try:
         folder = enrollment.normalise(root)
@@ -627,7 +631,7 @@ def install_pack(
         mapping = pack_render.render(
             profile, prefix, project, app=app,
             gitnexus_repo=gitnexus_repo, source=source, models=models,
-            user_dir=user_profiles_dir())
+            user_dir=user_profiles_dir(), efforts=efforts)
     except pack_render.PackRenderError as exc:
         return False, str(exc), []
     try:
@@ -679,7 +683,7 @@ OWN_MODEL_GLOBS = (".claude/agents/bc-*.md", ".codex/agents/bc-*.toml",
                    ".grok/agents/bc-*.md")
 
 
-def pin_own_checkout(root: str, models) -> list[str]:
+def pin_own_checkout(root: str, models, efforts=None) -> list[str]:
     """Pin the Agent models setting into Dark Army's own checkout, in place.
 
     The pack never renders into its own project (`_is_bobs_own`), so before
@@ -688,8 +692,9 @@ def pin_own_checkout(root: str, models) -> list[str]:
     ran on whatever the parent session ran. This rewrites only the model
     line of each existing ``bc-*`` brief and shim
     (`pack_render.pin_own_models`); it creates no file, follows no
-    link and touches nothing else. Returns the project-relative paths it
-    rewrote. Never raises."""
+    link and touches nothing else. ``efforts`` (the resolved effort table, or
+    ``None``) pins the one ``effort`` line of each in the same pass. Returns
+    the project-relative paths it rewrote. Never raises."""
     try:
         folder = enrollment.normalise(root)
     except (OSError, ValueError):
@@ -710,7 +715,7 @@ def pin_own_checkout(root: str, models) -> list[str]:
     except OSError:
         logger.exception("agent models: could not read %s's own briefs", folder)
         return []
-    changed = pack_render.pin_own_models(mapping, models)
+    changed = pack_render.pin_own_models(mapping, models, efforts=efforts)
     if not changed:
         return []
     if not _begin_write(folder, wait=False):
@@ -732,14 +737,14 @@ def pin_own_checkout(root: str, models) -> list[str]:
     return wrote
 
 
-def resync_all(models_for=None) -> None:
+def resync_all(models_for=None, efforts_for=None) -> None:
     """Bring every pressed project back into step. Never raises.
 
     Single-flight: a second call while one is running is a no-op. Per-root
     locks skip a project an install is already writing. ``models_for`` is
     ``root -> {provider: {role: model}}`` — the caller's resolved Agent
     models table for that project — or ``None`` for a render carrying no
-    model lines.
+    model lines. ``efforts_for`` is the same for the effort table.
     """
     global _RESYNC_AGAIN
     with _RESYNC_GUARD:
@@ -752,7 +757,7 @@ def resync_all(models_for=None) -> None:
         _RESYNC_AGAIN = False
     try:
         while True:
-            _resync_all_locked(models_for)
+            _resync_all_locked(models_for, efforts_for)
             with _RESYNC_GUARD:
                 if not _RESYNC_AGAIN:
                     _RESYNC_LOCK.release()
@@ -765,13 +770,15 @@ def resync_all(models_for=None) -> None:
         raise
 
 
-def _resync_all_locked(models_for=None) -> None:
+def _resync_all_locked(models_for=None, efforts_for=None) -> None:
     # Dark Army's own checkout first: it is never rendered, so the one thing
     # the setting owes it is its model lines — and that needs no pack source.
     if models_for is not None:
         for own in self_roots():
             try:
-                pin_own_checkout(own, models_for(own))
+                pin_own_checkout(
+                    own, models_for(own),
+                    efforts_for(own) if efforts_for is not None else None)
             except Exception:
                 logger.exception("agent models: pinning %s failed", own)
     source = pack_root()
@@ -801,7 +808,14 @@ def _resync_all_locked(models_for=None) -> None:
                 except Exception:
                     logger.exception("agent pack: could not resolve the "
                                      "model table for %s", root)
-            _resync_one(root, raw, source, models=models)
+            efforts = None
+            if efforts_for is not None:
+                try:
+                    efforts = efforts_for(root)
+                except Exception:
+                    logger.exception("agent pack: could not resolve the "
+                                     "effort table for %s", root)
+            _resync_one(root, raw, source, models=models, efforts=efforts)
         except Exception:
             logger.exception("agent pack resync failed for %s", root)
             try:
@@ -810,7 +824,8 @@ def _resync_all_locked(models_for=None) -> None:
                 logger.exception("could not record a failed pack resync")
 
 
-def _resync_one(root: str, raw: dict, source: Path, models=None) -> None:
+def _resync_one(root: str, raw: dict, source: Path, models=None,
+                efforts=None) -> None:
     live = pack_ledger.entry(root)
     if live is None:
         return
@@ -845,7 +860,8 @@ def _resync_one(root: str, raw: dict, source: Path, models=None) -> None:
             app=str(live.get("app") or raw.get("app") or detect_app(folder)),
             gitnexus_repo=str(
                 live.get("gitnexus_repo") or raw.get("gitnexus_repo") or ""),
-            source=source, models=models, user_dir=user_profiles_dir())
+            source=source, models=models, user_dir=user_profiles_dir(),
+            efforts=efforts)
         if pack_ledger.entry(root) is None:
             return
         owned = [str(item) for item in (live.get("settings_allow_owned") or [])]
