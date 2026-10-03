@@ -2820,6 +2820,20 @@ class BoardVerbsMixin:
                 + " (run python3 .claude/skills/scout/scout_check.py on it)")
 
     @staticmethod
+    def _same_entry(a: str, b: str) -> bool:
+        """Whether `a` and `b` are one directory entry on this disk.
+
+        **Blocking** (two `lstat`) — executor only. `lstat`, never `stat`: a
+        link's own inode is compared, so a link can never be "the same entry"
+        as a name that does not exist."""
+        try:
+            sa = os.lstat(a)
+            sb = os.lstat(b)
+        except OSError:
+            return False
+        return (sa.st_dev, sa.st_ino) == (sb.st_dev, sb.st_ino)
+
+    @staticmethod
     def _canonical_path(path: str) -> str:
         """`path`'s realpath spelled the way the disk spells it.
 
@@ -2830,8 +2844,14 @@ class BoardVerbsMixin:
         press from the list would never find the card the flag stored. Each
         component is replaced by the directory entry it names: the exact
         name when present, else the one entry that matches it without
-        case; an unreadable directory keeps the rest as typed. The flag, the
-        list and the press all store and compare this spelling."""
+        case, and only when `os.lstat` of both spellings names one
+        `(st_dev, st_ino)` — which a case-insensitive volume answers yes and
+        a case-sensitive one never does for a name that does not exist. A
+        typed name that does not exist stays as typed, so the containment and
+        existence checks that follow see the real path (security review of
+        the manual-check-folder plan, 25 Sep 2026); an unreadable directory
+        keeps the rest as typed. The flag, the list and the press all store
+        and compare this spelling."""
         resolved = os.path.realpath(str(path or ""))
         out = os.sep
         parts = [part for part in resolved.split(os.sep) if part]
@@ -2843,7 +2863,9 @@ class BoardVerbsMixin:
             if part not in names:
                 folded = [name for name in names
                           if name.casefold() == part.casefold()]
-                if len(folded) == 1:
+                if len(folded) == 1 and BoardVerbsMixin._same_entry(
+                        os.path.join(out, part),
+                        os.path.join(out, folded[0])):
                     part = folded[0]
             out = os.path.join(out, part)
         return out

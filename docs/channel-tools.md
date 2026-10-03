@@ -110,7 +110,12 @@ they did not have:
   `<enrolled root>/manual-check/<folder>/check.md` — the enrolled project
   the card's root belongs to, exactly three segments, `manual-check` and
   `check.md` in that exact case, `_manual_check_home`, the one rule the
-  list and the press share (else `board.MANUAL_CHECK_PLACE_REFUSAL`) — and a
+  list and the press share (else `board.MANUAL_CHECK_PLACE_REFUSAL`); a
+  component typed in a different case is taken from the directory only when
+  `os.lstat` of both spellings names one `(st_dev, st_ino)`
+  (`_canonical_path`), and a typed name that does not exist stays as typed
+  and is refused by the checks that follow, so a case-sensitive volume never
+  has a different folder or a link swapped in — and a
   clean check (else
   `board.MANUAL_CHECK_MALFORMED_REFUSAL` and the problems), and
   `flag_manual` stores the realpath in `manual_check_path` in the same

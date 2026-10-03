@@ -348,6 +348,50 @@ async def test_a_stray_file_a_link_and_a_fifo_are_refused(setup, tmp_path):
     assert "- **Status:** open" in open(stray).read()
 
 
+def _case_sensitive(monkeypatch):
+    import errno
+    real_lstat, real_stat, real_listdir = os.lstat, os.stat, os.listdir
+
+    def _strict(real):
+        def twin(path, *args, **kwargs):
+            if isinstance(path, str) and os.path.isabs(path):
+                here = os.sep
+                for part in [p for p in path.split(os.sep) if p]:
+                    try:
+                        names = real_listdir(here)
+                    except OSError:
+                        break
+                    if part not in names:
+                        raise FileNotFoundError(
+                            errno.ENOENT, os.strerror(errno.ENOENT), path)
+                    here = os.path.join(here, part)
+            return real(path, *args, **kwargs)
+        return twin
+
+    monkeypatch.setattr(os, "lstat", _strict(real_lstat))
+    monkeypatch.setattr(os, "stat", _strict(real_stat))
+
+
+@pytest.mark.asyncio
+async def test_a_stale_root_spelling_is_refused_on_the_sealed_door(
+        setup, monkeypatch):
+    """The strict `os.lstat` / `os.stat` twin is a copy of
+    `test_manual_check._case_sensitive` (the tests are not importable from
+    one another)."""
+    api, _, _, (a, _b) = setup
+    path = _put(a, "2026-09-25-strip", _check())
+    before = open(path, "rb").read()
+    stale = os.path.join(os.path.dirname(a), "Project-A")
+    monkeypatch.setattr(enrollment, "enrolled_roots", lambda: {stale})
+    _case_sensitive(monkeypatch)
+    status, _, body = await api._board_action(VERB, _verb(path, "passed"))
+    assert status == 409, body
+    assert json.loads(body)["detail"] == board.MANUAL_CHECK_PLACE_REFUSAL
+    assert open(path, "rb").read() == before
+    status, body = await _get(api, "path=" + quote(path))
+    assert json.loads(body)["available"] is False
+
+
 @pytest.mark.asyncio
 async def test_away_rides_the_lease(setup, monkeypatch):
     api, _, _, (a, _b) = setup

@@ -937,6 +937,111 @@ async def test_a_wrong_cased_dated_folder_is_stored_as_the_disk_spells_it(
         store.close()
 
 
+def _case_sensitive(monkeypatch):
+    """Make `os.lstat` / `os.stat` answer as a case-sensitive volume does: a
+    path whose component is not exactly among its parent's real listing does
+    not exist. `os.path.realpath` resolves through `os.lstat`, so this one
+    seam covers it too; `os.listdir` stays real."""
+    import errno
+    import os
+    real_lstat, real_stat, real_listdir = os.lstat, os.stat, os.listdir
+
+    def _strict(real):
+        def twin(path, *args, **kwargs):
+            if isinstance(path, str) and os.path.isabs(path):
+                here = os.sep
+                for part in [p for p in path.split(os.sep) if p]:
+                    try:
+                        names = real_listdir(here)
+                    except OSError:
+                        break
+                    if part not in names:
+                        raise FileNotFoundError(
+                            errno.ENOENT, os.strerror(errno.ENOENT), path)
+                    here = os.path.join(here, part)
+            return real(path, *args, **kwargs)
+        return twin
+
+    monkeypatch.setattr(os, "lstat", _strict(real_lstat))
+    monkeypatch.setattr(os, "stat", _strict(real_stat))
+
+
+def test_a_typed_name_that_does_not_exist_stays_as_typed(
+        tmp_path, monkeypatch):
+    from dark_army_daemon.daemon_board import BoardVerbsMixin
+    root, check = _project(tmp_path)
+    shouted = check.replace("2026-09-25-strip", "2026-09-25-STRIP")
+    _case_sensitive(monkeypatch)
+    assert BoardVerbsMixin._canonical_path(shouted) == shouted
+    assert BoardVerbsMixin._canonical_path(check) == check
+
+
+@pytest.mark.asyncio
+async def test_a_stale_root_spelling_admits_nothing_on_a_case_sensitive_volume(
+        tmp_path, monkeypatch):
+    import os
+    from dark_army_daemon import board
+    real_tmp = os.path.realpath(tmp_path)
+    root = os.path.join(real_tmp, "work")
+    target = os.path.join(root, "manual-check", "2026-09-25-strip")
+    os.makedirs(target)
+    check = os.path.join(target, "check.md")
+    with open(check, "w") as handle:
+        handle.write(_CHECK)
+    before = open(check, "rb").read()
+    daemon, store = _board_daemon(tmp_path)
+    try:
+        # Enrolled under the other spelling only; patched before the seam.
+        members = {os.path.join(real_tmp, "Work")}
+        from dark_army_daemon import enrollment
+        monkeypatch.setattr(enrollment, "enrolled_roots",
+                            lambda: set(members))
+        _case_sensitive(monkeypatch)
+        assert daemon._manual_check_home(check) == ""
+        text = await daemon.manual_check_text(check)
+        assert text["available"] is False
+        assert text["reason"] == board.MANUAL_CHECK_PLACE_REFUSAL
+        ok, detail = await daemon.record_manual_outcome(check, "passed", "x")
+        assert (ok, detail) == (False, board.MANUAL_CHECK_PLACE_REFUSAL)
+        assert open(check, "rb").read() == before
+        assert (await daemon.manual_checks_report())["checks"] == []
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_shouted_folder_over_a_link_is_refused_at_the_flag(
+        tmp_path, monkeypatch):
+    import os
+    from dark_army_daemon import board
+    real_tmp = os.path.realpath(tmp_path)
+    elsewhere = os.path.join(real_tmp, "elsewhere")
+    os.makedirs(elsewhere)
+    with open(os.path.join(elsewhere, "check.md"), "w") as handle:
+        handle.write(_CHECK)
+    root = os.path.join(real_tmp, "proj")
+    os.makedirs(os.path.join(root, "manual-check"))
+    os.symlink(elsewhere, os.path.join(root, "manual-check", "x"))
+    daemon, store = _board_daemon(tmp_path)
+    try:
+        _bind(daemon, store)
+        _enrolled(monkeypatch, root)
+        card, _ = store.create({"title": "mine", "project": "bob",
+                                "root": root})
+        store.bind_session(card["id"], "s1")
+        _case_sensitive(monkeypatch)
+        reply = await _flag(daemon, "manual-check/X/check.md")
+        assert reply["ok"] is False, reply
+        assert reply["detail"] == "there is no file at that path"
+        assert store.get(card["id"])["manual_check_path"] == ""
+        # The honest spelling leaves the project: refused, as today.
+        reply = await _flag(daemon, "manual-check/x/check.md")
+        assert reply["ok"] is False, reply
+        assert reply["detail"] == board.MANUAL_CHECK_PLACE_REFUSAL
+    finally:
+        store.close()
+
+
 # --- a person's hand on a finished card clears Needs you, like Dismiss -------
 
 
