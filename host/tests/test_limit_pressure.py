@@ -102,7 +102,7 @@ let week = P.picture(
              P.Point(ts: 7_200 * 3 + 5, fiveHour: nil, sevenDay: 9),
              P.Point(ts: -5, fiveHour: 99, sevenDay: 99),
              P.Point(ts: 7 * day + 1, fiveHour: 98, sevenDay: 98)],
-    resets: [7_200 * 10 + 1, 7 * day + 50, -3], from: 0, to: 7 * day)
+    resets: [7_200.0 * 10 + 1, 7 * day + 50, -3] as [Double], from: 0, to: 7 * day)
 out["week"] = pic(week)
 out["seven_only"] = pic(P.picture(
     points: [P.Point(ts: 10, fiveHour: nil, sevenDay: 41.4)],
@@ -125,7 +125,7 @@ out["last_slice_has_to"] = pic(P.picture(
     resets: [], from: 0, to: day))
 out["month"] = pic(P.picture(
     points: [P.Point(ts: 100, fiveHour: 10, sevenDay: nil)],
-    resets: [150, 40 * 3600], from: 0, to: 30 * day))
+    resets: [150.0, 40.0 * 3600] as [Double], from: 0, to: 30 * day))
 out["height"] = [P.height(150) ?? -1, P.height(50) ?? -1, P.height(-4) ?? -1,
                  P.height(nil) == nil ? 1 : 0]
 out["counts"] = [P.columnCount(from: 0, to: day), P.columnCount(from: 0, to: 7 * day),

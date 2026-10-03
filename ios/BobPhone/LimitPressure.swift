@@ -87,11 +87,13 @@ enum LimitPressure {
         let fiveHourPeak = fiveHour.compactMap { $0 }.max()
         let sevenDayPeak = sevenDay.compactMap { $0 }.max()
         if fiveHourPeak == nil && sevenDayPeak == nil { return nil }
-        let columns = (0..<count).map { i in
-            Column(start: from + Double(i) * width,
-                   end: i == count - 1 ? to : from + Double(i + 1) * width,
-                   fiveHour: fiveHour[i], sevenDay: sevenDay[i],
-                   reset: marked[i])
+        let columns: [Column] = (0..<count).map { (i: Int) -> Column in
+            let start: Double = from + Double(i) * width
+            let next: Double = from + Double(i + 1) * width
+            let end: Double = i == count - 1 ? to : next
+            return Column(start: start, end: end,
+                          fiveHour: fiveHour[i], sevenDay: sevenDay[i],
+                          reset: marked[i])
         }
         var parts: [String] = []
         var said: [String] = []
