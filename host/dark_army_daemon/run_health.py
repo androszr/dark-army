@@ -12,7 +12,8 @@ the daemon's two deduped-by-type helper lists** (the session's seen set and
 the card's recorded trail): neither can count a second `bc-implementer`
 spawn. `SessionStats.agents` is one entry per spawned agent id, and
 `stats_to_dict` publishes it as `spawn_counts`; that is the only observed
-count of fix rounds. Codex and Grok keep no
+count of fix rounds; its timed twin `spawns` lets a batch member's card
+count only the implementer spawns inside its own window. Codex and Grok keep no
 per-spawn record (`NO_SPAWN_LIST_PROVIDERS`), so their rows' `fix_rounds` is
 **absent**, never zero — zero would say "no fix rounds" about a run nobody
 counted.
@@ -213,6 +214,29 @@ def fix_rounds(spawn_counts: Optional[dict]) -> Optional[int]:
     return max(0, (_int_or_none(spawn_counts.get(IMPLEMENTER_STAGE)) or 0) - 1)
 
 
+def fix_rounds_between(spawns, since: Optional[float],
+                       until: Optional[float]) -> Optional[int]:
+    """Implementer spawns inside `[since, until)` after the first; each
+    bound optional. `spawns` is the row's `[[type, at], ...]`. None unless it
+    is a list. Pure."""
+    if not isinstance(spawns, list):
+        return None
+    count = 0
+    for item in spawns:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        role, at = item
+        if role != IMPLEMENTER_STAGE or isinstance(at, bool) \
+                or not isinstance(at, (int, float)):
+            continue
+        if since is not None and at < since:
+            continue
+        if until is not None and at >= until:
+            continue
+        count += 1
+    return max(0, count - 1)
+
+
 def attention(size_class: str, ctx_pct: Optional[int],
               rounds: Optional[int]) -> bool:
     """Whether the line turns amber: a worrying run, a context at or past
@@ -232,7 +256,8 @@ def _counts(counts: Optional[dict]) -> tuple:
 
 
 def compose(row: Optional[dict], counts: Optional[dict],
-            ledger_entry: Optional[dict], cuts) -> Optional[dict]:
+            ledger_entry: Optional[dict], cuts, *,
+            window=None) -> Optional[dict]:
     """The published dict, or None where there is neither a row nor a
     frozen reading — the absent case, which the decoration leaves off the
     card.
@@ -245,6 +270,12 @@ def compose(row: Optional[dict], counts: Optional[dict],
     reading came off a row on this frame rather than the ledger. Attempts and
     returns are always the store's current figures — a card sent back after
     its run froze still shows the return.
+
+    `window` is a shared (batch) card's `(since, until)`
+    (`daemon_board._card_window`): the fix rounds are the implementer spawns
+    inside it, absent when the window or the timed `spawns` list is missing.
+    `None` — a card on its own — reads the session's `spawn_counts` exactly
+    as before.
     """
     attempts, returns = _counts(counts)
     if isinstance(row, dict):
@@ -265,8 +296,19 @@ def compose(row: Optional[dict], counts: Optional[dict],
         # for them whatever ran, and an empty count is not a count of
         # nothing.
         provider = str(row.get("provider") or "")
-        rounds = None if provider in NO_SPAWN_LIST_PROVIDERS else fix_rounds(
-            stats.get("spawn_counts") if stats else None)
+        rounds = None
+        if provider not in NO_SPAWN_LIST_PROVIDERS:
+            spawns = stats.get("spawns") if stats else None
+            if window is not None:
+                # A shared card: only its own window counts, and where the
+                # window is unknown or the row keeps no timed list the figure
+                # is withheld, never the session's.
+                if isinstance(window, (list, tuple)) and len(window) == 2 \
+                        and window[0] is not None:
+                    rounds = fix_rounds_between(spawns, window[0], window[1])
+            else:
+                rounds = fix_rounds(
+                    stats.get("spawn_counts") if stats else None)
         ctx = quantise_ctx(metrics.get("ctx_used_pct")) if metrics else None
         out = {
             "class": size_class,

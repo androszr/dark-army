@@ -118,7 +118,7 @@ ends, a bind that expires, or a reset of the current card sends the
 unreached members back with `BATCH_LEFT_NOTE`. Only the batch's owning
 session (its lowest-ranked bound card, `_batch_owner`) can walk or release
 it, and a marked card outside Backlog is refused a single Start until Leave
-batch. Cost, trail and fix rounds are session-wide. Long form:
+batch. Cost is session-wide until *Split a batch implementation's cost across its cards* lands; the trail and fix rounds are each member's own, inside its window from bind to close or leave (`docs/channel-tools.md`). Long form:
 `docs/channel-tools.md`.
 
 **How many agents may work at once in one project is a number you set, per

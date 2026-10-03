@@ -517,6 +517,12 @@ LOW_PRIORITY_ALREADY_REFUSAL = ("Low priority was already switched on for "
 # — `/ship` runs five — and the board applies its own, smaller bound again at
 # the store.
 MAX_SEEN_SUBAGENTS = 40
+# How many timed stage starts one session's `subagent_spawns` holds. It is per
+# spawn, never deduped (a second `bc-implementer` is the point), so it is
+# larger than `MAX_SEEN_SUBAGENTS`; a batch of `board.MAX_BATCH_CARDS` (8)
+# cards, five `/ship` stages each plus fix rounds, is well under it. The
+# newest entries are kept.
+MAX_SUBAGENT_SPAWNS = 120
 # How long a live-subagent entry may park its parent with no
 # `subagent_start`/`subagent_stop` traffic at all. Hook delivery is
 # best-effort, so a dropped SubagentStop used to leave the parent's `subagents`
@@ -6522,6 +6528,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         role = step.subagent_type or step.agent_id
         if role not in ran and len(ran) < MAX_SEEN_SUBAGENTS:
             ran.append(role)
+        # The timed companion: `[role, at]` per start, so a batch member's
+        # trail can be cut to its own window (`_record_card_stages`).
+        spawns = entry.setdefault("subagent_spawns", [])
+        spawns.append([role, float(step.now)])
+        del spawns[:-MAX_SUBAGENT_SPAWNS]
         # `subagent_event_at` is the parking clock `_parked_reason` reads.
         entry["last_event"] = entry["subagent_event_at"] = step.now
 

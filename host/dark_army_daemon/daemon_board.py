@@ -435,6 +435,39 @@ def _batch_rank(card: Optional[dict]) -> int:
         return 0
 
 
+def _card_window(card: Optional[dict], shared: Optional[bool] = None):
+    """A card's own window: `None` for a card that is not shared (it keeps
+    the session-wide reading it always had), else `(since, until)` — each
+    `None` when open — and `()` for a shared card whose `dispatched_at` is not
+    written yet (the advance binds, then writes it; a pass between must
+    withhold, never read the whole session). Pure.
+
+    A card is shared when it is a batch member (`batch_id`) or `shared` says
+    its session carries several cards. `since` is `dispatched_at`; `until`
+    is `done_at` for a card in Done, else `session_ended_at` for a card left
+    `ended`."""
+    card = card or {}
+    if shared is None:
+        shared = bool(str(card.get("batch_id") or ""))
+    if not shared:
+        return None
+
+    def _num(key):
+        try:
+            return float(card.get(key) or 0.0) or None
+        except (TypeError, ValueError):
+            return None
+
+    since = _num("dispatched_at")
+    if since is None:
+        return ()
+    until = None
+    if str(card.get("column_name") or "") == "done":
+        until = _num("done_at")
+    elif str(card.get("link_state") or "") == "ended":
+        until = _num("session_ended_at")
+    return since, until
+
 
 #: Held across the outcome press's place check, header re-read and write, so
 #: two presses on one check cannot both see `Status: open` and both write.
@@ -1325,6 +1358,23 @@ class BoardVerbsMixin:
         size = int((batch_sizes or {}).get(bid) or 0)
         return {"rank": rank, "size": max(size, rank), "state": state}
 
+    def _card_shares_session(self, card: dict) -> bool:
+        """Whether a card is shared: a batch member, or another card carries
+        its `session_id` — an ended former member whose `batch_id` was cleared
+        at the session's end still is. The one rule the trail, the live line
+        and the freeze share (`_reconcile_board`'s `sessions_shared` is the
+        same test over one pass). Never raises."""
+        if str(card.get("batch_id") or ""):
+            return True
+        sid = str(card.get("session_id") or "")
+        if not sid or self._board is None:
+            return False
+        try:
+            return len(self._board.by_session(sid)) > 1
+        except Exception:
+            logger.debug("shared-session check failed", exc_info=True)
+            return False
+
     def _run_health_for(self, card: dict, run_counts: Optional[dict],
                         run_ledger, snapshot: Optional[dict] = None
                         ) -> Optional[dict]:
@@ -1350,7 +1400,9 @@ class BoardVerbsMixin:
             if row is None and entry is None:
                 return None
             cuts = ledger.cuts_for(str(card.get("root") or ""))
-            return run_health.compose(row, counts, entry, cuts)
+            return run_health.compose(
+                row, counts, entry, cuts,
+                window=_card_window(card, self._card_shares_session(card)))
         except Exception:
             logger.debug("run health for %s unavailable", cid, exc_info=True)
             return None
@@ -1386,7 +1438,10 @@ class BoardVerbsMixin:
             if self._board is not None:
                 counts = self._board.run_health_counts([cid]).get(cid)
             reading = run_health.compose(row, counts, None,
-                                         ledger.cuts_for(root))
+                                         ledger.cuts_for(root),
+                                         window=_card_window(
+                                             card,
+                                             self._card_shares_session(card)))
             if reading is None:
                 return
             ledger.freeze(cid, root, reading, run_at)
@@ -5401,6 +5456,13 @@ class BoardVerbsMixin:
         now = time.time()
         if current:
             left = current[0]
+            # The reconcile skips an `ended` batch member from here on, so a
+            # stage that started after its last pass is recorded now or never.
+            await loop.run_in_executor(
+                None, functools.partial(
+                    self._record_card_stages, str(left["id"]), session_id,
+                    since=(_card_window(left, True) or (None,))[0],
+                    until=now, shared=True))
             await self._board_call("mark_ended", left["id"], when=now)
             snapshot = self._agents_snapshot_cache or {}
             await loop.run_in_executor(
@@ -6816,6 +6878,16 @@ class BoardVerbsMixin:
             logger.debug("board reconcile could not read cards", exc_info=True)
             return False
 
+        # Sessions carrying more than one card (a batch): one in-memory pass.
+        # `_record_card_stages` withholds, rather than misfiles, a trail it
+        # cannot cut to a card's window.
+        seen_sessions: dict = {}
+        for card in cards:
+            csid = str(card.get("session_id") or "")
+            if csid:
+                seen_sessions[csid] = seen_sessions.get(csid, 0) + 1
+        sessions_shared = {k for k, n in seen_sessions.items() if n > 1}
+
         # A card's project label follows the enrolled folder's name, once.
         # The board joins card to session **by label** — `_bind_dispatched_card`
         # refuses a candidate whose row `project` differs before it ever looks
@@ -6934,7 +7006,15 @@ class BoardVerbsMixin:
                 if state != "live":
                     self._board.mark_live(cid)
                     changed = True
-                changed |= self._record_card_stages(cid, sid)
+                shared = sid in sessions_shared
+                win = _card_window(card, shared or bool(card.get("batch_id")))
+                if win == ():
+                    # A shared or batch card whose `dispatched_at` is not
+                    # written yet: the append-only trail takes nothing.
+                    continue
+                win = win or (None, None)
+                changed |= self._record_card_stages(
+                    cid, sid, since=win[0], until=win[1], shared=shared)
                 continue
             first_missing = self._board_missing_since.setdefault(cid, now)
             if state != "ended" and now - first_missing >= self.BOARD_SESSION_GRACE:
@@ -7335,11 +7415,53 @@ class BoardVerbsMixin:
             logger.debug("queue decision failed", exc_info=True)
             self._queue_candidates = []
 
-    def _record_card_stages(self, card_id: str, session_id: str) -> bool:
-        """Append observed stage names; recorded faces remain the store's memory."""
+    def _record_card_stages(self, card_id: str, session_id: str, *,
+                            since: Optional[float] = None,
+                            until: Optional[float] = None,
+                            shared: bool = False) -> bool:
+        """Append observed stage names; recorded faces remain the store's memory.
+
+        A batch member reads only the stage starts inside its own window
+        (`since <= at < until`, `_card_window`), off the session's timed
+        `subagent_spawns`. `shared` says the session carries several cards:
+        where no timed record exists (Codex's untimed `observed_roles`, a
+        state restored from a build without the log) nothing is recorded,
+        because withheld beats wrong. A single card reads as it always did."""
         state = self._session_states.get(session_id) or {}
         codex = self._codex_records.get(session_id)
-        observed = codex.observed_roles if codex is not None else state.get("subagents_seen") or []
+        # `shared`: several cards are bound to this session. A batch head
+        # alone is a window (`since`) but not shared, so a Codex batch's first
+        # card still records its roles.
+        if shared and since is None:
+            # A shared card whose window has not opened (bound, `dispatched_at`
+            # not yet written): the append-only trail takes nothing.
+            return False
+        if codex is not None:
+            if shared:
+                return False
+            observed = codex.observed_roles
+        elif not shared and since is None:
+            observed = state.get("subagents_seen") or []
+        else:
+            spawns = state.get("subagent_spawns")
+            if isinstance(spawns, list):
+                observed = []
+                for item in spawns:
+                    if not isinstance(item, (list, tuple)) or len(item) != 2:
+                        continue
+                    role, at = item
+                    if isinstance(at, bool) or not isinstance(at, (int, float)):
+                        continue
+                    if since is not None and at < since:
+                        continue
+                    if until is not None and at >= until:
+                        continue
+                    if role not in observed:
+                        observed.append(role)
+            elif shared:
+                return False
+            else:
+                observed = state.get("subagents_seen") or []
         names = [n for n in observed if self._stage_name_ok(n)]
         if not names:
             return False

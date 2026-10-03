@@ -146,7 +146,16 @@ they did not have:
   names the next card's title and plan, or says the batch is finished.
   Only the batch's owning session (`_batch_owner`, its lowest-ranked bound
   card) may walk or release it; a marked card outside Backlog is refused a
-  single Start until Leave batch.
+  single Start until Leave batch. Each member's stage trail and fix rounds
+  are read inside its own window — from its `dispatched_at` (the press for
+  the head, the advance's bind for a later member) to its `done_at` or the
+  advance that left it — off the session's timed spawn log
+  (`subagent_spawns`) and the transcript's per-spawn `spawns` list; a
+  member the session leaves unclosed is recorded once more at the advance;
+  Codex keeps no timed record, so a Codex session on a second card records
+  no trail and shows no fix rounds — withheld, never wrong. A spawn between
+  a close and the next call falls in no window: a track short by one, never
+  a wrong one.
 - `dark_army_answer_card` — one message onto the thread of the card Dark Army just
   asked about. Same no-`card_id` shape; changes nothing else.
   **In a batch it answers the card the session is on** (29 Sep 2026): the open

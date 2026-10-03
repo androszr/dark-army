@@ -990,3 +990,144 @@ def test_effort_a_frozen_entry_keeps_it_and_an_old_one_reads_empty():
            "reading": {"class": "typical", "turns": 5}}
     out = rh.compose(None, {}, old, DEFAULT_CUTS)
     assert out["effort"] == ""
+
+
+# ── a batch member's window ──────────────────────────────────────────────────
+
+_SPAWNS = [["bc-implementer", 10.0], ["bc-verifier", 20.0],
+           ["bc-implementer", 110.0], ["bc-implementer", 130.0],
+           ["bc-verifier", 140.0]]
+
+
+@pytest.mark.parametrize("since,until,expected", [
+    (None, None, 2),
+    (100.0, None, 1),
+    (None, 100.0, 0),
+    (100.0, 130.0, 0),       # `until` is out
+    (110.0, 131.0, 1),       # `since` is in
+    (200.0, None, 0),
+])
+def test_fix_rounds_between_counts_implementers_inside_the_window(
+        since, until, expected):
+    assert rh.fix_rounds_between(_SPAWNS, since, until) == expected
+
+
+def test_fix_rounds_between_is_none_without_a_list():
+    assert rh.fix_rounds_between(None, 0.0, None) is None
+    assert rh.fix_rounds_between({"bc-implementer": 3}, 0.0, None) is None
+
+
+def test_compose_with_a_window_reads_the_spawns_list_and_without_reads_the_counts():
+    stats = {"assistant_messages": 5, "spawn_counts": {"bc-implementer": 3},
+             "spawns": _SPAWNS}
+    row = _row(stats=stats)
+    assert rh.compose(row, None, None, DEFAULT_CUTS)["fix_rounds"] == 2
+    assert rh.compose(row, None, None, DEFAULT_CUTS,
+                      window=(100.0, None))["fix_rounds"] == 1
+    # A shared card whose window has not opened, or whose row keeps no timed
+    # list, is withheld — never the session's count.
+    assert "fix_rounds" not in rh.compose(row, None, None, DEFAULT_CUTS,
+                                          window=())
+    untimed = _row(stats={**stats, "spawns": None})
+    assert "fix_rounds" not in rh.compose(untimed, None, None, DEFAULT_CUTS,
+                                          window=(100.0, None))
+    codex = _row(stats=stats, provider="codex")
+    assert "fix_rounds" not in rh.compose(codex, None, None, DEFAULT_CUTS,
+                                          window=(100.0, None))
+    assert set(rh.compose(row, None, None, DEFAULT_CUTS,
+                          window=(100.0, None))) <= rh.PUBLISHED_KEYS
+
+
+def test_stats_to_dict_publishes_spawns_in_order_with_times_and_bounded():
+    from dark_army_daemon.session_stats import MAX_SPAWN_LOG
+    s = SessionStats()
+    s.agents["a"] = AgentInfo(agent_id="a", subagent_type="bc-implementer",
+                              spawned_at=5.0)
+    s.agents["b"] = AgentInfo(agent_id="b", subagent_type="", spawned_at=6.0)
+    s.agents["c"] = AgentInfo(agent_id="c", subagent_type="bc-verifier",
+                              spawned_at=7.0)
+    assert stats_to_dict(s)["spawns"] == [["bc-implementer", 5.0],
+                                          ["bc-verifier", 7.0]]
+    big = SessionStats()
+    for n in range(MAX_SPAWN_LOG + 3):
+        big.agents[str(n)] = AgentInfo(agent_id=str(n), subagent_type="x",
+                                       spawned_at=float(n))
+    out = stats_to_dict(big)["spawns"]
+    assert len(out) == MAX_SPAWN_LOG and out[-1][1] == float(MAX_SPAWN_LOG + 2)
+
+
+def test_a_batch_members_frozen_reading_carries_its_own_fix_rounds(
+        daemon, store, ledger_path, monkeypatch):
+    monkeypatch.setattr(rh.paths, "RUN_HEALTH_PATH", ledger_path)
+    first, second = _card(store, title="one"), _card(store, title="two")
+    for n, c in enumerate((first, second), start=1):
+        store.update(c["id"], {"batch_id": "b1", "batch_rank": str(n)},
+                     bump=False)
+    _dispatch(store, first["id"], "s1", 100.0)
+    store.update(first["id"], {"column_name": "done", "done_at": 200.0},
+                 bump=False)
+    _dispatch(store, second["id"], "s1", 201.0)
+    spawns = [["bc-implementer", 120.0], ["bc-implementer", 220.0],
+              ["bc-implementer", 240.0]]
+    row = _row(session_id="s1")
+    row["stats"] = {**row["stats"], "spawns": spawns}
+    snapshot = _snapshot(row)
+    daemon._agents_snapshot_cache = snapshot
+    for card in (first, second):
+        daemon._freeze_run_health(store.get(card["id"]), snapshot)
+    ledger = rh.Ledger.load(ledger_path)
+    assert ledger.entry_for(first["id"])["reading"]["fix_rounds"] == 0
+    assert ledger.entry_for(second["id"])["reading"]["fix_rounds"] == 1
+    live = [daemon._run_health_for(store.get(c["id"]), None, ledger)
+            for c in (first, second)]
+    assert [r["fix_rounds"] for r in live] == [0, 1]
+
+
+def test_a_single_cards_line_is_unchanged_by_the_window():
+    row = _row()
+    row["stats"] = {**row["stats"], "spawn_counts": {"bc-implementer": 3},
+                    "spawns": [["bc-implementer", 120.0],
+                               ["bc-implementer", 130.0],
+                               ["bc-implementer", 140.0]]}
+    assert rh.compose(row, None, None, DEFAULT_CUTS) == rh.compose(
+        row, None, None, DEFAULT_CUTS, window=(100.0, None))
+
+
+def test_a_single_card_with_an_untimed_spawn_or_in_done_reads_the_session_count(
+        daemon, store, ledger_path):
+    c = _card(store)
+    _dispatch(store, c["id"], "s1", 1_000.0)
+    store.update(c["id"], {"column_name": "done", "done_at": 1_100.0},
+                 bump=False)
+    row = _row(session_id="s1")
+    row["stats"] = {**row["stats"], "spawn_counts": {"bc-implementer": 3},
+                    "spawns": [["bc-implementer", 0.0],
+                               ["bc-implementer", 2_000.0]]}
+    daemon._agents_snapshot_cache = _snapshot(row)
+    out = daemon._run_health_for(store.get(c["id"]), None,
+                                 rh.Ledger.load(ledger_path))
+    assert out["fix_rounds"] == 2
+
+
+def test_a_left_batch_card_whose_batch_id_was_cleared_stays_windowed(
+        daemon, store, ledger_path):
+    """At the session's end the reconcile clears `batch_id` on the unclosed
+    card; the earlier members still carry its `session_id`, so it is still
+    shared and reads only its own window, not the session's re-runs."""
+    first, last = _card(store, title="one"), _card(store, title="last")
+    _dispatch(store, first["id"], "s1", 100.0)
+    store.update(first["id"], {"column_name": "done", "done_at": 200.0},
+                 bump=False)
+    _dispatch(store, last["id"], "s1", 201.0)
+    store.update(last["id"], {"link_state": "ended",
+                              "session_ended_at": 300.0}, bump=False)
+    row = _row(session_id="s1")
+    row["stats"] = {**row["stats"], "spawn_counts": {"bc-implementer": 3},
+                    "spawns": [["bc-implementer", 50.0],
+                               ["bc-implementer", 150.0],
+                               ["bc-implementer", 250.0]]}
+    daemon._agents_snapshot_cache = {"finished": [row], "running": [],
+                                     "waiting": [], "sleeping": []}
+    out = daemon._run_health_for(store.get(last["id"]), None,
+                                 rh.Ledger.load(ledger_path))
+    assert out["fix_rounds"] == 0
