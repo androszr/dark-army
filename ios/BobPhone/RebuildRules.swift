@@ -12,12 +12,12 @@ import Foundation
 /// * "Rebuilt at" is only ever claimed for a finish **at or after this press**
 ///   (`lastFinishedAt >= pressedAt`), or a stamp from last week would read as
 ///   this press landing;
-/// * from away the verb is not offered at all — it is on the Mac's home door
-///   only — so the screen says so instead of asking for Face ID and being
-///   turned away.
+/// * from away the verb is offered only where the Mac says it accepts an away
+///   press (`Board.rebuildAwaySupported`); against an older Mac the screen says
+///   so instead of asking for Face ID and being turned away.
 enum RebuildRules {
     static let awayLine =
-        "Rebuild & restart is offered on home Wi-Fi only. The Mac does not offer it from away."
+        "This Mac's Dark Army offers Rebuild & restart on home Wi-Fi only."
     static let unavailableLine =
         "This Mac is not running Dark Army from a source checkout, so it has nothing to rebuild."
     static let waitingLine = "Restarting — waiting for the Mac"
@@ -28,13 +28,23 @@ enum RebuildRules {
     static let armedLabel = "Really rebuild and restart?"
     static let armedWarning =
         "Builds from the Mac's working tree as it stands and restarts Dark Army. The Mac drops off the link for about a minute."
+    static let awayArmedWarning =
+        "Builds from the Mac's working tree as it stands and restarts Dark Army. You are away: the Mac drops off the link for a minute or two, and if the build fails its last lines show here."
     static let agentPrompt =
         "This agent says Dark Army needs rebuilding and restarting to pick up its work."
 
-    /// Whether the press may be offered: the Mac says it can rebuild, the
-    /// phone is on the home door, and no rebuild is already running.
-    static func canPress(section: RebuildSection, away: Bool) -> Bool {
-        section.available && !away && !section.rebuilding && !section.restarting
+    /// Whether the tile is lit and the button drawn: the Mac says it can
+    /// rebuild, and the phone is home or the Mac accepts the press away.
+    static func offered(section: RebuildSection, away: Bool,
+                        awayAllowed: Bool) -> Bool {
+        section.available && (!away || awayAllowed)
+    }
+
+    /// Whether the press may be sent: offered, and no rebuild already running.
+    static func canPress(section: RebuildSection, away: Bool,
+                         awayAllowed: Bool = false) -> Bool {
+        offered(section: section, away: away, awayAllowed: awayAllowed)
+            && !section.rebuilding && !section.restarting
     }
 
     /// `HH:mm` in the phone's own time zone.
@@ -49,9 +59,10 @@ enum RebuildRules {
     /// The one status sentence. `pressedAt` is this screen's own press (epoch
     /// seconds), nil when nothing was pressed here.
     static func line(section: RebuildSection, connected: Bool,
-                     away: Bool = false, pressedAt: Double? = nil,
+                     away: Bool = false, awayAllowed: Bool = false,
+                     pressedAt: Double? = nil,
                      timeZone: TimeZone = .current) -> String {
-        if away { return awayLine }
+        if away && !awayAllowed { return awayLine }
         if !section.available { return unavailableLine }
         if !connected, pressedAt != nil || section.rebuilding {
             return waitingLine

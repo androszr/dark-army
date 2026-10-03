@@ -3,8 +3,9 @@ import SwiftUI
 /// The Menu tab's Rebuild & restart screen: the Mac's current build line and
 /// one button. A first press arms it ("Really rebuild and restart?"), a second
 /// sends `rebuild_app` through `post` — never `enqueue`, so a rebuild is never
-/// banked and fired later on the phone's clock. Home Wi-Fi only: from away the
-/// button is absent and the screen says why. `RebuildRules` owns every word.
+/// banked and fired later on the phone's clock. Away it is offered only where
+/// the Mac says it accepts an away press; otherwise the button is absent and the
+/// screen says why. `RebuildRules` owns every word.
 struct RebuildView: View {
     @ObservedObject var client: PhoneClient
     @StateObject private var arm = Arm()
@@ -14,11 +15,12 @@ struct RebuildView: View {
 
     private var section: RebuildSection { client.snapshot.rebuild }
     private var away: Bool { client.via == .relay }
+    private var awayAllowed: Bool { client.snapshot.board.rebuildAwaySupported }
     private var connected: Bool { client.status == .live }
 
     private var status: String {
         RebuildRules.line(section: section, connected: connected, away: away,
-                          pressedAt: pressedAt)
+                          awayAllowed: awayAllowed, pressedAt: pressedAt)
     }
 
     private var failed: Bool {
@@ -26,7 +28,8 @@ struct RebuildView: View {
     }
 
     private var canPress: Bool {
-        RebuildRules.canPress(section: section, away: away)
+        RebuildRules.canPress(section: section, away: away,
+                              awayAllowed: awayAllowed)
             && connected && !sending
     }
 
@@ -40,12 +43,13 @@ struct RebuildView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(status)
                 if arm.rebuild != nil {
-                    Text(RebuildRules.armedWarning)
+                    Text(away ? RebuildRules.awayArmedWarning : RebuildRules.armedWarning)
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.alarm)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if section.available, !away {
+                if RebuildRules.offered(section: section, away: away,
+                                         awayAllowed: awayAllowed) {
                     DecryptButton(arm.rebuild != nil
                                   ? RebuildRules.armedLabel
                                   : RebuildRules.idleLabel) {

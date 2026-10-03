@@ -1,8 +1,8 @@
 """Rebuild & restart's daemon half: the door, the hop, the snapshot and the stamp.
 
-Three entry points start one rebuild; the phone's is `rebuild_app`, chosen for
-the home Wi-Fi only (it runs `build.sh` from the working tree as it stands, so
-it is deliberately not on `REMOTE_ACTIONS`). The menu-bar app owns the one
+Three entry points start one rebuild; the phone's is `rebuild_app`, chosen on
+both phone tuples (it runs `build.sh` from the working tree as it stands, and
+away it rides the lease like every write). The menu-bar app owns the one
 in-flight gate; the daemon's whole part is to hand the press over and publish
 the facts. See `test_menubar.py` for the app's side.
 """
@@ -55,9 +55,9 @@ def _server(daemon):
 
 # --- the tuples ---------------------------------------------------------------
 
-def test_the_verb_is_home_only():
+def test_the_verb_is_chosen_on_both_doors():
     assert ApiServer.LAN_ACTIONS.count("rebuild_app") == 1
-    assert "rebuild_app" not in ApiServer.REMOTE_ACTIONS
+    assert ApiServer.REMOTE_ACTIONS.count("rebuild_app") == 1
     assert set(ApiServer.REMOTE_ACTIONS) <= set(ApiServer.LAN_ACTIONS)
 
 
@@ -119,15 +119,107 @@ async def test_a_sealed_home_frame_runs_it():
     assert json.loads(body)["detail"] == rebuild_state.REBUILD_STARTED
 
 
+def _away(monkeypatch, *, lease=True, bot=False, bot_write=True):
+    from dark_army_daemon import devices, relay
+    monkeypatch.setattr(relay, "lease_valid", lambda _d: lease)
+    monkeypatch.setattr(devices, "is_bot", lambda _d: bot)
+    monkeypatch.setattr(relay, "materialise_bot_grants", lambda _d: None,
+                        raising=False)
+    monkeypatch.setattr(relay, "bot_grant_valid",
+                        lambda _d, _side: bot_write)
+
+
 @pytest.mark.asyncio
-async def test_a_relay_frame_is_a_404_and_runs_nothing():
+async def test_a_relay_frame_inside_the_lease_asks_once(monkeypatch):
+    _away(monkeypatch)
     daemon = _StubDaemon()
     server = _server(daemon)
-    status, _ctype, _body = await server._sealed_run(
-        "action", {"action": "rebuild_app"}, "phone-1",
-        actions=ApiServer.REMOTE_ACTIONS, check_lease=False, record=False)
-    assert status == 404
+    status, _ctype, _body = await server._remote_run(
+        "action", {"action": "rebuild_app"}, "phone-1")
+    assert status == 200
+    assert daemon.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_an_away_press_on_a_lapsed_lease_runs_nothing(monkeypatch):
+    from dark_army_daemon import relay
+    _away(monkeypatch, lease=False)
+    daemon = _StubDaemon()
+    server = _server(daemon)
+    status, _ctype, body = await server._remote_run(
+        "action", {"action": "rebuild_app"}, "phone-1")
+    assert status == 403
+    assert json.loads(body)["detail"] == relay.LEASE_REFUSAL
     assert daemon.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_the_bot_without_write_is_refused_away(monkeypatch):
+    from dark_army_daemon import relay
+    _away(monkeypatch, bot=True, bot_write=False)
+    daemon = _StubDaemon()
+    server = _server(daemon)
+    status, _ctype, body = await server._remote_run(
+        "action", {"action": "rebuild_app"}, "bot-1")
+    assert status == 403
+    assert json.loads(body)["detail"] == relay.BOT_WRITE_REFUSAL
+    assert daemon.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_away_press_runs_once(monkeypatch):
+    _away(monkeypatch)
+    daemon = _StubDaemon()
+    server = _server(daemon)
+    payload = {"action": "rebuild_app", "command_token": "0123456789abcdef"}
+    first = await server._remote_run("action", dict(payload), "phone-1")
+    second = await server._remote_run("action", dict(payload), "phone-1")
+    assert first == second
+    assert daemon.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_an_away_press_reaches_the_menu_bar_once(monkeypatch):
+    _away(monkeypatch)
+    d = _daemon(available=True)
+    observer = _Observer()
+    d.add_observer(observer)
+    server = _server(d)
+    status, _ctype, body = await server._remote_run(
+        "action", {"action": "rebuild_app"}, "phone-1")
+    assert status == 200
+    assert json.loads(body)["detail"] == rebuild_state.REBUILD_STARTED
+    assert observer.requests == 1
+    d._rebuild["rebuilding"] = True
+    status, _ctype, body = await server._remote_run(
+        "action", {"action": "rebuild_app"}, "phone-1")
+    assert status == 200
+    assert json.loads(body)["detail"] == rebuild_state.REBUILD_ALREADY
+    assert observer.requests == 1
+
+
+@pytest.mark.asyncio
+async def test_the_away_press_is_listed_as_remote_activity(monkeypatch):
+    _away(monkeypatch)
+    daemon = _StubDaemon()
+    seen = []
+    daemon.record_remote_action = lambda *a: seen.append(a)
+    server = _server(daemon)
+    await server._remote_run("action", {"action": "rebuild_app"}, "phone-1")
+    assert seen == [("phone-1", "rebuild_app", True)]
+
+
+def test_the_away_marker_is_published():
+    from dark_army_daemon.daemon_board import BoardVerbsMixin
+
+    class _Stub(BoardVerbsMixin):
+        def _observers_implementing(self, name):
+            return False
+
+        def _board_projects(self):
+            return []
+
+    assert _Stub()._pipeline_writable()["rebuild_away_supported"] is True
 
 
 # --- the section --------------------------------------------------------------

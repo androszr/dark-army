@@ -436,6 +436,6 @@ def test_xctest_names_the_same_cases():
 def test_the_contract_names_the_section():
     contract = _read(CONTRACT)
     assert "## Several planned cards are started from the phone at once" in contract
-    assert "Five presses keep the synchronous" in contract
+    assert "Six presses keep the synchronous" in contract
     assert "start_batch_supported" in _read(TRANSPORT)
     assert "start_batch_supported" in _read(CONTEXT_BOARD)

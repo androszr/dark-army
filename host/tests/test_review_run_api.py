@@ -771,9 +771,10 @@ async def test_the_handle_is_resolved_only_for_a_terminal_wearing_the_runs_name(
 
 @pytest.mark.asyncio
 async def test_away_a_review_that_ticks_rebuild_or_restart_is_refused():
-    """`rebuild_app` is home-only, and a review run's Rebuild and Restart
-    steps reach what it does: the away door refuses either in words, before
-    the lease or the daemon; Commit alone is untouched by the rule."""
+    """`rebuild_app` is on the away door as a person's own press, but a review
+    run's Rebuild and Restart steps are not that press: the away door still
+    refuses either in words, before the lease or the daemon; Commit alone is
+    untouched by the rule."""
     from dark_army_daemon import api_server as api_mod
     calls = []
 
@@ -783,7 +784,7 @@ async def test_away_a_review_that_ticks_rebuild_or_restart_is_refused():
             return True, "x"
 
     server = ApiServer(_Daemon())
-    assert "rebuild_app" not in ApiServer.REMOTE_ACTIONS
+    assert "rebuild_app" in ApiServer.REMOTE_ACTIONS
     for steps in (["rebuild"], "commit,restart", ["commit", "rebuild", "push"]):
         status, _c, body = await server._sealed_run(
             "action", {"action": "review_start", "root": "/a",
@@ -802,6 +803,31 @@ async def test_away_a_review_that_ticks_rebuild_or_restart_is_refused():
                    "steps": ["commit"]}, "dev-1",
         actions=ApiServer.REMOTE_ACTIONS, check_lease=False, record=False)
     assert status == 200 and len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_third_door_tuple_still_refuses_rebuild_and_restart_steps():
+    """The guard fails closed: any tuple but `LAN_ACTIONS` refuses."""
+    from dark_army_daemon import api_server as api_mod
+    calls = []
+
+    class _Daemon:
+        async def start_review(self, *a):
+            calls.append(a)
+            return True, "x"
+
+    server = ApiServer(_Daemon())
+    status, _c, body = await server._sealed_run(
+        "action", {"action": "review_start", "root": "/a", "tool": "claude",
+                   "steps": ["rebuild"]}, "dev-1",
+        actions=tuple(ApiServer.REMOTE_ACTIONS), check_lease=False, record=False)
+    assert status == 403
+    assert json.loads(body)["detail"] == api_mod.REVIEW_HOME_ONLY_REFUSAL
+    status, _c, _b = await server._sealed_run(
+        "action", {"action": "review_start", "root": "/a", "tool": "claude",
+                   "steps": ["rebuild"]}, "dev-1",
+        actions=ApiServer.LAN_ACTIONS, check_lease=False, record=False)
+    assert status == 200 and len(calls) == 1
 
 
 @pytest.mark.asyncio

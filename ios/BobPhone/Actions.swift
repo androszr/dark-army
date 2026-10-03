@@ -101,9 +101,9 @@ enum PhoneActions {
     /// `post`; not in `settlingActions`.
     static let missionEnd = "mission_end"
     /// Route: `BobDaemon.request_rebuild` — ask the Mac to rebuild and
-    /// restart Dark Army. **Home Wi-Fi only**: the verb is on the Mac's
-    /// `LAN_ACTIONS` and deliberately not on `REMOTE_ACTIONS`, so the screens
-    /// never offer it from away. Armed then confirmed, and rides `post`, never
+    /// restart Dark Army. On both phone tuples: away it rides the lease, the
+    /// app's Face ID unlock and the receipt token, and is offered only where
+    /// the board says `rebuild_away_supported`. Armed then confirmed, and rides `post`, never
     /// `enqueue`: a rebuild banked in the queue and fired later would restart
     /// the Mac on the phone's clock, not the person's. Not in
     /// `settlingActions` — nothing is leaving. No payload field.

@@ -1582,6 +1582,10 @@ struct Board: Decodable {
     /// means **false**: an older Mac 404s the verb, so the Board tab's
     /// Backlog row draws its Select control absent rather than present and refused.
     var startBatchSupported = false
+    /// Whether this Mac carries `rebuild_app` on its away door too. Absent
+    /// means **false**: an older Mac 404s the verb from away, so Rebuild &
+    /// restart draws dim away from home rather than offering a refused press.
+    var rebuildAwaySupported = false
     /// Whether this Mac serves the sealed `conversation` read. Absent means
     /// **false**: an older Mac 404s the kind, so the phone opens Details and
     /// draws one sentence rather than a blank conversation.
@@ -1711,6 +1715,7 @@ struct Board: Decodable {
         case promoteSupported = "promote_supported"
         case refineBatchSupported = "refine_batch_supported"
         case startBatchSupported = "start_batch_supported"
+        case rebuildAwaySupported = "rebuild_away_supported"
         case conversationSupported = "conversation_supported"
         case subagentConversationSupported = "subagent_conversation_supported"
         case cardTimelineSupported = "card_timeline_supported"
@@ -1777,6 +1782,7 @@ struct Board: Decodable {
         promoteSupported = c.value(.promoteSupported, false)
         refineBatchSupported = c.value(.refineBatchSupported, false)
         startBatchSupported = c.value(.startBatchSupported, false)
+        rebuildAwaySupported = c.value(.rebuildAwaySupported, false)
         conversationSupported = c.value(.conversationSupported, false)
         subagentConversationSupported = c.value(.subagentConversationSupported, false)
         cardTimelineSupported = c.value(.cardTimelineSupported, false)

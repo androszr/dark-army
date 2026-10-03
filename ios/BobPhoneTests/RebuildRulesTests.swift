@@ -13,9 +13,10 @@ final class RebuildRulesTests: XCTestCase {
     }
 
     private func line(_ s: RebuildSection, connected: Bool = true, away: Bool = false,
-                      pressedAt: Double? = nil) -> String {
+                      awayAllowed: Bool = false, pressedAt: Double? = nil) -> String {
         RebuildRules.line(section: s, connected: connected, away: away,
-                          pressedAt: pressedAt, timeZone: utc)
+                          awayAllowed: awayAllowed, pressedAt: pressedAt,
+                          timeZone: utc)
     }
 
     // MARK: the words
@@ -37,6 +38,36 @@ final class RebuildRulesTests: XCTestCase {
         let s = RebuildSection(available: true)
         XCTAssertEqual(line(s, away: true), RebuildRules.awayLine)
         XCTAssertFalse(RebuildRules.canPress(section: s, away: true))
+    }
+
+    func testAwayWithTheMarkerOffersThePress() {
+        let s = RebuildSection(available: true, label: "Rebuild & Reload")
+        XCTAssertEqual(line(s, away: true, awayAllowed: true), "Rebuild & Reload")
+        XCTAssertTrue(RebuildRules.canPress(section: s, away: true, awayAllowed: true))
+    }
+
+    func testAwayWithTheMarkerStillRefusesWhileRebuilding() {
+        let s = RebuildSection(available: true, rebuilding: true)
+        XCTAssertFalse(RebuildRules.canPress(section: s, away: true, awayAllowed: true))
+        XCTAssertEqual(line(s, away: true, awayAllowed: true), RebuildRules.rebuildingLine)
+    }
+
+    func testOfferedTable() {
+        for available in [false, true] {
+            for away in [false, true] {
+                for allowed in [false, true] {
+                    let s = RebuildSection(available: available)
+                    XCTAssertEqual(
+                        RebuildRules.offered(section: s, away: away, awayAllowed: allowed),
+                        available && (!away || allowed))
+                }
+            }
+        }
+    }
+
+    func testAwayArmedWarningSaysTheLinkDrops() {
+        XCTAssertTrue(RebuildRules.awayArmedWarning.contains("You are away"))
+        XCTAssertTrue(RebuildRules.awayArmedWarning.contains("drops off the link"))
     }
 
     func testRebuildingWarnsTheMacWillDrop() {
@@ -186,5 +217,12 @@ final class RebuildRulesTests: XCTestCase {
     func testTheMenuTileLightsOnlyWhenTheMacCanRebuild() {
         XCTAssertFalse(MenuSection.rebuild.lit(scoutReports: false))
         XCTAssertTrue(MenuSection.rebuild.lit(scoutReports: false, rebuild: true))
+        let s = RebuildSection(available: true)
+        XCTAssertFalse(MenuSection.rebuild.lit(
+            scoutReports: false,
+            rebuild: RebuildRules.offered(section: s, away: true, awayAllowed: false)))
+        XCTAssertTrue(MenuSection.rebuild.lit(
+            scoutReports: false,
+            rebuild: RebuildRules.offered(section: s, away: true, awayAllowed: true)))
     }
 }

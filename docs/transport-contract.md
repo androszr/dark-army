@@ -189,11 +189,8 @@ either sealed door a fresh open answers `started` — the terminal handle is
 `mission` snapshot section carries no handle either. Pinned by
 `test_mission_control.py`.
 
-**`rebuild_app` is chosen at home only**: on `LAN_ACTIONS`, not `REMOTE_ACTIONS`, no payload, `post` never the queue, never replayed
-(`ReceiptLedger.neverReplayed`); it builds the working tree as it stands and replaces the installed app, and a write-granted bot at
-home reaches it too. `request_rebuild` hands the press to the menu-bar app, whose one in-flight flag is the gate (200 means *asked*),
-and refuses while restarting or a press token the stamp says already ran; loopback twin `APP_ACTIONS`. The `rebuild` section holds no path
-(`last_error` is home-redacted), seeded from `rebuild-stamp.json` (`test_rebuild_verb.py`).
+**`rebuild_app` is chosen on both tuples**, each its own decision: no payload, `post` never the queue, never replayed (`ReceiptLedger.neverReplayed`); it builds the working tree as it stands and replaces the installed app. Away it rides the lease, the app's Face ID unlock and the receipt token like every write, the bot's Write grant decides for the bot, and `rebuild_away_supported` on `_pipeline_writable()` tells the phone to offer it (an older Mac sends no key, so the tile stays dim away). An away `review_start` ticking Rebuild or Restart is still refused: the person chose the press, not a review run.
+`request_rebuild` hands the press to the menu-bar app, whose one in-flight flag is the gate (200 means *asked*), and refuses while restarting or a press token the stamp says already ran, so a replay after the restart never builds twice; loopback twin `APP_ACTIONS`. The `rebuild` section holds no path (`last_error` is home-redacted), seeded from `rebuild-stamp.json` (`test_rebuild_verb.py`).
 
 ## The sealed `state` read is conditional
 
