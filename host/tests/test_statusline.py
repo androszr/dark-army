@@ -445,6 +445,17 @@ async def test_metrics_reach_the_snapshot():
     assert entry["metrics"]["five_hour_pct"] == 41
 
 
+def test_the_statusline_sample_is_stamped_as_claudes():
+    d = BobDaemon()
+    d._history = object()
+    d._last_metric_sample = {}
+    calls = []
+    d._history_write = lambda *a, **k: calls.append((a, k))
+    d._sample_metrics("s1", {"five_hour_pct": 41})
+    assert calls == [(("record_metrics", "s1", {"five_hour_pct": 41}),
+                      {"provider": "claude"})]
+
+
 @pytest.mark.asyncio
 async def test_sessions_without_metrics_report_an_empty_dict():
     d = BobDaemon()

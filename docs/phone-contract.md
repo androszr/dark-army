@@ -682,7 +682,7 @@ total is unchanged. The week is the sealed `history_week` read
 and on pull only** — never the poll, `backgroundRefresh` or the widget —
 and held for the life of the screen, never on disk; while it loads Dark
 Army talks (`AgentChatterView`), and a Mac out of reach is one sentence and
-a Retry. Read-only. Pinned by `host/tests/test_phone_history_week.py`.
+a Retry. Under the legend sits Claude's limit chart where the Mac sent `limits`: one flexible column per two hours on a fixed 0–100% track, a five-hour bar, a seven-day tick and a hairline at each reset, folded by `LimitPressure` (byte-pinned from `enum LimitPressure {` down, `test_limit_pressure.py`); a stretch with no reading is empty, never 0%, a week with none draws no chart, and neither amber nor red is used. The group is one spoken element. Read-only. Pinned by `host/tests/test_phone_history_week.py`.
 
 **Manual checks open from the Menu's Manual checks tile.** Against a Mac
 that publishes `manual_checks_supported` the tile is lit

@@ -184,8 +184,9 @@ wide ledger in the board's place (`RailLayout.LeftPane.history`); the rail
 is its scope; its headline is `token_cost_usd` (a reported dollar sits
 beside it, never added; no price is a dash, never $0.00); fetched on open
 and on a range or project change, not on the SSE loop; `GET /api/lifecycle`
-stays, undrawn. The phone's History is the week alone, folded by
-`LedgerWeek`, byte-pinned (`test_ledger_week.py`). The card window fetches one
+stays, undrawn. The phone's History is the week and its limit pressure, folded by
+`LedgerWeek` and `LimitPressure`, byte-pinned (`test_ledger_week.py`,
+`test_limit_pressure.py`). The card window fetches one
 session's record through `SessionRecord.swift`. Every rail section — Active, Recently
 finished, Abandoned — folds through the one `SectionHeader`
 (`RailWidgets.swift`; buckets and sections are `RailSections.swift`). The inbox is grouped under project

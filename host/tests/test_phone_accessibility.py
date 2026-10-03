@@ -408,6 +408,10 @@ def test_the_files_the_plan_named_were_all_opened():
 #: entries below sit in one file, so file granularity was never enough
 #: either. Adding a site means adding a reason **and** moving a number.
 IGNORE_SITES = {
+    ("HistoryWeekView.swift", "HistoryWeekView"):
+        (1, "the History screen's limit chart — drawn columns with no press "
+            "anywhere in it, spoken as one sentence (`LimitPressure.Picture."
+            "spoken`) rather than eighty-four fragments"),
     ("AgentDetailView.swift", "JourneyRail"):
         (1, "the agent sheet's journey rail — five drawn stops with no press "
             "anywhere in it, spoken as one sentence (`CardJourney.spoken`) "

@@ -48,4 +48,43 @@ final class HistoryWeekTests: XCTestCase {
         XCTAssertEqual(picture.total, "not priced")
         XCTAssertEqual(picture.days.last?.figure, "—")
     }
+
+    // MARK: - Claude's limit pressure
+
+    func testAbsentLimitsGiveAnEmptyReportAndNoPicture() throws {
+        let decoded = try report(#"{"available": true, "cards": []}"#)
+        XCTAssertTrue(decoded.limits.series.isEmpty)
+        XCTAssertNil(decoded.limits.pressure())
+    }
+
+    func testANullFiveHourReadingStaysNil() throws {
+        let decoded = try report(#"""
+        {"available": true, "limits": {"from": 0, "to": 86400,
+          "series": [{"ts": 100, "five_hour_pct": null, "seven_day_pct": 40}],
+          "resets": []}}
+        """#)
+        XCTAssertNil(decoded.limits.series[0].fiveHourPct)
+        XCTAssertEqual(decoded.limits.series[0].sevenDayPct, 40)
+        let picture = decoded.limits.pressure()
+        XCTAssertNil(picture?.fiveHourPeak)
+        XCTAssertEqual(picture?.sevenDayPeak, 40)
+        XCTAssertEqual(picture?.headline, "7d peak 40%")
+    }
+
+    func testAFullBlockGivesTheSharedFoldsPicture() throws {
+        let decoded = try report(#"""
+        {"available": true, "limits": {"from": 0, "to": 604800,
+          "series": [{"ts": 100, "five_hour_pct": 10, "seven_day_pct": 5},
+                     {"ts": 200, "five_hour_pct": 80, "seven_day_pct": 6}],
+          "resets": [150]}}
+        """#)
+        let direct = LimitPressure.picture(
+            points: [LimitPressure.Point(ts: 100, fiveHour: 10, sevenDay: 5),
+                     LimitPressure.Point(ts: 200, fiveHour: 80, sevenDay: 6)],
+            resets: [150], from: 0, to: 604800)
+        XCTAssertEqual(decoded.limits.pressure(), direct)
+        XCTAssertEqual(direct?.columns.count, 84)
+        XCTAssertEqual(direct?.columns[0].fiveHour, 80)
+        XCTAssertEqual(direct?.columns[0].reset, true)
+    }
 }

@@ -1073,6 +1073,92 @@ def test_burn_rate_needs_a_reset_time(store):
     assert report["projected_full_at"] is None
 
 
+def test_a_grok_sample_is_not_claudes_budget(store):
+    """Grok's overlay files its weekly percentage under `five_hour_pct`; drawn
+    as Claude's five-hour budget it would put a Friday reset on Claude's chart."""
+    now = time.time()
+    store.record_metrics("g1", {"five_hour_pct": 95,
+                                "five_hour_resets_at": now + 400_000},
+                         ts=now - 30, provider="grok")
+    report = store.limits_report(days=1)
+    assert report["series"] == []
+    assert report["resets"] == []
+    assert report["current"] == {}
+    assert report["burn_pct_per_hour"] is None
+
+
+def test_a_legacy_row_counts_as_claudes_only_with_a_seven_day_reading(store):
+    now = time.time()
+    for ts, seven in ((now - 60, 30.0), (now - 3 * 3600, None)):
+        store._write(
+            "INSERT INTO metric_samples(ts, day, session_id, five_hour_pct,"
+            " seven_day_pct) VALUES(?,?,?,?,?)",
+            (ts, "2026-01-01", "old", 50.0, seven))
+    series = store.limits_report(days=1)["series"]
+    assert len(series) == 1
+    assert series[0]["seven_day_pct"] == 30.0
+
+
+def test_record_metrics_stores_the_provider_and_an_older_insert_still_lands(store):
+    store.record_metrics("s1", {"five_hour_pct": 5}, ts=time.time())
+    store.record_metrics("g1", {"five_hour_pct": 6}, ts=time.time(),
+                         provider="grok")
+    store._write(
+        "INSERT INTO metric_samples(ts, day, session_id, five_hour_pct)"
+        " VALUES(?,?,?,?)", (time.time(), "2026-01-01", "old", 7.0))
+    rows = store._query(
+        "SELECT session_id, provider FROM metric_samples ORDER BY id")
+    assert [(r["session_id"], r["provider"]) for r in rows] == [
+        ("s1", "claude"), ("g1", "grok"), ("old", None)]
+
+
+def test_limits_from_and_to_are_the_charts_axis(store):
+    now = time.time()
+    store.record_metrics("s1", {"five_hour_pct": 5}, ts=now - 60)
+    seven = store.limits_report(days=7)
+    # Floored to the series' bucket, so the first bucket is never before it.
+    assert now - 7 * 86400 - 1800 < seven["from"] <= now - 7 * 86400
+    assert seven["to"] >= now
+    everything = store.limits_report(days=None)
+    assert everything["from"] == everything["series"][0]["ts"]
+    assert everything["to"] >= now
+
+
+def test_the_first_bucket_is_never_before_the_axis(store):
+    now = time.time()
+    since = now - 7 * 86400
+    store.record_metrics("s1", {"five_hour_pct": 33}, ts=since + 60)
+    report = store.limits_report(days=7)
+    assert report["series"], "the reading just inside the range was lost"
+    assert all(p["ts"] >= report["from"] for p in report["series"])
+
+
+def test_an_empty_series_has_no_start_for_every_range(store):
+    report = store.limits_report(days=None)
+    assert report["series"] == []
+    assert report["from"] is None
+    assert report["to"] is not None
+
+
+def test_a_database_from_before_the_provider_column_gains_it(tmp_path):
+    path = tmp_path / "old.db"
+    raw = sqlite3.connect(path)
+    raw.execute("CREATE TABLE metric_samples (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " ts REAL NOT NULL, day TEXT NOT NULL, session_id TEXT NOT NULL,"
+                " cost_usd REAL, ctx_pct REAL, five_hour_pct REAL,"
+                " five_hour_resets_at REAL, seven_day_pct REAL,"
+                " lines_added INTEGER, lines_removed INTEGER)")
+    raw.commit()
+    raw.close()
+    s = HistoryStore(path)
+    s.connect()
+    try:
+        names = {r["name"] for r in s._query("PRAGMA table_info(metric_samples)")}
+        assert "provider" in names
+    finally:
+        s.close()
+
+
 # --- hourly ------------------------------------------------------------------
 
 

@@ -42,6 +42,7 @@ pid and read the clipboard while the desk key sits on it.
 from __future__ import annotations
 
 import asyncio
+import math
 import base64
 import functools
 import hashlib
@@ -194,7 +195,13 @@ HISTORY_WEEK_DAY_KEYS = (
 HISTORY_WEEK_BODY_KEYS = (
     "supported", "available", "range_days", "from", "to", "generated_at",
     "partial", "codex_history_partial", "cards", "other_days", "truncated",
+    "limits",
 )
+# `limits` is Claude's budget over the week (`HistoryStore.limits_report(7)`,
+# Claude-only), drawn by the shared `LimitPressure` fold. `current` and the burn
+# rate are not sent: nothing on the phone draws them.
+HISTORY_WEEK_LIMITS_KEYS = ("bucket_seconds", "from", "to", "series", "resets")
+HISTORY_WEEK_LIMIT_POINT_KEYS = ("ts", "five_hour_pct", "seven_day_pct")
 
 # A request line plus headers. Anything larger is not a client of ours.
 MAX_HEADER_BYTES = 16 * 1024
@@ -5095,7 +5102,49 @@ class ApiServer:
             "cards": cards,
             "other_days": days,
         }
+        limits = await self._history_week_limits(pick)
+        if limits is not None:
+            body["limits"] = limits
         return 200, "application/json", self._history_week_page_bytes(body)
+
+    async def _history_week_limits(self, pick):
+        """Claude's limit pressure for the week, projected through
+        `HISTORY_WEEK_LIMITS_KEYS` / `HISTORY_WEEK_LIMIT_POINT_KEYS`; None (the
+        key stays absent) when the store is not open, the read fails or no
+        Claude reading exists. The read blocks on SQLite, so it hops to the
+        executor and is never called inline on the loop."""
+        store = getattr(self._daemon, "_history", None)
+        if store is None:
+            return None
+        try:
+            raw = await asyncio.get_running_loop().run_in_executor(
+                None, store.limits_report, 7)
+        except Exception:
+            logger.debug("history_week: limits_report failed", exc_info=True)
+            return None
+        if not isinstance(raw, dict):
+            return None
+        def real(value):
+            # json.dumps(allow_nan=False) would fail the whole answer on a
+            # stored inf or NaN, so only finite real numbers ride.
+            return (isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value))
+
+        def finite(row):
+            return {k: v for k, v in row.items() if real(v)}
+
+        points = []
+        for point in raw.get("series") or []:
+            row = finite(pick(point, HISTORY_WEEK_LIMIT_POINT_KEYS))
+            if "ts" in row and set(row) - {"ts"}:
+                points.append(row)
+        if not points:
+            return None
+        out = finite(pick(raw, [k for k in HISTORY_WEEK_LIMITS_KEYS
+                                if k not in ("series", "resets")]))
+        out["series"] = points
+        out["resets"] = [r for r in raw.get("resets") or [] if real(r)]
+        return out
 
     @staticmethod
     def _history_week_page_bytes(body):

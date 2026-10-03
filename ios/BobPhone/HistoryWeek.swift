@@ -20,9 +20,13 @@ struct HistoryWeekReport: Decodable {
     var truncated = false
     var cards: [HistoryWeekCard] = []
     var otherDays: [HistoryWeekOtherDay] = []
+    /// Claude's limit pressure over the week. An older Mac sends none, which
+    /// decodes empty and draws nothing.
+    var limits = HistoryWeekLimits()
 
     enum CodingKeys: String, CodingKey {
         case available, reason, partial, truncated, cards
+        case limits
         case rangeDays = "range_days"
         case codexHistoryPartial = "codex_history_partial"
         case otherDays = "other_days"
@@ -40,6 +44,7 @@ struct HistoryWeekReport: Decodable {
         truncated = c.value(.truncated, false)
         cards = c.value(.cards, [])
         otherDays = c.value(.otherDays, [])
+        limits = c.value(.limits, HistoryWeekLimits())
     }
 
     /// The week as `LedgerWeek` folds it — the same input the Mac's History
@@ -187,6 +192,62 @@ struct HistoryWeekOtherDay: Decodable {
             claudeUnpricedIds: claudeTokenUnpricedSessionIds,
             grokUnpricedIds: grokTokenUnpricedSessionIds,
             codexUnpricedIds: codexTokenUnpricedSessionIds)
+    }
+}
+
+/// Claude's five-hour and seven-day readings over the week, as the Mac's
+/// `limits_report(7)` series, cut to the fields the chart reads. An absent
+/// reading is nil, never 0: an unmeasured stretch is left empty.
+struct HistoryWeekLimits: Decodable {
+    var series: [HistoryWeekLimitPoint] = []
+    var resets: [Double] = []
+    var from: Double?
+    var to: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case series, resets, from, to
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        series = c.value(.series, [])
+        resets = c.value(.resets, [])
+        from = c.maybe(.from)
+        to = c.maybe(.to)
+    }
+
+    /// The shared fold's picture (`LimitPressure`, byte-pinned with the Mac);
+    /// nil where nothing was measured, so nothing is drawn.
+    func pressure() -> LimitPressure.Picture? {
+        LimitPressure.picture(
+            points: series.map {
+                LimitPressure.Point(ts: $0.ts, fiveHour: $0.fiveHourPct,
+                                    sevenDay: $0.sevenDayPct)
+            },
+            resets: resets, from: from, to: to)
+    }
+}
+
+struct HistoryWeekLimitPoint: Decodable {
+    var ts: Double = 0
+    var fiveHourPct: Double?
+    var sevenDayPct: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case ts
+        case fiveHourPct = "five_hour_pct"
+        case sevenDayPct = "seven_day_pct"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ts = c.value(.ts, 0)
+        fiveHourPct = c.maybe(.fiveHourPct)
+        sevenDayPct = c.maybe(.sevenDayPct)
     }
 }
 

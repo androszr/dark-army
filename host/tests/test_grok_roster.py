@@ -1490,6 +1490,25 @@ def test_grok_cost_is_recorded_as_measured(tmp_path):
     store.close()
 
 
+def test_grok_weekly_figure_is_stored_as_grok_and_never_drawn_as_claudes(tmp_path):
+    import time
+
+    from dark_army_daemon.daemon import BobDaemon
+    from dark_army_daemon.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "history.db")
+    store.connect()
+    d = BobDaemon()
+    d._history = store
+    d._record_grok_history(
+        "g1", {"five_hour_pct": 80.0, "five_hour_resets_at": time.time() + 400_000,
+               "cost_usd": 0.1}, "Pixel art")
+    rows = store._query("SELECT provider FROM metric_samples")
+    assert [r["provider"] for r in rows] == ["grok"]
+    assert store.limits_report(days=7)["series"] == []
+    store.close()
+
+
 def _chat_line(text):
     return json.dumps({"type": "tool_result", "content": text})
 
