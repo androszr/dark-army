@@ -1967,10 +1967,25 @@ def _attach_vscode_attribution(records, vscode_roots, observed, candidates) -> N
         if not record.is_child and record.cwd:
             top_level_by_cwd.setdefault(record.cwd, set()).add(record.session_id)
     unreadable = _shared_classification(observed, "unreadable", _classify_unreadable)
+    native = {id(proc) for proc, _identity in candidates}
     for record in vscode_roots:
         if len(top_level_by_cwd.get(record.cwd, ())) != 1:
             continue
-        matches = [item for item in candidates if item[1].cwd == record.cwd]
+        try:
+            started = float(record.started_at)
+        except (TypeError, ValueError):
+            continue
+        # Only a process that began just before the rollout competes: a
+        # Codex left open in the same folder for hours wrote some older
+        # rollout, and counting it made every new session there ambiguous —
+        # a Refine or Start on a Codex card could then never be proven.
+        # Two processes inside the window are still ambiguous and pair none.
+        matches = [
+            item for item in candidates
+            if item[1].cwd == record.cwd
+            and math.isfinite(item[1].create_time) and item[1].create_time > 0
+            and 0 <= started - item[1].create_time <= NEAREST_START_SECONDS
+        ]
         if len(matches) != 1:
             continue
         proc, identity = matches[0]
@@ -1982,15 +1997,11 @@ def _attach_vscode_attribution(records, vscode_roots, observed, candidates) -> N
             for index, arg in enumerate(identity.argv)
         ):
             continue
-        try:
-            started = float(record.started_at)
-        except (TypeError, ValueError):
-            continue
-        if (not math.isfinite(identity.create_time) or identity.create_time <= 0
-                or not 0 <= started - identity.create_time <= NEAREST_START_SECONDS):
-            continue
+        # A readable native was already judged by the start window above;
+        # only a process whose fields could not be read stays a competitor.
         if any(
-            other is not proc and (not cwd or cwd == record.cwd)
+            other is not proc and id(other) not in native
+            and (not cwd or cwd == record.cwd)
             for other, cwd in unreadable
         ):
             continue

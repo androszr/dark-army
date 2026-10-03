@@ -355,6 +355,26 @@ def test_vscode_attribution_requires_finite_recent_preceding_start(started, crea
     assert record.process_seen is None
 
 
+def test_vscode_attribution_ignores_a_codex_left_open_for_hours_in_the_folder():
+    # A Refine's new Codex beside one open since the morning: the old
+    # process began long before this rollout, so it is no competitor.
+    record = _root(source_kind="vscode", started_at=20_000.5)
+    old = _FakeProcess(60576, create_time=100.0)
+    new = _FakeProcess(60577, create_time=20_000.0)
+
+    codex_rollouts.attach_process_ids([record], [old, new])
+
+    assert record.pid == 60577
+
+
+def test_vscode_attribution_two_new_processes_in_the_window_pair_neither():
+    record = _root(source_kind="vscode", started_at=20_000.5)
+    codex_rollouts.attach_process_ids([record], [
+        _FakeProcess(60576, create_time=19_990.0),
+        _FakeProcess(60577, create_time=20_000.0)])
+    assert record.pid is None
+
+
 def test_vscode_attribution_rechecks_identity_and_clears_stale_pid():
     record = _root(source_kind="vscode", started_at=100.799)
     process = _FakeProcess(60576)
