@@ -375,6 +375,11 @@ def test_select_is_drawn_only_where_the_mac_says_so_and_one_row_at_a_time():
                  'DecryptButton("SELECT")', 'DecryptButton("CANCEL")',
                  "{ leaveSelectMode() }"):
         assert term in control, term
+    # The assistant row is drawn in the bar, not under the heading.
+    assert "batchAssistantRow" not in control
+    bar = board.split("private var selectionBar: some View", 1)[1].split(
+        "private var batchAssistantRow", 1)[0]
+    assert "batchAssistantRow" in bar
     prep = board.split("private var prepBatchControl: some View", 1)[1].split(
         "private var batchButton", 1)[0]
     assert "selectingRow == nil" in prep.split('DecryptButton("SELECT")', 1)[0]

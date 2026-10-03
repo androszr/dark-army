@@ -68,6 +68,13 @@ struct BoardView: View {
     /// A swiped press the phone's own queue turned down (the duplicate, a
     /// declined Face ID), in its words, drawn under that card.
     @State private var swipeRefusal: [String: String] = [:]
+    /// The card the hold just ticked, so the release that follows the hold
+    /// is swallowed once instead of unticking it
+    /// (`PhoneCardHold.consumesTap`).
+    @State private var heldCard: String?
+    /// When the hold ticked it: a release that never arrives must not eat a
+    /// later tap, so the swallow lasts `PhoneCardHold.releaseWindow` only.
+    @State private var heldAt: Date?
 
     private var board: Board { client.snapshot.board }
     private var rowFlips: Set<String> { BoardRowFold.decode(joined: rowFlipsJoined) }
@@ -92,7 +99,7 @@ struct BoardView: View {
     var body: some View {
         Group {
             if board.available {
-                columnsBody
+                columnsHandled
             } else {
                 unavailable
             }
@@ -154,6 +161,8 @@ struct BoardView: View {
         }
     }
 
+    /// The column stack with its first handlers; `columnsHandled` adds the rest.
+    /// Split in two so the type-checker takes each chain in reasonable time.
     private var columnsBody: some View {
         VStack(spacing: 0) {
             if board.outcomesSupported {
@@ -188,11 +197,6 @@ struct BoardView: View {
                         if !BoardRowFold.drawnFolded(item.id, flipped: rowFlips,
                                                      searching: searching) {
                             rowBody(for: item.id)
-                        } else if selectingRow == item.id {
-                            // The ticks survive a fold, so the selecting
-                            // row's count and CANCEL stay under its heading.
-                            if item.id == "prep" { prepBatchControl }
-                            if item.id == "backlog" { backlogBatchControl }
                         }
                     }
                 }
@@ -201,6 +205,9 @@ struct BoardView: View {
             }
             .tint(Theme.phosphor)
             .refreshable { await client.refreshNow() }
+            // While a row selects, its count, verb and assistant row sit in
+            // a bar above the tab bar; the inset keeps the last card clear.
+            .safeAreaInset(edge: .bottom, spacing: 0) { selectionBar }
             // Dragging the rows puts the keyboard away too, the way the
             // composer's scroll does.
             .scrollDismissesKeyboard(.interactively)
@@ -213,6 +220,8 @@ struct BoardView: View {
                 startReport = ""
             }
         }
+        // A changed tick list buzzes once, the hold's first tick included.
+        .sensoryFeedback(.selection, trigger: selection)
         .onChange(of: client.snapshot.generatedAt) { _, _ in
             noteClearDoneSnapshot()
             pruneSelection()
@@ -233,6 +242,10 @@ struct BoardView: View {
         .onChange(of: project) { _, _ in revealed = nil }
         // A card in select mode does not swipe, and entering it shuts one.
         .onChange(of: selectingRow) { _, _ in revealed = nil }
+    }
+
+    private var columnsHandled: some View {
+        columnsBody
         .confirmationDialog(moreFor.map { "More for \($0.title)" } ?? "More",
                             isPresented: Binding(get: { moreFor != nil },
                                                  set: { if !$0 { moreFor = nil } }),
@@ -619,6 +632,16 @@ struct BoardView: View {
             }
             .buttonStyle(.plain)
             .disabled(leaving)
+            // Beside the tap and the swipe's drag, never instead of them: a
+            // finger that moves is a scroll or a swipe and the hold fails.
+            .simultaneousGesture(LongPressGesture(minimumDuration: PhoneCardHold.minimumDuration, maximumDistance: PhoneCardHold.maximumDistance)
+                .onEnded { _ in hold(card, fromTouch: true) })
+            let holdable = PhoneCardHold.entersSelect(
+                column: card.column, card: card, cards: visibleCards(in: card.column),
+                supported: card.column == "prep" ? board.refineBatchSupported
+                                                 : board.startBatchSupported,
+                pressOut: card.column == "prep" ? batchMark != nil : batchSending,
+                selecting: selectingRow, dispatchEnabled: board.dispatchEnabled)
             if swipes {
                 VStack(alignment: .leading, spacing: 4) {
                     SwipeRevealRow(revealed: revealed == card.id, onReveal: { open in
@@ -642,6 +665,9 @@ struct BoardView: View {
                                     }
                                 }
                                 DecryptButton(PhoneCardSwipe.deleteRow) { deleting = card }
+                                if holdable {
+                                    DecryptButton("Select") { hold(card) }
+                                }
                             }
                     })
                     swipeNote(for: card)
@@ -843,7 +869,15 @@ struct BoardView: View {
     private func tickableCard(_ card: BoardCard) -> some View {
         let tick = tick(for: card)
         let leaving = client.cardLeaving(card.id)
-        return DecryptButton(action: { toggle(card) }) {
+        return DecryptButton(action: {
+            // The release that follows the hold is not a tick.
+            if !PhoneCardHold.consumesTap(held: heldCard, tapped: card.id,
+                                          heldAt: heldAt, now: Date()) {
+                toggle(card)
+            }
+            heldCard = nil
+            heldAt = nil
+        }) {
             PhoneBoardCard(card: card,
                            notice: client.boardNotices[card.id] ?? "",
                            leaving: leaving,
@@ -869,11 +903,35 @@ struct BoardView: View {
         }
     }
 
+    /// The hold: the SELECT word's steps with the held card already ticked.
+    /// A card the SELECT word's own gate would not open a row for ignores it.
+    private func hold(_ card: BoardCard, fromTouch: Bool = false) {
+        // A card whose delete is in flight is inert, as its tap is.
+        guard !client.cardLeaving(card.id), PhoneCardHold.entersSelect(
+            column: card.column, card: card, cards: visibleCards(in: card.column),
+            supported: card.column == "prep" ? board.refineBatchSupported
+                                             : board.startBatchSupported,
+            pressOut: card.column == "prep" ? batchMark != nil : batchSending,
+            selecting: selectingRow, dispatchEnabled: board.dispatchEnabled)
+        else { return }
+        arm.disarm()
+        selection = [card.id]
+        batchRefusal = ""
+        if card.column == "backlog" { startReport = "" }
+        selectingRow = card.column
+        // Only a finger has a release to swallow; the VoiceOver action has none.
+        if fromTouch {
+            heldCard = card.id
+            heldAt = Date()
+        }
+    }
+
     /// Under the Prep heading: SELECT where the Mac takes the batch verb
     /// and at least two of the drawn cards could be refined — **absent**,
-    /// never inert — or, in select mode, the batch button, CANCEL and the
-    /// note. SELECT is absent too while a batch press is out: a select mode
-    /// entered then would be a greyed QUEUED button over no ticks.
+    /// never inert — or, in select mode, CANCEL alone (the verb and the note
+    /// are in `selectionBar`). SELECT is absent too while a batch press is
+    /// out: a select mode entered then would be a greyed QUEUED button over
+    /// no ticks.
     @ViewBuilder
     private var prepBatchControl: some View {
         if selectingRow != "prep" {
@@ -894,85 +952,20 @@ struct BoardView: View {
                 .accessibilityLabel("Select Prep cards to refine together")
             }
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
-                    batchButton
-                    // Enabled while the press is out: CANCEL leaves select
-                    // mode and never cancels the queued press, which stays on
-                    // the QUEUE list with its mark and RETRY — a press queued
-                    // offline must not lock the row until reconnect.
-                    DecryptButton("CANCEL") { leaveSelectMode() }
-                        .font(Theme.mono(12))
-                        .foregroundStyle(Theme.faint)
-                        .frame(minWidth: 44, minHeight: 44)
-                        .contentShape(Rectangle())
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Leave select mode")
-                }
-                batchAssistantRow
-                if !batchRefusal.isEmpty {
-                    Text(batchRefusal)
-                        .font(Theme.mono(11))
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    /// In select mode, once a card is ticked: one assistant for every ticked
-    /// card, the card screen's own tile row. A batch runs in one session, so
-    /// the Mac refuses a set naming different assistants; one tap here
-    /// writes the pick to each ticked card that names another one — the
-    /// card screen's `boardUpdate` with `tool` alone, one per card.
-    @ViewBuilder
-    private var batchAssistantRow: some View {
-        let cards = selectedCards
-        if !cards.isEmpty && !board.tools.isEmpty {
-            let shared = PhoneRowSelection.sharedTool(cards)
-            let waiting = pendingBatchTool != nil && shared != pendingBatchTool
-            VStack(alignment: .leading, spacing: 6) {
-                Text(shared.isEmpty && !waiting
-                     ? "assistant for all — the ticked cards differ"
-                     : (waiting ? "assistant for all — sending…" : "assistant for all"))
-                    .font(Theme.mono(11))
-                    .foregroundStyle(shared.isEmpty && !waiting ? .orange : Theme.faint)
-                    .accessibilityHidden(true)
-                PhoneProviderSwitch(tools: board.tools,
-                                    installed: board.installed,
-                                    selected: waiting ? (pendingBatchTool ?? "") : shared,
-                                    sending: waiting,
-                                    pick: setBatchTool)
-                    .disabled(pressOut)
-            }
-            .onChange(of: shared) { _, now in
-                if now == pendingBatchTool { pendingBatchTool = nil }
-            }
-        }
-    }
-
-    /// Writes `tool` to every ticked card naming another assistant. Each is
-    /// queued under its own card's scope, exactly as the card screen's pick,
-    /// so its receipt settles when that card names the tool. The first
-    /// refusal is drawn under the button and lets the tiles go.
-    private func setBatchTool(_ tool: String) {
-        let ids = PhoneRowSelection.retoolIds(selectedCards, to: tool)
-        guard !ids.isEmpty else { return }
-        arm.disarm()
-        batchRefusal = ""
-        pendingBatchTool = tool
-        Task { @MainActor in
-            for id in ids {
-                let result = await client.enqueue(action: PhoneActions.boardUpdate,
-                                                  fields: ["card_id": id, "tool": tool],
-                                                  scope: id)
-                if !result.ok {
-                    pendingBatchTool = nil
-                    batchRefusal = result.detail
-                    return
-                }
-            }
+            // The verb, the assistant row and the refusal live in the bar
+            // above the tab bar (`selectionBar`); CANCEL stays here too, a
+            // way out where the bar is behind a presented sheet. Enabled
+            // while the press is out: CANCEL leaves select mode and never
+            // cancels the queued press, which stays on the QUEUE list with
+            // its mark and RETRY — a press queued offline must not lock the
+            // row until reconnect.
+            DecryptButton("CANCEL") { leaveSelectMode() }
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.faint)
+                .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityLabel("Leave select mode")
         }
     }
 
@@ -1064,6 +1057,113 @@ struct BoardView: View {
         selection = []
         batchRefusal = ""
         pendingBatchTool = nil
+        heldCard = nil
+        heldAt = nil
+    }
+
+    // MARK: - The selection bar
+
+    /// Drawn above the tab bar while a row selects, and nowhere else: the
+    /// count, the row's one verb, CANCEL, the assistant row and the Mac's
+    /// refusal. A fixed strip, so it stays in reach while the list scrolls.
+    @ViewBuilder
+    private var selectionBar: some View {
+        if selectingRow != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(PhoneCardHold.countLine(count: selection.count))
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.dim)
+                HStack(spacing: 12) {
+                    if selectingRow == "backlog" {
+                        startBatchButton
+                    } else {
+                        batchButton
+                    }
+                    // Prep's CANCEL is never disabled (a press queued offline
+                    // must not lock the row); Backlog's is while it sends.
+                    DecryptButton("CANCEL") { leaveSelectMode() }
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.faint)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .disabled(selectingRow == "backlog" && batchSending)
+                        .accessibilityLabel("Leave select mode")
+                }
+                batchAssistantRow
+                if !batchRefusal.isEmpty {
+                    Text(batchRefusal)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Theme.bar)
+            .overlay(alignment: .top) {
+                Rectangle().fill(Theme.faint).frame(height: 1)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(PhoneCardHold.barLabel(column: selectingRow,
+                                                       count: selection.count))
+        }
+    }
+
+    /// In select mode, once a card is ticked: one assistant for every ticked
+    /// card, the card screen's own tile row. A batch runs in one session, so
+    /// the Mac refuses a set naming different assistants; one tap here
+    /// writes the pick to each ticked card that names another one — the
+    /// card screen's `boardUpdate` with `tool` alone, one per card.
+    @ViewBuilder
+    private var batchAssistantRow: some View {
+        let cards = selectedCards
+        if !cards.isEmpty && !board.tools.isEmpty {
+            let shared = PhoneRowSelection.sharedTool(cards)
+            let waiting = pendingBatchTool != nil && shared != pendingBatchTool
+            VStack(alignment: .leading, spacing: 6) {
+                Text(shared.isEmpty && !waiting
+                     ? "assistant for all — the ticked cards differ"
+                     : (waiting ? "assistant for all — sending…" : "assistant for all"))
+                    .font(Theme.mono(11))
+                    .foregroundStyle(shared.isEmpty && !waiting ? .orange : Theme.faint)
+                    .accessibilityHidden(true)
+                PhoneProviderSwitch(tools: board.tools,
+                                    installed: board.installed,
+                                    selected: waiting ? (pendingBatchTool ?? "") : shared,
+                                    sending: waiting,
+                                    pick: setBatchTool)
+                    .disabled(pressOut)
+            }
+            .onChange(of: shared) { _, now in
+                if now == pendingBatchTool { pendingBatchTool = nil }
+            }
+        }
+    }
+
+    /// Writes `tool` to every ticked card naming another assistant. Each is
+    /// queued under its own card's scope, exactly as the card screen's pick,
+    /// so its receipt settles when that card names the tool. The first
+    /// refusal is drawn under the button and lets the tiles go.
+    private func setBatchTool(_ tool: String) {
+        let ids = PhoneRowSelection.retoolIds(selectedCards, to: tool)
+        guard !ids.isEmpty else { return }
+        arm.disarm()
+        batchRefusal = ""
+        pendingBatchTool = tool
+        Task { @MainActor in
+            for id in ids {
+                let result = await client.enqueue(action: PhoneActions.boardUpdate,
+                                                  fields: ["card_id": id, "tool": tool],
+                                                  scope: id)
+                if !result.ok {
+                    pendingBatchTool = nil
+                    batchRefusal = result.detail
+                    return
+                }
+            }
+        }
     }
 
     // MARK: - Batch Start on Backlog
@@ -1071,7 +1171,8 @@ struct BoardView: View {
     /// Under the Backlog heading: the Mac's report of the last batch Start;
     /// SELECT where the Mac takes the batch verb, no row is selecting and at
     /// least two of the drawn cards could be started — **absent**, never
-    /// inert — or, in select mode, the batch button, CANCEL and the refusal.
+    /// inert — or, in select mode, CANCEL alone (the verb and the refusal
+    /// are in `selectionBar`).
     @ViewBuilder
     private var backlogBatchControl: some View {
         if selectingRow != "backlog" {
@@ -1100,30 +1201,18 @@ struct BoardView: View {
                 .accessibilityLabel("Select planned cards to start together")
             }
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
-                    startBatchButton
-                    // Disabled while the press is out: a synchronous press
-                    // has no queue row to fall back on, and it returns
-                    // within the client's own timeout.
-                    DecryptButton("CANCEL") { leaveSelectMode() }
-                        .font(Theme.mono(12))
-                        .foregroundStyle(Theme.faint)
-                        .frame(minWidth: 44, minHeight: 44)
-                        .contentShape(Rectangle())
-                        .buttonStyle(.plain)
-                        .disabled(batchSending)
-                        .accessibilityLabel("Leave select mode")
-                }
-                batchAssistantRow
-                if !batchRefusal.isEmpty {
-                    Text(batchRefusal)
-                        .font(Theme.mono(11))
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // The verb, the assistant row and the refusal live in the bar
+            // (`selectionBar`); CANCEL stays here too. Disabled while the
+            // press is out: a synchronous press has no queue row to fall
+            // back on, and it returns within the client's own timeout.
+            DecryptButton("CANCEL") { leaveSelectMode() }
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.faint)
+                .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .disabled(batchSending)
+                .accessibilityLabel("Leave select mode")
         }
     }
 

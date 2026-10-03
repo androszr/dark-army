@@ -408,6 +408,8 @@ in full in `docs/phone-contract.md`.
 **A Prep or Backlog card swipes on the phone too**, with the "2 of 5"
 mark: `docs/phone-contract.md`.
 
+**A held phone card opens the batch bar** (3 Oct 2026): a half-second hold on a Prep or Backlog card enters that row's select mode with the card ticked, and the verb, CANCEL and the assistant row sit in a bar above the tab bar; in full in `docs/phone-contract.md`.
+
 **The Mac board's ticks outlive looking away too** (25 Sep 2026): a
 search, a project change or a fold keeps select mode and its ticks, the
 batch button counts every ticked card drawn or not, and a tick never

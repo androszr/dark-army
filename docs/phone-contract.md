@@ -310,13 +310,16 @@ every board against what in the whole row may still be ticked, never while
 the press is out. **Ticks outlive looking away** (25 Sep 2026): a search,
 a project change, a fold or leaving the Board tab keeps select mode and
 its ticks (each disarms a waiting press), the batch button's count names
-every ticked card drawn or not, a folded selecting row keeps its batch
-control under the heading, and the selecting row draws its ticked cards
+every ticked card drawn or not, the bar (below) is on screen whether the
+row is folded or not, and the selecting row draws its ticked cards
 first — the Mac's board does the same. A member deleted mid-flight leaves the
 press SENT until the effect deadline, as a single Refine on a deleted
 card does. The Mac re-checks everything (`docs/transport-contract.md`,
 *The LAN door is sealed*); the tick only hides a press that could not
-succeed. Pinned by `host/tests/test_phone_batch_refine.py` and
+succeed. A hold on a Prep card enters this select mode too, and the batch
+button, the assistant row and the refusal are drawn in the bar above the
+tab bar, not under the heading, which keeps SELECT and CANCEL (*A held card
+opens the batch bar*). Pinned by `host/tests/test_phone_batch_refine.py` and
 `ios/BobPhoneTests/RowSelectionTests.swift`.
 
 ## Several planned cards are started from the phone at once
@@ -340,8 +343,67 @@ heading on success, under the button with the ticks kept on a refusal. An
 unreachable Mac is a refusal in words; nothing fires later on the phone's
 clock. The tile and the card screen draw the Mac's `BATCH r/n · working`,
 `· waiting` or `· left the line`, and `canStart` is withheld on
-`holdsBatchMark`. Pinned by `host/tests/test_phone_batch_start.py` and
-`ios/BobPhoneTests/RowSelectionTests.swift`.
+`holdsBatchMark`. A hold on a Backlog card enters this select mode too, and
+`START n TOGETHER`, the assistant row and the refusal are drawn in the bar
+above the tab bar; the heading keeps SELECT, the report and CANCEL (*A held
+card opens the batch bar*). Pinned by `host/tests/test_phone_batch_start.py`
+and `ios/BobPhoneTests/RowSelectionTests.swift`.
+
+## A held card opens the batch bar
+
+A half-second hold on a Prep or Backlog card on the Board tab enters that
+row's select mode with the card already ticked (3 Oct 2026). The hold is a
+`LongPressGesture` (`PhoneCardHold.minimumDuration` 0.5 s,
+`maximumDistance` 10 pt: a finger that travels further is a scroll or a
+swipe and the hold fails) attached with `.simultaneousGesture` beside the
+tile's button and the swipe's drag — never `.gesture` or
+`.highPriorityGesture`, which would steal the tap or the scroll. It runs the
+SELECT word's own steps with `selection = [card.id]`, and only where
+`PhoneCardHold.entersSelect` says so: the row is Prep or Backlog, the Mac
+takes the row's batch verb (`refine_batch_supported` /
+`start_batch_supported`), the row's press is not out, no row is selecting
+(a hold in the other row does nothing; CANCEL first), the card is tickable
+and at least two drawn cards are (`PhoneRowSelection.tickable` and
+`offersSelect`, the SELECT word's gate, so a hold never opens a bar whose
+verb could not fire). A card that cannot be batched ignores the hold.
+The release after a finger hold may reach the tile in select mode as a
+press, or may not (the hold swaps the tile for its select-mode twin
+mid-touch). Only a finger hold (`hold(_:fromTouch:)`) records `heldCard` and
+`heldAt`; `PhoneCardHold.consumesTap` swallows a press on that card only
+within `PhoneCardHold.releaseWindow` (1 s), so a release that never arrives
+cannot eat a later tap. They clear on every select-mode press and in
+`leaveSelectMode()`. The VoiceOver action records nothing. A card whose
+delete is in flight (`client.cardLeaving`) ignores the hold.
+Tapping more cards in the row ticks and unticks them by today's rule (one
+row, one project folder).
+
+Every change of the tick list plays the system selection haptic
+(`.sensoryFeedback(.selection, trigger: selection)`; a tick pruned by a new
+board buzzes too).
+
+**The bar** is `BoardView.selectionBar`, a `.safeAreaInset(edge: .bottom,
+spacing: 0)` on the board's `ScrollView`, so it stacks above the tab bar and
+the list's last card scrolls clear of it. It is drawn while a row selects
+and holds the count line (`PhoneCardHold.countLine`), the row's verb
+(`batchButton` on Prep, `startBatchButton` on Backlog, behaviour unchanged:
+armed then confirmed, Prep through `enqueue`, Backlog `post`), CANCEL (Prep
+never disabled, Backlog disabled while it sends), the assistant row and the
+Mac's refusal. The assistant row (`batchAssistantRow`, moved here from under
+the heading) is `PhoneProviderSwitch`: the marked icon is the assistant every
+picked card names; a tap writes `tool` onto every picked card naming another
+(`board_update`, one receipt per card) and the batch verbs read each card's
+`tool` on the Mac. No new action, no new field, no door change. The heading
+keeps SELECT, the Backlog report and one CANCEL (a way out where the bar is
+behind a sheet); the folded-heading branch that drew the controls is gone,
+since the bar is always on screen. The bar is one `.contain` group labelled
+`PhoneCardHold.barLabel` ("Batch start, n selected").
+
+**VoiceOver**: every card that can be held offers a "Select" action
+(inside the swipe's `.accessibilityActions` block) doing what the hold does,
+and SELECT stays under the heading. Against an older Mac the markers decode
+false, `entersSelect` is false, and neither the hold nor the bar exists.
+Pinned by `host/tests/test_phone_card_hold.py` and
+`ios/BobPhoneTests/CardHoldTests.swift`.
 
 ## A Prep or Backlog card is swiped on the Board tab
 

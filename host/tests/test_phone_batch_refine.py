@@ -356,6 +356,8 @@ def test_select_is_drawn_only_where_the_mac_says_so():
     assert 'PhoneRowSelection.offersSelect("prep", cards: visibleCards(in: "prep")' in control
     assert 'DecryptButton("SELECT")' in control
     assert 'DecryptButton("CANCEL")' in control
+    # The assistant row moved to the bar above the tab bar.
+    assert "batchAssistantRow" not in control
     # Pruned against the whole row — a search or a project filter hides a
     # ticked card, never unticks it — and never while a press is out.
     prune = board.split("private func pruneSelection()", 1)[1].split("\n    }\n", 1)[0]
@@ -457,7 +459,10 @@ def test_ticks_outlive_leaving_the_tab_a_filter_and_a_fold():
     assert "arm.disarm()" in gone
     assert ".onChange(of: query) { _, _ in disarmBatch() }" in board
     assert ".onChange(of: project) { _, _ in disarmBatch() }" in board
-    assert "} else if selectingRow == item.id {" in board
+    # The ticks survive a fold: the bar is a bottom inset, always on screen,
+    # so the folded heading no longer carries a copy of the controls.
+    assert ".safeAreaInset(edge: .bottom, spacing: 0) { selectionBar }" in board
+    assert 'if item.id == "prep" { prepBatchControl }' not in board
     assert "cardsStack(tickedFirst(visible, in: id))" in board
     first = board.split("private func tickedFirst(", 1)[1].split("\n    }\n", 1)[0]
     assert "guard selectingRow == id" in first
