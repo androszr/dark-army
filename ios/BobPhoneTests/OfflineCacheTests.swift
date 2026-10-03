@@ -1209,6 +1209,13 @@ final class OfflineCacheTests: XCTestCase {
         XCTAssertEqual(bare.wording, "Mark a check done")
         bare.action = PhoneActions.boardReview
         XCTAssertEqual(bare.wording, "Mark a result reviewed")
+        // The Review section's three verbs read as words in the pending list.
+        bare.action = PhoneActions.reviewStart
+        XCTAssertEqual(bare.wording, "Start a review")
+        bare.action = PhoneActions.reviewContinue
+        XCTAssertEqual(bare.wording, "Continue a review")
+        bare.action = PhoneActions.reviewEnd
+        XCTAssertEqual(bare.wording, "End a review")
     }
 
     // MARK: - the cache is pairing-scoped

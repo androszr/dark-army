@@ -200,3 +200,17 @@ def test_the_marker_never_raises_a_card_or_a_bucket(monkeypatch, tmp_path):
 ])
 def test_offered_truth_table(marker, stamp, own, row, facts, want):
     assert rebuild_state.offered(marker, stamp, own, row, facts) is want
+
+
+def test_the_stamp_is_written_owner_only_and_keeps_its_keys(tmp_path, monkeypatch):
+    import os
+    import stat
+    from dark_army_daemon import paths
+    stamp = tmp_path / "state" / "rebuild-stamp.json"
+    monkeypatch.setattr(paths, "REBUILD_STAMP_PATH", str(stamp))
+    rebuild_state.note_press("tok-1")
+    rebuild_state.write_stamp(1.0, 2.0, True)
+    assert stat.S_IMODE(os.stat(stamp).st_mode) == 0o600
+    data = json.loads(stamp.read_text())
+    assert data["token"] == "tok-1" and data["ok"] is True
+    assert rebuild_state.replayed("tok-1") and not rebuild_state.replayed("x")

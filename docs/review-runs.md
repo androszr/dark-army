@@ -67,6 +67,8 @@ older ones and removes their folders.
   or `Confidence:` line follows it, so summary bullets and the "Do next" list
   are not findings and never shift the numbering; `MAX_FINDINGS`, `MAX_LINE_CHARS`, `MAX_FIX_CHARS`; past the bound
   `truncated` is stated). The run is a `review_picks` Needs you entry.
+  Until Continue, `picks` re-reads the file and a new digest replaces the
+  list. A `done` run with an open terminal still holds its project.
 - **Continue** (`continue_review`) → `fixing`. Refused outside `picks`
   (`REVIEW_NOT_PICKS_REFUSAL`), for an off-list index (`REVIEW_PICK_REFUSAL`)
   while a permission prompt is up (`TERMINAL_PROMPT_REFUSAL`) and, for a run
@@ -143,6 +145,8 @@ Continue, the ledger and End all work by handle.
   decision: `review_start` `{root, tool, steps}`, `review_continue`
   `{run_id, fix}`, `review_end` `{run_id}`. A list may arrive as a JSON list or
   one comma-joined string (the panel's `post` sends strings only).
+  Away, a `review_start` ticking `rebuild` or `restart` is 403
+  `REVIEW_HOME_ONLY_REFUSAL`: those reach what home-only `rebuild_app` does.
 - Reads: loopback `GET /api/review?root=` and the sealed `review_offer` kind
   (`root` in the body, never a query string).
 - Markers on `_pipeline_writable()`: `review_supported` (the section and the

@@ -229,9 +229,14 @@ class ReviewVerbsMixin:
                 return False, REVIEW_STEPS_REFUSAL
             chosen = [s for s in offer["steps"] if s["id"] in ticked]
             with self._review_lock:
-                busy = any(r.get("root") == canonical
-                           and r.get("state") in review_run.LIVE_STATES
-                           for r in self._review_runs)
+                mine = [dict(r) for r in self._review_runs
+                        if r.get("root") == canonical]
+            # A `done` run whose terminal is still open still has an
+            # assistant in this working tree: a second run would share it.
+            busy = any(r.get("state") in review_run.LIVE_STATES
+                       or (r.get("state") == "done"
+                           and self._review_terminal_open(r))
+                       for r in mine)
             if busy:
                 return False, REVIEW_BUSY_REFUSAL
             roots = {dispatch.normalise_root(r)
@@ -324,6 +329,14 @@ class ReviewVerbsMixin:
                 and not getattr(t, "exited", False)]
         return str(hits[0].handle) if len(hits) == 1 else ""
 
+    def _review_terminal_open(self, rec: dict) -> bool:
+        """Whether the run's own terminal is still open: the recorded handle,
+        else the one wearing its name. Loop only."""
+        handle = str(rec.get("handle") or "") \
+            or self._review_named_handle(str(rec.get("id") or ""))
+        term = self._pty.get(handle) if handle else None
+        return term is not None and not getattr(term, "exited", False)
+
     def _review_resolve_handle(self, run_id: str, rec: dict) -> str:
         """The record's handle, or - when it holds none - the terminal found
         by name, written back so every later read has it. Loop only."""
@@ -333,7 +346,9 @@ class ReviewVerbsMixin:
         handle = self._review_named_handle(run_id)
         if handle:
             self._review_set(run_id, handle=handle)
-            self._review_save()
+            # The save is a file write: hand it to the executor, never the
+            # loop this runs on.
+            asyncio.get_running_loop().run_in_executor(None, self._review_save)
         return handle
 
     # --- Continue ----------------------------------------------------------
@@ -383,8 +398,11 @@ class ReviewVerbsMixin:
                 handle, review_run.continue_line(rec, fix), session_id)
             if not ok:
                 return False, why
-            self._review_set(run_id, expect_state="picks", state="fixing",
-                             decided_at=now, picks=fix)
+            if not self._review_set(run_id, expect_state="picks",
+                                    state="fixing", decided_at=now, picks=fix):
+                # The run left `picks` while the line was typed (its
+                # terminal exited, or End): not a success.
+                return False, REVIEW_NOT_PICKS_REFUSAL
             await loop.run_in_executor(None, self._review_save)
             self._review_notify()
             return True, ""
@@ -488,6 +506,22 @@ class ReviewVerbsMixin:
                                 parsed["findings"])):
                         changed = True
                         state = "picks"
+            elif state == "picks" and run_id not in self._review_busy:
+                # The file can grow after its VERDICT line (an Edit adding
+                # the rest): until a person decides, the checklist follows
+                # it, and a new digest re-raises the Needs you entry.
+                parsed = review_run.parse_findings(scout_report.read_text(
+                    folder / review_run.FINDINGS_NAME))
+                digest = review_run.digest_of(parsed["findings"]) \
+                    if parsed is not None else ""
+                if digest and digest != rec.get("findings_digest") \
+                        and self._review_set(
+                            run_id, expect_state="picks",
+                            findings_at=now, findings=parsed["findings"],
+                            verdict=parsed["verdict"],
+                            truncated=bool(parsed["truncated"]),
+                            findings_digest=digest):
+                    changed = True
             elif state == "fixing":
                 ledger = review_run.parse_steps(scout_report.read_text(
                     folder / review_run.STEPS_NAME))

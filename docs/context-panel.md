@@ -405,7 +405,8 @@ judged by the Start rule, and one armed-then-confirmed press sending
 **The agent sheet swipes to the next agent in Needs you** (28 Sep 2026) —
 in full in `docs/phone-contract.md`.
 
-**Phone card swipes and the "2 of 5" mark**: `docs/phone-contract.md`.
+**A Prep or Backlog card swipes on the phone too**, with the "2 of 5"
+mark: `docs/phone-contract.md`.
 
 **The Mac board's ticks outlive looking away too** (25 Sep 2026): a
 search, a project change or a fold keeps select mode and its ticks, the

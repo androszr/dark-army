@@ -259,6 +259,9 @@ struct Receipt: Identifiable, Codable, Equatable {
         case PhoneActions.boardMerge: return "Merge a card into main"
         case PhoneActions.boardMergeFix: return "Fix a card's merge"
         case PhoneActions.boardReviewRun: return "Review a card's branch"
+        case PhoneActions.reviewStart: return "Start a review"
+        case PhoneActions.reviewContinue: return "Continue a review"
+        case PhoneActions.reviewEnd: return "End a review"
         default: return action
         }
     }

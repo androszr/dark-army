@@ -7,6 +7,7 @@ The whole loop is `test_the_whole_loop_from_start_to_done`: Start, the
 findings file, the picks state, Continue, the step ledger, done.
 """
 
+import asyncio
 import json
 import os
 import subprocess
@@ -684,7 +685,12 @@ async def test_a_name_resolved_handle_is_saved(daemon, project):
     ok, run_id = await daemon.start_review(str(project), "claude", [])
     daemon._review_set(run_id, handle="")
     daemon._review_resolve_handle(run_id, daemon._review_find(run_id))
-    saved = review_run.load_records(paths.REVIEW_RUNS_PATH)
+    # The save is handed to the executor, off the loop: wait for it.
+    for _ in range(100):
+        saved = review_run.load_records(paths.REVIEW_RUNS_PATH)
+        if next(r for r in saved if r["id"] == run_id).get("handle") == "h-1":
+            break
+        await asyncio.sleep(0.02)
     assert next(r for r in saved if r["id"] == run_id)["handle"] == "h-1"
 
 
@@ -761,3 +767,96 @@ async def test_the_handle_is_resolved_only_for_a_terminal_wearing_the_runs_name(
     assert daemon._review_handle_if_named("s-9") == "h-1"
     daemon._pty.terms["h-1"].name = "another terminal"
     assert daemon._review_handle_if_named("s-9") is None
+
+
+@pytest.mark.asyncio
+async def test_away_a_review_that_ticks_rebuild_or_restart_is_refused():
+    """`rebuild_app` is home-only, and a review run's Rebuild and Restart
+    steps reach what it does: the away door refuses either in words, before
+    the lease or the daemon; Commit alone is untouched by the rule."""
+    from dark_army_daemon import api_server as api_mod
+    calls = []
+
+    class _Daemon:
+        async def start_review(self, *a):
+            calls.append(a)
+            return True, "x"
+
+    server = ApiServer(_Daemon())
+    assert "rebuild_app" not in ApiServer.REMOTE_ACTIONS
+    for steps in (["rebuild"], "commit,restart", ["commit", "rebuild", "push"]):
+        status, _c, body = await server._sealed_run(
+            "action", {"action": "review_start", "root": "/a",
+                       "tool": "claude", "steps": steps}, "dev-1",
+            actions=ApiServer.REMOTE_ACTIONS, check_lease=False, record=False)
+        assert status == 403
+        assert json.loads(body)["detail"] == api_mod.REVIEW_HOME_ONLY_REFUSAL
+    assert calls == []
+    status, _c, _b = await server._sealed_run(
+        "action", {"action": "review_start", "root": "/a", "tool": "claude",
+                   "steps": ["rebuild", "restart"]}, "dev-1",
+        actions=ApiServer.LAN_ACTIONS, check_lease=False, record=False)
+    assert status == 200 and len(calls) == 1
+    status, _c, _b = await server._sealed_run(
+        "action", {"action": "review_start", "root": "/a", "tool": "claude",
+                   "steps": ["commit"]}, "dev-1",
+        actions=ApiServer.REMOTE_ACTIONS, check_lease=False, record=False)
+    assert status == 200 and len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_checklist_follows_a_findings_file_that_grows_until_picked(
+        daemon, project):
+    """An assistant may write the VERDICT line and a few findings, then add
+    the rest: until a person decides, the checklist follows the file."""
+    ok, run_id = await daemon.start_review(str(project), "claude", [])
+    assert ok, run_id
+    head = FINDINGS.split("WARN ·")[0]
+    _write(run_id, review_run.FINDINGS_NAME, head)
+    _observe(daemon)
+    first = _run(daemon, run_id)
+    assert first["state"] == "picks" and len(first["findings"]) == 2
+    _write(run_id, review_run.FINDINGS_NAME, FINDINGS)
+    assert _observe(daemon) is True
+    grown = _run(daemon, run_id)
+    assert grown["state"] == "picks" and len(grown["findings"]) == 4
+    assert _observe(daemon) is False, "an unchanged file moves nothing"
+    daemon._pty.terms["h-1"].session_id = "s-1"
+    ok, detail = await daemon.continue_review(run_id, [4])
+    assert ok, detail
+    _write(run_id, review_run.FINDINGS_NAME, head)
+    _observe(daemon)
+    assert len(_run(daemon, run_id)["findings"]) == 4, "a decision freezes it"
+
+
+@pytest.mark.asyncio
+async def test_continue_is_not_a_success_when_the_run_left_picks_meanwhile(
+        daemon, project, monkeypatch):
+    ok, run_id = await daemon.start_review(str(project), "claude", [])
+    daemon._pty.terms["h-1"].session_id = "s-1"
+    _write(run_id, review_run.FINDINGS_NAME, FINDINGS)
+    _observe(daemon)
+
+    async def typed_then_exited(handle, line, session_id):
+        daemon._review_set(run_id, state="exited")
+        return True, ""
+
+    monkeypatch.setattr(daemon, "_terminal_line_input", typed_then_exited)
+    ok, detail = await daemon.continue_review(run_id, [1])
+    assert not ok and detail == daemon_review.REVIEW_NOT_PICKS_REFUSAL
+    assert _run(daemon, run_id)["state"] == "exited"
+
+
+@pytest.mark.asyncio
+async def test_a_done_run_with_its_terminal_open_still_holds_the_project(
+        daemon, project):
+    ok, run_id = await daemon.start_review(str(project), "claude", [])
+    daemon._pty.terms["h-1"].session_id = "s-1"   # bound: no launch pending
+    daemon._review_set(run_id, state="done")
+    daemon._review_attempt = 0.0
+    ok, detail = await daemon.start_review(str(project), "claude", [])
+    assert not ok and detail == daemon_review.REVIEW_BUSY_REFUSAL
+    daemon._pty.terms["h-1"].exited = True
+    daemon._review_attempt = 0.0
+    ok, detail = await daemon.start_review(str(project), "claude", [])
+    assert ok, detail

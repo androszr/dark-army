@@ -143,6 +143,8 @@ LAN_TUNNEL_REFUSAL = ("Dark Army's phone door does not answer over a VPN — joi
                       "the Mac's Wi-Fi")
 # Over either connection cap (`busy`, weight 0 on the access log).
 LAN_BUSY_REFUSAL = "Dark Army's phone door is busy — try again in a moment"
+REVIEW_HOME_ONLY_REFUSAL = ("Rebuild and Restart run only from the phone at home "
+                            "or on the Mac — untick them to start this review away")
 # How many connections the door holds open at once, in all and per address.
 # A keyholder phone holds a poll, a terminal stream and an upload at once —
 # the per-peer headroom is deliberate. Read through the module at call time
@@ -2293,6 +2295,9 @@ class ApiServer:
 
     #: The Review section's three verbs, one name each (docs/review-runs.md).
     REVIEW_ACTIONS = ("review_start", "review_continue", "review_end")
+    #: The review steps that rebuild or replace the installed app: refused
+    #: on any door without `rebuild_app` (the away door).
+    HOME_ONLY_REVIEW_STEPS = ("rebuild", "restart")
 
     def _review_request(self, request: _Request):
         """`(action, payload)` if this is an authorised review POST, else
@@ -3641,8 +3646,10 @@ class ApiServer:
         # is not yet on the remote is a thing to start from the train, and
         # the press can start nothing but that one provider in that one
         # folder with the steps the person ticked. Away it rides the lease,
-        # Face ID and the receipt token like every write. No parenthesis in
-        # this block.
+        # Face ID and the receipt token like every write. Away, a press that
+        # ticks the Rebuild or Restart step is refused in words before the
+        # lease, because those two reach what rebuild_app does and that verb
+        # is home-only. No parenthesis in this block.
         "review_start",
         # Away as well as at home, and its own decision: picking the fixes
         # is the moment the run waits on a person. Away it rides the lease
@@ -4332,6 +4339,17 @@ class ApiServer:
                 return 403, "application/json", b'{"error":"outcome editing is available on the Mac"}'
             if action not in actions:
                 return 404, "application/json", b'{"error":"not found"}'
+            # A review run's Rebuild and Restart steps reach what
+            # `rebuild_app` does, so a door without `rebuild_app` (away)
+            # refuses a `review_start` that ticks either, in words.
+            if action == "review_start" and "rebuild_app" not in actions:
+                ticked = self._review_ids(payload.get("steps"),
+                                          integers=False) or []
+                if set(ticked) & set(self.HOME_ONLY_REVIEW_STEPS):
+                    body = json.dumps(
+                        {"error": REVIEW_HOME_ONLY_REFUSAL,
+                         "detail": REVIEW_HOME_ONLY_REFUSAL}).encode()
+                    return 403, "application/json", body
             # The bot's write grant decides for the bot on both doors, and
             # the day lease no longer does; a phone keeps its day lease away
             # and nothing at home, exactly as before.

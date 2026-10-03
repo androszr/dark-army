@@ -71,10 +71,7 @@ def note_press(token: str) -> None:
     stamp["token"] = str(token)
     path = paths.REBUILD_STAMP_PATH
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(stamp, fh)
-    os.replace(tmp, path)
+    paths.atomic_write_json(path, stamp, mode=0o600)
 
 
 def replayed(token: str) -> bool:
@@ -117,10 +114,7 @@ def write_stamp(started_at: float, finished_at: float, ok: bool) -> None:
                   "ok": bool(ok)})
     path = paths.REBUILD_STAMP_PATH
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(stamp, fh)
-    os.replace(tmp, path)
+    paths.atomic_write_json(path, stamp, mode=0o600)
 
 
 _cache: dict = {"key": None, "stamp": {}}
