@@ -793,14 +793,10 @@ real columns and to what the prompt builders send.
   (`docs/card-worktrees.md`, *Stale registrations*). In full:
   `docs/card-worktrees.md`.
 
-  **A Done card can be reviewed and merged** (v31, `merges.py`): the card
-  keeps its branch after the folder goes, and a confirmed MERGE builds a
-  `Merge card/<id8>: <title>` commit in the card's own folder, runs the
-  project's optional check script there and only then fast-forwards the local
-  main line — never a push, the main checkout's unsaved work never touched;
-  a conflict or red check reads "merge needs you" with a Fix press that starts
-  the card's own assistant in the folder. Gate, steps and read:
-  `docs/card-worktrees.md`, *Review and merge*.
+  **A Done card can be reviewed and merged** (v31, `merges.py`): MERGE
+  builds the merge commit in the card's folder, runs the checks, then
+  fast-forwards local main — never a push: `docs/card-worktrees.md`,
+  *Review and merge*.
 
   Deliberately **not** passed: `--no-session-persistence`,
   `--setting-sources ""`, `--strict-mcp-config`, and

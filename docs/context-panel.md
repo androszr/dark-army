@@ -364,13 +364,9 @@ the flag false by default and the card's `error_kind` as `""`. The action
 `low_priority` is on `LAN_ACTIONS` and `REMOTE_ACTIONS` and deliberately not
 in the phone's `settlingActions` — the row is not leaving.
 
-**Rebuild & restart is one press on the Mac.** The brand bar's `RebuildButton`
-(drawn when `context.canRebuild`) and the agent's `RebuildBar` (drawn where
-`rebuild_offered` is true and the Mac can rebuild) both send the settings row's
-own `Panel.send(action: "rebuild")`; the menu bar's one in-flight flag is the
-gate, and both read `settings.rebuilding` and the context's `rebuild_outcome` /
-`rebuild_error` off the context push through `RebuildControl.title`. No
-confirmation. The panel does not decode the `rebuild` section.
+**Rebuild & restart is one press on the Mac**, unconfirmed: `RebuildButton`
+and the agent's `RebuildBar` send `Panel.send(action: "rebuild")`; words via
+`RebuildControl.title`.
 
 **Asking for the board opens the workspace**: `installBoardObserver`'s
 `.panelOpenBoard` notification calls `show`.
@@ -409,7 +405,7 @@ judged by the Start rule, and one armed-then-confirmed press sending
 **The agent sheet swipes to the next agent in Needs you** (28 Sep 2026) —
 in full in `docs/phone-contract.md`.
 
-**A Prep or Backlog card swipes on the phone too** (3 Oct 2026): START or Refine and a dots menu holding a confirmed Delete, the card screen's own presses behind a sideways swipe; in full, with the agent sheet's "2 of 5" mark, in `docs/phone-contract.md`.
+**Phone card swipes and the "2 of 5" mark**: `docs/phone-contract.md`.
 
 **The Mac board's ticks outlive looking away too** (25 Sep 2026): a
 search, a project change or a fold keeps select mode and its ticks, the
@@ -629,10 +625,8 @@ hold: the lines ship in code, the reveal is a pure function of `now - began`
 under a `TimelineView`, a caption is never replaced (only the spinner), and
 `ProgressView` stays at **zero** across both clients.
 
-**The Review tab** (`PanelView.Tab.review`; `ReviewRail`, `ReviewPane`,
-`ReviewRules`) picks a project, provider and after-steps and draws a run's
-findings checklist; source of truth `snapshot.review`
-(`Snapshot.Section.review`): `docs/review-runs.md`.
+**The Review tab** (`ReviewRail`, `ReviewPane`, `ReviewRules`;
+`snapshot.review`): `docs/review-runs.md`.
 
 **The Comm tab talks to Mission Control** (`PanelView.Tab.comm`,
 `CommRail.swift`, `CommRules.swift`): the wide pane is the board **with
