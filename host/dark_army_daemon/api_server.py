@@ -144,8 +144,9 @@ LAN_TUNNEL_REFUSAL = ("Dark Army's phone door does not answer over a VPN — joi
                       "the Mac's Wi-Fi")
 # Over either connection cap (`busy`, weight 0 on the access log).
 LAN_BUSY_REFUSAL = "Dark Army's phone door is busy — try again in a moment"
-REVIEW_HOME_ONLY_REFUSAL = ("Rebuild and Restart run only from the phone at home "
-                            "or on the Mac — untick them to start this review away")
+REVIEW_HOME_ONLY_REFUSAL = ("A review's Rebuild and Restart steps run only from "
+                            "home or the Mac — untick them, or use Rebuild & "
+                            "restart in the Menu")
 # How many connections the door holds open at once, in all and per address.
 # A keyholder phone holds a poll, a terminal stream and an upload at once —
 # the per-peer headroom is deliberate. Read through the module at call time
@@ -2315,7 +2316,8 @@ class ApiServer:
     #: The Review section's three verbs, one name each (docs/review-runs.md).
     REVIEW_ACTIONS = ("review_start", "review_continue", "review_end")
     #: The review steps that rebuild or replace the installed app: refused
-    #: on any door without `rebuild_app` (the away door).
+    #: on every door but home, because the person chose the Rebuild & restart
+    #: press, not a review run ticking it.
     HOME_ONLY_REVIEW_STEPS = ("rebuild", "restart")
 
     def _review_request(self, request: _Request):
@@ -3533,14 +3535,13 @@ class ApiServer:
         # the bot itself by its verified identity, never by a payload name.
         # Its own line, chosen on purpose; no parenthesis in this block.
         "set_bot_access",
-        # Rebuild and restart the Mac's Dark Army from the phone, at home
-        # only. It runs build.sh from the working tree as it stands, changes
-        # included, and replaces the installed app: strictly more than any
-        # verb on REMOTE_ACTIONS does, so it is deliberately not on that
-        # tuple. A failed build away from the desk leaves nobody able to read
-        # the log, and the mailbox cadence plus a restart gap makes the
-        # outcome murky. Carries no payload field. A write-granted bot at
-        # home reaches it too. No parenthesis in this block.
+        # Rebuild and restart the Mac's Dark Army from the phone, at home and
+        # away, each door its own decision. It runs build.sh from the working
+        # tree as it stands, changes included, and replaces the installed
+        # app: strictly more than most verbs here do, and the person chose it
+        # behind the same proof as every other write. Carries no payload
+        # field and names no path. A write-granted bot reaches it too. See
+        # `REMOTE_ACTIONS` for the away rules. No parenthesis in this block.
         "rebuild_app",
         # Landing a Done card's branch on the local main line, from the
         # phone at home. The person's own press, armed and then confirmed
@@ -3681,8 +3682,8 @@ class ApiServer:
         # folder with the steps the person ticked. Away it rides the lease,
         # Face ID and the receipt token like every write. Away, a press that
         # ticks the Rebuild or Restart step is refused in words before the
-        # lease, because those two reach what rebuild_app does and that verb
-        # is home-only. No parenthesis in this block.
+        # lease, because the person chose the rebuild press, not a review run
+        # ticking those two steps. No parenthesis in this block.
         "review_start",
         # Away as well as at home, and its own decision: picking the fixes
         # is the moment the run waits on a person. Away it rides the lease
@@ -3740,6 +3741,14 @@ class ApiServer:
         # confirmed, riding the phone's lease, Face ID and the receipt
         # token, and it pushes nothing. No parenthesis in this block.
         "board_merge_batch",
+        # Away as well as at home, and its own decision: it builds the
+        # Mac's working tree as it stands and restarts Dark Army, which the
+        # person asked for from away. Away it rides the lease, the app's
+        # Face ID unlock and the receipt token like every write, and the
+        # bot's Write grant decides for the bot. It reads no payload field
+        # and names no path. A replay after the restart is refused by the
+        # press token the stamp keeps. No parenthesis in this block.
+        "rebuild_app",
     )
 
     #: The board names inside `LAN_ACTIONS`. Membership, not a prefix.
@@ -4387,9 +4396,11 @@ class ApiServer:
             if action not in actions:
                 return 404, "application/json", b'{"error":"not found"}'
             # A review run's Rebuild and Restart steps reach what
-            # `rebuild_app` does, so a door without `rebuild_app` (away)
-            # refuses a `review_start` that ticks either, in words.
-            if action == "review_start" and "rebuild_app" not in actions:
+            # `rebuild_app` does. `rebuild_app` is on the away door now, but
+            # the person chose the press, not a review run ticking it, so
+            # every door but home still refuses a `review_start` that ticks either,
+            # in words.
+            if action == "review_start" and actions is not self.LAN_ACTIONS:
                 ticked = self._review_ids(payload.get("steps"),
                                           integers=False) or []
                 if set(ticked) & set(self.HOME_ONLY_REVIEW_STEPS):

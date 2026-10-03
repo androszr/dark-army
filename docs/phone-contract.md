@@ -703,15 +703,16 @@ draft and `bobphone://usage` still land. Pinned by
 `host/tests/test_phone_menu.py`.
 
 **Rebuild & restart opens from the Menu's Rebuild tile.** `MenuSection.rebuild`
-is lit once the Mac's `rebuild` section says `available` and the phone is on the
-home door (`client.via != .relay`); the verb `rebuild_app` is on the Mac's home
-list only (`docs/transport-contract.md`), so from away the tile is dim and
-`RebuildView` says so rather than asking for Face ID to be turned away. The
+is lit once the Mac's `rebuild` section says `available` and the phone is home
+or the board says `rebuild_away_supported` (`RebuildRules.offered`); the verb
+`rebuild_app` is on both of the Mac's lists (`docs/transport-contract.md`) and
+away rides the lease and the app's Face ID unlock. Against an older Mac away,
+the tile is dim and `RebuildView` says the Mac offers it at home only. The
 first press arms (`Arm.Slot.rebuild`, "Really rebuild and restart?"), the
 second sends through `client.post` — never `enqueue`, and a lost reply is never
 replayed (`ReceiptLedger.neverReplayed`; a person's RETRY sends once), so a rebuild is never banked and fired on
 the phone's clock — and the screen reads "Rebuilding…" and
-warns the Mac will drop off the link. `RebuildRules.line` owns the words: a
+warns the Mac will drop off the link (away, `awayArmedWarning` adds that it is a minute or two and a failed build's last lines show here). `RebuildRules.line` owns the words: a
 dropped link after a press (or a held picture still saying `rebuilding`) reads
 "Restarting — waiting for the Mac", and "Rebuilt at HH:MM" only when
 `lastFinishedAt >= pressedAt`, so last week's stamp never reads as this press
@@ -1496,7 +1497,7 @@ wearing one of the phone's own `phoneAuthored` sentences), with RETRY (a
 no-op on a `.queued` or `.sending` row: a fresh token mid-transmit would
 send the press twice) and DISCARD (off while the row is `.sending`) as
 before; a refusal the person read stays listed for `refusedShown` (600 s).
-**Five presses keep the synchronous `post`**
+**Six presses keep the synchronous `post`**
 because the screen reads their reply body: the guarded card Save
 (`expected_revision`, whose 409 carries the Mac's copy), card creation
 (`OutboxStore`, its own queue), Clear done (count and token off the
@@ -1505,7 +1506,10 @@ Mac's report of what started and what was left alone, drawn verbatim)
 and START n TOGETHER (`board_start_batch`, whose 200 `detail` is the
 Mac's report of what started, what waits and what was skipped; a batch
 Start banked and fired later would put work in front of the launcher on
-the phone's clock, not the person's);
+the phone's clock, not the person's)
+and Rebuild & restart (`rebuild_app`, which restarts the Mac, so a banked press
+fired later would restart it on the phone's clock, and away its reason is
+load-bearing);
 terminal keystrokes stay on `post` as a stream with their own batching. Pinned by `host/tests/test_phone_action_queue.py` (the four pure
 functions under `swiftc`, the wiring by grep) and `OfflineCacheTests.swift`.
 

@@ -62,8 +62,8 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     /// Checks section (`Board.manualChecksSupported`), Plans once it lists
     /// its projects' plans (`Board.plansSupported`), History once it serves
     /// the week (`Board.historyWeekSupported`), Rebuild & restart once the
-    /// Mac says it can rebuild and the phone is on the home door
-    /// (`RebuildRules.canPress`'s two terms), every other section as `built`.
+    /// Mac says it can rebuild and the phone is home or the Mac offers it
+    /// away (`RebuildRules.offered`), every other section as `built`.
     func lit(scoutReports: Bool, manualChecks: Bool = false,
              plans: Bool = false, historyWeek: Bool = false,
              rebuild: Bool = false, review: Bool = true,
@@ -134,7 +134,10 @@ struct MenuView: View {
             manualChecks: client.snapshot.board.manualChecksSupported,
             plans: client.snapshot.board.plansSupported,
             historyWeek: client.snapshot.board.historyWeekSupported,
-            rebuild: client.snapshot.rebuild.available && client.via != .relay,
+            rebuild: RebuildRules.offered(
+                section: client.snapshot.rebuild,
+                away: client.via == .relay,
+                awayAllowed: client.snapshot.board.rebuildAwaySupported),
             review: client.snapshot.board.reviewSupported,
             worktrees: client.snapshot.board.worktreesSupported)
         return DecryptButton(action: { open = section }) {

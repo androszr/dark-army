@@ -1318,31 +1318,36 @@ struct AgentDetailView: View {
     }
 
     /// Offered only where the agent's report said Dark Army needs a rebuild
-    /// (`rebuild_offered`) and the Mac can rebuild. Home Wi-Fi only, so from
-    /// away the box says so instead of offering a press the Mac would turn
-    /// away. Armed then confirmed, then sent with `post`, never `enqueue`.
+    /// (`rebuild_offered`) and the Mac can rebuild. Away it is offered only
+    /// where the Mac says it accepts an away press, otherwise the box says
+    /// so instead of offering a press the Mac would turn away. Armed then confirmed, then sent with `post`, never `enqueue`.
     private var rebuildBox: some View {
         let section = client.snapshot.rebuild
         let away = client.via == .relay
+        let awayAllowed = client.snapshot.board.rebuildAwaySupported
         let connected = client.status == .live
+        let warning = away ? RebuildRules.awayArmedWarning : RebuildRules.armedWarning
         return VStack(alignment: .leading, spacing: 8) {
-            Text(arm.rebuild != nil ? RebuildRules.armedWarning : RebuildRules.agentPrompt)
+            Text(arm.rebuild != nil ? warning : RebuildRules.agentPrompt)
                 .font(Theme.mono(11))
                 .foregroundStyle(arm.rebuild != nil ? Theme.alarm : Theme.dim)
             Text(RebuildRules.line(section: section, connected: connected,
-                                   away: away, pressedAt: rebuildPressedAt))
+                                   away: away, awayAllowed: awayAllowed,
+                                   pressedAt: rebuildPressedAt))
                 .font(Theme.mono(11))
                 .foregroundStyle(RebuildRules.isFailure(section: section,
                                                         pressedAt: rebuildPressedAt)
                                  ? Theme.alarm : Theme.dim)
-            if !away {
+            if RebuildRules.offered(section: section, away: away,
+                                    awayAllowed: awayAllowed) {
                 DecryptButton(arm.rebuild != nil
                               ? RebuildRules.armedLabel : RebuildRules.idleLabel) {
                     pressRebuild()
                 }
                 .buttonStyle(AlarmOutline(
                     color: arm.rebuild != nil ? Theme.alarm : Theme.phosphor))
-                .disabled(busy || !RebuildRules.canPress(section: section, away: away)
+                .disabled(busy || !RebuildRules.canPress(section: section, away: away,
+                                                   awayAllowed: awayAllowed)
                           || !connected)
                 .accessibilityLabel(arm.rebuild != nil
                     ? "Confirm rebuild and restart, step two of two"

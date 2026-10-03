@@ -403,10 +403,6 @@ judged by the Start rule, and one armed-then-confirmed press sending
 `board_start_batch` synchronously, never queued, behind
 `start_batch_supported`. In full in `docs/phone-contract.md`.
 
-**The phone's Menu lists every card's worktree** and merges ticked finished
-cards in a row (3 Oct 2026): `docs/card-worktrees.md`, *Several finished cards
-merge one after another*.
-
 **The agent sheet swipes to the next agent in Needs you** (28 Sep 2026) —
 in full in `docs/phone-contract.md`.
 

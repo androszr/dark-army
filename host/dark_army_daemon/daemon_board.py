@@ -1013,6 +1013,11 @@ class BoardVerbsMixin:
             # false), so the phone draws the Backlog row's Select control
             # **absent** rather than present and refused.
             "start_batch_supported": True,
+            # This daemon carries `rebuild_app` on both phone tuples; an
+            # older one 404s it from away and sends no key, which decodes
+            # false, so the phone draws the away tile dim rather than
+            # offering a press that would be refused.
+            "rebuild_away_supported": True,
             # This daemon serves the sealed `conversation` read — a session's
             # turns, paged by a cursor. An older Mac sends no key, which
             # decodes false, so the phone opens Details and draws one
