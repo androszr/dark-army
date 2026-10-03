@@ -102,7 +102,8 @@ PUSH_MAX_PER_MINUTE = 10
 # The kind words a buzz may carry — `alerts.KINDS`, restated here so the wire
 # check reads as a closed set in the file that writes the wire. Anything else
 # is not sent: the mailbox then plays its default sound, exactly as before.
-PUSH_KINDS = ("security", "permission", "question", "attention", "finished")
+PUSH_KINDS = ("security", "permission", "question", "picks", "attention",
+              "finished")
 #: Cast slugs a buzz may name as its portrait. `identity.NAMES` lowercased,
 #: every one ASCII (`test_identity.py` pins that). The live card's slug is
 #: checked against the same tuple (`push_activity`).
@@ -139,7 +140,7 @@ PUSH_ID_SHAPE = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
 #: slug's shape (a lowercase cast name, or empty). Never `title`: an
 #: undeployed mailbox answers a body without one with 400, which is exactly
 #: the refusal an old relay should give the new leg — never a mis-sent buzz.
-ACTIVITY_KINDS = ("permission", "question", "attention")
+ACTIVITY_KINDS = ("permission", "question", "picks", "attention")
 ACTIVITY_EVENTS = ("update", "end")
 #: What `push_activity_outcome` can answer; the daemon's retry rule reads it.
 ACTIVITY_OUTCOMES = ("landed", "refused", "dead", "unreachable", "skipped")
@@ -865,6 +866,11 @@ class RelayConnector:
         sid = str(body.get("session_id") or "")
         if PUSH_ID_SHAPE.match(sid):
             fields["session_id"] = sid
+        # A review run's id (`picks`): joined by the same shape, and only
+        # when there is one — every other card's wire is unchanged.
+        run_id = str(body.get("run_id") or "")
+        if PUSH_ID_SHAPE.match(run_id):
+            fields["run_id"] = run_id
         for field in ("working", "needs_you", "standing_by", "tokens_k",
                       "tokens_k_hour"):
             if field not in body:

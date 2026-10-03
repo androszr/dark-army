@@ -7,7 +7,7 @@
 //   buzz's subject: opaque ids the phone resolves against the picture it
 //   already holds when the Mac is out of reach; they pick no category.
 // The same route carries the phone's live card: body = {tok, env, event,
-//   nickname?, slug?, kind?, work?, since?, session_id?, working?,
+//   nickname?, slug?, kind?, work?, since?, session_id?, run_id?, working?,
 //   needs_you?, standing_by?, cost_usd?, tokens_k?, cost_usd_hour?,
 //   tokens_k_hour?} where `event` is
 //   "update" or "end" — an ActivityKit push to the activity's own token,
@@ -26,7 +26,8 @@
 // or a tool's bare name — the body), and the lock-screen leg's act word plus
 // opaque ids that only pick a category — so the route can never carry an
 // arbitrary payload, the command being approved, a file path, a project
-// name or a sound name. Blank or absent `work` / `need` is normal, not a 400.
+// name (one exception, the person's decision of 3 Oct 2026: a `picks` buzz
+// or card with no nickname known names its project) or a sound name. Blank or absent `work` / `need` is normal, not a 400.
 //
 // APNs specifics, both learned the hard way elsewhere: Vercel's global
 // fetch (undici) speaks HTTP/1.1 only and APNs requires HTTP/2, so
@@ -64,6 +65,8 @@ const SOUNDS = {
   security: "buzz-permission.wav",
   permission: "buzz-permission.wav",
   question: "buzz-question.wav",
+  // A review waiting on picks plays the question cue: no new file.
+  picks: "buzz-question.wav",
   attention: "buzz-question.wav",
   finished: "buzz-finished.wav",
 };
@@ -74,7 +77,7 @@ const ACTS = ["permission", "acknowledge"];  // pinned to relay_client.PUSH_ACTS
 const ID_SHAPE = /^[A-Za-z0-9._:-]{1,120}$/;
 // The live card's leg, pinned to relay_client.ACTIVITY_* / live_activity.KINDS.
 const ACTIVITY_EVENTS = ["update", "end"];
-const ACTIVITY_KINDS = ["permission", "question", "attention"];
+const ACTIVITY_KINDS = ["permission", "question", "picks", "attention"];
 // identity.NAMES lowercased, pinned by test_phone_buzz_kinds.py. The one
 // face check for the buzz and the live card alike: a face off this list is
 // dropped, and one the list knows always reaches the phone.
@@ -308,10 +311,13 @@ module.exports = async (req, res) => {
     const event = String(body.event || "");
     const slug = String(body.slug || "");
     const sid = body.session_id === undefined ? "" : String(body.session_id);
+    // A review run's id (kind `picks`): joined only when present.
+    const runId = body.run_id === undefined ? "" : String(body.run_id);
     const since = body.since === undefined ? 0 : Number(body.since);
     if (!ACTIVITY_EVENTS.includes(event)
         || (slug !== "" && !FACE_SLUGS.includes(slug))
         || (sid !== "" && !ID_SHAPE.test(sid))
+        || (runId !== "" && !ID_SHAPE.test(runId))
         || !Number.isFinite(since) || since < 0
         || (event === "update" && (!ACTIVITY_KINDS.includes(kind)
                                    || body.since === undefined))
@@ -335,6 +341,7 @@ module.exports = async (req, res) => {
         },
       },
     };
+    if (runId) payload.aps["content-state"].run_id = runId;
     if (event === "end") payload.aps["dismissal-date"] = timestamp;
     for (const key of FLEET_INT_KEYS) {
       if (body[key] === undefined) continue;

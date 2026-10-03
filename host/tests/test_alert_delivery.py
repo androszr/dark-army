@@ -1636,3 +1636,183 @@ def test_a_pidless_reporter_is_not_held(monkeypatch):
     d._session_states = {"s1": {"state": "idle"}}
     snap = _reporter_snapshot(quiet=time.time())
     assert d._report_hold(AlertPolicy(), snap) == set()
+
+
+# ── a review run waiting on picks: the buzz and its wire ─────────────────────
+
+def _picks_alert(sid="", **over):
+    return dict({"id": "review:r-1:picks:1", "session_id": sid,
+                 "nickname": "repo", "title": "repo is waiting on your picks",
+                 "body": "2 findings — pick the fixes", "rule": "review_picks",
+                 "severity": "warn", "kind": "picks", "actions": [],
+                 "need": "Pick the fixes: 2 findings"}, **over)
+
+
+@pytest.mark.asyncio
+async def test_a_picks_alert_with_no_session_is_not_withheld_unlisted(monkeypatch):
+    """Exempt from the unlisted rung by kind, as `security` is: its listing
+    is the run's own `picks` state, not a session the phone's list shows."""
+    d = _pushable(monkeypatch)
+    calls = _outcomes(d, monkeypatch)
+    d._undelivered = [_picks_alert("")]
+    d._deliver_alerts()
+    await _settle(d)
+    ((_did, body),) = d._relay_connector.pushed
+    assert body["kind"] == "picks" and body["title"] == "repo is waiting on your picks"
+    assert [(ids, got) for ids, got, _ in calls] == [
+        (["review:r-1:picks:1"], "sent:1")]
+
+
+@pytest.mark.asyncio
+async def test_a_picks_alert_on_an_unlisted_bound_session_is_still_sent(monkeypatch):
+    d = _pushable(monkeypatch)
+    d._undelivered = [_picks_alert("s3")]          # `s3` is not on the list
+    d._deliver_alerts()
+    await _settle(d)
+    assert len(d._relay_connector.pushed) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_picks_alert_is_not_held_for_the_card_grace(monkeypatch):
+    from dark_army_daemon import daemon as daemon_module
+
+    d = _pushable(monkeypatch)
+    monkeypatch.setattr(daemon_module, "PUSH_GRACE_SECONDS", 3600.0)
+    calls = _outcomes(d, monkeypatch)
+    d._undelivered = [_picks_alert("s1")]
+    d._deliver_alerts()
+    await _settle(d)
+    assert len(d._relay_connector.pushed) == 1
+    assert [got for _, got, _ in calls] == ["sent:1"]
+
+
+@pytest.mark.asyncio
+async def test_a_picks_alert_is_still_withheld_while_the_mac_is_in_use(monkeypatch):
+    d = _pushable(monkeypatch)
+    _idle(monkeypatch, 5.0)
+    calls = _outcomes(d, monkeypatch)
+    d._undelivered = [_picks_alert("s1")]
+    d._deliver_alerts()
+    await _settle(d)
+    assert d._relay_connector.pushed == []
+    assert [got for _, got, _ in calls] == ["withheld:mac_active"]
+
+
+def test_the_picks_buzz_is_composed_from_its_own_closed_fields():
+    alert = _picks_alert("s1", nickname="Vex")
+    assert BobDaemon._compose_push_title([alert]) == "Vex is waiting on your picks"
+    assert BobDaemon._compose_push_kind([alert]) == "picks"
+    assert BobDaemon._compose_push_need([alert]) == "Pick the fixes: 2 findings"
+    assert BobDaemon._compose_push_act([alert]) == {}
+
+
+def test_picks_ranks_below_a_question_and_above_attention():
+    q, p, a = (dict(_alert(), kind=k) for k in ("question", "picks", "attention"))
+    assert BobDaemon._compose_push_kind([a, p]) == "picks"
+    assert BobDaemon._compose_push_kind([a, p, q]) == "question"
+
+
+@pytest.mark.asyncio
+async def test_the_picks_buzz_carries_no_finding_text(monkeypatch):
+    d = _pushable(monkeypatch)
+    alert = _picks_alert("s1", body="leaks the api token in utils.py",
+                         subtitle="secret-project")
+    d._undelivered = [alert]
+    d._deliver_alerts()
+    await _settle(d)
+    ((_did, body),) = d._relay_connector.pushed
+    flat = json.dumps(body)
+    assert "token" not in flat and "utils.py" not in flat
+    assert "secret-project" not in flat
+    assert body["need"] == "Pick the fixes: 2 findings"
+
+
+@pytest.fixture
+def _relay_store(tmp_path, monkeypatch):
+    from dark_army_daemon import devices, paths, relay
+
+    monkeypatch.setattr(paths, "RELAY_PATH", tmp_path / "relay.json")
+    monkeypatch.setattr(paths, "DEVICES_PATH", tmp_path / "devices.json")
+    monkeypatch.setattr(paths, "STATE_DIR", tmp_path / "state")
+    relay.reset()
+    devices.reset()
+    yield
+    relay.reset()
+    devices.reset()
+
+
+@pytest.mark.asyncio
+async def test_a_review_run_entering_picks_buzzes_once_and_the_live_card_names_it(
+        tmp_path, monkeypatch, _relay_store):
+    """(success criterion) A paired phone, the Mac idle, a published run
+    moving reviewing -> picks -> fixing over three snapshots: one buzz
+    ("<who> is waiting on your picks", kind picks), one live-card update
+    naming the run, then the card comes down once the run reads `fixing`."""
+    import asyncio
+
+    from dark_army_daemon import alerts as alerting
+    from dark_army_daemon import buzz_ledger, relay
+    from tests.test_live_activity import _connector
+
+    monkeypatch.setattr(BobDaemon, "_schedule_agents_push", lambda self: None)
+    monkeypatch.setattr(buzz_ledger, "mac_idle_seconds", lambda: None)
+    conn, d, calls = _connector(tmp_path)
+    relay.note_push_token("dev-1", "ab" * 32, "prod")
+    relay.note_activity_token("dev-1", "cd" * 32, "prod")
+    d.phone_push_enabled = True
+    d.remote_access_enabled = True
+    d._relay_connector = conn
+    d._observers = []
+    d._board_state = {"cards": []}
+    policy = alerting.AlertPolicy()
+    row = {"session_id": "s1", "nickname": "Vex", "project": "repo",
+           "idle_seconds": 0.0, "signals": []}
+
+    async def settle():
+        for _ in range(6):
+            await asyncio.sleep(0)
+        tasks = list(getattr(d, "_phone_leg_tasks", None) or ())
+        if tasks:
+            await asyncio.gather(*tasks)
+        for _ in range(6):
+            await asyncio.sleep(0)
+
+    def tick(state, now):
+        d._review_published = [{
+            "id": "r-1", "state": state, "session_id": "s1", "project": "repo",
+            "findings_at": 1_700_000_000.0,
+            "findings": [{"index": 1, "line": "leaks the api token"},
+                         {"index": 2, "line": "drops a table"}]}]
+        snapshot = {"running": [dict(row)], "waiting": [], "sleeping": [],
+                    "finished": []}
+        d._agents_snapshot_cache = snapshot
+        raised = policy.evaluate(snapshot, {}, now,
+                                 review_runs=d._published_review_runs())
+        d._undelivered.extend(a.as_dict() for a in raised)
+        d._deliver_alerts()
+        return snapshot
+
+    d._undelivered = []
+    for state, now in (("reviewing", 100.0), ("picks", 110.0), ("picks", 120.0),
+                       ("fixing", 130.0)):
+        snapshot = tick(state, now)
+        await settle()
+        if state == "reviewing":
+            continue                    # no card up: the phone has none yet
+        if now == 110.0:
+            # The phone starts its own card for the run and registers the
+            # activity's token, which clears the Mac's "ended" mark.
+            d.forget_live_activity("dev-1")
+        d._push_live_activity(snapshot)
+        await settle()
+
+    buzzes = [c[2] for c in calls if "title" in c[2]]
+    cards = [c[2] for c in calls if "event" in c[2]]
+    assert len(buzzes) == 1
+    assert buzzes[0]["kind"] == "picks"
+    assert buzzes[0]["title"] == "Vex is waiting on your picks"
+    assert "token" not in json.dumps(buzzes[0])
+    assert [c["event"] for c in cards] == ["update", "end"]
+    assert cards[0]["kind"] == "picks" and cards[0]["run_id"] == "r-1"
+    assert cards[0]["session_id"] == "s1" and cards[0]["nickname"] == "Vex"
+    assert "token" not in json.dumps(cards[0])

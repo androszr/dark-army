@@ -389,7 +389,8 @@ def test_the_kinds_are_ordered_most_urgent_first():
     # `security` leads: a burst of refused knocks at the phone doors
     # (`access_log.py`) is about the machine, not an agent, and a buzz
     # collapsing it with an agent's ask plays the more urgent cue.
-    assert KINDS == ("security", "permission", "question", "attention", "finished")
+    assert KINDS == ("security", "permission", "question", "picks", "attention",
+                     "finished")
 
 
 def test_a_standing_question_under_the_idle_reminder_is_a_question():
@@ -920,3 +921,192 @@ def test_an_unknown_start_seeds_nothing():
     row = dict(reported(), quiet_since=5.0, idle_seconds=3)
     assert [a.rule for a in policy.evaluate(snap(sleeping=[row]), {}, now=8.0)] \
         == ["report"]
+
+
+# ── a review run waiting on picks (REVIEW_PICKS_RULE) ────────────────────────
+
+from dark_army_daemon import alerts as _alerts  # noqa: E402
+
+
+def run(run_id="r-1", state="picks", session_id="s1", project="repo",
+        lines=("a", "b"), findings_at=50.0):
+    return {"id": run_id, "state": state, "session_id": session_id,
+            "project": project, "findings_at": findings_at,
+            "findings": [{"index": i + 1, "line": ln}
+                         for i, ln in enumerate(lines)]}
+
+
+def _picks(out):
+    return [a for a in out if a.rule == _alerts.REVIEW_PICKS_RULE]
+
+
+def test_the_picks_kind_sits_between_question_and_attention():
+    assert KINDS.index("question") < KINDS.index("picks") < KINDS.index("attention")
+    assert _alerts.KIND_PICKS == "picks"
+
+
+def test_a_run_in_picks_raises_one_picks_alert():
+    policy = AlertPolicy()
+    out = policy.evaluate(snap(running=[agent()]), {}, now=100,
+                          review_runs=[run()])
+    (alert,) = _picks(out)
+    assert alert.kind == "picks" and alert.session_id == "s1"
+    assert alert.title == "Vex is waiting on your picks"
+    assert alert.need == "Pick the fixes: 2 findings"
+    assert alert.severity == "warn"
+    assert alert.character == "vex"
+    assert alert.actions == ("reveal", "mute")
+    # No finding's words reach the alert.
+    secret = AlertPolicy().evaluate(
+        snap(running=[agent()]), {}, now=100,
+        review_runs=[run(lines=("leaks the api token in utils.py",))])
+    assert "token" not in repr(_picks(secret)[0].as_dict())
+
+
+def test_a_second_evaluate_on_the_same_picture_raises_nothing():
+    """`_forget_gone` drops any key not shaped like a session id unless
+    `live` names it — the buzz would repeat every tick."""
+    policy = AlertPolicy()
+    runs = [run()]
+    first = policy.evaluate(snap(running=[agent()]), {}, now=100, review_runs=runs)
+    second = policy.evaluate(snap(running=[agent()]), {}, now=105, review_runs=runs)
+    third = policy.evaluate(snap(running=[agent()]), {}, now=110, review_runs=runs)
+    assert len(_picks(first)) == 1
+    assert _picks(second) == [] and _picks(third) == []
+
+
+def test_a_growing_findings_file_is_one_alert_and_a_new_run_fires_once():
+    """The observer re-reads `findings.md` while the run waits: "0 findings"
+    then "5 findings" is one entry into `picks`, one buzz."""
+    policy = AlertPolicy()
+    row = snap(running=[agent()])
+    assert len(_picks(policy.evaluate(
+        row, {}, 100, review_runs=[run(lines=())]))) == 1
+    assert _picks(policy.evaluate(
+        row, {}, 110, review_runs=[run(lines=("a", "b", "c"), findings_at=105.0)])) == []
+    # Leaving `picks` raises nothing and a later run is its own event.
+    assert _picks(policy.evaluate(
+        row, {}, 120, review_runs=[run(state="fixing")])) == []
+    assert len(_picks(policy.evaluate(
+        row, {}, 130, review_runs=[run(run_id="r-2")]))) == 1
+    assert _picks(policy.evaluate(
+        row, {}, 140, review_runs=[run(run_id="r-2")])) == []
+
+
+def test_a_run_whose_findings_landed_before_this_daemon_started_does_not_buzz():
+    policy = AlertPolicy(started_at=1000.0)
+    row = snap(running=[agent()])
+    old = run(findings_at=900.0)
+    assert _picks(policy.evaluate(row, {}, 1010.0, review_runs=[old])) == []
+    # Marked delivered: still silent on later ticks.
+    assert _picks(policy.evaluate(row, {}, 1020.0, review_runs=[old])) == []
+    fresh = AlertPolicy(started_at=1000.0)
+    assert len(_picks(fresh.evaluate(
+        row, {}, 1010.0, review_runs=[run(findings_at=1005.0)]))) == 1
+
+
+def test_findings_in_the_second_the_daemon_started_still_buzz():
+    """`findings_at` is published as whole seconds; `started_at` is exact."""
+    policy = AlertPolicy(started_at=1000.6)
+    out = policy.evaluate(snap(running=[agent()]), {}, 1001.0,
+                          review_runs=[run(findings_at=1000.0)])
+    assert len(_picks(out)) == 1
+
+
+def test_one_finding_is_singular():
+    out = AlertPolicy().evaluate(snap(running=[agent()]), {}, 100,
+                                 review_runs=[run(lines=("a",))])
+    (alert,) = _picks(out)
+    assert alert.need == "Pick the fixes: 1 finding"
+    assert alert.body == "1 finding — pick the fixes"
+
+
+def test_a_run_not_in_picks_raises_nothing():
+    policy = AlertPolicy()
+    for state in ("reviewing", "fixing", "done", "exited", "ended"):
+        out = policy.evaluate(snap(running=[agent()]), {}, now=100,
+                              review_runs=[run(state=state)])
+        assert _picks(out) == []
+
+
+def test_a_muted_or_suppressed_bound_session_withholds():
+    muted = AlertPolicy()
+    muted.mute("s1")
+    assert _picks(muted.evaluate(snap(running=[agent()]), {}, 100,
+                                 review_runs=[run()])) == []
+    quiet = AlertPolicy()
+    assert _picks(quiet.evaluate(snap(running=[agent()]), {}, 100,
+                                 suppressed=["s1"], review_runs=[run()])) == []
+    focused = AlertPolicy()
+    assert _picks(focused.evaluate(snap(running=[agent()]), {}, 100,
+                                   panel_focused=["s1"], review_runs=[run()])) == []
+
+
+def test_the_bound_sessions_card_and_report_rules_are_skipped_but_its_prompt_is_not():
+    policy = AlertPolicy()
+    cards = {"s1": {"hook": "Stop", "message": "Waiting for input"}}
+    out = policy.evaluate(snap(waiting=[agent(signals=[])]), cards, 100,
+                          review_runs=[run()])
+    assert [a.rule for a in out] == [_alerts.REVIEW_PICKS_RULE]
+    prompts = {"s1": {"request_id": "q1", "tool_name": "Bash"}}
+    out = AlertPolicy().evaluate(snap(waiting=[agent()]), cards, 100,
+                                 prompts=prompts, review_runs=[run()])
+    assert sorted(a.rule for a in out) == ["permission", "review_picks"]
+    # An unbound run leaves every session's own card alone.
+    out = AlertPolicy().evaluate(snap(waiting=[agent()]), cards, 100,
+                                 review_runs=[run(session_id="")])
+    assert sorted(a.rule for a in out) == ["card", "review_picks"]
+
+
+def test_the_report_rule_is_skipped_for_the_bound_session():
+    policy = AlertPolicy()
+    row = dict(agent(), work_report={"headline": "Done", "sections": []},
+               idle_seconds=1.0)
+    out = policy.evaluate(snap(sleeping=[row]), {}, 100, review_runs=[run()])
+    assert [a.rule for a in out] == [_alerts.REVIEW_PICKS_RULE]
+
+
+def test_the_picks_alert_neither_waits_on_nor_stamps_the_cooldown():
+    policy = AlertPolicy()
+    cards = {"s1": {"hook": "Stop", "message": "Waiting for input"}}
+    # A card alert 10s before does not swallow the picks alert.
+    first = policy.evaluate(snap(waiting=[agent(signals=[WAITING])]), cards, 100)
+    assert [a.rule for a in first] == ["card"]
+    out = policy.evaluate(snap(waiting=[agent(signals=[WAITING])]), cards, 110,
+                          review_runs=[run()])
+    assert len(_picks(out)) == 1
+    # And it stamped nothing: a card 10s after still fires.
+    fresh = AlertPolicy()
+    fresh.evaluate(snap(running=[agent()]), {}, 100, review_runs=[run()])
+    assert "s1" not in fresh._last_per_session
+    after = fresh.evaluate(snap(waiting=[agent(signals=[WAITING])]),
+                           {"s1": {"hook": "Stop", "message": "x"}}, 110)
+    assert [a.rule for a in after] == ["card"]
+
+
+def test_the_title_is_the_bound_row_else_the_project():
+    out = AlertPolicy().evaluate(snap(running=[agent(nickname="")]), {}, 100,
+                                 review_runs=[run(project="ledger-app")])
+    assert _picks(out)[0].title == "ledger-app is waiting on your picks"
+    unbound = AlertPolicy().evaluate(snap(), {}, 100,
+                                     review_runs=[run(session_id="")])
+    (alert,) = _picks(unbound)
+    assert alert.title == "repo is waiting on your picks"
+    assert alert.nickname == "repo"
+    nameless = AlertPolicy().evaluate(snap(), {}, 100,
+                                      review_runs=[run(session_id="", project="")])
+    assert _picks(nameless)[0].title == "A review is waiting on your picks"
+
+
+def test_an_unbound_picks_alert_has_no_face_and_no_actions():
+    out = AlertPolicy().evaluate(snap(), {}, 100,
+                                 review_runs=[run(session_id="")])
+    (alert,) = _picks(out)
+    assert alert.session_id == "" and alert.character == "" and alert.actions == ()
+    assert alert.kind == "picks"
+
+
+def test_a_malformed_run_is_ignored():
+    out = AlertPolicy().evaluate(snap(), {}, 100,
+                                 review_runs=["x", {"state": "picks"}, None])
+    assert out == []

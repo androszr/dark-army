@@ -215,7 +215,7 @@ def test_the_sound_is_chosen_here_from_a_closed_set():
     reuses the permission cue: no new file."""
     text = _read(PUSH)
     sounds = _sounds(text)
-    assert set(sounds) == {"security", "permission", "question", "attention", "finished"}
+    assert set(sounds) == {"security", "permission", "question", "picks", "attention", "finished"}
     assert sounds["security"] == sounds["permission"]
     assert all(v.startswith("buzz-") and v.endswith(".wav")
                for v in sounds.values())
@@ -236,7 +236,7 @@ def test_the_activity_leg_is_a_closed_set_and_never_carries_a_title():
     400 rather than mis-sending an alert."""
     text = _read(PUSH)
     assert 'const ACTIVITY_EVENTS = ["update", "end"];' in text
-    assert 'const ACTIVITY_KINDS = ["permission", "question", "attention"];' in text
+    assert 'const ACTIVITY_KINDS = ["permission", "question", "picks", "attention"];' in text
     assert '(slug !== "" && !FACE_SLUGS.includes(slug))' in text
     assert "ACTIVITY_STALE_SECONDS = 1800" in text
     branch = text.split("if (body.event !== undefined) {")[1].split("} else {")[0]

@@ -704,3 +704,17 @@ def test_the_lock_screen_card_fits_inside_the_system_height():
     # The island keeps its stacked cells: only the Lock Screen goes inline.
     island = text.split("struct NeedsYouLockScreenView")[0]
     assert "inline: true" not in island
+
+
+def test_the_live_card_names_a_review_run_waiting_on_picks():
+    """Source pins for the fourth kind and the run id: the shared state
+    decodes `run_id`, draws "pick fixes" and counts a run id as a face; the
+    rule lists the review wire among the kinds that may be the subject."""
+    shared = _read(ACTIVITY_SHARED)
+    assert shared.count('case runId = "run_id"') == 1
+    assert shared.count('case "picks": return "pick fixes"') == 1
+    assert "!sessionId.isEmpty || !runId.isEmpty" in shared
+    rule = _read(LIVE_ACTIVITY)
+    assert ".reviewPicks" in rule.split("static let sessionKinds")[1].split("\n\n")[0]
+    assert "a.runId == b.runId" in rule
+    assert rule.count("reviewPicks") >= 2

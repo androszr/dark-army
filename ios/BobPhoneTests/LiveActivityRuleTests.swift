@@ -449,4 +449,85 @@ final class LiveActivityRuleTests: XCTestCase {
             LiveActivityController.registrationFields(token: "ab", env: "dev"),
             ["token": "ab", "env": "dev", "shape": "2"])
     }
+
+    // MARK: - a review run waiting on picks
+
+    private func reviewSnapshot(sessionId: String = "w1", extra: String = "",
+                                waiting: String = "") throws -> Snapshot {
+        try snapshot("""
+        {
+          "generated_at": 1000,
+          "agents": {"waiting": [\(waiting)]\(extra)},
+          "review": {"available": true, "runs": [
+            {"id":"r-1","project":"P","state":"picks","session_id":"\(sessionId)",
+             "started_at":500,"findings_at":900,
+             "findings":[{"index":1,"line":"a"},{"index":2,"line":"b"}]}
+          ]}
+        }
+        """)
+    }
+
+    func testARunInPicksIsTheSubjectWithItsBoundRowsNicknameAndFace() throws {
+        let snap = try reviewSnapshot(
+            waiting: #"{"session_id":"w1","nickname":"Vex","project":"P","idle_seconds":40}"#)
+        // The bound session's plain wait is the run's, never a second entry.
+        XCTAssertEqual(snap.decisionItems.map(\.target.key), ["r:r-1"])
+        let subject = try XCTUnwrap(NeedsYouActivityRule.subject(from: snap))
+        XCTAssertEqual(subject.kind, "picks")
+        XCTAssertEqual(subject.runId, "r-1")
+        XCTAssertEqual(subject.sessionId, "w1")
+        XCTAssertEqual(subject.nickname, "Vex")
+        XCTAssertEqual(subject.slug, "vex")
+        XCTAssertEqual(subject.since, 900)
+        XCTAssertEqual(subject.kindWord, "pick fixes")
+    }
+
+    func testAnUnboundRunSaysItsProjectWithNoFaceAndNoSession() throws {
+        let snap = try reviewSnapshot(sessionId: "")
+        let subject = try XCTUnwrap(NeedsYouActivityRule.subject(from: snap))
+        XCTAssertEqual(subject.kind, "picks")
+        XCTAssertEqual(subject.runId, "r-1")
+        XCTAssertEqual(subject.nickname, "P")
+        XCTAssertEqual(subject.slug, "")
+        XCTAssertEqual(subject.sessionId, "")
+        XCTAssertEqual(subject.work, "")
+        XCTAssertTrue(subject.hasFace)
+    }
+
+    func testAPromptOnTheBoundSessionOutranksTheRun() throws {
+        let snap = try snapshot("""
+        {
+          "generated_at": 1000,
+          "agents": {"running": [
+            {"session_id":"w1","nickname":"Vex","project":"P","idle_seconds":5}]},
+          "permissions": [
+            {"request_id":"pr","session_id":"w1","tool_name":"Bash","description":"ls"}
+          ],
+          "review": {"available": true, "runs": [
+            {"id":"r-1","project":"P","state":"picks","session_id":"w1","findings_at":900}
+          ]}
+        }
+        """)
+        let subject = try XCTUnwrap(NeedsYouActivityRule.subject(from: snap))
+        XCTAssertEqual(subject.kind, "permission")
+        XCTAssertEqual(subject.sessionId, "w1")
+        XCTAssertEqual(subject.runId, "")
+    }
+
+    func testARunOutranksAPlainWaitingRow() throws {
+        let snap = try reviewSnapshot(
+            sessionId: "",
+            waiting: #"{"session_id":"w2","nickname":"Cipher","project":"P","idle_seconds":900}"#)
+        XCTAssertEqual(NeedsYouActivityRule.subject(from: snap)?.runId, "r-1")
+    }
+
+    func testAChangedRunIdIsAnUpdate() {
+        let a = NeedsYouAttributes.ContentState(nickname: "P", kind: "picks",
+                                                since: 900, runId: "r-1")
+        var b = a
+        b.runId = "r-2"
+        XCTAssertFalse(NeedsYouActivityRule.same(a, b))
+        XCTAssertEqual(NeedsYouActivityRule.plan(current: a, subject: b), .update(b))
+        XCTAssertEqual(NeedsYouActivityRule.kindWord(.reviewPicks), "picks")
+    }
 }

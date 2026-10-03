@@ -9983,14 +9983,21 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                                  suppressed=self._alert_suppressed(out),
                                  prompts=prompt_facts,
                                  panel_focused=self._panel_focused_sessions(),
-                                 report_hold=report_hold)
+                                 report_hold=report_hold,
+                                 review_runs=self._published_review_runs())
         self._update_report_candidates(policy, out)
         if raised:
             # Bounded, and ordered oldest first: the tail is a record of what was
             # decided, kept so a surface that arrives late can see it.
             rows = [a.as_dict() for a in raised]
             if capture is not None:
-                capture.freeze_alert_targets(rows, out,
+                # A picks alert is not a decision episode, and an empty
+                # session id would bind every session-less card to it.
+                capture.freeze_alert_targets(
+                    [row for row in rows
+                     if row.get("session_id")
+                     or row.get("rule") != alerting.REVIEW_PICKS_RULE],
+                    out,
                     (getattr(self, "_board_state", None) or {}).get("cards", []),
                     prompt_facts)
             # What the policy saw when it chose the kind, reduced to counts
@@ -10005,7 +10012,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
             for alert, row in zip(raised, rows):
                 sid = alert.session_id
                 gap = (alert.created_at - before[sid]) if sid in before else None
-                name, entry = by_sid.get(sid, ("", None))
+                name, entry = by_sid.get(sid, ("", None)) if sid \
+                    else ("", None)
                 row["_buzz_evidence"] = buzz_ledger.evidence(
                     entry, cards.get(sid), cooldown_gap=gap, category=name)
             self._alerts = (self._alerts + rows)[-32:]
@@ -11813,6 +11821,13 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                 rest.append(alert)
         return finished, rest
 
+    def _published_review_runs(self) -> list:
+        """The last published `review` section's runs, rebound whole by
+        `review_snapshot()` — so the executor's alert gate and the loop's
+        Live Activity read the same list with no lock, never the mutable
+        records (`_board_state`'s precedent)."""
+        return getattr(self, "_review_published", None) or []
+
     @staticmethod
     def _split_unlisted(pending: list, listed) -> tuple[list, list]:
         """`(unlisted, rest)` — an alert whose session the phone's Needs you
@@ -11831,8 +11846,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
         for alert in pending:
             sid = str(alert.get("session_id") or "") \
                 if isinstance(alert, dict) else ""
-            if isinstance(alert, dict) \
-                    and alert.get("kind") == alerting.KIND_SECURITY:
+            # `picks` is exempt by kind as well: its listing is the run's own
+            # `picks` state (the phone's `r:<run id>` entry), not a session.
+            if isinstance(alert, dict) and alert.get("kind") in (
+                    alerting.KIND_SECURITY, alerting.KIND_PICKS):
                 rest.append(alert)
             elif sid and sid in listed:
                 rest.append(alert)
@@ -12104,7 +12121,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
         one line saying what is needed (`need`, from `_compose_push_need`) —
         the agent's own summary or question text, or a tool's bare name.
         What still never rides is the command or input preview, the tool's
-        `description`, a file path, the project name and the branch. This
+        `description`, a file path, the project name and the branch — with
+        one exception, the person's decision of 3 Oct 2026: a `picks` alert
+        (a review run waiting on its picks) carries the project as its
+        `nickname` where no nickname is known, so that title and the live
+        card's nickname name the project in plaintext. This
         helper in particular reads no key of the alert but `nickname` and
         `kind`; the kind is `Alert.kind`, decided once in
         `AlertPolicy.evaluate` and never re-derived here. The phone fetches the
@@ -12128,6 +12149,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
             return f"{nickname} wants to run a tool"
         if kind == "question":
             return f"{nickname} asked you a question"
+        if kind == alerting.KIND_PICKS:
+            return f"{nickname} is waiting on your picks"
         if kind == "finished":
             return f"{nickname} finished"
         return f"{nickname} needs you"
@@ -12432,14 +12455,16 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                     for n in self._notification_snapshot()]
         return live_activity.subject(
             snapshot or {}, self._prompts_by_session(),
-            notified=notified, cards=cards)
+            notified=notified, cards=cards,
+            review_runs=self._published_review_runs())
 
     def _activity_content(self, subject: dict) -> dict:
         """The wire dict for one subject, `work` on `_compose_push_work`'s
         rule (the bound card's title, else the row's name, clamped)."""
         sid = str(subject.get("session_id") or "")
         return live_activity.content_state(
-            subject, self._work_line_for_session(sid), time.time())
+            subject, self._work_line_for_session(sid) if sid else "",
+            time.time())
 
     def _activity_fleet_state(self, snapshot: dict) -> dict | None:
         """The shape-2 card, or None when the fleet is not up.
@@ -12460,7 +12485,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                     for n in self._notification_snapshot()]
         subject = live_activity.fleet_face(
             snapshot or {}, self._prompts_by_session(),
-            notified=notified, cards=cards)
+            notified=notified, cards=cards,
+            review_runs=self._published_review_runs())
         face = (self._activity_content(subject) if subject
                 else live_activity.empty_face(time.time()))
         return live_activity.fleet_state(

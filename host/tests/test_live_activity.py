@@ -170,7 +170,8 @@ def test_the_admission_rule_is_the_phones_line_for_line():
     # the hysteresis window withholds from — never the raw dict's keys.
     assert ("notified = [str(n.get(\"session_id\") or \"\")\n"
             "                    for n in self._notification_snapshot()]") in daemon_src
-    assert "notified=notified, cards=cards)" in daemon_src
+    assert "notified=notified, cards=cards," in daemon_src
+    assert "review_runs=self._published_review_runs())" in daemon_src
 
 
 # --- listed_sessions: the phone's admission set (23 Sep 2026) ---------------------
@@ -435,10 +436,13 @@ def test_content_state_carries_exactly_the_six_keys():
     subject = {"session_id": "s1", "nickname": "Vex", "kind": "question",
                "idle_seconds": 90.4}
     state = live_activity.content_state(subject, "Rename the strip", 1_000_000.0)
-    # Shape 1 is still exactly the six face keys. `STATE_KEYS` grew; this
-    # did not.
+    # Shape 1 is the six face keys plus `run_id`, which is empty for every
+    # subject but a review run and which the wire leaves off when empty.
     assert tuple(state) == live_activity.FACE_KEYS
-    assert tuple(state) == live_activity.STATE_KEYS[:6]
+    assert tuple(state) == live_activity.STATE_KEYS[:7]
+    assert live_activity.FACE_KEYS[:6] == (
+        "nickname", "slug", "kind", "work", "since", "session_id")
+    assert state["run_id"] == ""
     assert state["slug"] == cast.character_for("Vex", "s1") == "vex"
     assert state["since"] == 999_910
     assert isinstance(state["since"], int)
@@ -522,7 +526,12 @@ def test_the_ranking_agrees_with_the_phones_kind_order():
     order = re.findall(r"case (\w+)", block)
     assert order[0] == "permission" and order[1] == "question"
     assert order.index("waiting") > order.index("question")
-    assert live_activity.KINDS == ("permission", "question", "attention")
+    # `reviewPicks` is last in the enum but an `.answer` kind, and `before`
+    # compares the kind first: it ranks after permission and question and
+    # ahead of `waiting` (a `.stopped` entry), the Mac's `picks` slot.
+    assert "case .permission, .question, .startAsked, .reviewPicks: return .answer" in swift
+    assert "case .waiting: return .stopped" in swift
+    assert live_activity.KINDS == ("permission", "question", "picks", "attention")
     before = swift.split("private static func before(")[1].split("\n    }\n")[0]
     rungs = [line.strip() for line in before.splitlines() if line.strip().startswith("if ") or "return a.target.key" in line]
     assert rungs[0].startswith("if a.kind != b.kind")
@@ -1302,13 +1311,20 @@ def test_the_glue_hands_the_composer_the_published_cards_not_the_raw_dict(monkey
                         lambda: [{"session_id": "shown"}])
     seen = {}
 
-    def subject(snapshot, prompts, *, notified, cards):
+    def subject(snapshot, prompts, *, notified, cards, review_runs=None):
         seen["notified"] = list(notified)
+        seen["review_runs"] = review_runs
         return None
 
     monkeypatch.setattr(live_activity, "subject", subject)
     assert d._activity_subject({"waiting": []}) is None
     assert seen["notified"] == ["shown"]
+    # No review section published yet: an empty list, never a missing one.
+    assert seen["review_runs"] == []
+    runs = [{"id": "r-1", "state": "picks"}]
+    d._review_published = runs
+    assert d._activity_subject({"waiting": []}) is None
+    assert seen["review_runs"] is runs
 
 
 @pytest.mark.asyncio
@@ -1678,7 +1694,8 @@ async def test_a_fleet_body_posts_the_thirteen_keys_and_never_a_title(tmp_path):
             "cost_usd_hour": 4.216, "tokens_k_hour": 1100}
     assert await conn.push_activity("dev-1", body) is True
     posted = calls[0][2]
-    assert set(posted) == {"tok", "env", "event", *live_activity.STATE_KEYS}
+    # `run_id` rides only when there is one, and this body has none.
+    assert set(posted) == {"tok", "env", "event", *live_activity.STATE_KEYS} - {"run_id"}
     assert "title" not in posted
     assert posted["cost_usd"] == 1.23
     assert posted["working"] == 1 and posted["tokens_k"] == 45
@@ -1792,3 +1809,151 @@ async def test_ptys_keeps_her_face_on_the_live_card(tmp_path):
             "dev-1", {"event": "update", **_state(slug=slug)}) is True
         assert calls[0][2]["slug"] == sent, slug
 
+
+
+# --- a review run waiting on picks ----------------------------------------------
+
+
+def _run(run_id="r-1", state="picks", session_id="s1", project="repo",
+         findings_at=1_700_000_100.0):
+    return {"id": run_id, "state": state, "session_id": session_id,
+            "project": project, "findings_at": findings_at, "findings": []}
+
+
+def test_a_picks_run_ranks_below_prompts_and_questions_and_above_attention():
+    snap = {"waiting": [_row("s-att", "Aaa"),
+                        _row("s-q", "Zed", questions=[{"text": "ok?"}]),
+                        _row("s-p", "Mmm")]}
+    prompts = {"s-p": {"request_id": "p1"}}
+    ranked = live_activity.waiters(snap, prompts,
+                                   review_runs=[_run(session_id="")])
+    assert [(w["kind"], w["session_id"]) for w in ranked] == [
+        ("permission", "s-p"), ("question", "s-q"), ("picks", ""),
+        ("attention", "s-att")]
+    assert ranked[2]["run_id"] == "r-1"
+
+
+def test_a_bound_waiting_session_is_taken_by_its_run():
+    snap = {"waiting": [_row("s1", "Vex", 30)]}
+    ranked = live_activity.waiters(snap, {}, review_runs=[_run()])
+    assert [(w["kind"], w["session_id"], w["nickname"]) for w in ranked] == [
+        ("picks", "s1", "Vex")]
+    # Without the run the same row is plain attention.
+    assert live_activity.subject(snap, {})["kind"] == "attention"
+
+
+def test_a_bound_session_with_a_prompt_or_question_keeps_its_entry():
+    snap = {"waiting": [_row("s1", "Vex", 30)]}
+    prompt = live_activity.subject(snap, {"s1": {"request_id": "p"}},
+                                   review_runs=[_run()])
+    assert prompt["kind"] == "permission" and prompt.get("run_id") is None
+    asked = {"waiting": [_row("s1", "Vex", 30, questions=[{"text": "ok?"}])]}
+    got = live_activity.waiters(asked, {}, review_runs=[_run()])
+    assert [w["kind"] for w in got] == ["question"]
+
+
+def test_only_a_run_in_picks_is_a_candidate():
+    snap = {"waiting": []}
+    for state in ("reviewing", "fixing", "done", "ended", "exited"):
+        assert live_activity.waiters(snap, {}, review_runs=[_run(state=state)]) == []
+    assert live_activity.waiters(snap, {}, review_runs=["junk", {"state": "picks"}]) == []
+
+
+def test_the_run_candidate_is_dated_by_its_findings_and_named_by_project_when_unbound():
+    (item,) = live_activity.waiters({}, {}, review_runs=[_run(session_id="")])
+    assert item["quiet_since"] == 1_700_000_100.0
+    assert item["session_id"] == "" and item["nickname"] == "repo"
+    # A bound session with no live row is just as unbound.
+    (gone,) = live_activity.waiters({"finished": [_row("s1", "Vex")]}, {},
+                                    review_runs=[_run()])
+    assert gone["session_id"] == ""
+
+
+def test_an_unbound_runs_content_state_has_no_stranger_face():
+    item = live_activity.subject({}, {}, review_runs=[_run(session_id="")])
+    state = live_activity.content_state(item, "", 1_700_000_500.0)
+    assert state["slug"] == "" and state["session_id"] == ""
+    assert state["run_id"] == "r-1" and state["kind"] == "picks"
+    assert state["since"] == 1_700_000_100
+    assert cast.character_for("", "") != ""        # the trap this avoids
+    bound = live_activity.subject({"waiting": [_row("s1", "Vex")]}, {},
+                                  review_runs=[_run()])
+    got = live_activity.content_state(bound, "Rename the strip", 1_700_000_500.0)
+    assert got["slug"] == "vex" and got["session_id"] == "s1"
+    assert got["run_id"] == "r-1" and got["work"] == "Rename the strip"
+
+
+def test_same_notices_a_changed_run_id():
+    a = live_activity.content_state(
+        live_activity.subject({}, {}, review_runs=[_run("r-1", session_id="")]),
+        "", 0.0)
+    b = live_activity.content_state(
+        live_activity.subject({}, {}, review_runs=[_run("r-2", session_id="")]),
+        "", 0.0)
+    assert "run_id" in live_activity.STATE_KEYS
+    assert live_activity.same(a, dict(a))
+    assert not live_activity.same(a, b)
+
+
+def test_the_fleet_state_carries_run_id_and_the_empty_face_does_not():
+    face = live_activity.content_state(
+        live_activity.fleet_face({}, {}, review_runs=[_run(session_id="")]),
+        "", 0.0)
+    state = live_activity.fleet_state({"working": 1, "attention": 1, "idle": 0},
+                                      {}, face)
+    assert state["run_id"] == "r-1" and set(state) >= set(live_activity.FACE_KEYS)
+    assert live_activity.empty_face(0)["run_id"] == ""
+    assert live_activity.fleet_state({}, {}, None)["run_id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_push_activity_joins_run_id_under_the_id_shape_and_drops_a_bad_one(tmp_path):
+    conn, _d, calls = _connector(tmp_path)
+    relay.note_activity_token("dev-1", "ab" * 32, "dev")
+    good = _state(kind="picks", run_id="r-1", session_id="")
+    assert await conn.push_activity("dev-1", {"event": "update", **good}) is True
+    assert calls[0][2]["run_id"] == "r-1" and calls[0][2]["kind"] == "picks"
+    calls.clear()
+    bad = _state(kind="picks", run_id="bad id!")
+    await conn.push_activity("dev-1", {"event": "update", **bad})
+    assert "run_id" not in calls[0][2]
+    calls.clear()
+    await conn.push_activity("dev-1", {"event": "update", **_state(), "run_id": ""})
+    assert "run_id" not in calls[0][2]
+
+
+@pytest.mark.asyncio
+async def test_the_glue_hands_the_runs_to_the_composer_and_the_card_names_it(monkeypatch):
+    d = _glued(monkeypatch, {"waiting": [_row("s1", "Vex", 30)]})
+    d._review_published = [_run()]
+    _push(d)
+    await _settle()
+    ((_did, body),) = d._relay_connector.pushed
+    assert body["kind"] == "picks" and body["run_id"] == "r-1"
+    assert body["session_id"] == "s1" and body["slug"] == "vex"
+    # The run leaves `picks`: the bound row is plain attention again.
+    d._review_published = [_run(state="fixing")]
+    _push(d)
+    await _settle()
+    assert d._relay_connector.pushed[-1][1]["kind"] == "attention"
+
+
+def test_the_published_runs_default_to_an_empty_list():
+    d = BobDaemon.__new__(BobDaemon)
+    assert d._published_review_runs() == []
+
+
+def test_two_runs_break_a_tie_on_the_phones_entry_title_not_the_bound_nickname():
+    """The phone titles a run "Review · <project, else root>" and sorts by
+    it; the Mac ranks on the same string, whatever the bound rows wear."""
+    snap = {"waiting": [_row("s1", "Zed"), _row("s2", "Aaa")]}
+    runs = [_run("r-1", session_id="s1", project="alpha"),
+            _run("r-2", session_id="s2", project="beta"),
+            dict(_run("r-3", session_id="", project=""), root="gamma")]
+    ranked = live_activity.waiters(snap, {}, review_runs=runs)
+    assert [w["run_id"] for w in ranked] == ["r-1", "r-2", "r-3"]
+    swift = INBOX_SWIFT.read_text()
+    assert r'title: "Review · \(name)"' in swift
+    assert "let name = run.project.isEmpty ? run.root : run.project" in swift
+    src = (ROOT / "host" / "dark_army_daemon" / "live_activity.py").read_text()
+    assert '"Review · " + (name or str(run.get("root") or ""))' in src

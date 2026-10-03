@@ -197,6 +197,20 @@ test('an unknown event, kind, slug shape or session id is 400 and nothing is sen
     const h=harness(); assert.equal((await activity(h,fields)).statusCode,400,JSON.stringify(fields)); assert.equal(h.sent.length,0);
   }
 });
+test('a picks buzz plays the question cue and a picks update carries run_id as the eighth key',async()=>{
+  const b=harness(); assert.equal((await b.run({kind:'picks'})).statusCode,200);
+  assert.equal(b.sent[0].body.aps.sound,'buzz-question.wav');
+  const h=harness(); assert.equal((await activity(h,{kind:'picks',run_id:'r-1'})).statusCode,200);
+  const content=h.sent[0].body.aps['content-state'];
+  assert.deepEqual(Object.keys(content).sort(),['kind','nickname','run_id','session_id','since','slug','updated_at','work']);
+  assert.equal(content.kind,'picks'); assert.equal(content.run_id,'r-1');
+  const plain=harness(); assert.equal((await activity(plain,{kind:'picks'})).statusCode,200);
+  assert.equal(plain.sent[0].body.aps['content-state'].run_id,undefined);
+  assert.equal(Object.keys(plain.sent[0].body.aps['content-state']).length,7);
+});
+test('a run_id out of shape is 400 and nothing is sent',async()=>{
+  const h=harness(); assert.equal((await activity(h,{kind:'picks',run_id:'bad id!'})).statusCode,400); assert.equal(h.sent.length,0);
+});
 test('the activity work line is clamped and the wrong secret is refused before any parse',async()=>{
   const h=harness(); await activity(h,{work:'x'.repeat(500)});
   assert.equal(h.sent[0].body.aps['content-state'].work.length,80);

@@ -27,6 +27,17 @@ session entries of the three kinds it can draw a face for):
   the session's own *attention* entry — a card entry is a ``LOOK AT``, an
   agent that merely stopped a ``STOPPED`` — so that session is no subject;
   a prompt or a question outranks the card and the session stays;
+* **a review run waiting on picks is a subject of its own** (kind
+  `picks`, `docs/review-runs.md`): read off the published `review` runs
+  (`review_runs`), ranked after a prompt and a question and before a row
+  that merely stopped — the phone's `reviewPicks` wire sits between
+  `question` and `waiting`. The session bound to a run speaks through it:
+  a bound row that would be *attention* is no subject (the run takes its
+  entry), while a bound row holding a prompt or a question keeps its own
+  entry and the run yields — the phone's one-entry rule. A run wears its
+  bound row's face where it has one; an unbound run (Codex on a hosted
+  pty) has `session_id` and `slug` empty and says its project, so no
+  stranger's portrait is drawn. `run_id` names it on the wire;
 * ranked exactly as the phone sorts its list (`PhoneInbox.before`): kind,
   then the row's title — nickname, else name, else session id, compared as
   `localizedStandardCompare` does for the cast's plain names (case-folded,
@@ -60,13 +71,14 @@ from . import cast, inbox_ack
 #: `alerts.KINDS` / `relay_client.PUSH_KINDS` minus the two that have no
 #: standing subject: `security` is about the machine, `finished` waits on
 #: nobody. `relay_client.ACTIVITY_KINDS` restates it at the wire.
-KINDS = ("permission", "question", "attention")
+KINDS = ("permission", "question", "picks", "attention")
 
 #: The buckets a subject may come from — the phone's `liveBuckets`.
 LIVE_BUCKETS = ("running", "waiting", "sleeping")
 
 #: The face, in the order `push.js` writes it. Shape 1's whole state.
-FACE_KEYS = ("nickname", "slug", "kind", "work", "since", "session_id")
+FACE_KEYS = ("nickname", "slug", "kind", "work", "since", "session_id",
+             "run_id")
 
 #: The three bucket counts. `needs_you` is `counts["attention"]`,
 #: `standing_by` is `counts["idle"]` — the strip's own numbers.
@@ -128,6 +140,7 @@ def empty_face(now: float) -> dict:
         "work": "",
         "since": 0,
         "session_id": "",
+        "run_id": "",
     }
 
 
@@ -151,6 +164,7 @@ def fleet_state(counts, figures, face) -> dict:
         "work": str(base.get("work") or ""),
         "since": base.get("since", 0),
         "session_id": str(base.get("session_id") or ""),
+        "run_id": str(base.get("run_id") or ""),
         "working": _as_int(counts.get("working")),
         "needs_you": _as_int(counts.get("attention")),
         "standing_by": _as_int(counts.get("idle")),
@@ -290,7 +304,7 @@ def shown_sessions(snapshot: dict, prompts: dict, notified=None,
 
 
 def waiters(snapshot: dict, prompts: dict, notified=None,
-            cards=None) -> list[dict]:
+            cards=None, review_runs=None) -> list[dict]:
     """The whole of Needs you's session half, in the phone's order; `subject`
     is its head.
 
@@ -302,9 +316,19 @@ def waiters(snapshot: dict, prompts: dict, notified=None,
     cards (`_board_state["cards"]`, the phone's ``snapshot.board.cards``).
     Each item is ``{"session_id", "nickname", "name", "kind", "idle_seconds",
     "quiet_since"}`` — the row's own figures, re-derived from nothing.
+    ``review_runs`` is the published `review` section's runs: each one in
+    the ``picks`` state is a further candidate of kind ``picks`` carrying
+    its ``run_id`` (see the module docstring).
     """
     snapshot = snapshot or {}
     prompts = prompts or {}
+    picks_runs = [run for run in review_runs or ()
+                  if isinstance(run, dict) and run.get("state") == "picks"
+                  and str(run.get("id") or "")]
+    review_bound = {str(run.get("session_id")) for run in picks_runs
+                    if run.get("session_id")}
+    live_rows: dict[str, dict] = {}
+    held: set[str] = set()      # bound sessions keeping their own entry
     carded_ids = carded_sessions(cards)
     listed = listed_sessions(snapshot, prompts, notified)
     seen: set[str] = set()
@@ -317,13 +341,20 @@ def waiters(snapshot: dict, prompts: dict, notified=None,
             if not sid or sid in seen:
                 continue
             seen.add(sid)
+            live_rows[sid] = row
             has_prompt = bool(prompts.get(sid))
             if sid not in listed:
                 continue
+            if has_prompt or _has_question(row):
+                held.add(sid)
             if has_prompt:
                 kind = "permission"
             elif _has_question(row):
                 kind = "question"
+            elif sid in review_bound:
+                # The run takes the entry of the session bound to it, as
+                # `carded_ids` takes a stopped row's.
+                continue
             elif sid in carded_ids:
                 # The card's entry wins the phone's one-entry rule over a
                 # row that merely stopped; the card draws no face, so
@@ -347,11 +378,35 @@ def waiters(snapshot: dict, prompts: dict, notified=None,
                 "idle_seconds": idle,
                 "quiet_since": _finite_stamp(row.get("quiet_since")),
             }))
+    for run in picks_runs:
+        bound = str(run.get("session_id") or "")
+        if bound in held:
+            # A prompt or a question on the bound session keeps its own
+            # entry; the run yields (the phone's `oneEntryPerSubject`).
+            continue
+        row = live_rows.get(bound) if bound else None
+        sid = bound if row is not None else ""
+        nickname = str((row or {}).get("nickname") or "")
+        name = str(run.get("project") or "")
+        run_id = str(run.get("id") or "")
+        # Ranked by the phone's own entry title, "Review · <project, else
+        # root>" (`PhoneInbox.reviewItems`), so a tie between two runs
+        # breaks the same way on both ends whatever the bound rows are called.
+        tie = "Review · " + (name or str(run.get("root") or ""))
+        candidates.append((KINDS.index("picks"), title_key(tie), run_id, {
+            "session_id": sid,
+            "run_id": run_id,
+            "nickname": nickname or name,
+            "name": name,
+            "kind": "picks",
+            "idle_seconds": 0.0,
+            "quiet_since": _finite_stamp(run.get("findings_at")),
+        }))
     return [item[3] for item in sorted(candidates, key=lambda item: item[:3])]
 
 
 def subject(snapshot: dict, prompts: dict, notified=None,
-            cards=None) -> dict | None:
+            cards=None, review_runs=None) -> dict | None:
     """The top session waiter, or ``None`` when nobody needs a person.
 
     ``snapshot`` is the published agents snapshot (bucket name → rows);
@@ -363,12 +418,12 @@ def subject(snapshot: dict, prompts: dict, notified=None,
     Returns ``{"session_id", "nickname", "name", "kind", "idle_seconds",
     "quiet_since"}`` — the row's own figures, re-derived from nothing.
     """
-    ranked = waiters(snapshot, prompts, notified, cards)
+    ranked = waiters(snapshot, prompts, notified, cards, review_runs)
     return ranked[0] if ranked else None
 
 
 def fleet_face(snapshot: dict, prompts: dict, notified=None,
-               cards=None) -> dict | None:
+               cards=None, review_runs=None) -> dict | None:
     """The face on the fleet card (shape 2): `subject`, else the head of the
     published ``waiting`` bucket as an ``attention`` face.
 
@@ -379,7 +434,7 @@ def fleet_face(snapshot: dict, prompts: dict, notified=None,
     face-only card (shape 1) keeps `subject` alone; the phone's
     `NeedsYouActivityRule.fleetState` restates this rule.
     """
-    head = subject(snapshot, prompts, notified, cards)
+    head = subject(snapshot, prompts, notified, cards, review_runs)
     if head is not None:
         return head
     for row in (snapshot or {}).get("waiting") or []:
@@ -454,7 +509,9 @@ def title_key(title: str) -> tuple:
 
 
 def content_state(subject: dict, work: str, now: float) -> dict:
-    """The wire dict for one subject — exactly the six face keys.
+    """The wire dict for one subject — exactly the seven face keys
+    (``run_id`` is ``""`` for every subject but a review run, and the wire
+    leaves an empty one off).
 
     ``slug`` is `cast.character_for`, the phone's `Cast.character(for:)`
     rung for rung, so the face on the Lock Screen is the face on the row.
@@ -480,11 +537,14 @@ def content_state(subject: dict, work: str, now: float) -> dict:
         since = int(round(max(0.0, float(now) - max(0.0, idle))))
     return {
         "nickname": nickname,
-        "slug": cast.character_for(nickname, sid),
+        # An unbound run has no session: `cast.character_for("", "")`
+        # answers a stranger's face, so it draws an initial instead.
+        "slug": cast.character_for(nickname, sid) if sid else "",
         "kind": kind,
         "work": str(work or ""),
         "since": since,
         "session_id": sid,
+        "run_id": str(subject.get("run_id") or ""),
     }
 
 

@@ -860,3 +860,31 @@ async def test_a_done_run_with_its_terminal_open_still_holds_the_project(
     daemon._review_attempt = 0.0
     ok, detail = await daemon.start_review(str(project), "claude", [])
     assert ok, detail
+
+
+@pytest.mark.asyncio
+async def test_the_picks_buzz_needs_no_client_asking_for_state(daemon, project):
+    """The published list moves with the writer: a run reaching `picks`
+    through the executor pass raises exactly one picks alert with no
+    `state()` / `review_snapshot()` call, and leaving `picks` updates what the
+    gate and the Live Activity read."""
+    from dark_army_daemon import alerts as alerting
+
+    ok, run_id = await daemon.start_review(str(project), "claude", [])
+    assert ok
+    daemon._review_published = []                 # nobody has asked yet
+    _write(run_id, review_run.FINDINGS_NAME, FINDINGS)
+    daemon._review_pty_facts = daemon._review_compose_facts()
+    assert daemon._reconcile_review() is True
+    published = daemon._published_review_runs()
+    assert [(r["id"], r["state"]) for r in published] == [(run_id, "picks")]
+    policy = alerting.AlertPolicy()
+    rows = {"running": [], "waiting": [], "sleeping": [], "finished": []}
+    first = policy.evaluate(rows, {}, time.time(),
+                            review_runs=daemon._published_review_runs())
+    assert [a.rule for a in first] == [alerting.REVIEW_PICKS_RULE]
+    assert policy.evaluate(rows, {}, time.time() + 5,
+                           review_runs=daemon._published_review_runs()) == []
+    # The writer moves the run on: the published list follows at once.
+    assert daemon._review_set(run_id, expect_state="picks", state="fixing")
+    assert daemon._published_review_runs()[0]["state"] == "fixing"

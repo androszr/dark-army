@@ -1546,6 +1546,19 @@ beside `plan` (`_card_report`) and `reportSection` draws it.
 
 ## The waiting agent is a Live Activity
 
+**A review run waiting on picks is a subject of its own** (kind `picks`,
+the words "pick fixes"): the head of `decisionItems` may be the run's
+`r:<run id>` entry (`NeedsYouActivityRule.reviewSubject`, `.reviewPicks`
+in `sessionKinds`), ranked after a prompt and a question and ahead of an
+agent that merely stopped, the Mac's `live_activity.waiters` run candidate
+rule for rule: bound to a live row it wears that agent's nickname, face and
+`work`; unbound it says the project with an empty `slug` and `session_id`,
+and `runId` alone gives it a face row. `since` is the run's `findings_at`.
+The one-entry rule holds both ways — a prompt or question on the bound
+session keeps its own entry and the run yields; a plain wait on it is the
+run's (`ReviewRules.coveredStates`). Moving on to the buzz that raises it:
+`docs/transport-contract.md`, *The buzz says which kind it is*.
+
 **The one agent at the top of Needs you is a Live Activity** — a card on
 the Lock Screen and, on phones that have one, in the Dynamic Island: the
 portrait, the nickname, the kind word (`permission` / `question` /

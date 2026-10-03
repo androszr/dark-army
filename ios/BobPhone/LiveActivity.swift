@@ -19,7 +19,8 @@ enum NeedsYouActivityRule {
     /// restated so a locally started card reads exactly what the Mac's
     /// update will say.
     static let workChars = 80
-    static let sessionKinds: Set<PhoneInboxWireKind> = [.permission, .question, .waiting]
+    static let sessionKinds: Set<PhoneInboxWireKind> =
+        [.permission, .question, .reviewPicks, .waiting]
 
     enum Step: Equatable {
         case none
@@ -31,6 +32,12 @@ enum NeedsYouActivityRule {
     /// The card to show for this picture, or nil when nobody needs you.
     static func subject(from snapshot: Snapshot) -> NeedsYouAttributes.ContentState? {
         for item in snapshot.decisionItems {
+            // A review run waiting on picks (`r:<run id>`): the Mac's
+            // `live_activity.waiters` run candidate, rule for rule.
+            if case .review(let runId) = item.target, item.wire == .reviewPicks,
+               !runId.isEmpty {
+                return reviewSubject(item, runId: runId, in: snapshot)
+            }
             guard case .session(let id) = item.target, sessionKinds.contains(item.wire),
                   !id.isEmpty else { continue }
             guard let (agent, _) = PhoneInbox.uniqueAgent(session: id,
@@ -45,6 +52,31 @@ enum NeedsYouActivityRule {
                 sessionId: id)
         }
         return nil
+    }
+
+    /// The card for a run waiting on picks. Bound to a live row it wears
+    /// that agent's nickname, face and work line; unbound (Codex on a hosted
+    /// terminal never binds a session) it says the project, draws no cast
+    /// face (`slug` empty, never a stranger's) and carries the run id alone.
+    /// `since` is the run's findings clock, the Mac's `quiet_since` for it.
+    static func reviewSubject(_ item: PhoneInboxItem, runId: String,
+                              in snapshot: Snapshot) -> NeedsYouAttributes.ContentState {
+        if !item.sessionId.isEmpty,
+           let (agent, category) = PhoneInbox.uniqueAgent(session: item.sessionId,
+                                                          agents: snapshot.agents),
+           PhoneInbox.liveBuckets.contains(category) {
+            return NeedsYouAttributes.ContentState(
+                nickname: agent.nickname.isEmpty ? item.project : agent.nickname,
+                slug: Cast.character(for: agent),
+                kind: kindWord(.reviewPicks),
+                work: work(for: agent, in: snapshot),
+                since: item.since,
+                sessionId: item.sessionId,
+                runId: runId)
+        }
+        return NeedsYouAttributes.ContentState(
+            nickname: item.project, slug: "", kind: kindWord(.reviewPicks),
+            work: "", since: item.since, sessionId: "", runId: runId)
     }
 
     /// The card is up while anybody is working or waiting. Standing by
@@ -100,6 +132,7 @@ enum NeedsYouActivityRule {
         switch wire {
         case .permission: return "permission"
         case .question: return "question"
+        case .reviewPicks: return "picks"
         default: return "attention"
         }
     }
@@ -175,7 +208,7 @@ enum NeedsYouActivityRule {
     static func same(_ a: NeedsYouAttributes.ContentState,
                      _ b: NeedsYouAttributes.ContentState) -> Bool {
         a.nickname == b.nickname && a.slug == b.slug && a.kind == b.kind
-            && a.work == b.work && a.sessionId == b.sessionId
+            && a.work == b.work && a.sessionId == b.sessionId && a.runId == b.runId
             && a.working == b.working && a.needsYou == b.needsYou
             && a.standingBy == b.standingBy && a.costUsd == b.costUsd
             && a.tokensK == b.tokensK

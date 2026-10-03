@@ -170,10 +170,21 @@ The Mac's rail and pane are `ReviewRail` and `ReviewPane`; the phone's are
 presses; End is armed then confirmed. The terminal is drawn only on its own
 screen so one pane states `panel_terminal` for that session at a time.
 
+## The picks state buzzes the phone
+
+A run entering `picks` raises one `picks`-kind buzz on the phone and is the
+Lock Screen card's subject (`pick fixes`) until the picks are sent or the run
+ends. The daemon reads the last published `review` runs
+(`_review_published`, rebound whole by `review_snapshot()`) at the same
+moment it decides every interruption; the bound session's own card and report
+rules are skipped so one event is one buzz. The Mac's panel and the strip do
+not change. In full: `docs/transport-contract.md`, *The buzz says which kind
+it is* and *The buzz has a live-card leg*; `docs/phone-contract.md`, *The
+waiting agent is a Live Activity*.
+
 ## Not here
 
-A board card for a run, `card_runs` rows or a cost line; a buzz or Live
-Activity for the picks state (the inbox entry is the whole signal); reading old
+A board card for a run, `card_runs` rows or a cost line; reading old
 findings after a run is pruned; watching the TestFlight workflow to
 completion (the step reports the run URL); editing or reordering findings or
 steps; a second live review of one project (refused).
