@@ -360,6 +360,18 @@ def test_a_press_while_restarting_is_refused_in_words():
     assert observer.requests == 0
 
 
+def test_a_press_while_a_card_merges_is_refused_in_words():
+    for busy in ({"_merging": {"c1": {"root": "/r"}}},
+                 {"_merge_batch": {"token": "t", "queue": ["c2"]}}):
+        d = _daemon(available=True)
+        for key, value in busy.items():
+            setattr(d, key, value)
+        observer = _Observer()
+        d.add_observer(observer)
+        assert d.request_rebuild() == (False, rebuild_state.REBUILD_MERGING_REFUSAL)
+        assert observer.requests == 0
+
+
 def test_the_same_press_asked_again_after_the_restart_is_not_run_again(
         tmp_path, monkeypatch):
     """A phone press whose reply was lost can be replayed to the fresh daemon,

@@ -7656,6 +7656,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
             return True, rebuild_state.REBUILD_ALREADY
         if self._rebuild.get("restarting"):
             return False, rebuild_state.REBUILD_RESTARTING_REFUSAL
+        # A merge mid fast-forward would be built half-landed, and the
+        # restart would drop the rest of a batch's queue: refuse in words.
+        if getattr(self, "_merging", None) or getattr(self, "_merge_batch", None):
+            return False, rebuild_state.REBUILD_MERGING_REFUSAL
         # The same press asked for again after the restart — a phone's replay
         # to a fresh daemon whose receipt ledger is empty. Only that token is
         # refused; a new press is never blocked.

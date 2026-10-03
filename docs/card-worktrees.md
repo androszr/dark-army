@@ -753,7 +753,8 @@ only writes a Done card), a conflict or red check is recorded by the engine
 and the batch carries on. Fix is per row, the card screen's own verb. A
 restart mid-batch drops the remaining queue: those cards lose `queued` and stay
 Done and mergeable, and the running merge recovers by the engine's own restart
-rules.
+rules. Rebuild & restart refuses in words while any merge or batch runs
+(`REBUILD_MERGING_REFUSAL`), so only a crash or a quit cuts a batch short.
 
 **The read** (`worktrees`, loopback `GET /api/worktrees` behind the desk token,
 and the sealed kind on both doors, a read in neither action tuple) is on demand

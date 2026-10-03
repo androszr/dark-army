@@ -39,6 +39,8 @@ REBUILD_UNREACHABLE_REFUSAL = (
     "here.")
 REBUILD_RESTARTING_REFUSAL = (
     "Dark Army is restarting right now; try again once it is back.")
+REBUILD_MERGING_REFUSAL = (
+    "A card is merging into main right now; rebuild once the merge is done.")
 REBUILD_REPLAYED = "that press already ran, so it is not run again"
 REBUILD_ALREADY = "already rebuilding"
 REBUILD_STARTED = "asked the Mac to rebuild and restart"
