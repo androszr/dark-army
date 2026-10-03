@@ -287,6 +287,52 @@ clock. The tile and the card screen draw the Mac's `BATCH r/n · working`,
 `holdsBatchMark`. Pinned by `host/tests/test_phone_batch_start.py` and
 `ios/BobPhoneTests/RowSelectionTests.swift`.
 
+## A Prep or Backlog card is swiped on the Board tab
+
+A card in the Prep or Backlog row slides left (3 Oct 2026) to show two
+buttons: the card's one next action and a dots button. The board is one
+`ScrollView`, not a `List`, so `.swipeActions` is not available: the slide
+is `SwipeRevealRow`, a horizontal `DragGesture` attached with
+`.simultaneousGesture` beside the tile's own button (never `.gesture`, which
+would steal the tap or the vertical pan). `PhoneCardSwipe` (`CardSwipe.swift`,
+Foundation only) holds the arithmetic: a drag counts past 20pt and only when
+it is mostly sideways, the buttons are 148pt wide, and the row opens or
+shuts past 56pt. One card is open at a time (`revealed`); a tap on an open
+card shuts it instead of opening it; select mode, a search, a project
+change, leaving the Board and a snapshot that no longer lists the card in
+Prep or Backlog all shut it. In progress and Done do not swipe.
+
+**The first button is the card screen's own rule.** `PhoneCardSwipe.primary`
+is the two arms of `CardSections.nextAction` this view reaches (Prep: Refine
+if `PhoneRowSelection.tickable("prep", …)`, else Start if startable;
+Backlog: Start if startable), pinned equal to the Mac's
+`CardActionWeight.primary`. `PhoneCardSwipe.canStart` is the card screen's
+Start gate, **moved there verbatim** so both read one body. The first press
+arms ("Really start?", or "Start unplanned?" on a card with no plan and not a
+scout), the second sends `board_dispatch` (or `board_refine`) through
+`enqueue` under the card's scope, as `pressStart` does; START HERE, the plain
+move and the changed-plan confirmation stay on the card screen, and a
+plan-gate refusal is drawn under the tile and read like any other (the
+card screen's `noteArrived` arms its confirmation off the note whether or
+not it was read, so leaving it unread only stranded the receipt). The
+button wears QUEUED / SENDING / SENT while the press is on its way, and a
+queued Delete says so under the tile. The Mac's refusal is drawn under the
+card in orange, ahead of the phone's own, and the phone's own clears when
+the press's mark appears. A drag that scroll takes over snaps the tile
+back (`@GestureState`).
+
+**The dots open a menu, and Delete card is behind it**: a confirmation
+dialog with Delete card in red and Cancel, then "Are you sure?" with Delete
+and Cancel; Delete sends `board_delete` through `enqueue` (no `Arm`, the
+dialog is the confirmation) and the tile dims through `cardLeaving`. The
+menu is built for more quiet verbs; only Delete card ships. For VoiceOver the
+card carries the same verbs as actions (the first button, and Delete card,
+which goes straight to "Are you sure?"). The three verbs were already on
+both phone doors; no daemon code changed. Pinned by
+`host/tests/test_phone_card_swipe.py` and
+`ios/BobPhoneTests/CardSwipeTests.swift`; the gesture's arbitration inside
+the scroll view is the one thing only a real phone confirms.
+
 ## One decision list
 
 Needs you is the live decision list, not a second waiting-only feed and not

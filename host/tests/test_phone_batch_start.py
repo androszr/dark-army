@@ -393,8 +393,12 @@ def test_the_tile_and_the_card_screen_draw_the_batch_line():
     spoken = _slice(board, "private var spoken: String {")
     assert "card.batchLine" in spoken
     card = _read(CARD)
+    # The gate moved to `PhoneCardSwipe.canStart` (3 Oct 2026), which the
+    # card screen and the Board's swipe both read.
     can_start = _slice(card, "private var canStart: Bool {")
-    assert "!card.holdsBatchMark" in can_start
+    assert "PhoneCardSwipe.canStart(" in can_start
+    moved = _slice(_read(PHONE / "CardSwipe.swift"), "static func canStart(")
+    assert "!card.holdsBatchMark" in moved
     status = card.split("private var statusSection: some View {", 1)[1].split(
         "liveState", 1)[0]
     assert "card.batchLine" in status

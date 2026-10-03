@@ -323,19 +323,11 @@ struct PhoneCardDetailView: View {
         return result
     }
 
+    /// The Board tab's swipe reads this same rule, so it lives in
+    /// `PhoneCardSwipe.canStart` (`CardSwipe.swift`) and both surfaces call
+    /// the one body.
     private var canStart: Bool {
-        board.dispatchEnabled
-            && (card.column == "prep" || card.column == "backlog")
-            && !card.tool.isEmpty
-            && card.queueState != "queued"
-            && card.sessionId.isEmpty
-            && !isBusy
-            // A card waiting its turn in a batch, or dragged out of the
-            // line, is started by the batch or by Leave batch on the Mac,
-            // not by this button. The Mac refuses a press made off a stale
-            // picture with its batch-waiting refusal, which arrives on the
-            // receipt and is drawn by `noteArrived` as any other refusal.
-            && !card.holdsBatchMark
+        PhoneCardSwipe.canStart(card: card, dispatchEnabled: board.dispatchEnabled)
     }
 
     /// START HERE: spawn Dark Army's own terminal for a card that has none
