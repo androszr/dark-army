@@ -325,6 +325,54 @@ struct LowPriorityBar: View {
     }
 }
 
+/// The agent's own next-step button: it finished work on Dark Army itself and
+/// said, in its report's `dark-army-next` marker, that the app has to be
+/// rebuilt and restarted to pick it up. Drawn only where `agent.rebuildOffered`
+/// says so (the daemon checked the own checkout and clears it after a rebuild
+/// that started later) and the Mac can rebuild at all. **No arm**: it sends the
+/// same `Panel.send(action: "rebuild")` the top bar sends, and the menu bar's
+/// one in-flight gate makes a second press a no-op.
+struct RebuildBar: View {
+    static let prompt = "This agent says Dark Army needs rebuilding and restarting to pick up its work."
+
+    let agent: Agent
+    @ObservedObject var client: DaemonClient
+    var inset: CGFloat = 14
+
+    private var title: String {
+        RebuildControl.title(label: client.context.rebuildLabel,
+                             rebuilding: client.context.settings.rebuilding,
+                             outcome: client.context.rebuildOutcome)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider().opacity(0.6)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(Self.prompt)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Color.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button { Panel.send(action: "rebuild") } label: {
+                    Label(title, systemImage: "arrow.triangle.2.circlepath")
+                }
+                .controlSize(.small)
+                .disabled(client.context.settings.rebuilding)
+                .reportsKeyboardFocus()
+                .accessibilityLabel(title)
+                .accessibilityHint("Rebuilds Dark Army from this checkout and restarts it. Hosted terminals stay open.")
+            }
+            .padding(.top, 8)
+        }
+        .buttonStyle(.bordered)
+        .padding(.horizontal, inset)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+    }
+}
+
 /// Stop, drawn where it can be pressed. Before this bar the verb was a
 /// secret letter (S) and its arm was invisible: `RowActions.armedStop` was
 /// read by no view, so neither a pointer nor VoiceOver could stop a session

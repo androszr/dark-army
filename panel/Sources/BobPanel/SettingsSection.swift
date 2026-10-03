@@ -153,6 +153,9 @@ struct BrandBar: View {
                         .reportsKeyboardFocus()
                         .accessibilityValue(keysShown ? "shown" : "hidden")
                 }
+                if client.context.canRebuild {
+                    RebuildButton(client: client)
+                }
                 SettingsButton(client: client)
                     .frame(width: 20, height: 18)
                     .fixedSize()
@@ -164,6 +167,65 @@ struct BrandBar: View {
                 .frame(height: 2)
         }
         .frame(height: PanelMetrics.brandBar)
+    }
+}
+
+/// Rebuild & restart, one press from the window's top bar, drawn only when Dark
+/// Army runs from a source checkout (`canRebuild`). It sends the very request
+/// the settings row sends — `Panel.send(action: "rebuild")`, the menu bar's one
+/// gate — so a second press while it runs does nothing there. It reads
+/// "Rebuilding…" and goes grey while the menu bar says one is in flight, amber
+/// when the build on disk is older than the source, and red after a failure
+/// until the next attempt. No confirmation: a failed build changes nothing and
+/// a successful one restarts the app, which is what the press asks for.
+struct RebuildButton: View {
+    @ObservedObject var client: DaemonClient
+
+    private var rebuilding: Bool { client.context.settings.rebuilding }
+    private var failed: Bool { client.context.rebuildOutcome == "failed" }
+
+    private var title: String {
+        RebuildControl.title(label: client.context.rebuildLabel,
+                             rebuilding: rebuilding,
+                             outcome: client.context.rebuildOutcome)
+    }
+
+    /// The failure text when the last attempt failed; the build-is-old note
+    /// when the amber tint is showing (a colour is never the only sign);
+    /// otherwise what the press does.
+    private var helpText: String {
+        if failed, !client.context.rebuildError.isEmpty {
+            return client.context.rebuildError
+        }
+        if client.context.buildStale, !rebuilding {
+            return RebuildControl.staleNote
+                + " Rebuilds Dark Army from this checkout and restarts it."
+        }
+        return "Rebuilds Dark Army from this checkout and restarts it. Hosted terminals stay open."
+    }
+
+    private var tint: Color {
+        if rebuilding { return Theme.faint }
+        if failed { return .red }
+        if client.context.buildStale { return .orange }
+        return Theme.dim
+    }
+
+    var body: some View {
+        Button {
+            Panel.send(action: "rebuild")
+        } label: {
+            Text(title)
+        }
+        .buttonStyle(AlarmOutline(color: tint, size: 10))
+        .disabled(rebuilding)
+        .clickable()
+        .reportsKeyboardFocus()
+        .help(helpText)
+        .accessibilityLabel(title)
+        .accessibilityValue(client.context.buildStale && !rebuilding && !failed
+                            ? RebuildControl.staleNote : "")
+        .accessibilityHint(helpText)
     }
 }
 

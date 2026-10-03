@@ -68,6 +68,7 @@ from . import origin
 from . import power_source
 from . import paths as paths_mod
 from . import relay
+from . import rebuild_state
 from . import relay_client
 from . import relay_ws
 from . import run_health
@@ -1439,6 +1440,16 @@ class DaemonObserver(Protocol):
     # must cost nothing to leave it unimplemented. `_observers_implementing`
     # is therefore also the published "can this Mac honour it at all".
     def on_preference_request(self, key: str, value) -> None: ...
+    # Asked to start one Rebuild & restart — the phone's Menu tile or an
+    # agent's next-step button, handed over by `BobDaemon.request_rebuild`.
+    # No argument: the verb is a fixed one. The menu-bar app owns the one
+    # in-flight gate, so this is a *request*, and a second one while a rebuild
+    # runs is a no-op there. Optional, like `on_preference_request`:
+    # `_observers_implementing` is also the published "can this Mac honour it".
+    def on_rebuild_request(self) -> None: ...
+    # Receives the rebuild's facts (`BobDaemon.rebuild_snapshot`) whenever the
+    # menu-bar app reports a change. Optional, like `on_board_change`.
+    def on_rebuild_change(self, facts: dict) -> None: ...
 
 
 #: The app bundle a daemon can run from, as a whole path component.
@@ -2229,6 +2240,13 @@ class BobDaemon(BoardVerbsMixin):
         # `_save_mission` on the executor; the terminal itself is the
         # broker's across a restart, this is only how to find it again.
         self._mission: dict = mission.load_record(paths_mod.MISSION_PATH)
+        # Rebuild & restart's published facts (`rebuild_state`): the menu-bar
+        # app owns the truth and tells us through `set_rebuild_state`; a
+        # fresh process is seeded from the stamp the last successful rebuild
+        # left, so a phone learns the rebuild landed. Replaced whole, never
+        # mutated, so the enrich executor reads a consistent snapshot.
+        self._rebuild: dict = rebuild_state.seed_facts(
+            rebuild_state.read_stamp())
         # When Mission Control was last accepted, for DISPATCH_COOLDOWN —
         # `_adhoc_attempt`'s shape, for the same reason.
         self._mission_attempt: float = 0.0
@@ -7523,6 +7541,61 @@ class BobDaemon(BoardVerbsMixin):
         self._notify_observers("on_preference_request", name, value)
         return True, "asked the Mac to change that"
 
+    def set_rebuild_state(self, facts: dict) -> None:
+        """The menu-bar app reports the rebuild's facts. Loop thread.
+
+        Merged over the defaults, so a key an older app does not send keeps
+        its default, and replaced whole so the executor's read is consistent."""
+        merged = {**self._rebuild}
+        for key in rebuild_state.snapshot_defaults():
+            if key in (facts or {}):
+                merged[key] = facts[key]
+        # Home-redacted before it is published: build output is full of paths
+        # under the home folder, and this rides every `state` read.
+        merged["last_error"] = rebuild_state.redact_error(
+            merged.get("last_error"))
+        self._rebuild = merged
+        self._notify_observers("on_rebuild_change", self.rebuild_snapshot())
+
+    def rebuild_snapshot(self) -> dict:
+        """The `rebuild` section: eight keys, never a path or key
+        (`last_error` is a home-redacted tail)."""
+        facts = self._rebuild
+        out = rebuild_state.snapshot_defaults()
+        for key in out:
+            if key in facts:
+                out[key] = facts[key]
+        return out
+
+    def request_rebuild(self, token: str = "") -> tuple[bool, str]:
+        """A phone, or an agent's button, asks the Mac to rebuild and restart.
+
+        Applies nothing: the menu-bar app runs `build.sh`, owns the one
+        in-flight flag and restarts, so the 200 this earns means *asked*, not
+        *built*. A press while one is already running answers `(True,
+        REBUILD_ALREADY)` and notifies nobody; the gate in the app refuses a
+        second one regardless."""
+        if not self._rebuild.get("available"):
+            return False, rebuild_state.REBUILD_UNAVAILABLE_REFUSAL
+        if not self._observers_implementing("on_rebuild_request"):
+            return False, rebuild_state.REBUILD_UNREACHABLE_REFUSAL
+        if self._rebuild.get("rebuilding"):
+            return True, rebuild_state.REBUILD_ALREADY
+        if self._rebuild.get("restarting"):
+            return False, rebuild_state.REBUILD_RESTARTING_REFUSAL
+        # The same press asked for again after the restart — a phone's replay
+        # to a fresh daemon whose receipt ledger is empty. Only that token is
+        # refused; a new press is never blocked.
+        if rebuild_state.replayed(token):
+            return True, rebuild_state.REBUILD_REPLAYED
+        try:
+            rebuild_state.note_press(token)
+        except OSError:
+            logger.warning("could not record the rebuild's press token",
+                           exc_info=True)
+        self._notify_observers("on_rebuild_request")
+        return True, rebuild_state.REBUILD_STARTED
+
     @staticmethod
     def _codex_finished_state(record: codex_rollouts.CodexRecord) -> dict:
         """Synthetic `_record_finished` state for a Codex root that just ended."""
@@ -9231,6 +9304,9 @@ class BobDaemon(BoardVerbsMixin):
                 stats = cache.get(transcript)
                 parsed.append((stub, transcript, stats))
 
+        # Once per pass: Dark Army's own checkout and the rebuild stamp.
+        own_root = enrollment.self_root()
+        stamp = rebuild_state.cached_stamp()
         nicknames = self._assign_nicknames(parsed)
         # What this snapshot puts on screen, for the event log's finish line
         # to read after the row is gone. Built here, assigned whole below.
@@ -9666,6 +9742,17 @@ class BobDaemon(BoardVerbsMixin):
             entry["project"] = workspace.project_label(
                 entry.get("cwd", ""), metrics, entry.get("project", "")
             )
+            # The Rebuild button's reach: the agent's report carried the
+            # `dark-army-next: rebuild` marker, it works in Dark Army's own
+            # checkout and no successful rebuild started after the marker.
+            # `self._rebuild` is replaced whole on the loop, so this executor
+            # read is one frame stale at worst (the `can_low_priority`
+            # precedent).
+            entry["rebuild_offered"] = rebuild_state.offered(
+                getattr(stats, "rebuild_marker_at", 0.0),
+                stamp, own_root,
+                enrollment.root_enrolled(entry.get("cwd", "") or ""),
+                self._rebuild)
             # What those numbers are *doing*. Computed here rather than in
             # signals.py so the rules stay pure functions of one entry — and
             # published rather than kept private, because "context 62%, +3%/min"

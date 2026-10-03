@@ -17,7 +17,7 @@ EXPECTED = {
     "ProviderSwitch.swift": 2,
     "RowBars.swift": 3,
     "SettingsRows.swift": 4,
-    "SettingsSection.swift": 2,
+    "SettingsSection.swift": 3,
     "SettingsSidebar.swift": 1,
 }
 
@@ -39,9 +39,11 @@ def _help_counts():
 
 def test_tooltip_allowlist_is_exactly_the_named_survivors():
     counts = _help_counts()
-    assert sum(EXPECTED.values()) == 24
-    assert sum(counts.values()) == 24, (
-        f"whole-tree {HELP} count is {sum(counts.values())}, not 24: {counts}"
+    # 25 since 3 Oct 2026: the brand bar's Rebuild button names its failure
+    # (or that the build is older than the source) in its tooltip.
+    assert sum(EXPECTED.values()) == 25
+    assert sum(counts.values()) == 25, (
+        f"whole-tree {HELP} count is {sum(counts.values())}, not 25: {counts}"
     )
     assert counts == EXPECTED, (
         f"{HELP} sites drifted from the allowlist.\n"

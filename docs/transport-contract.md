@@ -193,6 +193,12 @@ either sealed door a fresh open answers `started` — the terminal handle is
 `mission` snapshot section carries no handle either. Pinned by
 `test_mission_control.py`.
 
+**`rebuild_app` is chosen at home only**: on `LAN_ACTIONS`, not `REMOTE_ACTIONS`, no payload, `post` never the queue, never replayed
+(`ReceiptLedger.neverReplayed`); it builds the working tree as it stands and replaces the installed app, and a write-granted bot at
+home reaches it too. `request_rebuild` hands the press to the menu-bar app, whose one in-flight flag is the gate (200 means *asked*),
+and refuses while restarting or a press token the stamp says already ran; loopback twin `APP_ACTIONS`. The `rebuild` section holds no path
+(`last_error` is home-redacted), seeded from `rebuild-stamp.json` (`test_rebuild_verb.py`).
+
 ## The sealed `state` read is conditional
 
 **The sealed `state` read is conditional, on both doors at once.**

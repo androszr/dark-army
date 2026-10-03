@@ -244,6 +244,24 @@ NOTIFY_SCRIPT = textwrap.dedent('''\
         "comment on that message."
     )
 
+    # The fourth standing instruction: one machine-readable line beside the
+    # completion report, saying the finished work needs Dark Army itself
+    # rebuilt and restarted to take effect. The daemon parses it
+    # (`session_stats._NEXT_RE`) and offers a one-click button on this agent's
+    # row; it is not a question and never puts the row under Needs you. The
+    # marker is dark-army-next, and this text must never contain a literal
+    # bob-actions or bob-tldr HTML comment.
+    NEXT_STEP_HINT = (
+        "If the work you just finished changed Dark Army's own code - its "
+        "host, its panel or its hooks - and the app has to be rebuilt and "
+        "restarted before the change takes effect, add one more line right "
+        "after the ## Work done report, exactly: "
+        "<!-- dark-army-next: rebuild -->. It is a marker, not a question: "
+        "never put it in a message that is waiting on the user, never "
+        "alongside a status or choices comment, and leave it out when "
+        "nothing needs rebuilding."
+    )
+
     # The third standing instruction, same vehicle: where an agent may search.
     # A recursive walk from / or the home folder in a terminal Dark Army hosts
     # is charged to Dark Army by macOS and raises Photos, Music and Documents
@@ -1341,6 +1359,7 @@ NOTIFY_SCRIPT = textwrap.dedent('''\
                 and msg.get("provider") != "grok"):
             print(TLDR_HINT)
             print(WORK_REPORT_HINT)
+            print(NEXT_STEP_HINT)
             # SEARCH_SCOPE_HINT, read fresh from the search-scope file.
             print(_search_scope_hint())
 

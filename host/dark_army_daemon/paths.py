@@ -133,6 +133,11 @@ RUN_HEALTH_PATH = STATE_DIR / 'run-health.json'
 # the ring below; read by an older daemon never, by a newer one with a
 # default for every key.
 MISSION_PATH = STATE_DIR / "mission.json"
+# The last successful Rebuild & restart (rebuild_state.py): when it started and
+# when it finished, written by the menu-bar app just before it restarts, so the
+# fresh daemon can say the rebuild landed. No secret in it, so deliberately not
+# in `_PRIVATE_FILES`.
+REBUILD_STAMP_PATH = STATE_DIR / "rebuild-stamp.json"
 # The statusLine command we displaced, if the user already had one. Our script
 # shells out to it and prints its output verbatim, so installing Dark Army never costs
 # someone the status line they built.

@@ -160,10 +160,16 @@ def test_each_view_posts_through_one_scoped_helper(path):
     Since 20 Sep 2026 the seam queues the press (`enqueue`); `post` is not
     called from these two views at all."""
     text = _read(path)
+    # Rebuild & restart is the one deliberate exception (3 Oct 2026): it rides
+    # the synchronous `post` so a rebuild is never banked in the queue and
+    # fired later on the phone's clock (`PhoneActions.rebuildApp`).
+    rebuild = "client.post(action: PhoneActions.rebuildApp)"
     posts = [line for line in text.splitlines()
-             if "client.post" in line or "client.enqueue" in line]
+             if ("client.post" in line or "client.enqueue" in line)
+             and rebuild not in line]
     assert len(posts) == 1, f"{path.name} posts from {len(posts)} places"
-    assert "client.post(" not in text, f"{path.name} still awaits a press"
+    assert "client.post(" not in text.replace(rebuild, ""), (
+        f"{path.name} still awaits a press")
     assert "scope: agent.sessionId" in text, (
         f"{path.name}'s send helper lost the session scope — a permission "
         "verdict's fields carry only request_id, so without the scope that "

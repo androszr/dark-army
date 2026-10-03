@@ -1155,11 +1155,12 @@ async def test_a_stream_without_the_slim_query_carries_every_section(server):
 def test_the_omittable_sections_are_state_s_own_sections():
     """The list is auditable in one place, and it is exactly `state()`'s
     top level minus the clock and the two scalars."""
-    assert len(api_mod._OMITTABLE_SECTIONS) == 14
+    assert len(api_mod._OMITTABLE_SECTIONS) == 15
     assert "inbox" in api_mod._OMITTABLE_SECTIONS
     assert "security" in api_mod._OMITTABLE_SECTIONS
     assert "mission" in api_mod._OMITTABLE_SECTIONS
     assert "power" in api_mod._OMITTABLE_SECTIONS
+    assert "rebuild" in api_mod._OMITTABLE_SECTIONS
     assert "generated_at" not in api_mod._OMITTABLE_SECTIONS
     assert "reconciler_available" not in api_mod._OMITTABLE_SECTIONS
     assert "reconciler_error" not in api_mod._OMITTABLE_SECTIONS

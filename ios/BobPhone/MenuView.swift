@@ -6,7 +6,9 @@ import WebKit
 /// their own until the menu gathered them, so `bobphone://usage` (the
 /// widget's meter) and a draft stamped `comm` still name them.
 enum MenuSection: String, CaseIterable, Hashable, Identifiable {
-    case usage, history, comm, scouting, checks, plans, designSystem
+    // `case rebuild` (raw value `rebuild`) is Rebuild & restart's tile, kept in
+    // the one list below so the grid's order and every pin on it stay a single line.
+    case usage, history, comm, scouting, checks, plans, rebuild, designSystem
 
     var id: String { rawValue }
 
@@ -19,6 +21,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         case .scouting: return "Scouting"
         case .checks: return "Manual checks"
         case .plans: return "Plans"
+        case .rebuild: return "Rebuild & restart"
         case .designSystem: return "Design system"
         }
     }
@@ -31,6 +34,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         case .scouting: return "binoculars"
         case .checks: return "checklist"
         case .plans: return "doc.text"
+        case .rebuild: return "arrow.triangle.2.circlepath"
         case .designSystem: return "square.grid.2x2"
         }
     }
@@ -43,7 +47,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     var built: Bool {
         switch self {
         case .usage, .comm, .designSystem: return true
-        case .scouting, .checks, .plans, .history: return false
+        case .scouting, .checks, .plans, .history, .rebuild: return false
         }
     }
 
@@ -52,15 +56,18 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     /// (`Board.scoutReportsSupported`), Manual checks once it serves the
     /// Checks section (`Board.manualChecksSupported`), Plans once it lists
     /// its projects' plans (`Board.plansSupported`), History once it serves
-    /// the week (`Board.historyWeekSupported`), every other section as
-    /// `built`.
+    /// the week (`Board.historyWeekSupported`), Rebuild & restart once the
+    /// Mac says it can rebuild and the phone is on the home door
+    /// (`RebuildRules.canPress`'s two terms), every other section as `built`.
     func lit(scoutReports: Bool, manualChecks: Bool = false,
-             plans: Bool = false, historyWeek: Bool = false) -> Bool {
+             plans: Bool = false, historyWeek: Bool = false,
+             rebuild: Bool = false) -> Bool {
         switch self {
         case .scouting: return scoutReports
         case .checks: return manualChecks
         case .plans: return plans
         case .history: return historyWeek
+        case .rebuild: return rebuild
         default: return built
         }
     }
@@ -118,7 +125,8 @@ struct MenuView: View {
             scoutReports: client.snapshot.board.scoutReportsSupported,
             manualChecks: client.snapshot.board.manualChecksSupported,
             plans: client.snapshot.board.plansSupported,
-            historyWeek: client.snapshot.board.historyWeekSupported)
+            historyWeek: client.snapshot.board.historyWeekSupported,
+            rebuild: client.snapshot.rebuild.available && client.via != .relay)
         return DecryptButton(action: { open = section }) {
             VStack(spacing: 8) {
                 Image(systemName: section.symbol)
@@ -220,6 +228,17 @@ struct MenuSectionScreen: View {
                 MenuNotYet(path: "~/plans",
                            sentence: "Plans open here once the Mac's Dark Army lists them.")
                     .navigationTitle("plans")
+            }
+        case .rebuild:
+            // Only against a Mac that publishes the section; an older Mac
+            // keeps the page that says so.
+            if client.snapshot.rebuild.available {
+                RebuildView(client: client)
+                    .navigationTitle("rebuild")
+            } else {
+                MenuNotYet(path: "~/rebuild",
+                           sentence: "Rebuild & restart opens here once the Mac's Dark Army can rebuild from a source checkout.")
+                    .navigationTitle("rebuild")
             }
         case .designSystem:
             SignalWorkshopPhone()

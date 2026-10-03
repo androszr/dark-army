@@ -364,6 +364,14 @@ the flag false by default and the card's `error_kind` as `""`. The action
 `low_priority` is on `LAN_ACTIONS` and `REMOTE_ACTIONS` and deliberately not
 in the phone's `settlingActions` — the row is not leaving.
 
+**Rebuild & restart is one press on the Mac.** The brand bar's `RebuildButton`
+(drawn when `context.canRebuild`) and the agent's `RebuildBar` (drawn where
+`rebuild_offered` is true and the Mac can rebuild) both send the settings row's
+own `Panel.send(action: "rebuild")`; the menu bar's one in-flight flag is the
+gate, and both read `settings.rebuilding` and the context's `rebuild_outcome` /
+`rebuild_error` off the context push through `RebuildControl.title`. No
+confirmation. The panel does not decode the `rebuild` section.
+
 **Asking for the board opens the workspace**: `installBoardObserver`'s
 `.panelOpenBoard` notification calls `show`.
 

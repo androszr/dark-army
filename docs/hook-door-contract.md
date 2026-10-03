@@ -81,8 +81,9 @@ paragraph as `3171734ffe6d`).
 > **It carries two standing hints into every Claude session.** On
 > `session_start`, for Claude only (never Grok), the handler prints
 > `TLDR_HINT` and `WORK_REPORT_HINT` on stdout, unconditionally; a third,
-> `SEARCH_SCOPE_HINT`, lists `search-scope.json`'s folders
-> (`docs/agent-pack.md`). `bob-tldr`
+> `NEXT_STEP_HINT` (the `<!-- dark-army-next: rebuild -->` marker, parsed by
+> `session_stats._NEXT_RE`), and a fourth, `SEARCH_SCOPE_HINT`, which lists
+> `search-scope.json`'s folders (`docs/agent-pack.md`), follow them. `bob-tldr`
 > / `bob-actions` mark a turn that is **waiting on somebody** and are
 > parsed by `session_stats._TLDR_RE` / `_parse_actions`; the `## Work done`
 > report marks a turn waiting on **nobody**; `work_report` parses it for

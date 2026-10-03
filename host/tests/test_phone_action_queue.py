@@ -592,7 +592,7 @@ def test_enqueue_takes_no_lock_and_awaits_no_transport():
 
 def test_the_sender_is_one_ordered_task_that_passes_the_face_check_through():
     client = _text("Client.swift")
-    body = _block(client, "    func flushReceipts() async", 4000)
+    body = _block(client, "    func flushReceipts() async", 4400)
     assert "ReceiptLedger.nextSendable(" in body
     # A scope whose synchronous press holds `post`'s lock is walked past
     # before the attempt is counted, never sent into `stillSendingRefusal`.
@@ -1036,7 +1036,11 @@ def test_a_refused_hide_keeps_the_macs_words():
 def test_the_agent_and_card_screens_send_through_the_queue():
     detail = _text("AgentDetailView.swift")
     assert "client.enqueue(" in detail
-    assert "client.post(" not in detail
+    # Rebuild & restart alone is synchronous: a banked rebuild would restart
+    # the Mac on the phone's clock.
+    assert "client.post(" not in detail.replace(
+        "client.post(action: PhoneActions.rebuildApp)", "")
+    assert detail.count("client.post(action: PhoneActions.rebuildApp)") == 1
     assert "private var busy: Bool { settlingHere || hideAccepted }" in detail
     card = _text("CardDetailView.swift")
     seam = _block(card, "    private func send(_ action: String", 1400)

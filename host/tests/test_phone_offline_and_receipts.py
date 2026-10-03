@@ -387,7 +387,7 @@ def test_a_resend_is_bounded_and_never_replays_what_can_be_checked():
     assert "$0.attempts < Self.maxAttempts" in receipts
     assert "func exhausted(" in receipts
     start = client.index("func flushReceipts()")
-    body = client[start:start + 3600]
+    body = client[start:start + 4000]
     assert "ReceiptLedger.evidenceBeforeSending(receipt.effect," in body
     # The attempt is counted where the sender takes the record (`.queued`
     # or `.sent` → `.sending`), so the ceiling and the record agree.

@@ -533,6 +533,24 @@ against a Mac that does not serve their read (below). `PhoneTab(stored:)` reads 
 draft and `bobphone://usage` still land. Pinned by
 `host/tests/test_phone_menu.py`.
 
+**Rebuild & restart opens from the Menu's Rebuild tile.** `MenuSection.rebuild`
+is lit once the Mac's `rebuild` section says `available` and the phone is on the
+home door (`client.via != .relay`); the verb `rebuild_app` is on the Mac's home
+list only (`docs/transport-contract.md`), so from away the tile is dim and
+`RebuildView` says so rather than asking for Face ID to be turned away. The
+first press arms (`Arm.Slot.rebuild`, "Really rebuild and restart?"), the
+second sends through `client.post` — never `enqueue`, and a lost reply is never
+replayed (`ReceiptLedger.neverReplayed`; a person's RETRY sends once), so a rebuild is never banked and fired on
+the phone's clock — and the screen reads "Rebuilding…" and
+warns the Mac will drop off the link. `RebuildRules.line` owns the words: a
+dropped link after a press (or a held picture still saying `rebuilding`) reads
+"Restarting — waiting for the Mac", and "Rebuilt at HH:MM" only when
+`lastFinishedAt >= pressedAt`, so last week's stamp never reads as this press
+landing; a failure is the Mac's own words in `Theme.alarm`. An agent whose row
+says `rebuild_offered` (its report's `dark-army-next` marker,
+`docs/session-state-contract.md`) draws `rebuildBox` on its screen with the same
+arm. Pinned by `RebuildRulesTests.swift` and `test_phone_menu.py`.
+
 **The week's token cost opens from the Menu's History tile.** Against a Mac
 that publishes `history_week_supported` the tile is lit
 (`MenuSection.lit(…, historyWeek:)`) and pushes `HistoryWeekView`

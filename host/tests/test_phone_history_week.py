@@ -30,7 +30,7 @@ def _code(text: str) -> str:
 
 def test_the_menu_has_a_history_tile_lit_by_the_marker():
     menu = _read(MENU)
-    assert "case usage, history, comm, scouting, checks, plans, designSystem" in menu
+    assert "case usage, history, comm, scouting, checks, plans, rebuild, designSystem" in menu
     assert 'case .history: return "History"' in menu
     assert 'case .history: return "calendar"' in menu
     assert "case .history: return historyWeek" in menu

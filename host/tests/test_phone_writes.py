@@ -48,6 +48,9 @@ ARM_SLOTS = (
     "refineBatch",
     # The Backlog row's batch Start (25 Sep 2026): its own slot, never a card screen's Start.
     "startBatch",
+    # Rebuild & restart (3 Oct 2026): its own slot, so nothing else armed can
+    # confirm a restart of the Mac's Dark Army.
+    "rebuild",
 )
 
 OLDER_MAC = "this Mac cannot take commands from the phone yet"

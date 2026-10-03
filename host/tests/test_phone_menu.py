@@ -40,9 +40,9 @@ def _enum(text: str, name: str) -> str:
 
 def test_the_grid_holds_sections_in_order():
     menu = _enum(_read(MENU), "MenuSection")
-    assert "case usage, history, comm, scouting, checks, plans, designSystem" in menu
+    assert "case usage, history, comm, scouting, checks, plans, rebuild, designSystem" in menu
     for title in ('"Usage"', '"History"', '"Comm"', '"Scouting"', '"Manual checks"',
-                  '"Plans"', '"Design system"'):
+                  '"Plans"', '"Rebuild & restart"', '"Design system"'):
         assert f"return {title}" in menu, title
 
 
@@ -72,7 +72,7 @@ def test_a_tile_pushes_onto_the_tab_stack_with_a_back_button():
 
 def test_the_unbuilt_sections_say_so():
     view = _read(MENU)
-    assert "case .scouting, .checks, .plans, .history: return false" in view
+    assert "case .scouting, .checks, .plans, .history, .rebuild: return false" in view
     assert "MenuNotYet(" in view
     assert '"Not built yet"' in view
 
@@ -115,6 +115,7 @@ check(PhoneTab(stored: "") == nil, "empty")
 check(MenuSection(rawValue: "usage") == .usage, "section usage")
 check(MenuSection(rawValue: "plans") == .plans, "section plans")
 check(MenuSection(rawValue: "history") == .history, "section history")
+check(MenuSection(rawValue: "rebuild") == .rebuild, "section rebuild")
 check(PhoneTab(stored: "history") == .menu, "history")
 check(PhoneTab(stored: "plans") == .menu, "plans")
 check(MenuSection(rawValue: "board") == nil, "section board")
