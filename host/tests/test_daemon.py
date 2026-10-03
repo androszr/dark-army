@@ -652,6 +652,128 @@ def test_bind_requires_descent_from_the_spawned_terminal(tmp_path):
         store.close()
 
 
+class _VscodeCodexProcess:
+    def __init__(self, pid, cwd, created):
+        self.pid = pid
+        self.info = {"pid": pid, "name": "codex", "exe": "/opt/codex",
+                     "cwd": cwd, "create_time": created, "cmdline": ["codex"]}
+        self.created = created
+
+    def exe(self):
+        return self.info["exe"]
+
+    def cwd(self):
+        return self.info["cwd"]
+
+    def create_time(self):
+        return self.created
+
+    def cmdline(self):
+        return list(self.info["cmdline"])
+
+
+@pytest.mark.parametrize("receipt", ["shell", "pty"])
+def test_vscode_attribution_binds_only_the_spawned_terminal(tmp_path, monkeypatch, receipt):
+    from dark_army_daemon import codex_rollouts
+
+    daemon, store = _board_daemon(tmp_path)
+    try:
+        now = time.time()
+        card = _dispatching_card(store, tool="codex", when=now)
+        cwd = "/tmp/bob"
+        record = codex_rollouts.CodexRecord(
+            session_id="codex:launched", thread_id="launched",
+            path=tmp_path / "launched.jsonl", cwd=cwd,
+            originator="codex-tui", source_kind="vscode", thread_source="user",
+            started_at=now + 0.799, last_event=now, activity="working",
+        )
+        process = _VscodeCodexProcess(60576, cwd, now)
+        codex_rollouts.attach_process_ids([record], [process])
+        assert record.pid == 60576
+        daemon._codex_records[record.session_id] = record
+        monkeypatch.setattr(daemon, "_refresh_codex_records", lambda: None)
+        monkeypatch.setattr(daemon, "_refresh_grok_records", lambda: None)
+        if receipt == "shell":
+            daemon._spawn_shell_pids[card["id"]] = 4321
+        else:
+            daemon._spawn_pty_pids[card["id"]] = 4321
+        checked = []
+
+        def ancestry(pid, parent):
+            checked.append((pid, parent))
+            return (pid, parent) == (60576, 4321)
+
+        monkeypatch.setattr(daemon_mod, "_pid_descends", ancestry)
+        stub = next(row for row in daemon._collect_agent_stubs()
+                    if row["session_id"] == record.session_id)
+        assert stub["pid"] == 60576
+        assert daemon._reconcile_board({"running": [stub]}) is True
+        linked = store.get(card["id"])
+        assert linked["session_id"] == record.session_id
+        assert linked["link_state"] == "live"
+        assert linked["dispatch_error"] == ""
+        assert checked == [(60576, 4321)]
+        assert card["id"] not in daemon._spawn_shell_pids
+        assert card["id"] not in daemon._spawn_pty_pids
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("ambiguous,foreign", [(False, True), (True, False)])
+def test_vscode_attribution_refuses_unproved_board_bind(
+        tmp_path, monkeypatch, ambiguous, foreign):
+    from dark_army_daemon import codex_rollouts
+
+    daemon, store = _board_daemon(tmp_path)
+    try:
+        now = time.time()
+        card = _dispatching_card(store, tool="codex", when=now)
+        cwd = "/tmp/bob"
+        record = codex_rollouts.CodexRecord(
+            session_id="codex:launched", thread_id="launched",
+            path=tmp_path / "launched.jsonl", cwd=cwd,
+            originator="codex-tui", source_kind="vscode", thread_source="user",
+            started_at=now + 0.799, last_event=now, activity="working",
+        )
+        records = [record]
+        if ambiguous:
+            records.append(codex_rollouts.CodexRecord(
+                session_id="codex:other", thread_id="other",
+                path=tmp_path / "other.jsonl", cwd=cwd))
+        codex_rollouts.attach_process_ids(
+            records, [_VscodeCodexProcess(60576, cwd, now)])
+        daemon._codex_records[record.session_id] = record
+        monkeypatch.setattr(daemon, "_refresh_codex_records", lambda: None)
+        monkeypatch.setattr(daemon, "_refresh_grok_records", lambda: None)
+        daemon._spawn_shell_pids[card["id"]] = 4321
+        checked = []
+
+        def ancestry(pid, parent):
+            checked.append((pid, parent))
+            return not foreign and (pid, parent) == (60576, 4321)
+
+        monkeypatch.setattr(daemon_mod, "_pid_descends", ancestry)
+        stub = next(row for row in daemon._collect_agent_stubs()
+                    if row["session_id"] == record.session_id)
+        assert stub["pid"] == (None if ambiguous else 60576)
+        assert daemon._reconcile_board({"running": [stub]}) is False
+        assert store.get(card["id"])["session_id"] == ""
+        assert checked == ([(60576, 4321)] if foreign else [])
+        store.update(card["id"], {
+            "dispatched_at": now - dispatch.DISPATCH_BIND_WINDOW - 1})
+        assert daemon._reconcile_board({"running": [stub]}) is True
+        expired = store.get(card["id"])
+        assert expired["session_id"] == ""
+        assert expired["link_state"] == ""
+        assert "could not prove" in expired["dispatch_error"]
+        assert card["id"] not in daemon._spawn_shell_pids
+        # A late observation cannot revive the expired dispatch.
+        assert daemon._reconcile_board({"running": [stub]}) is False
+        assert store.get(card["id"])["session_id"] == ""
+    finally:
+        store.close()
+
+
 def test_bind_without_a_receipt_falls_back(tmp_path):
     """No receipt — an older extension window, or Dark Army restarted mid-window —
     and the predicate alone decides, exactly as before. This is where the

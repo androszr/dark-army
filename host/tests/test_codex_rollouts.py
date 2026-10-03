@@ -285,6 +285,112 @@ def _native_holder(pid, path, tty="ttys004", *, cwd="/code/bob", **changes):
     return _with_tty(process, tty)
 
 
+def test_vscode_attribution_links_one_recent_native_terminal_without_control():
+    record = _root(source_kind="vscode", started_at=100.799)
+    process = _FakeProcess(60576, create_time=100.0)
+
+    codex_rollouts.attach_process_ids([record], [process])
+
+    assert record.pid == 60576
+    assert record.process_identity is None
+    assert record.process_seen is None
+    assert codex_rollouts._safe_cli_root(record) is False
+
+
+@pytest.mark.parametrize("changes", [
+    {"parent_thread_id": "parent"},
+    {"originator": "codex-app"},
+    {"source_kind": "app"},
+    {"thread_source": "subagent"},
+    {"cwd": ""},
+    {"thread_id": ""},
+    {"started_at": None},
+    {"started_at": 0},
+    {"started_at": float("inf")},
+    {"started_at": float("nan")},
+])
+def test_vscode_attribution_refuses_ineligible_roots(changes):
+    fields = {"source_kind": "vscode", "started_at": 100.799}
+    fields.update(changes)
+    record = _root(**fields)
+    codex_rollouts.attach_process_ids([record], [_FakeProcess(60576)])
+    assert record.pid is None
+    assert record.process_identity is None
+    assert record.process_seen is None
+
+
+@pytest.mark.parametrize("other,processes", [
+    ([_root("other", source_kind="vscode")], [_FakeProcess(60576)]),
+    ([_root("other")], [_FakeProcess(60576)]),
+    ([], [_FakeProcess(60576), _FakeProcess(60577)]),
+    ([], [_FakeProcess(60576, cwd="/elsewhere")]),
+    ([], [_FakeProcess(60576, cmdline=("codex", "resume", "foreign"))]),
+    ([], [_FakeProcess(60576, exe="/Applications/Codex.app/Contents/MacOS/codex")]),
+    ([], [_FakeProcess(60576, exe="/opt/node", cmdline=("node", "codex"))]),
+    ([], [_FakeProcess(60576, cmdline=("codex", "app-server"))]),
+    ([], [_FakeProcess(60576, denied=("exe",))]),
+    ([], [_FakeProcess(60576), _FakeProcess(60577, denied=("exe", "cwd"))]),
+    ([], [_FakeProcess(60576), _FakeProcess(60577, denied=("exe",))]),
+])
+def test_vscode_attribution_refuses_competing_or_unreadable_processes(other, processes):
+    record = _root(source_kind="vscode", started_at=100.799)
+    codex_rollouts.attach_process_ids([record, *other], processes)
+    assert record.pid is None
+    assert record.process_identity is None
+    assert record.process_seen is None
+
+
+@pytest.mark.parametrize("started,created", [
+    (99.999, 100.0),
+    (401.0, 100.0),
+    (100.799, 0),
+    (100.799, float("inf")),
+    (100.799, float("nan")),
+])
+def test_vscode_attribution_requires_finite_recent_preceding_start(started, created):
+    record = _root(source_kind="vscode", started_at=started)
+    codex_rollouts.attach_process_ids([record], [_FakeProcess(60576, create_time=created)])
+    assert record.pid is None
+    assert record.process_identity is None
+    assert record.process_seen is None
+
+
+def test_vscode_attribution_rechecks_identity_and_clears_stale_pid():
+    record = _root(source_kind="vscode", started_at=100.799)
+    process = _FakeProcess(60576)
+    codex_rollouts.attach_process_ids([record], [process])
+    assert record.pid == 60576
+    process.fresh["create_time"] = 101.0
+    codex_rollouts.attach_process_ids([record], [process])
+    assert record.pid is None
+    process.fresh["create_time"] = 100.0
+    codex_rollouts.attach_process_ids([record], [])
+    assert record.pid is None
+    assert record.process_seen is None
+
+
+def test_vscode_attribution_unavailable_scan_clears_stale_pid():
+    record = _root(source_kind="vscode", started_at=100.799, pid=60576)
+
+    def unavailable():
+        raise PermissionError("process table denied")
+        yield
+
+    codex_rollouts.attach_process_ids([record], unavailable())
+    assert record.pid is None
+    assert record.process_identity is None
+    assert record.process_seen is None
+
+
+def test_vscode_attribution_cannot_reuse_a_cli_process():
+    cli = _root("cli", started_at=100.799)
+    vscode = _root("vscode", source_kind="vscode", started_at=100.799)
+    process = _FakeProcess(60576, cmdline=("codex", "resume", "cli"))
+    codex_rollouts.attach_process_ids([cli, vscode], [process])
+    assert cli.pid == 60576
+    assert vscode.pid is None
+
+
 def test_process_attachment_prefers_explicit_thread_id():
     record = _root()
     codex_rollouts.attach_process_ids([
@@ -1879,6 +1985,40 @@ def test_load_recent_invalidates_the_shared_scan_when_a_root_appears(
     journal("second")
     records = codex_rollouts.load_recent(tmp_path, now=now, grace=10 ** 9)
     assert {r.thread_id for r in records} == {"first", "second"}
+    assert len(calls) == 2
+
+
+def test_vscode_attribution_load_recent_attaches_without_cli_liveness(
+        tmp_path, monkeypatch):
+    now = int(time.time())
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    path = tmp_path / "2026/10/03/rollout-vscode.jsonl"
+    processes = []
+    calls = _counting_scan(monkeypatch, lambda: processes)
+    monkeypatch.setattr(codex_rollouts, "_CACHE", {})
+    monkeypatch.setattr(codex_rollouts, "_PROCESS_SNAPSHOT", None)
+    monkeypatch.setattr(codex_rollouts, "_LAST_ROOT_IDS", frozenset())
+    monkeypatch.setattr(codex_rollouts, "_thread_names", lambda: {})
+
+    # The old empty reading predates both the rollout and its process.
+    assert codex_rollouts.process_snapshot_shared() == []
+    write_rollout(path, [row("session_meta", {
+        "id": "vscode", "cwd": "/code/bob", "originator": "codex-tui",
+        "source": "vscode", "thread_source": "user",
+    }, timestamp=stamp)])
+    processes.append(_FakeProcess(60576, create_time=now - 0.799))
+
+    records = codex_rollouts.load_recent(tmp_path, now=now, grace=10 ** 9)
+    assert len(records) == 1
+    assert records[0].pid == 60576
+    assert records[0].process_identity is None
+    assert records[0].process_seen is None
+    assert codex_rollouts._safe_cli_root(records[0]) is False
+    assert len(calls) == 2
+
+    again = codex_rollouts.load_recent(tmp_path, now=now, grace=10 ** 9)
+    assert again[0].pid == 60576
+    assert again[0].process_seen is None
     assert len(calls) == 2
 
 
