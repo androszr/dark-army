@@ -214,7 +214,8 @@ CREATE TABLE IF NOT EXISTS metric_samples (
     five_hour_resets_at REAL,
     seven_day_pct       REAL,
     lines_added         INTEGER,
-    lines_removed       INTEGER
+    lines_removed       INTEGER,
+    provider            TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_session ON metric_samples(session_id, ts);
 CREATE INDEX IF NOT EXISTS idx_metrics_day     ON metric_samples(day);
@@ -327,6 +328,17 @@ def local_day(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
 
 
+# Which `metric_samples` rows are Claude's budget. Grok's overlay files its
+# *weekly* percentage under `five_hour_pct`, so the column alone cannot be drawn
+# as Claude's five-hour limit. Rows written before the `provider` column, or by
+# an older build after a downgrade, are Claude's only when they carry a
+# seven-day reading: Grok's writer never sets one (0 of 47,594 on one Mac), and
+# joining `sessions.provider` cannot tell (Grok sessions with a NULL provider
+# exist).
+_CLAUDE_LIMIT_SAMPLE = (
+    "(provider = 'claude' OR (provider IS NULL AND seven_day_pct IS NOT NULL))")
+
+
 def _bucket_seconds(days: Optional[int]) -> int:
     """How finely to sample a time series for a range of `days`.
 
@@ -418,6 +430,11 @@ class HistoryStore:
             ("cache_write_1h", "INTEGER"),
         ),
         "sessions": (
+            ("provider", "TEXT"),
+        ),
+        # Nullable, no default: a default of 'claude' would mark every older
+        # build's Grok row as Claude's.
+        "metric_samples": (
             ("provider", "TEXT"),
         ),
     }
@@ -569,19 +586,20 @@ class HistoryStore:
         )
 
     def record_metrics(self, session_id: str, metrics: dict,
-                       ts: Optional[float] = None) -> None:
+                       ts: Optional[float] = None,
+                       provider: str = "claude") -> None:
         if not session_id or not metrics:
             return
         ts = time.time() if ts is None else ts
         self._write(
             "INSERT INTO metric_samples(ts, day, session_id, cost_usd, ctx_pct,"
             " five_hour_pct, five_hour_resets_at, seven_day_pct, lines_added,"
-            " lines_removed) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            " lines_removed, provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (ts, local_day(ts), session_id,
              metrics.get("cost_usd"), metrics.get("ctx_used_pct"),
              metrics.get("five_hour_pct"), metrics.get("five_hour_resets_at"),
              metrics.get("seven_day_pct"), metrics.get("lines_added"),
-             metrics.get("lines_removed")),
+             metrics.get("lines_removed"), provider),
         )
 
     def upsert_session(self, session_id: str, **fields) -> None:
@@ -1884,8 +1902,14 @@ class HistoryStore:
         return {k: (v or 0) for k, v in out.items()}
 
     def limits_report(self, days: Optional[int] = None) -> dict:
-        """Rate-limit budget over time — the axis claude-usage hands to another
-        project entirely.
+        """Claude's rate-limit budget over time — the axis claude-usage hands to
+        another project entirely.
+
+        Claude's alone. Grok's overlay files its *weekly* percentage under
+        `five_hour_pct` (`grok_roster._overlay_billing`), so an unfiltered read
+        draws Grok's week as Claude's five-hour budget. Every query here goes
+        through `_CLAUDE_LIMIT_SAMPLE`; `sessions.provider` cannot tell the two
+        apart (Grok sessions with a NULL provider exist).
 
         The `resets` list matters as much as the series: a five-hour budget is a
         sawtooth, and without the reset boundaries drawn in, a fall from 90% to 4%
@@ -1893,7 +1917,10 @@ class HistoryStore:
 
         `current` is the newest sample in the *database*, not in the range, and
         carries its own `ts` — a caller showing it as "now" has to check how old
-        it is, because a daemon that was down all morning has nothing newer."""
+        it is, because a daemon that was down all morning has nothing newer.
+
+        `from` / `to` are the chart's x-axis: the range asked for (`since` to now),
+        (floored to a bucket, as the series' own `ts` are), or for `days=None` the first bucket's `ts`, None when the series is empty."""
         since = self._since(days)
         bucket = _bucket_seconds(days)
         series = [dict(r) for r in self._query(
@@ -1902,21 +1929,32 @@ class HistoryStore:
             " MAX(seven_day_pct) AS seven_day_pct"
             " FROM metric_samples WHERE ts >= ?"
             "   AND (five_hour_pct IS NOT NULL OR seven_day_pct IS NOT NULL)"
+            f"   AND {_CLAUDE_LIMIT_SAMPLE}"
             " GROUP BY 1 ORDER BY 1",
             (bucket, bucket, since),
         )]
         resets = [r["resets_at"] for r in self._query(
             "SELECT DISTINCT five_hour_resets_at AS resets_at FROM metric_samples"
-            " WHERE ts >= ? AND five_hour_resets_at IS NOT NULL ORDER BY 1",
+            " WHERE ts >= ? AND five_hour_resets_at IS NOT NULL"
+            f"   AND {_CLAUDE_LIMIT_SAMPLE} ORDER BY 1",
             (since,),
         )]
         latest = self._query(
             "SELECT ts, five_hour_pct, five_hour_resets_at, seven_day_pct"
             " FROM metric_samples WHERE five_hour_pct IS NOT NULL"
+            f"   AND {_CLAUDE_LIMIT_SAMPLE}"
             " ORDER BY ts DESC LIMIT 1"
         )
         current = dict(latest[0]) if latest else {}
-        return {"bucket_seconds": bucket, "series": series, "resets": resets,
+        now = time.time()
+        if days is not None:
+            # Series buckets are labelled by their floored start, so `from` is
+            # floored the same way or the first bucket falls before the axis.
+            start = int(since // bucket) * bucket
+        else:
+            start = series[0]["ts"] if series else None
+        return {"bucket_seconds": bucket, "from": start, "to": now,
+                "series": series, "resets": resets,
                 "current": current, **self._burn_rate(current)}
 
     @staticmethod

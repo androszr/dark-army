@@ -19,6 +19,7 @@ from dark_army_daemon import api_server as api_mod
 from dark_army_daemon.agent_report import _SESSION_FIGURES
 from dark_army_daemon.api_server import (
     HISTORY_WEEK_BODY_KEYS, HISTORY_WEEK_CARD_KEYS, HISTORY_WEEK_DAY_KEYS,
+    HISTORY_WEEK_LIMIT_POINT_KEYS, HISTORY_WEEK_LIMITS_KEYS,
     HISTORY_WEEK_SESSION_KEYS, ApiServer,
 )
 from dark_army_daemon.daemon import BobDaemon
@@ -159,6 +160,7 @@ async def test_the_key_set_is_closed_at_every_depth(stub):
         assert set(day) <= set(HISTORY_WEEK_DAY_KEYS)
     leaked = _keys_at_every_depth(week) & FENCE
     assert not leaked, leaked
+    assert "limits" not in week, "no store is open in this fixture"
     assert "Secret plan" not in body.decode()
     assert "/Users/me/secret" not in body.decode()
     assert "Ada" not in body.decode()
@@ -233,3 +235,122 @@ async def test_the_lan_door_refuses_the_plain_addresses(stub):
 
 def test_the_marker_rides_the_pipeline_flags():
     assert BobDaemon()._pipeline_writable()["history_week_supported"] is True
+
+
+# --- Claude's limit pressure -------------------------------------------------
+
+
+def _store_with_samples(tmp_path):
+    import time
+
+    from dark_army_daemon.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "history.db")
+    store.connect()
+    now = time.time()
+    store.record_metrics("c1", {"five_hour_pct": 60.0, "seven_day_pct": 20.0,
+                                "five_hour_resets_at": now + 3600},
+                         ts=now - 600)
+    store.record_metrics("c1", {"seven_day_pct": 21.0}, ts=now - 7200)
+    store.record_metrics("g1", {"five_hour_pct": 95.0,
+                                "five_hour_resets_at": now + 400_000},
+                         ts=now - 600, provider="grok")
+    return store, now
+
+
+@pytest.mark.asyncio
+async def test_limits_ride_the_week_closed_and_claude_only(stub, tmp_path):
+    api, daemon, _port, _calls, _ = stub
+    store, now = _store_with_samples(tmp_path)
+    daemon._history = store
+    try:
+        _status, _ctype, body = await api._history_week_for({})
+    finally:
+        store.close()
+    week = json.loads(body)
+    limits = week["limits"]
+    assert set(limits) <= set(HISTORY_WEEK_LIMITS_KEYS)
+    assert {"from", "to", "series", "resets"} <= set(limits)
+    for point in limits["series"]:
+        assert set(point) <= set(HISTORY_WEEK_LIMIT_POINT_KEYS)
+    # Claude's 60%, never Grok's 95%, and never Grok's far-off reset.
+    assert max(p["five_hour_pct"] for p in limits["series"]
+               if "five_hour_pct" in p) == 60.0
+    assert limits["resets"] == [pytest.approx(now + 3600)]
+    assert "current" not in limits and "burn_pct_per_hour" not in limits
+    assert not _keys_at_every_depth(week) & FENCE
+
+
+@pytest.mark.asyncio
+async def test_a_null_reading_is_a_missing_key_on_the_wire(stub, tmp_path):
+    api, daemon, _port, _calls, _ = stub
+    store, _now = _store_with_samples(tmp_path)
+    daemon._history = store
+    try:
+        _status, _ctype, body = await api._history_week_for({})
+    finally:
+        store.close()
+    series = json.loads(body)["limits"]["series"]
+    assert any("five_hour_pct" not in p and "seven_day_pct" in p for p in series)
+    for point in series:
+        assert None not in point.values()
+
+
+@pytest.mark.asyncio
+async def test_no_store_or_no_claude_reading_sends_no_limits(stub, tmp_path):
+    import time
+
+    from dark_army_daemon.history import HistoryStore
+
+    api, daemon, _port, _calls, _ = stub
+    daemon._history = None
+    _status, _ctype, body = await api._history_week_for({})
+    assert "limits" not in json.loads(body)
+    store = HistoryStore(tmp_path / "grok-only.db")
+    store.connect()
+    store.record_metrics("g1", {"five_hour_pct": 95.0}, ts=time.time() - 60,
+                         provider="grok")
+    daemon._history = store
+    try:
+        _status, _ctype, body = await api._history_week_for({})
+    finally:
+        store.close()
+    assert "limits" not in json.loads(body)
+
+
+@pytest.mark.asyncio
+async def test_a_stored_inf_or_nan_cannot_fail_the_week(stub):
+    api, daemon, _port, _calls, _ = stub
+
+    class Odd:
+        def limits_report(self, days=None):
+            inf, nan = float("inf"), float("nan")
+            return {"bucket_seconds": 1800, "from": 1.0, "to": inf,
+                    "series": [{"ts": 1.0, "five_hour_pct": inf,
+                                "seven_day_pct": 5.0},
+                               {"ts": nan, "five_hour_pct": 1.0},
+                               {"ts": 2.0, "five_hour_pct": nan,
+                                "seven_day_pct": nan}],
+                    "resets": [inf, nan, 3.0, True]}
+
+    daemon._history = Odd()
+    _status, _ctype, body = await api._history_week_for({})
+    limits = json.loads(body)["limits"]
+    assert limits["series"] == [{"ts": 1.0, "seven_day_pct": 5.0}]
+    assert limits["resets"] == [3.0]
+    assert "to" not in limits
+
+
+@pytest.mark.asyncio
+async def test_a_failing_limits_read_leaves_the_key_absent(stub):
+    api, daemon, _port, _calls, _ = stub
+
+    class Broken:
+        def limits_report(self, days=None):
+            raise RuntimeError("database is locked")
+
+    daemon._history = Broken()
+    _status, _ctype, body = await api._history_week_for({})
+    week = json.loads(body)
+    assert week["available"] is True
+    assert "limits" not in week

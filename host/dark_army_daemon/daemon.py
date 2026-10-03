@@ -6907,7 +6907,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
         if now - last < METRIC_SAMPLE_INTERVAL:
             return
         self._last_metric_sample[session_id] = now
-        self._history_write("record_metrics", session_id, dict(data))
+        self._history_write("record_metrics", session_id, dict(data),
+                            provider="claude")
         # The cost here is Claude Code's own figure, not our arithmetic — the one
         # number in this system that does not need a disclaimer.
         if data.get("cost_usd") is not None:
@@ -6935,7 +6936,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
         if now - last < METRIC_SAMPLE_INTERVAL:
             return
         self._last_metric_sample[session_id] = now
-        self._history.record_metrics(session_id, dict(metrics))
+        self._history.record_metrics(session_id, dict(metrics),
+                                      provider="grok")
         if metrics.get("cost_usd") is not None:
             self._history.upsert_session(
                 session_id,

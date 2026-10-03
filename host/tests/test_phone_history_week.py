@@ -89,6 +89,7 @@ def test_the_screen_keeps_the_phone_rules():
     assert ".task { await load() }" in view
     assert ".refreshable { await load() }" in view
     assert "LedgerWeek.picture(" in view
+    assert ".pressure()" in view
 
 
 def test_the_model_keeps_absent_money_absent():
@@ -98,4 +99,5 @@ def test_the_model_keeps_absent_money_absent():
     assert 'case tokenCostUsd = "token_cost_usd"' in model
     assert 'case reportedCostUsd = "reported_cost_usd"' in model
     assert "func asLedgerInput()" in model
+    assert "case limits" in model
     assert '"not priced"' in _read(PHONE / "LedgerWeek.swift")

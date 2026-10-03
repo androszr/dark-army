@@ -129,6 +129,21 @@ final class AgentReportTests: XCTestCase {
         XCTAssertEqual(HistoryFormat.percentPoints(measured.fiveHourPct), "0%")
     }
 
+    /// The chart's axis and reset marks decode tolerantly: an absent key is
+    /// an empty list or nil, never 0 (a 0 axis would start in 1970).
+    func testTheLimitChartsAxisAndResetsDecodeAndAbsentIsNotZero() throws {
+        let full = try report(#"""
+        {"limits": {"series": [], "resets": [10, 20.5], "from": 5, "to": 99}}
+        """#)
+        XCTAssertEqual(full.limits.resets, [10, 20.5])
+        XCTAssertEqual(full.limits.from, 5)
+        XCTAssertEqual(full.limits.to, 99)
+        let absent = try report(#"{"limits": {"series": []}}"#)
+        XCTAssertEqual(absent.limits.resets, [])
+        XCTAssertNil(absent.limits.from)
+        XCTAssertNil(absent.limits.to)
+    }
+
     func testAGenuineZeroIsStillAFigure() {
         XCTAssertEqual(HistoryFormat.percent(0), "0%")
         XCTAssertEqual(HistoryFormat.optionalUsd(0), Format.usd(0))

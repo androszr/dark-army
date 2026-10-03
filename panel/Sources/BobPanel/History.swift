@@ -389,20 +389,41 @@ struct HistoryWaitingDay: Decodable, Identifiable {
 /// footer's job, and this is the history of how close the machine ran.
 struct HistoryLimits: Decodable {
     var series: [HistoryLimitPoint] = []
+    /// Each five-hour window's reset instant, so the chart can mark where a
+    /// fall from 90% to 4% is a window rolling over.
+    var resets: [Double] = []
+    /// The chart's x-axis: the range the person picked. Nil where the daemon
+    /// sent none — never 0, which would put the axis in 1970.
+    var from: Double?
+    var to: Double?
     var burnPctPerHour: Double?
 
     enum CodingKeys: String, CodingKey {
-        case series
+        case series, resets, from, to
         case burnPctPerHour = "burn_pct_per_hour"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         series = c.value(.series, [])
+        resets = c.value(.resets, [])
+        from = c.maybe(.from)
+        to = c.maybe(.to)
         burnPctPerHour = c.maybe(.burnPctPerHour)
     }
 
     init() {}
+
+    /// The shared fold's picture of this range (`LimitPressure`, byte-pinned
+    /// with the phone); nil where nothing was measured, so nothing is drawn.
+    func pressure() -> LimitPressure.Picture? {
+        LimitPressure.picture(
+            points: series.map {
+                LimitPressure.Point(ts: $0.ts, fiveHour: $0.fiveHourPct,
+                                    sevenDay: $0.sevenDayPct)
+            },
+            resets: resets, from: from, to: to)
+    }
 }
 
 struct HistoryLimitPoint: Decodable, Identifiable {

@@ -25,6 +25,8 @@ struct HistoryWeekView: View {
     /// below the floor, so a small day does not vanish.
     private static let barHeight: CGFloat = 64
     private static let segmentFloor: CGFloat = 4
+    /// The limit chart's track: columns are flexible, only the height is fixed.
+    private static let pressureHeight: CGFloat = 56
     /// The strip's full width at accessibility sizes, where a day is a row.
     private static let stripWidth: CGFloat = 180
 
@@ -47,6 +49,9 @@ struct HistoryWeekView: View {
                     headline(picture)
                     week(picture)
                     legend
+                    if let limits = report?.limits.pressure() {
+                        pressure(limits)
+                    }
                 } else if asked && !loading {
                     CommentLine(text: failure)
                     DecryptButton("Retry") { Task { await load() } }
@@ -312,5 +317,56 @@ struct HistoryWeekView: View {
                 .foregroundStyle(Theme.dim)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    // MARK: - Claude's limit pressure
+
+    /// The same chart the Mac's History draws, folded by `LimitPressure`:
+    /// one column per slice of the week on a 0–100% track, a five-hour bar,
+    /// a seven-day tick and a hairline at each reset. An unmeasured slice is
+    /// an empty track. The columns carry no text and are hidden from
+    /// VoiceOver; the group speaks the peaks. Neither amber nor red.
+    private func pressure(_ picture: LimitPressure.Picture) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(picture.headline)
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.dim)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .bottom, spacing: 1) {
+                ForEach(Array(picture.columns.enumerated()), id: \.offset) { _, column in
+                    pressureColumn(column)
+                }
+            }
+            .frame(height: Self.pressureHeight)
+            Text("5h budget · 7d tick · | reset")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.dim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(picture.spoken)
+    }
+
+    private func pressureColumn(_ column: LimitPressure.Column) -> some View {
+        ZStack(alignment: .bottom) {
+            Color.clear
+            if let h = LimitPressure.height(column.fiveHour) {
+                Rectangle().fill(Theme.phosphor)
+                    .frame(height: max(1, CGFloat(h) * Self.pressureHeight))
+            }
+            if let h = LimitPressure.height(column.sevenDay) {
+                Rectangle().fill(Theme.phosphorBright)
+                    .frame(height: 2)
+                    .padding(.bottom, max(0, CGFloat(h) * Self.pressureHeight - 2))
+            }
+            if column.reset {
+                Rectangle().fill(Theme.hair)
+                    .frame(width: 1)
+                    .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 }

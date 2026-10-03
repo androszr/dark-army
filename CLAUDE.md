@@ -195,7 +195,7 @@ stated in full, with its reasons, in the subject document named.
   together**: `BoardRowFold` (folds persisted as `board_row_flips`),
   `DetailTab` / `TerminalWhereabouts`, `CardSections`, `CardTimeline`,
   `ProviderChoice`, `Markdown`, `Areas`, `Specialists`, `AgentChatter`,
-  `LedgerWeek`, `CastQuotes`, `WorkReport`, `Inbox.oneEntryPerSubject`; each
+  `LedgerWeek`, `LimitPressure`, `CastQuotes`, `WorkReport`, `Inbox.oneEntryPerSubject`; each
   pair's pinning test is named beside it in `docs/context-panel.md`.
 - **A card outlines one verb, chosen by its column** (`CardActionWeight`,
   the board tile's rule; the phone's card screen does not read it yet):

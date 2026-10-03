@@ -20,6 +20,7 @@
 		L1F3C7C10000000000000004 /* LifecycleReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = L1F3C7C10000000000000003 /* LifecycleReportView.swift */; };
 		L1F3C7C10000000000000006 /* LifecycleReportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = L1F3C7C10000000000000005 /* LifecycleReportTests.swift */; };
 		H1570EE70000000000000002 /* LedgerWeek.swift in Sources */ = {isa = PBXBuildFile; fileRef = H1570EE70000000000000001 /* LedgerWeek.swift */; };
+		H1570EF10000000000000002 /* LimitPressure.swift in Sources */ = {isa = PBXBuildFile; fileRef = H1570EF10000000000000001 /* LimitPressure.swift */; };
 		H1570EE70000000000000004 /* HistoryWeek.swift in Sources */ = {isa = PBXBuildFile; fileRef = H1570EE70000000000000003 /* HistoryWeek.swift */; };
 		H1570EE70000000000000006 /* HistoryWeekView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H1570EE70000000000000005 /* HistoryWeekView.swift */; };
 		H1570EE70000000000000008 /* HistoryWeekTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = H1570EE70000000000000007 /* HistoryWeekTests.swift */; };
@@ -217,6 +218,7 @@ DEC1510B000000000000002D = {isa = PBXBuildFile; fileRef = 7B0B0E1A00000000000001
 		L1F3C7C10000000000000003 /* LifecycleReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/LifecycleReportView.swift; sourceTree = SOURCE_ROOT; };
 		L1F3C7C10000000000000005 /* LifecycleReportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/LifecycleReportTests.swift; sourceTree = SOURCE_ROOT; };
 		H1570EE70000000000000001 /* LedgerWeek.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/LedgerWeek.swift; sourceTree = SOURCE_ROOT; };
+		H1570EF10000000000000001 /* LimitPressure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/LimitPressure.swift; sourceTree = SOURCE_ROOT; };
 		H1570EE70000000000000003 /* HistoryWeek.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/HistoryWeek.swift; sourceTree = SOURCE_ROOT; };
 		H1570EE70000000000000005 /* HistoryWeekView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhone/HistoryWeekView.swift; sourceTree = SOURCE_ROOT; };
 		H1570EE70000000000000007 /* HistoryWeekTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BobPhoneTests/HistoryWeekTests.swift; sourceTree = SOURCE_ROOT; };
@@ -545,6 +547,7 @@ DEC1510B000000000000003F = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 				L1F3C7C10000000000000001 /* LifecycleReport.swift */,
 				L1F3C7C10000000000000003 /* LifecycleReportView.swift */,
 				H1570EE70000000000000001 /* LedgerWeek.swift */,
+				H1570EF10000000000000001 /* LimitPressure.swift */,
 				H1570EE70000000000000003 /* HistoryWeek.swift */,
 				H1570EE70000000000000005 /* HistoryWeekView.swift */,
 				B0B0C0A000000000000001F8 /* OutcomeScreens.swift */,
@@ -890,6 +893,7 @@ DEC1510B0000000000000042 = {isa = PBXNativeTarget; buildConfigurationList = DEC1
 				L1F3C7C10000000000000002 /* LifecycleReport.swift in Sources */,
 				L1F3C7C10000000000000004 /* LifecycleReportView.swift in Sources */,
 				H1570EE70000000000000002 /* LedgerWeek.swift in Sources */,
+				H1570EF10000000000000002 /* LimitPressure.swift in Sources */,
 				H1570EE70000000000000004 /* HistoryWeek.swift in Sources */,
 				H1570EE70000000000000006 /* HistoryWeekView.swift in Sources */,
 				B0B0C0A000000000000001F9 /* OutcomeScreens.swift in Sources */,

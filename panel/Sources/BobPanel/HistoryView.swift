@@ -238,7 +238,8 @@ struct LedgerPane: View {
                 .padding(24)
         case .loaded(let report):
             loaded(ledgerPicture(report: report, client: client, lens: lens,
-                                 person: person, day: day, run: run))
+                                 person: person, day: day, run: run),
+                   pressure: report.limits.pressure())
         }
     }
 
@@ -254,7 +255,8 @@ struct LedgerPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func loaded(_ picture: LedgerPicture) -> some View {
+    private func loaded(_ picture: LedgerPicture,
+                        pressure: LimitPressure.Picture?) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(picture.masthead)
@@ -292,6 +294,10 @@ struct LedgerPane: View {
                     stage(picture)
                     if !opensUnderRow(picture) {
                         dock(picture)
+                            .padding(.top, CGFloat(LedgerWeekLayout.dockGap))
+                    }
+                    if let pressure {
+                        LimitPressureView(picture: pressure)
                             .padding(.top, CGFloat(LedgerWeekLayout.dockGap))
                     }
                 }
