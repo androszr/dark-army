@@ -290,17 +290,39 @@ final class PhoneSheetRouter: ObservableObject {
     private let presentationIdentity = Presentation()
     var presentation: Presentation? { top == nil ? nil : presentationIdentity }
 
+    /// Show `entry` on the trail. The agent sheet's swipe does not come through
+    /// here: it replaces the top rung with `replaceTop(_:)`.
     func show(_ entry: PhoneSheet) {
         if top == entry {
             // Refresh the seed while preserving the text already being edited.
             stack[stack.count - 1] = entry
         } else if stack.count == Self.MAX_DEPTH {
-            entryStates[entryStates.count - 1] = freshState(for: entry)
-            stack[stack.count - 1] = entry
+            swapTop(entry)
         } else {
             entryStates.append(freshState(for: entry))
             stack.append(entry)
         }
+    }
+
+    /// Put `entry` in the top rung with a fresh state, so the content remounts.
+    private func swapTop(_ entry: PhoneSheet) {
+        entryStates[entryStates.count - 1] = freshState(for: entry)
+        stack[stack.count - 1] = entry
+    }
+
+    /// The agent sheet's swipe: the top rung becomes `entry` without the
+    /// sheet closing. Not `back()` then `show()`: the trail must not grow with
+    /// agents swiped past, Back must return to the list, and at one rung
+    /// `back()` would empty the stack and dismiss the sheet. The displaced
+    /// rung's typed text is parked (memory only) for a swipe back; an equal
+    /// subject is a refresh, never a remount.
+    func replaceTop(_ entry: PhoneSheet) {
+        guard let current = top, let state = topState else { return }
+        guard current != entry else { show(entry); return }
+        if let kept = state.placeEntry(for: current) {
+            PhonePlaceStore.shared.keepDrafts(of: [kept])
+        }
+        swapTop(entry)
     }
 
     /// A new rung, carrying the text a tap or a draft displaced from the
@@ -367,6 +389,30 @@ struct PhoneSheetFrame: View {
 
     private var kind: PhoneSheetKind { router.top?.kind ?? .card }
     private var column: String? { router.top?.cardColumn }
+    /// The session ids Needs you draws, in drawn order, keeping the ones that
+    /// open an agent sheet. Read at the moment of use, never cached.
+    private var waitingOrder: [String] {
+        AgentSheetSwipe.order(PhoneInbox.groups(client.snapshot.decisionItems).map(\.items)) { item in
+            guard case .session(let id) = item.target,
+                  PhoneInbox.uniqueAgent(session: id, agents: client.snapshot.agents) != nil
+            else { return nil }
+            return id
+        }
+    }
+
+    private func neighbour(_ direction: AgentSheetSwipe.Direction) -> (Agent, Category)? {
+        guard case .agent(let agent, _) = router.top?.subject else { return nil }
+        guard let id = AgentSheetSwipe.neighbour(of: agent.sessionId, in: waitingOrder, direction) else {
+            return nil
+        }
+        return PhoneInbox.uniqueAgent(session: id, agents: client.snapshot.agents)
+    }
+
+    private func move(_ direction: AgentSheetSwipe.Direction) {
+        guard !router.terminalPresented, let (next, category) = neighbour(direction) else { return }
+        router.replaceTop(.agent(next, category))
+    }
+
     private var presentationBinding: Binding<PresentationDetent> {
         Binding(get: { detent.presentation }, set: { detent = $0 == .medium ? .medium : .large })
     }
@@ -422,6 +468,14 @@ struct PhoneSheetFrame: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
+                    .accessibilityActions {
+                        if neighbour(.next) != nil {
+                            DecryptButton("Next waiting agent", action: { move(.next) })
+                        }
+                        if neighbour(.previous) != nil {
+                            DecryptButton("Previous waiting agent", action: { move(.previous) })
+                        }
+                    }
                 if let decryptFeedback {
                     SheetArrivalCaption(feedback: decryptFeedback, host: captionHost)
                         .frame(minHeight: 44)
@@ -439,6 +493,15 @@ struct PhoneSheetFrame: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(Theme.phosphor)
+            .contentShape(Rectangle())
+            // Header only, by design: the body's drag resizes the sheet and the
+            // conversation scrolls; a horizontal reading there would fight both.
+            .simultaneousGesture(DragGesture(minimumDistance: 24, coordinateSpace: .local).onEnded { value in
+                if let direction = AgentSheetSwipe.direction(dx: value.translation.width,
+                                                             dy: value.translation.height) {
+                    move(direction)
+                }
+            })
             if let decryptFeedback {
                 SheetArrivalRule(feedback: decryptFeedback, host: captionHost)
             } else {

@@ -119,6 +119,23 @@ profile, Pipeline and the two Usage report screens retain their existing
 (push) navigation. The reports are pushes inside Usage, absent when the
 Mac does not publish the flag, fetched on appear not on tab visit.
 
+**The agent sheet swipes to the next agent that needs you.** A horizontal
+swipe on the sheet's header — leftward next, rightward previous — replaces the
+top rung with the neighbouring agent in the Needs you order as drawn at that
+moment (`PhoneInbox.groups` over `decisionItems`, session targets
+`uniqueAgent` resolves, card entries skipped), through
+`PhoneSheetRouter.replaceTop`: a fresh entry state, so the content remounts,
+the arrival caption plays again and the detent re-aims; the trail does not
+grow and Back returns to the list; the displaced rung's typed reply is parked
+in the place store's orphan drafts and returns on the next open of that agent,
+memory only; the ends stop with no action; the gesture is
+`.simultaneousGesture` on the header row only, never the body, and the
+whole row takes it (`.contentShape(Rectangle())`, so the blank space right of
+a short name counts); VoiceOver has
+"Next waiting agent" / "Previous waiting agent" on the title where a neighbour
+exists. The rules are Foundation-only in `AgentSheetSwipe.swift`, run by
+`host/tests/test_phone_sheet_swipe.py` and `AgentSheetSwipeTests.swift`.
+
 **A finished agent's report reads as on the Mac**: the sheet draws
 `work_report` through `WorkReport` (byte-pinned, `test_work_report_parse.py`)
 as labelled sections, Unchecked numbered; the status line and Needs you lead
