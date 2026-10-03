@@ -20,6 +20,9 @@ from Foundation import NSObject
 from PyObjCTools.AppHelper import callAfter
 
 from dark_army_daemon import agent_models
+# Module level on purpose: `_rebuild_finished` runs after `build.sh` has
+# replaced the bundle we execute from, and a cold import there dies.
+from dark_army_daemon import rebuild_state
 from dark_army_daemon.daemon import BobDaemon, DaemonObserver
 from . import (
     channel_install, hooks, kill_switch, launchd, dev_build, first_run, logsetup,
@@ -621,6 +624,11 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         # taking the callback off a menu item; with no menu they are flags, and
         # they ride down in the settings block so the row can grey itself.
         self._rebuilding = False
+        # What the last rebuild did, for the panel's context push and the
+        # daemon's `rebuild` section (`_rebuild_facts`). Seeded from the stamp
+        # a successful rebuild left, so a fresh process does not forget it
+        # landed. Replaced whole, never mutated in place.
+        self._rebuild: dict = self._seed_rebuild()
         self._vscode_installing = False
         # Roots whose pack install is in flight. A set, not a bool: two
         # projects can be installing at once, and the panel greys per row.
@@ -897,6 +905,9 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         self._daemon.auto_compact_enabled = bool(self._settings["auto_compact"])
         self._daemon.typed_reply_enabled = bool(
             self._settings.get("typed_reply", False))
+        # Tell the daemon whether this Mac can rebuild and what the button
+        # says, before its loop exists (nothing else touches it yet).
+        self._tell_daemon_rebuild()
         # The ⋯ row is gone; a stored false still wins so an upgrade does
         # not start sending opening-prompt text off the machine.
         self._daemon.session_title_enabled = bool(
@@ -3213,6 +3224,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             probes = self._compute_panel_probes()
             self._panel_probes = probes
         info = probes.get("build_info")
+        rebuild = self._rebuild_facts()
         grok = getattr(self, "_grok_limits", {}) or {}
         percent = grok.get("percent") if not grok.get("stale") else None
         resets = grok.get("resets_at")
@@ -3233,6 +3245,12 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             build_stale=bool(info and info.get("stale")),
             can_rebuild=self._repo_root is not None,
             rebuild_label=dev_build.rebuild_title(self._repo_root),
+            # The last rebuild's outcome and failure text, and when the
+            # running one began: the window's button turns red on a failure
+            # and names it in its help.
+            rebuild_outcome=rebuild["last_outcome"],
+            rebuild_error=rebuild["last_error"],
+            rebuild_started_at=rebuild["started_at"],
             grok_percent=float(percent) if isinstance(percent, (int, float)) else None,
             grok_resets_at=float(resets) if isinstance(resets, (int, float)) else None,
             settings={
@@ -3473,21 +3491,89 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         except Exception:
             logger.exception("Build-staleness check failed")
 
+    @staticmethod
+    def _seed_rebuild() -> dict:
+        facts = rebuild_state.seed_facts(rebuild_state.read_stamp())
+        return {"started_at": None,
+                "last_outcome": facts["last_outcome"],
+                "last_finished_at": facts["last_finished_at"],
+                "last_error": ""}
+
+    def _rebuild_record(self) -> dict:
+        record = self.__dict__.get("_rebuild")
+        if not isinstance(record, dict):
+            record = self._seed_rebuild()
+            self._rebuild = record
+        return record
+
+    def _rebuild_facts(self) -> dict:
+        """The one dict the panel's context and the daemon's `rebuild` section
+        both read, so neither client derives it. `available` is whether this
+        run has a source checkout to build; no path rides in it."""
+        record = self._rebuild_record()
+        repo_root = self.__dict__.get("_repo_root")
+        return {
+            "available": repo_root is not None,
+            "label": dev_build.rebuild_title(repo_root) if repo_root is not None
+            else "",
+            "rebuilding": bool(self.__dict__.get("_rebuilding", False)),
+            "restarting": bool(self.__dict__.get("_restarting", False)),
+            "started_at": record.get("started_at"),
+            "last_outcome": record.get("last_outcome") or "",
+            "last_finished_at": record.get("last_finished_at"),
+            "last_error": record.get("last_error") or "",
+        }
+
+    def _tell_daemon_rebuild(self) -> None:
+        """Publish `_rebuild_facts()` to the daemon, fire and forget: the loop
+        thread runs `set_rebuild_state`, and nothing here waits on it (never
+        block the AppKit thread on the daemon). Before the loop exists —
+        startup, the daemon not yet running — it is a direct call."""
+        daemon = self.__dict__.get("_daemon")
+        if daemon is None:
+            return
+        loop = self.__dict__.get("_loop")
+        try:
+            # Inside the try: this runs in `_on_restart` and just before it,
+            # and an exception here must never stop a Quit or a restart.
+            facts = self._rebuild_facts()
+            if loop is not None:
+                loop.call_soon_threadsafe(daemon.set_rebuild_state, facts)
+            else:
+                daemon.set_rebuild_state(facts)
+        except Exception:
+            logger.warning("could not tell the daemon about the rebuild",
+                           exc_info=True)
+
+    def on_rebuild_request(self) -> None:
+        """A phone or an agent's button asked for a rebuild. Arrives on the
+        daemon's loop thread, so it hops to the main thread and does nothing
+        else — `on_preference_request`'s shape. `_on_rebuild` is the one gate."""
+        callAfter(self._on_rebuild, None)
+
     def _on_rebuild(self, _):
         """Rebuild the artifact this run mode uses, then reload so it takes effect.
         Runs the (slow) build off the main thread; UI updates hop back via
         callAfter. On success we reuse the normal restart path to relaunch.
 
+        This is the one gate for all three entry points (the window's button,
+        the phone's tile, an agent's button): a press while a rebuild runs, or
+        while a restart is already under way, does nothing.
+
         Everything this path touches after the build must already be imported:
         in a frozen app `build.sh` does `rm -rf dist`, i.e. it deletes and
         recreates the very bundle we are executing from, so any *cold* import
         afterwards reads a replaced `python314.zip` and dies with a
-        ZipImportError. That is why `shlex`/`subprocess`/`callAfter` are
-        module-level imports and not function-local ones."""
-        if self._repo_root is None or self._rebuilding:
+        ZipImportError. That is why `shlex`/`subprocess`/`callAfter` and
+        `rebuild_state` are module-level imports and not function-local ones."""
+        if (self._repo_root is None or self._rebuilding
+                or self.__dict__.get("_restarting", False)):
             return
         self._rebuilding = True   # debounce: the panel greys its own row on this
+        self._rebuild = {**self._rebuild_record(), "started_at": time.time(),
+                         "last_outcome": "", "last_error": ""}
         self._push_panel_context()
+        self._tell_daemon_rebuild()
 
         def worker():
             try:
@@ -3509,16 +3595,44 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         try:
             if ok:
                 logger.info("Rebuild succeeded; reloading.")
+                # The stamp first: the restart that follows takes this
+                # process, and the fresh daemon seeds its `rebuild` section
+                # from it. Wrapped on its own so a failed write never stops
+                # the restart — a rebuild that succeeded and did not restart
+                # is the old silent no-op.
+                try:
+                    started = self._rebuild_record().get("started_at")
+                    now = time.time()
+                    rebuild_state.write_stamp(
+                        started if started is not None else now, now, True)
+                except Exception:
+                    logger.warning("could not write the rebuild stamp",
+                                   exc_info=True)
                 self._refresh_build_status()
+                # Told before `_on_restart`, which returns early when a
+                # restart is already under way and would tell nobody.
+                self._rebuild = {
+                    **self._rebuild_record(), "started_at": None,
+                    "last_outcome": "ok", "last_finished_at": time.time(),
+                    "last_error": ""}
+                self._tell_daemon_rebuild()
                 # Reuse the tested relaunch path: in a bundle this reloads the
                 # rebuilt .app; in dev it relaunches the menu bar, which respawns
                 # the freshly built sim. (_on_restart exits this process.)
                 self._on_restart(None)
                 return
             logger.error("Rebuild failed:\n%s", msg)
+            self._rebuild = {
+                **self._rebuild_record(), "started_at": None,
+                "last_outcome": "failed", "last_finished_at": time.time(),
+                # Redacted before it is cut, here as in the daemon: a hand cut
+                # could leave a fragment of the user name. The panel's own
+                # context push reads this same, already-redacted text.
+                "last_error": rebuild_state.redact_error(msg)}
         except Exception:
             logger.exception("Reload after a successful rebuild failed")
         self._push_panel_context()
+        self._tell_daemon_rebuild()
         try:
             rumps.notification("Dark Army", "Rebuild failed",
                                "See the log for details.")
@@ -3725,6 +3839,9 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         if self._restarting:
             return
         self._restarting = True
+        # Tell the daemon, so a press from the phone is refused in words
+        # instead of accepted and dropped by the gate in `_on_rebuild`.
+        self._tell_daemon_rebuild()
         logger.info("Restarting Dark Army...")
         for key in list(self.menu.keys()):
             if key.startswith("Restart"):

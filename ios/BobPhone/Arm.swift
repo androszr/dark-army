@@ -46,6 +46,9 @@ final class Arm: ObservableObject {
         /// reverse; armed on the joined id list, so a tick changed between
         /// the two presses re-arms rather than fires.
         case startBatch
+        /// Rebuild & restart, on the Menu screen and on an agent's screen. Its
+        /// own slot, so nothing else armed can confirm a Mac restart.
+        case rebuild
     }
 
     @Published private(set) var start: String?
@@ -65,6 +68,7 @@ final class Arm: ObservableObject {
     @Published private(set) var missionEnd: String?
     @Published private(set) var refineBatch: String?
     @Published private(set) var startBatch: String?
+    @Published private(set) var rebuild: String?
 
     /// Card detail hangs plan-gate pending flags here so a timeout cannot
     /// leave `skip_plan_gate` armed for the next Menu tap.
@@ -91,6 +95,7 @@ final class Arm: ObservableObject {
         missionEnd = nil
         refineBatch = nil
         startBatch = nil
+        rebuild = nil
         switch slot {
         case .start: start = id
         case .startHere: startHere = id
@@ -109,6 +114,7 @@ final class Arm: ObservableObject {
         case .missionEnd: missionEnd = id
         case .refineBatch: refineBatch = id
         case .startBatch: startBatch = id
+        case .rebuild: rebuild = id
         }
         timeoutTask = Task { [weak self] in
             let nanos = UInt64(Self.timeoutSeconds * 1_000_000_000)
@@ -148,6 +154,7 @@ final class Arm: ObservableObject {
         case .missionEnd: armed = missionEnd
         case .refineBatch: armed = refineBatch
         case .startBatch: armed = startBatch
+        case .rebuild: armed = rebuild
         }
         guard let armedId = armed, id.isEmpty || armedId == id else {
             return false
@@ -176,6 +183,7 @@ final class Arm: ObservableObject {
         missionEnd = nil
         refineBatch = nil
         startBatch = nil
+        rebuild = nil
         onDisarm?()
     }
 }

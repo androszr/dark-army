@@ -118,6 +118,7 @@ struct AgentDetailPane: View {
         if layout.options != .none { return true }
         if layout.reply { return true }
         if stopped, agent.canLowPriority { return true }
+        if agent.rebuildOffered, client.context.canRebuild { return true }
         if stopped, agent.canClose { return true }
         if !actions.refusal(for: agent).isEmpty { return true }
         return false

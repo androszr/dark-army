@@ -118,7 +118,7 @@ AT_MOST = ("Theme.swift", "FleetView.swift", "BrandBar.swift")
 TITLES = {'"new card"', '"profile"', '"PIPELINE"', '"agents"', '"timing"',
           '"knowledge"', '"access log"', '"usage"', '"comm"',
           '"scouting"', '"manual checks"', '"scout reports"', '"report"',
-          '"Design system"', '"plans"', '"plan"', '"history"'}
+          '"Design system"', '"plans"', '"plan"', '"history"', '"rebuild"'}
 
 #: Sheet subjects still appear in full in their content, with no bar title.
 SHEET_HEADERS = (

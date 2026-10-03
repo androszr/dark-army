@@ -411,7 +411,24 @@ final class ReceiptLedger: ObservableObject {
     /// a refusal.
     nonisolated static let phoneAuthored: Set<String> = [
         stuckLine, gaveUpLine, tooOldLine, otherPairingLine, faceNeededLine,
+        notReplayedLine,
     ]
+    /// Verbs a lost reply must never replay: a rebuild banked and re-sent
+    /// after the restart would rebuild the Mac a second time, on the phone's
+    /// clock rather than the person's (the Mac's receipt ledger is memory-only
+    /// and empty after the restart). Closed `.stuck` on `notReplayedLine`
+    /// instead; a person's own RETRY is a new press.
+    nonisolated static let neverReplayed: Set<String> = [PhoneActions.rebuildApp]
+    /// Whether the sender must close this receipt instead of re-sending it: a
+    /// never-replayed verb that was **already transmitted** (`attempts > 0`:
+    /// `open` writes 1 for a direct press and `markSending` counts each send).
+    /// A person's RETRY resets `attempts` to 0 under a fresh token, so it is a
+    /// new press and goes out exactly once.
+    nonisolated static func neverReplays(_ receipt: Receipt) -> Bool {
+        neverReplayed.contains(receipt.action) && receipt.attempts > 0
+    }
+    nonisolated static let notReplayedLine =
+        "Not sent again, so the Mac is not rebuilt twice. Look at the Mac, then RETRY if it did not start."
     /// The verbs whose press stays held while it lands: an answer or a
     /// reply the Mac accepted is typed into a dialog that the snapshot
     /// still lists for a poll cadence, so `.accepted` counts as a

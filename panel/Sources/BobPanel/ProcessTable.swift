@@ -513,6 +513,9 @@ struct StdoutPane: View {
             if category == .abandoned {
                 DeleteBar(agent: agent, actions: actions, client: client)
             }
+            if agent.rebuildOffered, client.context.canRebuild {
+                RebuildBar(agent: agent, client: client)
+            }
             if prompt == nil, stopped, agent.canLowPriority {
                 LowPriorityBar(agent: agent, actions: actions, client: client)
             }

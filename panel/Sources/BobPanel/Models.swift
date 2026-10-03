@@ -592,6 +592,11 @@ struct Agent: Decodable, Identifiable, Equatable {
     /// older daemon decodes false — no button, never one that types into a
     /// terminal.
     var canLowPriority = false
+    /// Whether this agent finished work that needs Dark Army rebuilt and
+    /// restarted to take effect, said in its report's `dark-army-next` marker
+    /// and judged by the daemon (own checkout, no later successful rebuild).
+    /// Drawn verbatim as the Rebuild bar; an older daemon decodes false.
+    var rebuildOffered = false
     /// Whether Dark Army may type a person's own message at this session on behalf
     /// of the card it is working — the card screen's Send a message button.
     /// Decided by the daemon per refresh and deliberately not `canType`,
@@ -702,6 +707,7 @@ struct Agent: Decodable, Identifiable, Equatable {
         case canType = "can_type"
         case canClose = "can_close"
         case canLowPriority = "can_low_priority"
+        case rebuildOffered = "rebuild_offered"
         case canMessage = "can_message"
         case ownTerminal = "own_terminal"
         case tabGone = "tab_gone"
@@ -769,6 +775,7 @@ struct Agent: Decodable, Identifiable, Equatable {
         canType = c.value(.canType, false)
         canClose = c.value(.canClose, false)
         canLowPriority = c.value(.canLowPriority, false)
+        rebuildOffered = c.value(.rebuildOffered, false)
         canMessage = c.value(.canMessage, false)
         ownTerminal = c.value(.ownTerminal, false)
         tabGone = c.value(.tabGone, false)

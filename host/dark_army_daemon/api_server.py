@@ -319,7 +319,7 @@ _OMITTABLE_SECTIONS = (
     "counts", "notifications", "agents", "signals", "mesh",
     "collaboration", "permissions",
     "board", "enrollment", "devices", "inbox", "security", "mission",
-    "power",
+    "power", "rebuild",
 )
 
 
@@ -807,6 +807,11 @@ class ApiServer:
         self._board = board or {}
         self._broadcast()
 
+    def on_rebuild_change(self, _facts) -> None:
+        """The rebuild's facts moved. `state()` reads them off the daemon, so
+        nothing is stored here: the frame is the news."""
+        self._broadcast()
+
     # --- state ---
 
     def state(self, *, done_review: bool = False) -> dict:
@@ -882,6 +887,12 @@ class ApiServer:
             # `available` is stated; no clock and no secret ride here.
             "power": self._daemon.power_snapshot()
             if hasattr(self._daemon, "power_snapshot") else {},
+            # Rebuild & restart for the phone's Menu tab: whether this Mac can
+            # rebuild, the button's label, whether one is running and how the
+            # last one ended. No path or key rides here; the error is a
+            # home-redacted tail.
+            "rebuild": self._daemon.rebuild_snapshot()
+            if hasattr(self._daemon, "rebuild_snapshot") else {},
             "reconciler_available": getattr(
                 self._daemon._agents_poller, "available", None
             ),
@@ -1529,6 +1540,13 @@ class ApiServer:
             mission_action = self._mission_request(request)
             if mission_action is not None:
                 status, ctype, body = await self._mission(mission_action)
+                await self._respond(writer, status, ctype, body)
+                return
+            # Rebuild & restart is awaited for the same reason as the Mission
+            # Control verbs: "nobody is listening" is news the presser gets.
+            app_action = self._app_request(request)
+            if app_action is not None:
+                status, ctype, body = await self._app_action(app_action)
                 await self._respond(writer, status, ctype, body)
                 return
             # A question answer is awaited for wrap-up's reason: it types into
@@ -2205,6 +2223,32 @@ class ApiServer:
             ok, detail = await self._daemon.end_mission()
         else:
             return 404, "application/json", b'{"error":"not found"}'
+        body = json.dumps({"ok": ok, "detail": detail or ""}).encode()
+        return (200 if ok else 409), "application/json", body
+
+    #: The one app verb: Rebuild & restart.
+    APP_ACTIONS = ("rebuild_app",)
+
+    def _app_request(self, request: _Request):
+        """The action name if this is an authorised `rebuild_app` POST, else
+        None. `_mission_request`'s shape: a verb behind the existing
+        `_authorised` (desk token **and** Origin), no payload field read."""
+        if request.path != "/api/action" or request.method != "POST":
+            return None
+        if not self._authorised(request):
+            return None
+        payload = request.json()
+        action = payload.get("action")
+        if action not in self.APP_ACTIONS:
+            return None
+        return str(action)
+
+    async def _app_action(self, action: str):
+        """Ask the menu-bar app to rebuild and restart. 200 means *asked*, not
+        *built*; 409 carries a refusal in its own words."""
+        if action not in self.APP_ACTIONS:
+            return 404, "application/json", b'{"error":"not found"}'
+        ok, detail = self._daemon.request_rebuild()
         body = json.dumps({"ok": ok, "detail": detail or ""}).encode()
         return (200 if ok else 409), "application/json", body
 
@@ -3290,6 +3334,15 @@ class ApiServer:
         # the bot itself by its verified identity, never by a payload name.
         # Its own line, chosen on purpose; no parenthesis in this block.
         "set_bot_access",
+        # Rebuild and restart the Mac's Dark Army from the phone, at home
+        # only. It runs build.sh from the working tree as it stands, changes
+        # included, and replaces the installed app: strictly more than any
+        # verb on REMOTE_ACTIONS does, so it is deliberately not on that
+        # tuple. A failed build away from the desk leaves nobody able to read
+        # the log, and the mailbox cadence plus a restart gap makes the
+        # outcome murky. Carries no payload field. A write-granted bot at
+        # home reaches it too. No parenthesis in this block.
+        "rebuild_app",
     )
 
     #: The phone writes **from away**, and the whole set of them. It starts
@@ -3645,6 +3698,13 @@ class ApiServer:
                 {"ok": ok, "detail": detail or ""}).encode()
         if action == "mission_end":
             ok, detail = await self._daemon.end_mission()
+            return (200 if ok else 409), "application/json", json.dumps(
+                {"ok": ok, "detail": detail or ""}).encode()
+        if action == "rebuild_app":
+            # No payload field is read and no path crosses the door: the
+            # menu-bar app builds what it was launched from.
+            ok, detail = self._daemon.request_rebuild(
+                self._receipts.usable(payload.get("command_token")) or "")
             return (200 if ok else 409), "application/json", json.dumps(
                 {"ok": ok, "detail": detail or ""}).encode()
         if action in ("dismiss", "stop_session", "delete_agent"):

@@ -48,6 +48,10 @@ struct Snapshot: Decodable {
     /// The host Mac's battery for the Fleet tab. Older Macs send none,
     /// which decodes `available == false` and Fleet draws nothing.
     var power = PowerSection()
+    /// Rebuild & restart: whether this Mac can rebuild, what the button says,
+    /// whether one is running and how the last one ended. Older Macs send
+    /// none, which decodes `available == false` and the Menu tile stays dim.
+    var rebuild = RebuildSection()
 
     /// Live decision subjects, one per agent and one per card.
     var decisionItems: [PhoneInboxItem] { PhoneInbox.items(from: self) }
@@ -60,7 +64,7 @@ struct Snapshot: Decodable {
         case generatedAt = "generated_at"
         case counts, agents, board, notifications, permissions, devices, collaboration
         case fleetFigures = "fleet_figures"
-        case enrollment, inbox, security, mission, power
+        case enrollment, inbox, security, mission, power, rebuild
         case stateDigest = "state_digest"
     }
 
@@ -81,6 +85,7 @@ struct Snapshot: Decodable {
         security = c.value(.security, SecuritySection())
         mission = c.value(.mission, MissionSection())
         power = c.value(.power, PowerSection())
+        rebuild = c.value(.rebuild, RebuildSection())
         stateDigest = c.value(.stateDigest, "")
     }
 
@@ -94,7 +99,7 @@ struct Snapshot: Decodable {
     /// sections and are never carried.
     enum Section: String, CaseIterable {
         case counts, notifications, agents, collaboration, permissions, board
-        case enrollment, devices, inbox, security, mission, power
+        case enrollment, devices, inbox, security, mission, power, rebuild
     }
 
     /// Take one section, named on the wire, from the picture already held.
@@ -118,6 +123,7 @@ struct Snapshot: Decodable {
         case .security: security = held.security
         case .mission: mission = held.mission
         case .power: power = held.power
+        case .rebuild: rebuild = held.rebuild
         }
         return true
     }
@@ -164,6 +170,58 @@ struct MissionSection: Decodable, Equatable {
         root = c.value(.root, "")
         name = c.value(.name, "")
         openedAt = c.value(.openedAt, 0)
+    }
+}
+
+/// The `rebuild` section of the state (`BobDaemon.rebuild_snapshot`): whether
+/// this Mac runs from a source checkout and can rebuild at all, the label the
+/// Mac's own button wears, whether one is in flight and how the last one
+/// ended. Every key has a default and the two clocks are optional, so a
+/// section from an older or newer Mac never blanks the frame. No path rides
+/// here. `RebuildRules` owns the words.
+struct RebuildSection: Decodable, Equatable {
+    var available = false
+    var label = ""
+    var rebuilding = false
+    /// The Mac is already restarting, so a press is refused in words.
+    var restarting = false
+    var startedAt: Double? = nil
+    var lastOutcome = ""
+    var lastFinishedAt: Double? = nil
+    var lastError = ""
+
+    enum CodingKeys: String, CodingKey {
+        case available, label, rebuilding, restarting
+        case startedAt = "started_at"
+        case lastOutcome = "last_outcome"
+        case lastFinishedAt = "last_finished_at"
+        case lastError = "last_error"
+    }
+
+    init(available: Bool = false, label: String = "", rebuilding: Bool = false,
+         restarting: Bool = false,
+         startedAt: Double? = nil, lastOutcome: String = "",
+         lastFinishedAt: Double? = nil, lastError: String = "") {
+        self.available = available
+        self.label = label
+        self.rebuilding = rebuilding
+        self.restarting = restarting
+        self.startedAt = startedAt
+        self.lastOutcome = lastOutcome
+        self.lastFinishedAt = lastFinishedAt
+        self.lastError = lastError
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        label = c.value(.label, "")
+        rebuilding = c.value(.rebuilding, false)
+        restarting = c.value(.restarting, false)
+        startedAt = c.maybe(.startedAt)
+        lastOutcome = c.value(.lastOutcome, "")
+        lastFinishedAt = c.maybe(.lastFinishedAt)
+        lastError = c.value(.lastError, "")
     }
 }
 
@@ -842,6 +900,10 @@ struct Agent: Decodable, Identifiable {
     /// The Low priority button's reach, decided by the Mac per refresh. An
     /// older Mac sends no key and this decodes false — no button.
     var canLowPriority = false
+    /// The agent's report said Dark Army needs rebuilding and restarting to
+    /// pick its work up, and the Mac judged it (own checkout, no later
+    /// successful rebuild). Absent decodes false — no button.
+    var rebuildOffered = false
     /// Whether this session runs on a terminal the Mac's Dark Army itself hosts
     /// rather than in an editor window — the terminal the phone can watch.
     /// An older Mac sends no key and decodes false: no screen, never a
@@ -899,6 +961,7 @@ struct Agent: Decodable, Identifiable {
         case canStop = "can_stop"
         case canClose = "can_close"
         case canLowPriority = "can_low_priority"
+        case rebuildOffered = "rebuild_offered"
         case ownTerminal = "own_terminal"
         case tabGone = "tab_gone"
         case canTerminalInput = "can_terminal_input"
@@ -948,6 +1011,7 @@ struct Agent: Decodable, Identifiable {
         canStop = c.value(.canStop, false)
         canClose = c.value(.canClose, false)
         canLowPriority = c.value(.canLowPriority, false)
+        rebuildOffered = c.value(.rebuildOffered, false)
         ownTerminal = c.value(.ownTerminal, false)
         tabGone = c.value(.tabGone, false)
         canTerminalInput = c.value(.canTerminalInput, false)

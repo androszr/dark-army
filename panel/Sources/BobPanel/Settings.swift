@@ -15,6 +15,12 @@ extension DaemonClient {
         /// to /Applications from an installed copy and only fills host/dist from
         /// a checkout, and the button must not promise the wrong one.
         var rebuildLabel = "Rebuild & Reload"
+        /// How the last rebuild ended (`"failed"` or empty) and the tail of
+        /// its error, for the window's Rebuild button; and when the running
+        /// one began. Pushed by the menu bar, never derived here.
+        var rebuildOutcome = ""
+        var rebuildError = ""
+        var rebuildStartedAt: Double?
         /// The loopback door's desk token, handed over on the menu bar's
         /// context push — this pipe and nowhere else, never a file, the
         /// environment or an argv (`docs/transport-contract.md`, *The

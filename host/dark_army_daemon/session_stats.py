@@ -207,6 +207,16 @@ _ACTIONS_RE = re.compile(r"<!--\s*bob-actions:\s*(.*?)\s*-->",
                          re.IGNORECASE | re.DOTALL)
 
 
+# The next-step marker (`docs/session-state-contract.md`): one line beside the
+# `## Work done` report saying the finished work needs something done to Dark
+# Army itself to take effect. A comment for the two existing markers' reasons,
+# `dark-army-` and not `bob-` because the `bob` list is closed, and a closed
+# vocabulary because both clients switch on the value and it is never free text.
+# Parsed here by the daemon, never by the hook handler.
+_NEXT_RE = re.compile(r"<!--\s*dark-army-next:\s*([a-z-]+)\s*-->", re.IGNORECASE)
+NEXT_STEPS = ("rebuild",)
+
+
 def _parse_actions(raw: str) -> list[str]:
     """The declared choices, in the order they were offered.
 
@@ -503,6 +513,12 @@ class SessionStats:
     # the false-buzz investigation of 20 Sep 2026).
     marker_at: float = 0.0
     prompt_at: float = 0.0
+    # When the report that carried `dark-army-next: rebuild` was written (epoch
+    # seconds, 0.0 for none). Deliberately **not** `marker_at`: that one makes
+    # a row "waiting on somebody"; this one only offers a button. Belongs to
+    # the report — it survives chatter, and the person's next prompt clears it
+    # where `last_report` clears.
+    rebuild_marker_at: float = 0.0
     # Where the work is happening. Both are stamped on most transcript lines by
     # Claude Code itself, so they are known for any session with a transcript —
     # unlike the statusline's copies, which arrive only after the first tick.
@@ -795,6 +811,8 @@ def _fold_line(line: str, acc: _Accum) -> None:
             summary = None
             actions = None
             spoke = False
+            next_token = ""
+            reported = False
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "text":
                     raw = str(item.get("text") or "")
@@ -805,6 +823,10 @@ def _fold_line(line: str, acc: _Accum) -> None:
                         # out of the tail the chevron will show in full.
                         summary = " ".join(marks[-1].split())[:MAX_SUMMARY_CHARS]
                         raw = _TLDR_RE.sub(" ", raw)
+                    nexts = _NEXT_RE.findall(raw)
+                    if nexts:
+                        next_token = nexts[-1].lower()
+                        raw = _NEXT_RE.sub(" ", raw)
                     offers = _ACTIONS_RE.findall(raw)
                     if offers:
                         actions = _parse_actions(offers[-1])
@@ -816,6 +838,13 @@ def _fold_line(line: str, acc: _Accum) -> None:
                         report = _work_report(text)
                         if report:
                             stats.last_report = report
+                            reported = True
+            # A marker with no report in the same message is noise: an agent
+            # waiting on the person must not light a button. A fresh report
+            # without the marker withdraws an older offer.
+            if reported:
+                stats.rebuild_marker_at = (
+                    _epoch(ts) if next_token in NEXT_STEPS else 0.0)
             # The summary is a caption *for* last_text, so the two move
             # together: a marker sets it, a new message without one clears it,
             # and a tool-only turn — which does not move last_text either —
@@ -865,6 +894,7 @@ def _fold_line(line: str, acc: _Accum) -> None:
             # A new request supersedes the last one's report. Only a genuine
             # prompt clears it — a tool result is the same turn still running.
             stats.last_report = ""
+            stats.rebuild_marker_at = 0.0
         # And last turn's caption and offered choices: they answered the
         # previous request, and standing under this one they read as a
         # question nobody is asking (RC2, 22 Sep 2026). Blank until the agent

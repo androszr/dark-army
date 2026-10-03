@@ -60,6 +60,13 @@ extension AppDelegate {
                         if let label = obj["rebuild_label"] as? String, !label.isEmpty {
                             ctx.rebuildLabel = label
                         }
+                        if let outcome = obj["rebuild_outcome"] as? String {
+                            ctx.rebuildOutcome = outcome
+                        }
+                        if let err = obj["rebuild_error"] as? String {
+                            ctx.rebuildError = err
+                        }
+                        ctx.rebuildStartedAt = self.jsonDouble(obj["rebuild_started_at"])
                         // The desk token: a present, non-empty value replaces;
                         // absent (an older app) or empty keeps what is held,
                         // so a push never blanks the panel's writes.

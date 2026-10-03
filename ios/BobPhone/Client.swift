@@ -2987,6 +2987,10 @@ final class PhoneClient: ObservableObject {
                     holding.insert(receipt.scope)
                     continue
                 }
+                // Never replayed: a second rebuild (`neverReplayed`).
+                if ReceiptLedger.neverReplays(receipt) {
+                    receipts.gaveUp(receipt.id, why: ReceiptLedger.notReplayedLine); continue
+                }
                 // **Never resend what you can check.** The Mac's own ledger is
                 // memory-only and TTL'd (`RECEIPT_SECONDS`), so past that window
                 // — or across a daemon restart — a replay would *execute again*.

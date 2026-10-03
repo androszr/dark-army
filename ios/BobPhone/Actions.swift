@@ -100,6 +100,14 @@ enum PhoneActions {
     /// terminal, the one thing that ends it. Armed then confirmed; rides
     /// `post`; not in `settlingActions`.
     static let missionEnd = "mission_end"
+    /// Route: `BobDaemon.request_rebuild` — ask the Mac to rebuild and
+    /// restart Dark Army. **Home Wi-Fi only**: the verb is on the Mac's
+    /// `LAN_ACTIONS` and deliberately not on `REMOTE_ACTIONS`, so the screens
+    /// never offer it from away. Armed then confirmed, and rides `post`, never
+    /// `enqueue`: a rebuild banked in the queue and fired later would restart
+    /// the Mac on the phone's clock, not the person's. Not in
+    /// `settlingActions` — nothing is leaving. No payload field.
+    static let rebuildApp = "rebuild_app"
     /// Route: `BoardVerbsMixin.message_card` — a person's own words typed
     /// onto the input line of the session working one named card, the way
     /// `/compact` and `/clear` already go. Card-scoped, never session-scoped:

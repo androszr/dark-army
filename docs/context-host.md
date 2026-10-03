@@ -644,7 +644,10 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `build.sh` stamps the checkout path into
     `Contents/Resources/repo-root` (before signing) and `find_repo_root()`
     reads it back **verified, not trusted**: no `host/build.sh` there means no
-    repo. An installed bundle's rebuild passes **`--install`**.
+    repo. An installed bundle's rebuild passes **`--install`**. The rebuild's
+    other entry points — the phone's `rebuild_app`, an agent's next-step button —
+    reach `_on_rebuild` through `BobDaemon.request_rebuild` and the observer's
+    `on_rebuild_request` (`docs/transport-contract.md`).
   - Restart spawns a **fresh detached process** rather than `os.execv`: a
     re-exec'd process keeps its PID and macOS will not re-register the
     `NSStatusItem`. The teardown (`_restart_now`) runs on a **worker thread**
@@ -745,3 +748,8 @@ A row kept after its tab vanished publishes `tab_gone` (*A Grok turn outlives it
   dialog before any of the tuples are trusted. Withholding a card
   (`_parked_reason`, `_finished_quietly`, `_mission_reply`) is not a fourth:
   none of them types, delivers or evicts.
+
+- **A report's `<!-- dark-army-next: rebuild -->` line offers a button, never a
+  card.** `session_stats` stamps `rebuild_marker_at` and `_enrich_agent_stubs`
+  publishes `rebuild_offered` (`docs/session-state-contract.md`); it touches no
+  bucket and acts on no session.

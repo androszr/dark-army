@@ -1364,3 +1364,29 @@ def test_no_client_script_names_the_bridge_port_as_a_default():
     for text in (NOTIFY_SCRIPT, statusline.STATUSLINE_SCRIPT,
                  inspect.getsource(channel_server)):
         assert "19873" not in text
+
+
+# --- The next-step hint: the fourth standing instruction ----------------------
+# One line beside the work report saying Dark Army itself needs a rebuild. The
+# daemon parses it (`session_stats._NEXT_RE`); this end only asks for it.
+
+
+def test_session_start_asks_for_the_rebuild_marker_once(tmp_path):
+    out = _run_script_stdout(dict(_START, cwd=str(tmp_path)), _free_port(), tmp_path)
+    assert out.count("<!-- dark-army-next: rebuild -->") == 1
+    assert out.index("## Work done") < out.index("dark-army-next")
+
+
+def test_the_next_step_hint_carries_no_bob_marker_literals():
+    hint = _script_namespace()["NEXT_STEP_HINT"]
+    assert "<!-- bob-tldr:" not in hint
+    assert "<!-- bob-actions:" not in hint
+    assert "bob" not in hint.lower()
+
+
+def test_the_requested_marker_is_the_one_the_daemon_parses():
+    from dark_army_daemon import session_stats as ss
+    hint = _script_namespace()["NEXT_STEP_HINT"]
+    found = ss._NEXT_RE.findall(hint)
+    assert found == ["rebuild"]
+    assert found[0] in ss.NEXT_STEPS

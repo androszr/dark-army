@@ -2257,6 +2257,186 @@ def test_a_rebuild_click_tells_the_panel_before_it_starts_building():
     assert started == []
 
 
+# ── one gate for all three rebuild entry points ──────────────────────────────
+#
+# The window's button, the phone's tile and an agent's button all end in
+# `_on_rebuild`; `on_rebuild_request` is only the hop from the daemon's loop
+# thread to the main thread.
+
+class _FakeLoop:
+    def __init__(self):
+        self.calls = []
+
+    def call_soon_threadsafe(self, fn, *args):
+        self.calls.append((fn, args))
+
+
+class _FakeDaemon:
+    def __init__(self):
+        self.facts = []
+
+    def set_rebuild_state(self, facts):
+        self.facts.append(facts)
+
+    def desk_token(self):
+        return ""
+
+
+def test_a_daemon_rebuild_request_hops_to_the_main_thread(monkeypatch):
+    from dark_army_menubar import app as A
+    hops = []
+    monkeypatch.setattr(A, "callAfter", lambda fn, *a: hops.append((fn, a)))
+    app = _context_app()
+    app.on_rebuild_request()
+    assert hops == [(app._on_rebuild, (None,))]
+
+
+def test_a_rebuild_is_refused_while_a_restart_is_under_way():
+    app = _context_app(_repo_root=Path("/repo"), _restarting=True)
+    app._on_rebuild(None)
+    assert app._rebuilding is False
+    assert app._panel.contexts == []
+
+
+def test_a_rebuild_click_publishes_the_in_flight_facts(monkeypatch):
+    from dark_army_menubar import app as A
+    app = _context_app(_repo_root=Path("/repo"), _daemon=_FakeDaemon(),
+                       _loop=_FakeLoop())
+    monkeypatch.setattr(A.time, "time", lambda: 1234.5)
+    monkeypatch.setattr(A.threading, "Thread",
+                        lambda target, daemon=False: _NoopThread())
+    app._on_rebuild(None)
+    ctx = app._panel.contexts[-1]
+    assert ctx["settings"]["rebuilding"] is True
+    assert ctx["rebuild_started_at"] == 1234.5
+    assert ctx["rebuild_outcome"] == "" and ctx["rebuild_error"] == ""
+    (fn, (facts,)), = app._loop.calls
+    assert fn == app._daemon.set_rebuild_state
+    assert facts["rebuilding"] is True and facts["started_at"] == 1234.5
+
+
+def test_a_successful_rebuild_leaves_a_stamp_then_restarts(monkeypatch, tmp_path):
+    from dark_army_daemon import paths, rebuild_state
+    monkeypatch.setattr(paths, "REBUILD_STAMP_PATH", tmp_path / "stamp.json")
+    order = []
+    app = _context_app(_repo_root=Path("/repo"))
+    app._rebuild = {"started_at": 100.0, "last_outcome": "", "last_error": "",
+                    "last_finished_at": None}
+    app._rebuilding = True
+    app._refresh_build_status = lambda: None
+    app._on_restart = lambda _: order.append(
+        ("restart", rebuild_state.read_stamp()))
+    app._rebuild_finished(True, "")
+    assert app._rebuilding is False
+    (name, stamp), = order
+    assert name == "restart"
+    assert stamp["ok"] is True and stamp["started_at"] == 100.0
+
+
+def test_a_restart_under_way_is_published_and_a_success_tells_the_daemon_first(
+        monkeypatch, tmp_path):
+    from dark_army_daemon import paths
+    monkeypatch.setattr(paths, "REBUILD_STAMP_PATH", tmp_path / "stamp.json")
+    app = _context_app(_repo_root=Path("/repo"), _daemon=_FakeDaemon(),
+                       _loop=_FakeLoop())
+    assert app._rebuild_facts()["restarting"] is False
+    app._refresh_build_status = lambda: None
+    seen = []
+    # An early-returning `_on_restart` (already restarting) tells nobody, so
+    # the success itself must have told the daemon before calling it.
+    app._on_restart = lambda _: seen.append(len(app._loop.calls))
+    app._rebuild_finished(True, "")
+    assert seen == [1]
+    (_fn, (facts,)), = app._loop.calls
+    assert facts["last_outcome"] == "ok" and facts["rebuilding"] is False
+    app._restarting = True
+    assert app._rebuild_facts()["restarting"] is True
+
+
+def test_telling_the_daemon_can_never_stop_a_restart(monkeypatch, tmp_path):
+    from dark_army_daemon import paths
+    monkeypatch.setattr(paths, "REBUILD_STAMP_PATH", tmp_path / "stamp.json")
+    app = _context_app(_repo_root=Path("/repo"), _daemon=_FakeDaemon(),
+                       _loop=_FakeLoop())
+
+    def boom():
+        raise RuntimeError("facts blew up")
+    app._rebuild_facts = boom
+    app._tell_daemon_rebuild()      # swallowed, never raised
+    restarted = []
+    app._refresh_build_status = lambda: None
+    app._on_restart = lambda _: restarted.append(True)
+    app._rebuild_finished(True, "")
+    assert restarted == [True]
+
+
+def test_the_failure_text_is_redacted_before_it_is_cut(monkeypatch):
+    from pathlib import Path as P
+    from dark_army_menubar import app as A
+    monkeypatch.setattr(A.rumps, "notification", lambda *a, **k: None)
+    home = str(P.home())
+    app = _context_app(_repo_root=Path("/repo"), _daemon=_FakeDaemon(),
+                       _loop=_FakeLoop())
+    app._rebuild_finished(False, ("z" * 290) + f" {home}/x")
+    assert home not in app._rebuild_facts()["last_error"]
+
+
+def test_a_stamp_that_cannot_be_written_never_stops_the_restart(monkeypatch):
+    from dark_army_daemon import rebuild_state
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(rebuild_state, "write_stamp", boom)
+    restarted = []
+    app = _context_app(_repo_root=Path("/repo"))
+    app._refresh_build_status = lambda: None
+    app._on_restart = lambda _: restarted.append(True)
+    app._rebuild_finished(True, "")
+    assert restarted == [True]
+
+
+def test_a_failed_rebuild_leaves_no_stamp_and_says_so(monkeypatch, tmp_path):
+    from dark_army_menubar import app as A
+    from dark_army_daemon import paths, rebuild_state
+    monkeypatch.setattr(paths, "REBUILD_STAMP_PATH", tmp_path / "stamp.json")
+    monkeypatch.setattr(A.rumps, "notification", lambda *a, **k: None)
+    app = _context_app(_repo_root=Path("/repo"), _daemon=_FakeDaemon(),
+                       _loop=_FakeLoop())
+    app._rebuilding = True
+    app._on_restart = lambda _: pytest.fail("a failed build must not restart")
+    app._rebuild_finished(False, "boom")
+    assert rebuild_state.read_stamp() == {}
+    ctx = app._panel.contexts[-1]
+    assert ctx["rebuild_outcome"] == "failed" and ctx["rebuild_error"] == "boom"
+    assert ctx["settings"]["rebuilding"] is False
+    (_fn, (facts,)), = app._loop.calls
+    assert facts["rebuilding"] is False and facts["last_outcome"] == "failed"
+    assert facts["last_error"] == "boom"
+
+
+def test_telling_the_daemon_never_waits_on_the_loop():
+    import json
+    app = _context_app(_repo_root=Path("/repo"), _daemon=_FakeDaemon(),
+                       _loop=_FakeLoop())
+    app._tell_daemon_rebuild()
+    (fn, (facts,)), = app._loop.calls
+    assert fn == app._daemon.set_rebuild_state
+    assert facts["available"] is True
+    assert "/repo" not in json.dumps(facts, default=str)
+
+
+def test_before_the_loop_exists_the_daemon_is_told_directly():
+    app = _context_app(_repo_root=Path("/repo"), _daemon=_FakeDaemon(),
+                       _loop=None)
+    app._tell_daemon_rebuild()
+    assert app._daemon.facts and app._daemon.facts[-1]["available"] is True
+
+
+def test_a_release_with_no_source_publishes_nothing_to_rebuild():
+    app = _context_app(_repo_root=None, _daemon=_FakeDaemon(), _loop=None)
+    app._tell_daemon_rebuild()
+    assert app._daemon.facts[-1]["available"] is False
+
+
 # ── the 30s context push stays off the AppKit thread and off dead panels ─────
 #
 # `_push_panel_context` used to run `dev_build.check_staleness` (a glob+stat

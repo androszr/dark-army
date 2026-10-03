@@ -127,6 +127,9 @@ struct AgentDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var arm = Arm()
     @State private var note = ""
+    /// When this screen last sent Rebuild & restart (epoch seconds), so
+    /// `RebuildRules` claims "Rebuilt at" only for a finish after it.
+    @State private var rebuildPressedAt: Double?
     @State private var hideAccepted = false
     /// A confirmed Delete is in the queue. The screen stays up while the
     /// press is in play — a refusal from the Mac's re-check has to land
@@ -1069,6 +1072,7 @@ struct AgentDetailView: View {
     private var hasVerbs: Bool {
         !note.isEmpty || !cards.isEmpty || !prompts.isEmpty
             || agent.canLowPriority || agent.canClose || agent.canHide
+            || (agent.rebuildOffered && client.snapshot.rebuild.available)
             || agent.canStop || liveCategory == .abandoned
     }
 
@@ -1139,6 +1143,9 @@ struct AgentDetailView: View {
         }
         if agent.canLowPriority {
             lowPriorityBox
+        }
+        if agent.rebuildOffered, client.snapshot.rebuild.available {
+            rebuildBox
         }
     }
 
@@ -1307,6 +1314,57 @@ struct AgentDetailView: View {
             }
             .buttonStyle(AlarmOutline(color: arm.lowPriority != nil ? Theme.alarm : Theme.phosphor))
             .disabled(busy)
+        }
+    }
+
+    /// Offered only where the agent's report said Dark Army needs a rebuild
+    /// (`rebuild_offered`) and the Mac can rebuild. Home Wi-Fi only, so from
+    /// away the box says so instead of offering a press the Mac would turn
+    /// away. Armed then confirmed, then sent with `post`, never `enqueue`.
+    private var rebuildBox: some View {
+        let section = client.snapshot.rebuild
+        let away = client.via == .relay
+        let connected = client.status == .live
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(arm.rebuild != nil ? RebuildRules.armedWarning : RebuildRules.agentPrompt)
+                .font(Theme.mono(11))
+                .foregroundStyle(arm.rebuild != nil ? Theme.alarm : Theme.dim)
+            Text(RebuildRules.line(section: section, connected: connected,
+                                   away: away, pressedAt: rebuildPressedAt))
+                .font(Theme.mono(11))
+                .foregroundStyle(RebuildRules.isFailure(section: section,
+                                                        pressedAt: rebuildPressedAt)
+                                 ? Theme.alarm : Theme.dim)
+            if !away {
+                DecryptButton(arm.rebuild != nil
+                              ? RebuildRules.armedLabel : RebuildRules.idleLabel) {
+                    pressRebuild()
+                }
+                .buttonStyle(AlarmOutline(
+                    color: arm.rebuild != nil ? Theme.alarm : Theme.phosphor))
+                .disabled(busy || !RebuildRules.canPress(section: section, away: away)
+                          || !connected)
+                .accessibilityLabel(arm.rebuild != nil
+                    ? "Confirm rebuild and restart, step two of two"
+                    : "Rebuild and restart Dark Army, step one of two")
+            }
+        }
+    }
+
+    private func pressRebuild() {
+        guard arm.confirm(.rebuild) else {
+            arm.arm(.rebuild, id: agent.sessionId)
+            return
+        }
+        let at = Date().timeIntervalSince1970
+        Task { @MainActor in
+            let result = await client.post(action: PhoneActions.rebuildApp)
+            if result.ok {
+                rebuildPressedAt = at
+                note = ""
+            } else if client.status == .live, !result.detail.isEmpty {
+                note = result.detail
+            }
         }
     }
 
