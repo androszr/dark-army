@@ -348,12 +348,14 @@ clock. The tile and the card screen draw the Mac's `BATCH r/n · working`,
 A card in the Prep or Backlog row slides left (3 Oct 2026) to show two
 buttons: the card's one next action and a dots button. The board is one
 `ScrollView`, not a `List`, so `.swipeActions` is not available: the slide
-is `SwipeRevealRow`, a horizontal `DragGesture` attached with
-`.simultaneousGesture` beside the tile's own button (never `.gesture`, which
-would steal the tap or the vertical pan). `PhoneCardSwipe` (`CardSwipe.swift`,
-Foundation only) holds the arithmetic: a drag counts past 20pt and only when
-it is mostly sideways, the buttons are 148pt wide, and the row opens or
-shuts past 56pt. One card is open at a time (`revealed`); a tap on an open
+is `SwipeRevealRow`. On iOS 18 and later it is `CardSwipePan`, a UIKit pan
+that begins only when the first movement is mostly sideways and that the
+scroll view's pan waits on, the system rows' own arbitration (3 Oct 2026: a
+SwiftUI drag lost the touch to the scroll view, so a swipe took two or three
+tries); iOS 17 keeps the `DragGesture` on `.simultaneousGesture`.
+`PhoneCardSwipe` (`CardSwipe.swift`, Foundation only) holds the arithmetic:
+a drag counts past 20pt and only when it is mostly sideways, the buttons
+are 148pt wide, and the row opens or shuts past 56pt or on a 300pt/s flick. One card is open at a time (`revealed`); a tap on an open
 card shuts it instead of opening it; select mode, a search, a project
 change, leaving the Board and a snapshot that no longer lists the card in
 Prep or Backlog all shut it. In progress and Done do not swipe.
@@ -374,8 +376,7 @@ not it was read, so leaving it unread only stranded the receipt). The
 button wears QUEUED / SENDING / SENT while the press is on its way, and a
 queued Delete says so under the tile. The Mac's refusal is drawn under the
 card in orange, ahead of the phone's own, and the phone's own clears when
-the press's mark appears. A drag that scroll takes over snaps the tile
-back (`@GestureState`).
+the press's mark appears. A cancelled or failed slide snaps the tile back.
 
 **The dots open a menu, and Delete card is behind it**: a confirmation
 dialog with Delete card in red and Cancel, then "Are you sure?" with Delete

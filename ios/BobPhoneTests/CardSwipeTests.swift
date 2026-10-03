@@ -71,6 +71,12 @@ final class CardSwipeTests: XCTestCase {
         XCTAssertFalse(PhoneCardSwipe.revealAfter(translation: -55, revealed: false))
         XCTAssertFalse(PhoneCardSwipe.revealAfter(translation: 57, revealed: true))
         XCTAssertTrue(PhoneCardSwipe.revealAfter(translation: 0, revealed: true))
+        // A quick flick opens or shuts whatever the travel.
+        XCTAssertEqual(PhoneCardSwipe.flickSpeed, 300)
+        XCTAssertTrue(PhoneCardSwipe.revealAfter(translation: -20, velocity: -400, revealed: false))
+        XCTAssertFalse(PhoneCardSwipe.revealAfter(translation: -20, velocity: -100, revealed: false))
+        XCTAssertFalse(PhoneCardSwipe.revealAfter(translation: 20, velocity: 400, revealed: true))
+        XCTAssertFalse(PhoneCardSwipe.revealAfter(translation: 20, velocity: -400, revealed: false))
         XCTAssertTrue(PhoneCardSwipe.dominantHorizontal(dx: 30, dy: 10))
         XCTAssertFalse(PhoneCardSwipe.dominantHorizontal(dx: 10, dy: 30))
     }

@@ -86,6 +86,9 @@ enum PhoneCardSwipe {
     static let revealTravel: CGFloat = 56
     /// The width of the buttons the card slides off.
     static let actionsWidth: CGFloat = 148
+    /// A flick this fast (points a second) opens or shuts the row whatever
+    /// its travel, the way the system's own swipe rows answer a quick swipe.
+    static let flickSpeed: CGFloat = 300
 
     /// A drag that moves more sideways than up or down is a swipe; the rest
     /// belongs to the scroll view.
@@ -106,5 +109,14 @@ enum PhoneCardSwipe {
         if translation <= -revealTravel { return true }
         if translation >= revealTravel { return false }
         return revealed
+    }
+
+    /// `revealAfter(translation:revealed:)` with the finger's speed at the
+    /// lift: a leftward flick opens, a rightward one shuts, a slow drag
+    /// reads the travel alone.
+    static func revealAfter(translation: CGFloat, velocity: CGFloat, revealed: Bool) -> Bool {
+        if velocity <= -flickSpeed && translation < 0 { return true }
+        if velocity >= flickSpeed && translation > 0 { return false }
+        return revealAfter(translation: translation, revealed: revealed)
     }
 }

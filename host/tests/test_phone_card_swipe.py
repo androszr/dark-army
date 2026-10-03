@@ -101,6 +101,11 @@ enum Runner {
             print("AFTER \(t) shut \(PhoneCardSwipe.revealAfter(translation: CGFloat(t), revealed: false))")
             print("AFTER \(t) open \(PhoneCardSwipe.revealAfter(translation: CGFloat(t), revealed: true))")
         }
+        print("FLICK \(PhoneCardSwipe.flickSpeed)")
+        for (t, v, open) in [(-20, -400, false), (-20, -100, false), (20, 400, true),
+                             (20, 100, true), (20, -400, false), (-80, 0, false)] {
+            print("FLICKAFTER \(t) \(v) \(open ? "open" : "shut") \(PhoneCardSwipe.revealAfter(translation: CGFloat(t), velocity: CGFloat(v), revealed: open))")
+        }
         print("DOMINANT 30 10 \(PhoneCardSwipe.dominantHorizontal(dx: 30, dy: 10))")
         print("DOMINANT 10 30 \(PhoneCardSwipe.dominantHorizontal(dx: 10, dy: 30))")
         print("DOMINANT -30 10 \(PhoneCardSwipe.dominantHorizontal(dx: -30, dy: 10))")
@@ -277,6 +282,18 @@ def test_the_gesture_helpers_clamp_and_threshold(rule_bin):
     assert "DOMINANT -30 10 true" in lines
 
 
+def test_a_quick_flick_opens_or_shuts_whatever_the_travel(rule_bin):
+    """The system's swipe rows answer a flick; so does the card."""
+    lines = _run(rule_bin, {})
+    assert "FLICK 300.0" in lines
+    assert "FLICKAFTER -20 -400 shut true" in lines      # a short fast flick opens
+    assert "FLICKAFTER -20 -100 shut false" in lines     # a short slow drag does not
+    assert "FLICKAFTER 20 400 open false" in lines       # a fast flick back shuts
+    assert "FLICKAFTER 20 100 open true" in lines
+    assert "FLICKAFTER 20 -400 shut false" in lines      # speed against the travel is ignored
+    assert "FLICKAFTER -80 0 shut true" in lines         # travel alone still opens
+
+
 # --- source pins ---------------------------------------------------------------
 
 def test_the_rule_is_foundation_only_and_names_every_static():
@@ -320,7 +337,15 @@ def test_the_swipe_is_wired_to_the_card_screens_presses():
     assert "own_terminal" not in board
     assert board.count(
         ".simultaneousGesture(DragGesture(minimumDistance: PhoneCardSwipe.minimumDrag") == 1
-    assert ".gesture(" not in board
+    # iOS 18+: one UIKit pan the scroll view waits on, begun only sideways
+    # (the reason a SwiftUI drag in a ScrollView took two or three swipes).
+    assert board.count(".gesture(") == 1
+    assert board.count("tile.gesture(CardSwipePan(") == 1
+    pan = board.split("private struct CardSwipePan", 1)[1]
+    assert "PhoneCardSwipe.dominantHorizontal(dx: velocity.x, dy: velocity.y)" in pan
+    assert "other is UIPanGestureRecognizer && other.view is UIScrollView" in pan
+    assert "shouldBeRequiredToFailBy" in pan
+    assert "case .cancelled, .failed:" in pan
     assert ".highPriorityGesture(" not in board
     assert board.count(".confirmationDialog(") == 2
     assert board.count("role: .destructive") == 2
@@ -341,10 +366,14 @@ def test_the_swipe_is_wired_to_the_card_screens_presses():
 
 def test_the_swipe_survives_a_cancelled_drag_and_reads_every_note():
     board = _code(_read(BOARD))
-    row = board.split("private struct SwipeRevealRow", 1)[1]
-    assert "@GestureState private var drag" in row
-    assert ".updating($drag)" in row and ".onChanged" not in row
+    row = board.split("private struct SwipeRevealRow", 1)[1].split(
+        "private struct CardSwipePan", 1)[0]
+    # iOS 17's drag resets itself on a cancel; iOS 18's pan zeroes its travel
+    # on end, cancel and failure, so the tile never stays part-slid.
+    assert "@GestureState private var legacyDrag" in row
+    assert ".updating($legacyDrag)" in row and ".onChanged" not in row
     assert row.count("PhoneCardSwipe.dominantHorizontal(") == 2
+    assert row.count("panDrag = 0") == 2
     arrived = board.split("    private func swipeNoteArrived(", 1)[1].split("\n    }\n", 1)[0]
     assert "client.readQueueNote(for: card.id)" in arrived
     assert "isPlanGateRefusal" not in arrived

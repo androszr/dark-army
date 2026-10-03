@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Board, four stacked rows in one scroll. New-card pushes the composer; the
 /// card screen is where Start, Refine, move and delete live.
@@ -1792,20 +1793,33 @@ enum BoardRowFold {
     }
 }
 
-/// A card that slides left to show the buttons under it. The slide is a
-/// horizontal `DragGesture` attached beside the tile's own button
-/// (`.simultaneousGesture`, never `.gesture`), so the tap and the scroll
-/// view's vertical pan both survive; the arithmetic is
-/// `PhoneCardSwipe`'s, pinned by `host/tests/test_phone_card_swipe.py`.
+/// A card that slides left to show the buttons under it.
+///
+/// On iOS 18 and later the slide is a UIKit pan (`CardSwipePan`) that begins
+/// only on a sideways movement and that the Board's scroll view waits on,
+/// the way the system's own swipe rows (Needs you's `.swipeActions`) are
+/// arbitrated. A SwiftUI `DragGesture` inside a `ScrollView` loses that
+/// race: the scroll view claims the touch after a few points of travel, the
+/// drag is cancelled before its `minimumDistance`, and the card snaps back,
+/// which is why a swipe took two or three tries (3 Oct 2026). iOS 17 keeps
+/// the SwiftUI drag, attached beside the tile's own button
+/// (`.simultaneousGesture`), so the tap and the vertical pan both survive.
+/// The arithmetic is `PhoneCardSwipe`'s, pinned by
+/// `host/tests/test_phone_card_swipe.py`.
 private struct SwipeRevealRow<Actions: View, Content: View>: View {
     let revealed: Bool
     let onReveal: (Bool) -> Void
     @ViewBuilder let actions: () -> Actions
     @ViewBuilder let content: () -> Content
-    /// Reset by SwiftUI when the gesture ends *or is cancelled* (the scroll
-    /// view taking the touch), so the tile never stays part-slid.
-    @GestureState private var drag: CGFloat = 0
+    /// iOS 17's drag. Reset by SwiftUI when the gesture ends *or is
+    /// cancelled* (the scroll view taking the touch), so the tile never
+    /// stays part-slid.
+    @GestureState private var legacyDrag: CGFloat = 0
+    /// iOS 18's pan travel, zeroed by the pan on its end, cancel or failure.
+    @State private var panDrag: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var drag: CGFloat { legacyDrag + panDrag }
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -1813,25 +1827,94 @@ private struct SwipeRevealRow<Actions: View, Content: View>: View {
                 .frame(width: PhoneCardSwipe.actionsWidth)
                 .accessibilityHidden(!revealed)
                 .allowsHitTesting(revealed)
-            content()
+            slide(content()
                 .background(Theme.bg)
-                .offset(x: PhoneCardSwipe.offset(forTranslation: drag, revealed: revealed))
-                .simultaneousGesture(DragGesture(minimumDistance: PhoneCardSwipe.minimumDrag)
-                    .updating($drag) { value, state, _ in
-                        guard PhoneCardSwipe.dominantHorizontal(
-                            dx: value.translation.width,
-                            dy: value.translation.height) else { return }
-                        state = value.translation.width
-                    }
-                    .onEnded { value in
-                        guard PhoneCardSwipe.dominantHorizontal(
-                            dx: value.translation.width,
-                            dy: value.translation.height) else { return }
-                        onReveal(PhoneCardSwipe.revealAfter(
-                            translation: value.translation.width, revealed: revealed))
-                    })
+                .offset(x: PhoneCardSwipe.offset(forTranslation: drag, revealed: revealed)))
         }
         .animation(Motion.animation(.snappy, reduced: reduceMotion), value: drag)
         .animation(Motion.animation(.snappy, reduced: reduceMotion), value: revealed)
+    }
+
+    @ViewBuilder private func slide<V: View>(_ tile: V) -> some View {
+        if #available(iOS 18.0, *) {
+            tile.gesture(CardSwipePan(
+                onChange: { panDrag = $0 },
+                onEnd: { translation, velocity in
+                    panDrag = 0
+                    onReveal(PhoneCardSwipe.revealAfter(
+                        translation: translation, velocity: velocity,
+                        revealed: revealed))
+                },
+                onCancel: { panDrag = 0 }))
+        } else {
+            tile.simultaneousGesture(DragGesture(minimumDistance: PhoneCardSwipe.minimumDrag)
+                .updating($legacyDrag) { value, state, _ in
+                    guard PhoneCardSwipe.dominantHorizontal(
+                        dx: value.translation.width,
+                        dy: value.translation.height) else { return }
+                    state = value.translation.width
+                }
+                .onEnded { value in
+                    guard PhoneCardSwipe.dominantHorizontal(
+                        dx: value.translation.width,
+                        dy: value.translation.height) else { return }
+                    onReveal(PhoneCardSwipe.revealAfter(
+                        translation: value.translation.width, revealed: revealed))
+                })
+        }
+    }
+}
+
+/// The card's sideways pan, as UIKit's own swipe rows do it: it begins only
+/// when the finger's first movement is more sideways than up or down
+/// (`PhoneCardSwipe.dominantHorizontal` on the velocity), and any enclosing
+/// scroll view's pan is made to wait for it to fail, so a vertical drag
+/// fails it at once and scrolls, and a sideways one is never stolen. A tap
+/// never moves, never begins it, and reaches the tile's button untouched.
+@available(iOS 18.0, *)
+private struct CardSwipePan: UIGestureRecognizerRepresentable {
+    let onChange: (CGFloat) -> Void
+    let onEnd: (_ translation: CGFloat, _ velocity: CGFloat) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer,
+                                         context: Context) {
+        let translation = recognizer.translation(in: recognizer.view).x
+        switch recognizer.state {
+        case .began, .changed:
+            onChange(translation)
+        case .ended:
+            onEnd(translation, recognizer.velocity(in: recognizer.view).x)
+        case .cancelled, .failed:
+            onCancel()
+        default:
+            break
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = recognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: pan.view)
+            return PhoneCardSwipe.dominantHorizontal(dx: velocity.x, dy: velocity.y)
+        }
+
+        /// The scroll view's pan waits for this one to fail: the
+        /// arbitration the system's swipe rows get for free.
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            other is UIPanGestureRecognizer && other.view is UIScrollView
+        }
     }
 }
