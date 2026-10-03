@@ -767,3 +767,47 @@ async def test_delete_judges_the_batch_on_the_card_as_it_is_under_the_lock(
     third = store.get(cards[2]["id"])
     assert third["batch_id"] == ""
     assert third["dispatch_error"] == daemon_board.BATCH_LEFT_NOTE
+
+
+@pytest.mark.asyncio
+async def test_answer_under_a_batch_reaches_the_card_the_session_is_on(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    cards, _opened = await _started_batch(d, store, project, monkeypatch)
+    sid = "s-batch"
+    await d.advance_batch_by_session(sid)  # card 1 left open, card 2 live
+    got, why = await d.answer_card_by_session(sid, "the answer")
+    assert got is not None, why
+    assert got["id"] == cards[1]["id"]
+    assert store.messages(cards[1]["id"])[-1]["via"] == "session"
+    assert store.messages(cards[0]["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_answer_after_a_proper_close_still_reaches_the_next_card(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    cards, _opened = await _started_batch(d, store, project, monkeypatch)
+    sid = "s-batch"
+    await d.close_card_by_session(sid, "card 1 built")
+    await d.advance_batch_by_session(sid)
+    got, why = await d.answer_card_by_session(sid, "the answer")
+    assert got is not None, why
+    assert got["id"] == cards[1]["id"]
+    assert store.messages(cards[0]["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_answer_is_refused_when_the_narrowing_drops_every_open_card(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    cards, _opened = await _started_batch(d, store, project, monkeypatch)
+    sid = "s-batch"
+    await d.close_card_by_session(sid, "card 1 built")
+    for _ in range(3):
+        await d.advance_batch_by_session(sid)
+    got, why = await d.answer_card_by_session(sid, "the answer")
+    assert got is None
+    assert "more than one card" in why
+    for c in cards:
+        assert store.messages(c["id"]) == []

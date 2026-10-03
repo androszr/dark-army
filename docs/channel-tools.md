@@ -149,6 +149,10 @@ they did not have:
   single Start until Leave batch.
 - `dark_army_answer_card` — one message onto the thread of the card Dark Army just
   asked about. Same no-`card_id` shape; changes nothing else.
+  **In a batch it answers the card the session is on** (29 Sep 2026): the open
+  cards are narrowed by the same positional rule the `dark_army_close_card`
+  bullet states, so a member the session moved past is not counted; the consult
+  rung before it and the one-Done-card rung after it are unchanged.
 - `dark_army_knowledge_read` / `dark_army_knowledge_write` — **the project's own
   question-and-answer notes**, in full in `docs/knowledge-notes.md`; what
   must hold: `knowledge_store.py` is schema 20's one table, keyed on the

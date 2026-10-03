@@ -7933,7 +7933,8 @@ class BoardVerbsMixin:
 
         Ladder, fail closed on ambiguity: (a) a consult whose bound session
         is the caller, `via=consultant`, retire the consult; (b) exactly one
-        non-Done card via `by_session`, `via=session`; (c) exactly one Done
+        non-Done card via `by_session` after the batch narrowing the close
+        uses (`_narrow_batch_open`), `via=session`; (c) exactly one Done
         card via `by_session`. Writes `card_messages` only.
         """
         if self._board is None:
@@ -7980,8 +7981,13 @@ class BoardVerbsMixin:
             return (await self._board_call("get", cid)), "answered"
 
         cards = await self._board_call("by_session", session_id) or []
-        open_cards = [c for c in cards if c.get("column_name") != "done"]
-        if len(open_cards) > 1:
+        # A batch session is bound to every card it has worked; the one it
+        # is on now is the one the close reaches (`_narrow_batch_open`).
+        pre = [c for c in cards if c.get("column_name") != "done"]
+        open_cards = self._narrow_batch_open(pre)
+        if len(open_cards) > 1 or (pre and not open_cards):
+            # Narrowing that drops every open card is not "no open card":
+            # the one-Done-card rung below must not pick up its place.
             return None, ("this session is on more than one card — "
                           "say which on the board")
         if len(open_cards) == 1:
