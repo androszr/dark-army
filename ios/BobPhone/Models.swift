@@ -1648,6 +1648,13 @@ struct Board: Decodable {
     var cardChangesSupported = false
     var mergeWritable = false
     var reviewRunWritable = false
+    /// The Menu's Worktrees screen (`docs/card-worktrees.md`, *Several
+    /// finished cards merge one after another*). Two more markers on the
+    /// same argument: whether this Mac serves the sealed `worktrees` read,
+    /// and whether it honours `board_merge_batch` from a phone. Absent from
+    /// an older Mac is **false**: the tile is dim and MERGE is drawn absent.
+    var worktreesSupported = false
+    var mergeBatchWritable = false
     /// Whether the next Start opens Dark Army's own terminal. START HERE
     /// is drawn only while this is off, so the two buttons cannot do the
     /// same thing. Absent from an older Mac is **false**.
@@ -1726,6 +1733,8 @@ struct Board: Decodable {
         case mergeWritable = "merge_writable"
         case reviewSupported = "review_supported"
         case reviewRunWritable = "review_run_writable"
+        case worktreesSupported = "worktrees_supported"
+        case mergeBatchWritable = "merge_batch_writable"
         case reviewSectionWritable = "review_section_writable"
         case ownTerminalEnabled = "own_terminal_enabled"
         case ownTerminalSpawnSupported = "own_terminal_spawn_supported"
@@ -1790,6 +1799,8 @@ struct Board: Decodable {
         mergeWritable = c.value(.mergeWritable, false)
         reviewSupported = c.value(.reviewSupported, false)
         reviewRunWritable = c.value(.reviewRunWritable, false)
+        worktreesSupported = c.value(.worktreesSupported, false)
+        mergeBatchWritable = c.value(.mergeBatchWritable, false)
         reviewSectionWritable = c.value(.reviewSectionWritable, false)
         ownTerminalEnabled = c.value(.ownTerminalEnabled, false)
         ownTerminalSpawnSupported = c.value(.ownTerminalSpawnSupported, false)
@@ -2308,6 +2319,78 @@ struct CardChangeReview: Decodable, Equatable {
 /// The sealed `card_changes` page — a Done card's branch against the main
 /// line. `available` is **stated**; `files` absent decodes empty.
 /// `branchTip` is echoed back on a file's changes and on MERGE.
+/// One row of the Worktrees list: a card's side folder with the daemon's own
+/// status word and line, drawn verbatim. Every key through the tolerant
+/// `value` helper, so one absent key never fails the page.
+struct WorktreeRow: Decodable, Equatable, Identifiable {
+    var cardId = ""
+    var title = ""
+    var project = ""
+    var column = ""
+    var branch = ""
+    var folder = ""
+    var status = ""
+    var word = ""
+    var line = ""
+    var ahead = 0
+    var uncommitted = 0
+    var mergeable = false
+    var branchTip = ""
+
+    /// A folder with no card has no id: its folder names it.
+    var id: String { cardId.isEmpty ? "folder:" + project + ":" + folder : cardId }
+
+    enum CodingKeys: String, CodingKey {
+        case title, project, column, branch, folder, status, word, line
+        case ahead, uncommitted, mergeable
+        case cardId = "card_id"
+        case branchTip = "branch_tip"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        cardId = c.value(.cardId, "")
+        title = c.value(.title, "")
+        project = c.value(.project, "")
+        column = c.value(.column, "")
+        branch = c.value(.branch, "")
+        folder = c.value(.folder, "")
+        status = c.value(.status, "")
+        word = c.value(.word, "")
+        line = c.value(.line, "")
+        ahead = c.value(.ahead, 0)
+        uncommitted = c.value(.uncommitted, 0)
+        mergeable = c.value(.mergeable, false)
+        branchTip = c.value(.branchTip, "")
+    }
+}
+
+/// The sealed `worktrees` page: `available` false with a `reason` for a Mac
+/// that cannot list, else the rows in the daemon's order.
+struct WorktreesPage: Decodable, Equatable {
+    var available = false
+    var rows: [WorktreeRow] = []
+    var truncated = false
+    var reason = ""
+
+    enum CodingKeys: String, CodingKey {
+        case available, rows, truncated, reason
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        let lossy: [ReviewLossy<WorktreeRow>] = c.value(.rows, [])
+        rows = lossy.compactMap(\.value)
+        truncated = c.value(.truncated, false)
+        reason = c.value(.reason, "")
+    }
+}
+
 struct CardChangesReport: Decodable, Equatable {
     var available = false
     var cardId = ""

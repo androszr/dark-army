@@ -54,6 +54,9 @@ ARM_SLOTS = (
     # Rebuild & restart (3 Oct 2026): its own slot, so nothing else armed can
     # confirm a restart of the Mac's Dark Army.
     "rebuild",
+    # The Worktrees screen's batch MERGE (3 Oct 2026): its own slot, so a
+    # MERGE armed on a card screen can never confirm a batch, nor the reverse.
+    "mergeBatch",
     # Continue and End on a Review run (docs/review-runs.md): their own
     # slots, armed on the run id, so no other arm can confirm either.
     "reviewContinue",

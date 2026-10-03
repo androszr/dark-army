@@ -20,6 +20,7 @@ import asyncio
 import ctypes
 import functools
 import hashlib
+import json
 import logging
 import os
 import secrets
@@ -61,6 +62,7 @@ from . import session_io
 from . import subprocess_env
 from . import trust_marks
 from . import work_record
+from . import worktree_list
 from . import workspace
 from . import worktrees
 
@@ -811,6 +813,14 @@ class BoardVerbsMixin:
             "card_changes_supported": True,
             "merge_writable": True,
             "review_run_writable": True,
+            # And two more, on the same argument: this daemon serves the
+            # sealed `worktrees` read and carries `board_merge_batch` on both
+            # phone tuples, so the Worktrees tile and its MERGE are drawn
+            # *absent* against an older Mac, which sends neither key
+            # (`docs/card-worktrees.md`, *Several finished cards merge one
+            # after another*).
+            "worktrees_supported": True,
+            "merge_batch_writable": True,
             # And a sixth, on `queue_writable`'s argument once more: this
             # daemon knows the `start_when_planned` card column, and an
             # older one simply sends no key — which decodes false, so the
@@ -10721,6 +10731,9 @@ class BoardVerbsMixin:
         cid = str(card_id or "")
         if cid in (getattr(self, "_merging", None) or {}):
             return True
+        if cid in ((getattr(self, "_merge_batch", None) or {})
+                   .get("queue") or []):
+            return True
         entry = (getattr(self, "_merge_helpers", None) or {}).get(cid)
         if entry:
             return (time.time() - float(entry.get("since") or 0.0)
@@ -10746,6 +10759,9 @@ class BoardVerbsMixin:
         merging = getattr(self, "_merging", None) or {}
         if str(card_id) in merging:
             return merges.MERGE_RUNNING_REFUSAL
+        if str(card_id) in ((getattr(self, "_merge_batch", None) or {})
+                            .get("queue") or []):
+            return merges.MERGE_QUEUED_REFUSAL
         for other, entry in merging.items():
             if other != str(card_id) and (entry or {}).get("root") == root:
                 return merges.PROJECT_MERGING_REFUSAL
@@ -11047,6 +11063,41 @@ class BoardVerbsMixin:
             self._merging = {k: v for k, v in current.items()
                              if k != card_id}
 
+    async def _merge_start(self, card_id: str, expected_tip=None) -> tuple:
+        """The press's gate and its record: `(ok, detail, root, token)`.
+        On a refusal `ok` is False and `detail` the words; on success the
+        `_merging` entry is made, `record_merge` cleared the old verdict
+        and the board published, and the caller starts `_merge_card_task`
+        with `root` and `token`. Shared by `merge_card` and the batch."""
+        if self._board is None:
+            return False, merges.BOARD_CLOSED_REFUSAL, "", ""
+        cid = str(card_id or "")
+        # `None` is no guard (the Mac's plain press). A value that is present
+        # is a guard and must be a whole commit hash: an empty or short one
+        # is never read as "absent".
+        if expected_tip is not None and not merges.is_tip(expected_tip):
+            return False, merges.TIP_CHANGED_REFUSAL, "", ""
+        card = await self._board_call("get", cid)
+        loop = asyncio.get_running_loop()
+        refusal, root, _branch, _path = await loop.run_in_executor(
+            None, functools.partial(
+                self._merge_gate_sync, card,
+                expected_tip=str(expected_tip or "")))
+        if refusal:
+            return False, refusal, "", ""
+        # No await between this look and the record below: of two presses
+        # arriving together, one finds the other's entry.
+        refusal = self._merging_refusal(cid, root)
+        if refusal:
+            return False, refusal, "", ""
+        token = secrets.token_hex(8)
+        merging = dict(getattr(self, "_merging", None) or {})
+        merging[cid] = {"root": root, "since": time.time(), "token": token}
+        self._merging = merging
+        await self._board_call("record_merge", cid, "", "")
+        await self._publish_board()
+        return True, merges.MERGING_NOTE, root, token
+
     async def merge_card(self, card_id: str, expected_tip=None) -> tuple:
         """The MERGE press. `(ok, detail)` — answers at once with
         `merges.MERGING_NOTE` and works in the background (the panel's POST
@@ -11057,38 +11108,155 @@ class BoardVerbsMixin:
         checkout and the trunk's tip re-checked by the task at the moment
         each is touched. `expected_tip` is the phone's current-state echo
         (absent: no guard)."""
-        if self._board is None:
-            return False, merges.BOARD_CLOSED_REFUSAL
-        cid = str(card_id or "")
-        # `None` is no guard (the Mac's plain press). A value that is present
-        # is a guard and must be a whole commit hash: an empty or short one
-        # is never read as "absent".
-        if expected_tip is not None and not merges.is_tip(expected_tip):
-            return False, merges.TIP_CHANGED_REFUSAL
-        card = await self._board_call("get", cid)
-        loop = asyncio.get_running_loop()
-        refusal, root, _branch, _path = await loop.run_in_executor(
-            None, functools.partial(
-                self._merge_gate_sync, card,
-                expected_tip=str(expected_tip or "")))
-        if refusal:
-            return False, refusal
-        # No await between this look and the record below: of two presses
-        # arriving together, one finds the other's entry.
-        refusal = self._merging_refusal(cid, root)
-        if refusal:
-            return False, refusal
-        token = secrets.token_hex(8)
-        merging = dict(getattr(self, "_merging", None) or {})
-        merging[cid] = {"root": root, "since": time.time(), "token": token}
-        self._merging = merging
+        ok, detail, root, token = await self._merge_start(
+            card_id, expected_tip)
+        if not ok:
+            return False, detail
         task = asyncio.ensure_future(self._merge_card_task(
-            cid, root, token, str(expected_tip or "")))
+            str(card_id or ""), root, token, str(expected_tip or "")))
         self._merge_tasks.add(task)
         task.add_done_callback(self._merge_tasks.discard)
-        await self._board_call("record_merge", cid, "", "")
+        return True, detail
+
+    async def merge_cards(self, pairs) -> tuple:
+        """The batch MERGE press: `(ok, detail)` for `[(card_id, tip), …]`.
+        Each card is gated now (a failing one is skipped and named, nothing
+        written to it), the survivors queue, and `_merge_batch_task` merges
+        them one at a time through `_merge_start` and `_merge_card_task`:
+        the single card's engine, never a second one."""
+        if self._board is None:
+            return False, merges.BOARD_CLOSED_REFUSAL
+        pairs = list(pairs or [])
+        if not pairs:
+            return False, merges.BATCH_EMPTY_REFUSAL
+        if len(pairs) > board.MAX_BATCH_CARDS:
+            return False, merges.BATCH_TOO_MANY_REFUSAL
+        if getattr(self, "_merge_batch", None):
+            return False, merges.BATCH_RUNNING_REFUSAL
+        loop = asyncio.get_running_loop()
+        started: list = []
+        skipped: list = []
+        tips: dict = {}
+        for cid, tip in pairs:
+            cid = str(cid or "")
+            card = await self._board_call("get", cid)
+            title = str((card or {}).get("title") or cid[:8])
+            if not merges.is_tip(tip):
+                skipped.append((title, merges.TIP_CHANGED_REFUSAL))
+                continue
+            refusal, root, _b, _p = await loop.run_in_executor(
+                None, functools.partial(
+                    self._merge_gate_sync, card, expected_tip=str(tip)))
+            if not refusal:
+                refusal = self._merging_refusal(cid, root)
+            if refusal:
+                skipped.append((title, refusal))
+                continue
+            started.append((cid, title))
+            tips[cid] = str(tip)
+        if not started:
+            return False, merges.batch_report([], skipped)
+        # The gates awaited above: look again, then set with no await.
+        if getattr(self, "_merge_batch", None):
+            return False, merges.BATCH_RUNNING_REFUSAL
+        token = secrets.token_hex(8)
+        self._merge_batch = {"token": token,
+                             "queue": [c for c, _t in started],
+                             "tips": tips, "total": len(started)}
+        task = asyncio.ensure_future(self._merge_batch_task(token))
+        self._merge_tasks.add(task)
+        task.add_done_callback(self._merge_tasks.discard)
         await self._publish_board()
-        return True, merges.MERGING_NOTE
+        return True, merges.batch_report([t for _c, t in started], skipped)
+
+    async def _merge_batch_task(self, token: str) -> None:
+        """The detached batch. Loop; never raises. For each queued card in
+        order: it leaves the queue (before the gate, or it would refuse
+        itself), waits out another merge of its project, then runs the
+        single card's start and task. `finally` empties the batch."""
+        try:
+            batch = dict(self._merge_batch or {})
+            order = list(batch.get("queue") or [])
+            tips = dict(batch.get("tips") or {})
+            for cid in order:
+                if (self._merge_batch or {}).get("token") != token:
+                    return
+                try:
+                    await self._merge_batch_turn(cid, tips.get(cid, ""),
+                                                 token)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("the batch turn of card %s failed",
+                                   cid[:8], exc_info=True)
+        finally:
+            if (self._merge_batch or {}).get("token") == token:
+                self._merge_batch = {}
+            try:
+                await self._publish_board()
+            except Exception:
+                logger.debug("could not publish after a batch", exc_info=True)
+
+    #: Refusals at a card's turn that say the card is already settled or
+    #: gone: logged, never recorded as a stop (that would overwrite a real
+    #: `merged` or write a spurious `card_merge_blocked`).
+    _BATCH_QUIET_REFUSALS = (merges.MERGE_RUNNING_REFUSAL,
+                             merges.ALREADY_MERGED_REFUSAL,
+                             merges.NOT_DONE_REFUSAL,
+                             merges.NO_CARD_REFUSAL)
+
+    async def _merge_batch_turn(self, cid: str, tip: str,
+                                token: str = "") -> None:
+        """One card's turn of the batch. The card stays in the queue (shown
+        queued, its folder held) through the wait for another merge of the
+        project, and leaves it with no await before `_merge_start`, whose
+        gate would otherwise refuse the card for being queued."""
+        card = await self._board_call("get", cid)
+        root = dispatch.normalise_root(str((card or {}).get("root") or ""))
+        waited = 0.0
+        while True:
+            # The queue rung of `_merging_refusal` answers first for a card
+            # that is still queued, so the project scan is read directly.
+            while root and waited < merges.BATCH_WAIT_SECONDS \
+                    and any(other != cid
+                            and (entry or {}).get("root") == root
+                            for other, entry in
+                            (getattr(self, "_merging", None) or {}).items()):
+                await asyncio.sleep(1.0)
+                waited += 1.0
+            current = self._merge_batch or {}
+            if token and current.get("token") != token:
+                return
+            self._merge_batch = dict(
+                current,
+                queue=[c for c in current.get("queue", []) if c != cid])
+            ok, detail, root, mtoken = await self._merge_start(cid, tip)
+            if not ok and detail == merges.PROJECT_MERGING_REFUSAL \
+                    and waited < merges.BATCH_WAIT_SECONDS:
+                # A Mac MERGE on another card of the project slipped in
+                # between the wait and the record: back to the head of the
+                # queue and wait again, never a recorded stop.
+                current = self._merge_batch or {}
+                if token and current.get("token") != token:
+                    return
+                self._merge_batch = dict(
+                    current,
+                    queue=[cid] + [c for c in current.get("queue", [])
+                                   if c != cid])
+                await asyncio.sleep(1.0)
+                waited += 1.0
+                card = await self._board_call("get", cid)
+                root = dispatch.normalise_root(
+                    str((card or {}).get("root") or ""))
+                continue
+            break
+        if not ok:
+            if detail in self._BATCH_QUIET_REFUSALS:
+                logger.info("batch: card %s not merged: %s", cid[:8], detail)
+                return
+            await self._merge_stop(cid, "blocked", detail)
+            return
+        await self._merge_card_task(cid, root, mtoken, tip)
 
     async def _merge_card_task(self, card_id: str, root: str,
                                token: str, expected_tip: str = "") -> None:
@@ -11686,6 +11854,12 @@ class BoardVerbsMixin:
         cid = str(card.get("id") or "")
         if cid in (getattr(self, "_merging", None) or {}):
             return merges.MERGING_NOTE
+        batch = getattr(self, "_merge_batch", None) or {}
+        queue = list(batch.get("queue") or [])
+        if cid in queue:
+            total = int(batch.get("total") or len(queue))
+            return merges.MERGE_QUEUED_NOTE.format(
+                total - len(queue) + queue.index(cid) + 1, total)
         state = str(card.get("merge_state") or "")
         note = str(card.get("merge_note") or "")
         if state not in merges.STATES or not state or not note:
@@ -11710,6 +11884,9 @@ class BoardVerbsMixin:
         out.pop("review_tip", None)
         if cid in (getattr(self, "_merging", None) or {}):
             out["merge_state"] = merges.SNAPSHOT_MERGING
+        elif cid in ((getattr(self, "_merge_batch", None) or {})
+                     .get("queue") or []):
+            out["merge_state"] = merges.SNAPSHOT_QUEUED
         elif not stored:
             out.pop("merge_state", None)
         if line:
@@ -11955,6 +12132,226 @@ class BoardVerbsMixin:
             text, truncated = work_record.clamp_diff(out)
             return 200, {"available": True, "path": rel, "text": text,
                          "truncated": truncated, "reason": ""}
+
+    # -- The Worktrees list: one on-demand read, never on the snapshot path --
+
+    def _worktrees_sync(self) -> dict:
+        """Every card's side folder and branch across the enrolled projects,
+        with a plain status. **Executor.** Bounded git per row under
+        `_worktrees_lock`; a failed call marks that row and never the page.
+        The page carries no absolute path (`folder` is relative)."""
+        page = {"available": False, "rows": [], "truncated": False,
+                "generated_at": time.time(), "reason": ""}
+        if self._board is None:
+            page["reason"] = merges.BOARD_CLOSED_REFUSAL
+            return page
+        with self._worktrees_lock:
+            roots = [r for r in sorted(enrollment.enrolled_roots())
+                     if r and self._git_checkout(r)]
+            if not roots:
+                page["reason"] = "No enrolled project is a git checkout."
+                return page
+            try:
+                cards = list(self._board.cards())
+            except Exception:
+                logger.debug("worktrees: could not read the board",
+                             exc_info=True)
+                cards = []
+            labels = {}
+            for entry in enrollment.projects():
+                labels[dispatch.normalise_root(
+                    str(entry.get("root") or ""))] = str(
+                    entry.get("label") or "")
+            merging = getattr(self, "_merging", None) or {}
+            batch = getattr(self, "_merge_batch", None) or {}
+            queue = list(batch.get("queue") or [])
+            rows: list = []
+            for root in roots:
+                norm = dispatch.normalise_root(root)
+                label = labels.get(norm) or os.path.basename(
+                    norm.rstrip(os.sep)) or "project"
+                trunk = self._merge_trunk_sync(root)
+                named: set = set()
+                for card in cards:
+                    if dispatch.normalise_root(
+                            str(card.get("root") or "")) != norm:
+                        continue
+                    path = str(card.get("worktree_path") or "")
+                    branch = str(card.get("worktree_branch") or "")
+                    cid = str(card.get("id") or "")
+                    if not path and not branch:
+                        if self._worktree_recently_merged(card):
+                            rows.append(self._worktree_merged_row(
+                                label, card, merging))
+                        continue
+                    if path:
+                        named.add(os.path.realpath(path))
+                    rows.append(self._worktree_row(
+                        root, label, trunk, card, cid, path, branch,
+                        cid in merging, cid in queue))
+                rows.extend(self._worktree_orphan_rows(root, label, named))
+            rows = worktree_list.order(rows)
+            if len(rows) > worktree_list.MAX_ROWS:
+                rows = rows[:worktree_list.MAX_ROWS]
+                page["truncated"] = True
+            for item in rows:
+                item.pop("_updated", None)
+            while rows and len(json.dumps(rows)) > worktree_list.PAGE_MAX_BYTES:
+                rows.pop()
+                page["truncated"] = True
+            page.update(available=True, rows=rows)
+            return page
+
+    def _worktree_row(self, root, label, trunk, card, cid, path, branch,
+                      merging, queued) -> dict:
+        """One card's row: bounded git for the folder and the branch."""
+        dirty = 0
+        failed = False
+        no_trunk = False
+        if path and os.path.isdir(path):
+            ok, out, _why = self._git_blocking(merges.argv_status(path), path)
+            if ok:
+                dirty = len([e for e in out.split(b"\0") if e])
+            else:
+                dirty, failed = -1, True
+        ahead = 0
+        ahead_read = False
+        tip = ""
+        if branch:
+            ok, out, _why = self._git_blocking(
+                merges.argv_tip(root, f"refs/heads/{branch}"), root)
+            text = out.decode("utf-8", "replace").strip() if ok else ""
+            if ok and merges.is_tip(text):
+                tip = text
+            if trunk and tip:
+                ok, out, _why = self._git_blocking(
+                    merges.argv_ahead_behind(root, trunk, branch), root)
+                if ok:
+                    ahead = merges.parse_ahead_behind(out)[1]
+                    ahead_read = True
+                else:
+                    failed = True
+            elif tip and not trunk:
+                failed = True
+                no_trunk = True
+            elif branch and not tip and str(
+                    card.get("merge_state") or "") != "merged":
+                failed = True
+        try:
+            gate = self._merge_gate_sync(card, busy=False, cached=True)[0]
+        except Exception:
+            logger.debug("worktrees: gate could not be decided",
+                         exc_info=True)
+            gate = "unknown"
+        live = str(card.get("link_state") or "") in ("live", "dispatching")
+        line_card = dict(card)
+        merge_line = self._merge_line(line_card)
+        # The gate's `merging` / queue rungs are the batch's own business
+        # here; the list says merging and queued in its own words.
+        if gate in (merges.MERGE_RUNNING_REFUSAL, merges.MERGE_QUEUED_REFUSAL,
+                    merges.PROJECT_MERGING_REFUSAL):
+            gate = ""
+        status, word, line = worktree_list.status_for(
+            card, dirty=dirty, ahead=ahead, merging=merging, queued=queued,
+            gate_refusal=gate, merge_line=merge_line, live=live,
+            failure=(merges.NO_TRUNK_REFUSAL if no_trunk else
+                     merges.GIT_FAILED_REFUSAL.format("a git call failed")
+                     if failed else ""))
+        mergeable = not gate and not failed and not live and bool(tip) \
+            and str(card.get("column_name") or "") == "done"
+        item = worktree_list.row(
+            card_id=str(card.get("id") or ""),
+            title=str(card.get("title") or ""),
+            project=label or str(card.get("project") or ""),
+            column=str(card.get("column_name") or ""), branch=branch,
+            folder=self._worktree_relative(root, path), status=status,
+            word=word, line=line, ahead=ahead if ahead_read else -1,
+            uncommitted=max(dirty, 0),
+            mergeable=mergeable and not merging and not queued,
+            branch_tip=tip)
+        item["_updated"] = float(card.get("updated_at") or 0.0)
+        return item
+
+    @staticmethod
+    def _worktree_recently_merged(card: dict) -> bool:
+        """A card that landed lately and whose folder and branch are gone:
+        still listed, as Merged, for `MERGED_LISTED_SECONDS`."""
+        return (str(card.get("merge_state") or "") == "merged"
+                and time.time() - float(card.get("updated_at") or 0.0)
+                <= worktree_list.MERGED_LISTED_SECONDS)
+
+    def _worktree_merged_row(self, label, card, merging) -> dict:
+        """The row of a recently merged card: no git, never tickable."""
+        item = worktree_list.row(
+            card_id=str(card.get("id") or ""),
+            title=str(card.get("title") or ""),
+            project=label or str(card.get("project") or ""),
+            column=str(card.get("column_name") or ""), status="merged",
+            word=worktree_list.STATUS_WORDS["merged"],
+            line=self._merge_line(dict(card)))
+        item["_updated"] = float(card.get("updated_at") or 0.0)
+        return item
+
+    @staticmethod
+    def _worktree_relative(root: str, path: str) -> str:
+        """`.worktrees/<name>` for a folder inside the root's own
+        `.worktrees`, else `""` — never an absolute path."""
+        if not path or not worktrees.inside(root, path):
+            return ""
+        return worktree_list.relative_folder(os.path.basename(
+            os.path.normpath(path)))
+
+    def _worktree_orphan_rows(self, root: str, label: str, named: set) -> list:
+        """Directories under `<root>/.worktrees/` no card names. No git; a
+        symbolic link is skipped."""
+        base = os.path.join(root, worktrees.WORKTREES_DIR)
+        out: list = []
+        try:
+            with os.scandir(base) as entries:
+                found = sorted(entries, key=lambda e: e.name)
+        except OSError:
+            return out
+        for entry in found:
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            if os.path.realpath(entry.path) in named:
+                continue
+            out.append(worktree_list.orphan_row(
+                label, worktree_list.relative_folder(entry.name)))
+        return out
+
+    async def worktrees_report(self) -> dict:
+        """Concurrent reads share one in-flight read, so repeated requests
+        never park more than one executor thread on `_worktrees_lock`."""
+        current = getattr(self, "_worktrees_current", None)
+        if current is None or current.done():
+            current = asyncio.ensure_future(self._worktrees_read())
+            self._worktrees_current = current
+            return await asyncio.shield(current)
+        # A read is in flight and may predate the change that made this
+        # caller ask: everyone arriving meanwhile shares ONE follow-up read
+        # that starts after the current one ends.
+        queued = getattr(self, "_worktrees_queued", None)
+        if queued is None:
+            queued = asyncio.ensure_future(self._worktrees_after(current))
+            self._worktrees_queued = queued
+        return await asyncio.shield(queued)
+
+    async def _worktrees_read(self) -> dict:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._worktrees_sync)
+
+    async def _worktrees_after(self, current) -> dict:
+        try:
+            await asyncio.shield(current)
+        except Exception:
+            logger.debug("the read before this one failed", exc_info=True)
+        self._worktrees_queued = None
+        self._worktrees_current = asyncio.current_task()
+        return await self._worktrees_read()
 
     async def card_changes_report(self, card_id: str) -> dict:
         loop = asyncio.get_running_loop()

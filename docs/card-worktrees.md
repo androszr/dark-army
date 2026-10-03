@@ -497,7 +497,8 @@ An older build reads past the six columns (`SELECT *` into a dict) and never
 removes a worktree or lands a branch: the folders and branches stay until the
 newer build returns. A card finished on the newer build keeps its branch name in
 `worktree_branch`, which the older build ignores; a phone paired with an older
-Mac sees none of the merge controls (no marker, no keys). `preferences.json` gains one dict key an older build ignores.
+Mac sees none of the merge controls (no marker, no keys), and the Worktrees tile
+is dim (neither `worktrees_supported` nor `merge_batch_writable` is published). `preferences.json` gains one dict key an older build ignores.
 
 ## Committing on the card branch, and what is not yet done
 
@@ -711,3 +712,61 @@ allowlist) and notice the merge to release folder and branch; the person chose
 the local button (28 Sep, 3 Oct 2026). The frozen bundle needs nothing:
 `merges.py` sits inside the `dark_army_daemon` package py2app already freezes.
 
+## Several finished cards merge one after another
+
+The phone's Menu has a **Worktrees** screen (`ios/BobPhone/WorktreesView.swift`)
+that lists every card's side folder across the enrolled projects with a plain
+status, and one MERGE that lands several finished cards on main in a row
+(3 Oct 2026, `plans/2026-10-03-phone-worktrees-batch-merge.md`). **There is no
+second merge engine.** The batch calls `_merge_start`, the gate-and-record half
+split out of `merge_card` (which stays byte-identical in behaviour), and awaits
+`_merge_card_task` inline: every folder, merge commit, check, fast-forward and
+release is the single card's.
+
+**The verb** (`board_merge_batch` on `BOARD_ACTIONS`, both phone tuples and
+`_LAN_BOARD`, keyed on `card_ids` and `expected_tips`, comma-joined and
+positional: `_merge_pairs` refuses a duplicate or a length mismatch, which the
+deduping `_card_ids` could not) is `merge_cards(pairs)`. Refusals in order:
+board closed, no cards, more than `board.MAX_BATCH_CARDS` (8), a batch already
+running (`BATCH_RUNNING_REFUSAL`). Each card is then gated at the press
+(`is_tip`, `_merge_gate_sync` with its busy rungs, `_merging_refusal`); a
+failing card is **skipped and named** and nothing is written to it
+(`start_cards`' rule). The reply is `merges.batch_report`; with nothing left it
+is a 409. The survivors are held in `_merge_batch` (`{token, queue, tips,
+total}`, memory only, replaced and never mutated) and `_merge_batch_task`
+merges them in list order. The batch is sent by `post`, never banked.
+
+**The queued rung.** A card in the queue publishes the snapshot-only
+`merge_state` `queued` (like `merging`, never stored, outside `STATES`) with
+`merge_line` "Waiting its turn to merge — n of m in this batch."; `merge_offered`
+is false (`_merging_refusal` answers `MERGE_QUEUED_REFUSAL`); `_merge_hold`
+holds its folder so the release defers. The panel draws the line through its
+existing `merge_line` path and `CardMerge` is untouched (`queued` is outside
+`openStates`). **A card leaves the queue before its own gate runs**, or it
+would refuse itself.
+
+**Each turn re-gates.** The task waits (one second at a time, up to
+`BATCH_WAIT_SECONDS`) while another card of the project merges, then runs
+`_merge_start` with the card's tip: a moved branch records `blocked` with
+`TIP_CHANGED_REFUSAL`, a card dragged out of Done writes nothing (`record_merge`
+only writes a Done card), a conflict or red check is recorded by the engine
+and the batch carries on. Fix is per row, the card screen's own verb. A
+restart mid-batch drops the remaining queue: those cards lose `queued` and stay
+Done and mergeable, and the running merge recovers by the engine's own restart
+rules.
+
+**The read** (`worktrees`, loopback `GET /api/worktrees` behind the desk token,
+and the sealed kind on both doors, a read in neither action tuple) is on demand
+only — never `state()`, a flush, SSE, the poll or the widget. `_worktrees_sync`
+runs on the executor under `_worktrees_lock`: per enrolled git root one trunk
+read, per card row `argv_status` (uncommitted count, a failure reads as dirty),
+`argv_tip` and `argv_ahead_behind`, bounded by `_git_blocking`; directories
+under `.worktrees/` no card names are listed as read-only `no_card` (a symbolic
+link is skipped, no git). The rule, in order, is `worktree_list.status_for`: no
+card, merging, queued, merged, conflict / checks failed / merge stopped,
+working (not Done, live, or a dirty folder), waiting (the gate's own words),
+nothing to merge, work done. `mergeable` needs a clean folder, a tip and no
+gate refusal. Rows are bounded by `MAX_ROWS` and `PAGE_MAX_BYTES`; `folder` is
+relative, so no absolute path rides the page. A card that landed within the last 24 hours (`MERGED_LISTED_SECONDS`) stays listed as Merged, with no git call and no tick, though its folder and branch are cleared; a row whose trunk, tip or count could not be read is `unreadable` ("Could not read", the failure words as its line, `ahead` -1, never mergeable). A read asked for while one runs waits for ONE follow-up read shared by everyone who arrived meanwhile, so no page predates its caller's change and at most one thread waits on the lock. The phone ticks a row only where
+`mergeable` **and** `CardMerge.offered` hold over the live card
+(`WorktreeRows.tickable`). Orphan folders are never removed here.

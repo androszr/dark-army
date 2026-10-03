@@ -60,6 +60,7 @@ PHONE_CALL_SITES += 1  # ConversationScreen catching-up caret
 PHONE_CALL_SITES += 1  # Comm's helper tab: the caret beside a helper's activity (CommView)
 PHONE_CALL_SITES += 1  # ConversationScreen's "now doing" line while the agent works
 PHONE_CALL_SITES += 1  # the History screen's "Checking with the Mac" line (HistoryWeekView)
+PHONE_CALL_SITES += 1  # the Worktrees screen's "Checking with the Mac" line (WorktreesView)
 
 #: The panel's action waits; each must have a phone caller outside the shared
 #: file, or the phone's buttons fall silent again.

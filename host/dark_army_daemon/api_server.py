@@ -1402,6 +1402,18 @@ class ApiServer:
                     request.query)
                 await self._respond(writer, status, ctype, body)
                 return
+            if request.path == "/api/worktrees" and request.method == "GET":
+                # Every card's side folder and its plain status: git on
+                # demand, never on the snapshot path. Token gated although a
+                # read; the desk token only (`/api/review`'s rule, and not
+                # in `SESSION_READS`). Host already ran above.
+                if not self._authorised(request):
+                    await self._respond(writer, 403, "application/json",
+                                        b'{"error":"forbidden"}')
+                    return
+                status, ctype, body = await self._worktrees_for({})
+                await self._respond(writer, status, ctype, body)
+                return
             if request.path == "/api/review" and request.method == "GET":
                 # What a review of one project would cover and offer. Token
                 # gated although a read, as `/api/knowledge` is; the desk token
@@ -2915,7 +2927,8 @@ class ApiServer:
                     "terminal", "conversation", "done", "knowledge",
                     "access_log", "bearings", "scout_reports",
                     "scout_report", "manual_checks", "plans", "plan", "image",
-                    "history_week", "card_changes", "review_offer", "action"):
+                    "history_week", "card_changes", "review_offer", "worktrees",
+                    "action"):
             status, ctype, out = await self._sealed_run(
                 kind, payload, device_id, actions=self.LAN_ACTIONS,
                 check_lease=False, record=False)
@@ -3355,7 +3368,13 @@ class ApiServer:
                      # fix a merge that stopped.
                      "board_merge_fix",
                      # Starting an assistant that reviews the branch.
-                     "board_review_run")
+                     "board_review_run",
+                     # Landing several finished cards on the local main line
+                     # one after another, through the single card's merge.
+                     # Keyed on `card_ids` and `expected_tips`, handled
+                     # before the card_id check. On both phone tuples — see
+                     # `LAN_ACTIONS`.
+                     "board_merge_batch")
 
     #: The phone writes, and the whole set of them. Named here rather than
     #: matched with a prefix: a prefix test would enrol whatever a future
@@ -3535,6 +3554,13 @@ class ApiServer:
         # is refused outright when board_dispatch is off. Keyed on card_id.
         # No parenthesis in this block.
         "board_review_run",
+        # Landing several finished cards on the local main line one after
+        # another, from the phone at home. It is board_merge repeated one
+        # card at a time under the same gate, armed and then confirmed on
+        # the phone, never an agent run, and it pushes nothing. Keyed on
+        # card_ids and expected_tips, handled above the card_id check. No
+        # parenthesis in this block.
+        "board_merge_batch",
     )
 
     #: The phone writes **from away**, and the whole set of them. It starts
@@ -3702,6 +3728,11 @@ class ApiServer:
         # assistant that only reads and reports a verdict. No parenthesis
         # in this block.
         "board_review_run",
+        # Away as well as at home, and its own decision: it is board_merge
+        # repeated one card at a time under the same gate, armed and then
+        # confirmed, riding the phone's lease, Face ID and the receipt
+        # token, and it pushes nothing. No parenthesis in this block.
+        "board_merge_batch",
     )
 
     #: The board names inside `LAN_ACTIONS`. Membership, not a prefix.
@@ -3729,6 +3760,9 @@ class ApiServer:
         "board_merge",
         "board_merge_fix",
         "board_review_run",
+        # Keyed on `card_ids` and `expected_tips`, handled above the
+        # `card_id` check.
+        "board_merge_batch",
     })
 
     async def _lan_run(self, action: str, payload: dict,
@@ -4293,6 +4327,12 @@ class ApiServer:
             # `q`, `status` and `path` ride the JSON body, never a query
             # string.
             return await self._manual_checks_for(payload)
+        if kind == "worktrees":
+            # Every card's side folder with a plain status. `card_changes`'
+            # rule: a **read**, above the `action` branch — neither action
+            # tuple, no lease check, no `remote_activity` record. The body
+            # carries nothing.
+            return await self._worktrees_for(payload)
         if kind == "card_changes":
             # A Done card's branch against the main line: commits, files with
             # counts, one file's changes. `manual_checks`' rule: a **read**,
@@ -4621,6 +4661,26 @@ class ApiServer:
         except (ValueError, TypeError) as exc:
             return 400, "application/json", json.dumps(
                 {"error": str(exc)}).encode()
+
+    async def _worktrees_for(self, _payload):
+        """The Worktrees page — loopback `GET /api/worktrees` and the sealed
+        `worktrees` kind. Never an error for a Mac that cannot answer:
+        `available: false` with the reason."""
+        handler = getattr(self._daemon, "worktrees_report", None)
+        if handler is None:
+            page = {"available": False, "rows": [], "truncated": False,
+                    "generated_at": time.time(),
+                    "reason": "Dark Army cannot list worktrees"}
+        else:
+            try:
+                page = await handler()
+            except Exception:
+                logger.warning("the worktrees read failed", exc_info=True)
+                page = {"available": False, "rows": [], "truncated": False,
+                        "generated_at": time.time(),
+                        "reason": "Dark Army could not read the worktrees"}
+        return 200, "application/json", json.dumps(
+            page, allow_nan=False).encode()
 
     async def _card_changes_for(self, query_or_payload):
         """A Done card's Changes — loopback `GET /api/card-changes` and the
@@ -5351,7 +5411,10 @@ class ApiServer:
                        "expected_outcome_revision", "confirm_outcome_scope_change",
                        # The batch verbs' list of cards, comma-joined
                        # (`_card_ids`). Envelope, never a card field.
-                       "card_ids")
+                       "card_ids",
+                       # The merge batch's tips, one per card, in the same
+                       # order (`_merge_pairs`). Envelope, never a card field.
+                       "expected_tips")
 
     def _board_fields(self, payload: dict) -> dict:
         out = {}
@@ -5414,6 +5477,24 @@ class ApiServer:
             if cid and cid not in ids:
                 ids.append(cid)
         return ids or None
+
+    @staticmethod
+    def _merge_pairs(payload: dict):
+        """The merge batch's `[(card_id, tip), …]`: `card_ids` and
+        `expected_tips` are comma-joined strings of equal, non-zero length,
+        no empty id and no duplicate (`_card_ids` dedupes, which would
+        misalign the tips). `None` is the caller's 400."""
+        ids_raw = payload.get("card_ids")
+        tips_raw = payload.get("expected_tips")
+        if not isinstance(ids_raw, str) or not isinstance(tips_raw, str) \
+                or len(ids_raw) > 4096 or len(tips_raw) > 4096:
+            return None
+        ids = [p.strip() for p in ids_raw.split(",")]
+        tips = [p.strip() for p in tips_raw.split(",")]
+        if not ids or len(ids) != len(tips) or any(not i for i in ids) \
+                or len(set(ids)) != len(ids):
+            return None
+        return list(zip(ids, tips))
 
     @staticmethod
     def _echo_kwargs(payload: dict, keys: tuple) -> dict:
@@ -5568,6 +5649,16 @@ class ApiServer:
             if ids is None:
                 return 400, "application/json", b'{"error":"no card_ids"}'
             ok, detail = await self._daemon.start_cards(ids)
+            body = json.dumps({"ok": ok, "detail": detail}).encode()
+            return (200 if ok else 409), "application/json", body
+        if action == "board_merge_batch":
+            # Several finished cards landed one after another through the
+            # single card's merge (`merge_cards`): keyed on `card_ids` and
+            # `expected_tips`, so handled **above** the `no card_id` line.
+            pairs = self._merge_pairs(payload)
+            if pairs is None:
+                return 400, "application/json", b'{"error":"no card_ids"}'
+            ok, detail = await self._daemon.merge_cards(pairs)
             body = json.dumps({"ok": ok, "detail": detail}).encode()
             return (200 if ok else 409), "application/json", body
         if not card_id:

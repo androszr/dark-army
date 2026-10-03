@@ -745,6 +745,8 @@ starts or deletes a plan. The list and the body are the sealed `plans` /
 older Mac leaves the tile dim and the page that says so. Pinned by
 `host/tests/test_phone_plans.py`.
 
+**Worktrees** (`MenuSection.worktrees`, appended after Review; `ios/BobPhone/WorktreesView.swift`, `WorktreeRows.swift`) lists every card's side folder with the daemon's own status word and line, drawn verbatim. The sealed `worktrees` read is made when the screen appears, on pull and when a listed card's merge state moves, never on the poll, the background refresh or the widget. A row ticks only where the daemon calls it `mergeable` and `CardMerge.offered` holds over the live card; up to `WorktreeRows.maximum` (8). MERGE is armed on `Arm.Slot.mergeBatch` (the joined ordered ids), then sent by `client.post` as `board_merge_batch` with `card_ids` and `expected_tips`, never `enqueue`: it happens at the press or not at all. The Mac's report is drawn under the button (amber, ticks kept, on a refusal). Fix per row is the card screen's own `board_merge_fix` route. Two markers, `worktrees_supported` and `merge_batch_writable`, dim the tile and hide MERGE against an older Mac (`docs/card-worktrees.md`, *Several finished cards merge one after another*).
+
 ## The Comm section talks to Mission Control
 
 The Menu's Comm section (`MenuSection.comm`, `CommView.swift`) talks to **Mission

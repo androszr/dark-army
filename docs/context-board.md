@@ -796,7 +796,8 @@ real columns and to what the prompt builders send.
   **A Done card can be reviewed and merged** (v31, `merges.py`): MERGE
   builds the merge commit in the card's folder, runs the checks, then
   fast-forwards local main — never a push: `docs/card-worktrees.md`,
-  *Review and merge*.
+  *Review and merge*; several at once from the phone, one after another
+  through the same engine, in *Several finished cards merge one after another*.
 
   Deliberately **not** passed: `--no-session-persistence`,
   `--setting-sources ""`, `--strict-mcp-config`, and

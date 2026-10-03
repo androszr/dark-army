@@ -2941,6 +2941,34 @@ final class PhoneClient: ObservableObject {
         return try? JSONDecoder().decode(CardChangesReport.self, from: data)
     }
 
+    /// Every card's side folder with a plain status (`worktrees`): the
+    /// sealed read, `fetchCardChanges`' shape, relay first when away. Called
+    /// from the Worktrees screen when it appears, on pull and when a merge
+    /// on it moves, and from **nowhere else** — never `poll`,
+    /// `backgroundRefresh` or the widget. A 404 is an older Mac: nil.
+    func fetchWorktrees() async -> WorktreesPage? {
+        guard let record, !backgroundRun else { return nil }
+        let answer: RelayChannel.Answer?
+        if knowsItIsAway, let channel {
+            answer = await channel.request(kind: "worktrees", body: [:],
+                                           timeout: Self.relayLegCap)
+        } else if let home = homeChannel {
+            answer = await home.request(
+                kind: "worktrees", body: [:], host: record.host,
+                port: record.port, timeout: 30)
+        } else {
+            return nil
+        }
+        guard record.token == self.record?.token else { return nil }
+        guard let answer else { return nil }
+        if answer.status == 403 {
+            forgetPairing()
+            return nil
+        }
+        guard answer.failure.isEmpty, answer.status == 200 else { return nil }
+        return try? JSONDecoder().decode(WorktreesPage.self, from: answer.body)
+    }
+
     /// One file's changes, by its index in the page and the tip it was read
     /// at (a moved branch is refused by the Mac, not drawn).
     func fetchCardChangeDiff(_ cardId: String, file: Int,

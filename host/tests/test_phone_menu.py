@@ -42,10 +42,13 @@ def test_the_grid_holds_sections_in_order():
     menu = _enum(_read(MENU), "MenuSection")
     assert "case usage, history, comm, scouting, checks, plans, rebuild, designSystem" in menu
     for title in ('"Usage"', '"History"', '"Comm"', '"Scouting"', '"Manual checks"',
-                  '"Plans"', '"Rebuild & restart"', '"Design system"', '"Review"'):
+                  '"Plans"', '"Rebuild & restart"', '"Design system"', '"Review"',
+                  '"Worktrees"'):
         assert f"return {title}" in menu, title
     # Review is appended after the sections already there, never inserted.
     assert "designSystem, review" in menu
+    # Worktrees is appended after Review, never inserted.
+    assert "designSystem, review, worktrees" in menu
 
 
 def test_the_grid_is_four_columns_and_two_at_accessibility_sizes():
@@ -122,6 +125,8 @@ check(MenuSection(rawValue: "history") == .history, "section history")
 check(MenuSection(rawValue: "rebuild") == .rebuild, "section rebuild")
 check(PhoneTab(stored: "history") == .menu, "history")
 check(PhoneTab(stored: "plans") == .menu, "plans")
+check(MenuSection(rawValue: "worktrees") == .worktrees, "section worktrees")
+check(PhoneTab(stored: "worktrees") == .menu, "worktrees")
 check(MenuSection(rawValue: "board") == nil, "section board")
 check(PhoneTab.allCases.count == 4, "four tabs")
 """,

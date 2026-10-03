@@ -88,7 +88,7 @@ def test_explicit_refresh_inventory_and_automatic_silence():
     expected = {"NeedsYouView.swift": 1, "FleetView.swift": 1, "BoardView.swift": 2,
                 "UsageView.swift": 1, "PipelineView.swift": 1, "CatchUpView.swift": 1,
                 "AgentReportView.swift": 1, "LifecycleReportView.swift": 1,
-                "HistoryWeekView.swift": 1}
+                "HistoryWeekView.swift": 1, "WorktreesView.swift": 1}
     actual = {}
     begins = 0
     for path in PHONE.glob("*.swift"):

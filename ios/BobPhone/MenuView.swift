@@ -8,7 +8,7 @@ import WebKit
 enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     // `case rebuild` (raw value `rebuild`) is Rebuild & restart's tile, kept in
     // the one list below so the grid's order and every pin on it stay a single line.
-    case usage, history, comm, scouting, checks, plans, rebuild, designSystem, review
+    case usage, history, comm, scouting, checks, plans, rebuild, designSystem, review, worktrees
 
     var id: String { rawValue }
 
@@ -24,6 +24,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         case .rebuild: return "Rebuild & restart"
         case .designSystem: return "Design system"
         case .review: return "Review"
+        case .worktrees: return "Worktrees"
         }
     }
 
@@ -38,6 +39,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         case .rebuild: return "arrow.triangle.2.circlepath"
         case .designSystem: return "square.grid.2x2"
         case .review: return "doc.text.magnifyingglass"
+        case .worktrees: return "arrow.triangle.branch"
         }
     }
 
@@ -50,6 +52,7 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .usage, .comm, .designSystem, .review: return true
         case .scouting, .checks, .plans, .history, .rebuild: return false
+        case .worktrees: return false
         }
     }
 
@@ -63,9 +66,11 @@ enum MenuSection: String, CaseIterable, Hashable, Identifiable {
     /// (`RebuildRules.canPress`'s two terms), every other section as `built`.
     func lit(scoutReports: Bool, manualChecks: Bool = false,
              plans: Bool = false, historyWeek: Bool = false,
-             rebuild: Bool = false, review: Bool = true) -> Bool {
+             rebuild: Bool = false, review: Bool = true,
+             worktrees: Bool = false) -> Bool {
         switch self {
         case .review: return review
+        case .worktrees: return worktrees
         case .scouting: return scoutReports
         case .checks: return manualChecks
         case .plans: return plans
@@ -130,7 +135,8 @@ struct MenuView: View {
             plans: client.snapshot.board.plansSupported,
             historyWeek: client.snapshot.board.historyWeekSupported,
             rebuild: client.snapshot.rebuild.available && client.via != .relay,
-            review: client.snapshot.board.reviewSupported)
+            review: client.snapshot.board.reviewSupported,
+            worktrees: client.snapshot.board.worktreesSupported)
         return DecryptButton(action: { open = section }) {
             VStack(spacing: 8) {
                 Image(systemName: section.symbol)
@@ -250,6 +256,16 @@ struct MenuSectionScreen: View {
         case .review:
             ReviewView(client: client)
                 .navigationTitle("review")
+        case .worktrees:
+            // The list only against a Mac that serves it, Scouting's rule.
+            if client.snapshot.board.worktreesSupported {
+                WorktreesView(client: client)
+                    .navigationTitle("worktrees")
+            } else {
+                MenuNotYet(path: "~/worktrees",
+                           sentence: "Worktrees open here once the Mac's Dark Army lists them.")
+                    .navigationTitle("worktrees")
+            }
         }
     }
 }

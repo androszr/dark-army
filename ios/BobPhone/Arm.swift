@@ -58,6 +58,11 @@ final class Arm: ObservableObject {
         case reviewContinue
         /// End on a Review run: closes that run's terminal.
         case reviewEnd
+        /// The Worktrees screen's batch MERGE. Its own slot, so a MERGE armed
+        /// on a card screen can never confirm a batch, nor the reverse; armed
+        /// on the joined ordered id list, so a tick changed between the two
+        /// presses re-arms rather than fires.
+        case mergeBatch
     }
 
     @Published private(set) var start: String?
@@ -82,6 +87,7 @@ final class Arm: ObservableObject {
     @Published private(set) var rebuild: String?
     @Published private(set) var reviewContinue: String?
     @Published private(set) var reviewEnd: String?
+    @Published private(set) var mergeBatch: String?
 
     /// Card detail hangs plan-gate pending flags here so a timeout cannot
     /// leave `skip_plan_gate` armed for the next Menu tap.
@@ -113,6 +119,7 @@ final class Arm: ObservableObject {
         rebuild = nil
         reviewContinue = nil
         reviewEnd = nil
+        mergeBatch = nil
         switch slot {
         case .start: start = id
         case .startHere: startHere = id
@@ -136,6 +143,7 @@ final class Arm: ObservableObject {
         case .rebuild: rebuild = id
         case .reviewContinue: reviewContinue = id
         case .reviewEnd: reviewEnd = id
+        case .mergeBatch: mergeBatch = id
         }
         timeoutTask = Task { [weak self] in
             let nanos = UInt64(Self.timeoutSeconds * 1_000_000_000)
@@ -180,6 +188,7 @@ final class Arm: ObservableObject {
         case .rebuild: armed = rebuild
         case .reviewContinue: armed = reviewContinue
         case .reviewEnd: armed = reviewEnd
+        case .mergeBatch: armed = mergeBatch
         }
         guard let armedId = armed, id.isEmpty || armedId == id else {
             return false
@@ -213,6 +222,7 @@ final class Arm: ObservableObject {
         rebuild = nil
         reviewContinue = nil
         reviewEnd = nil
+        mergeBatch = nil
         onDisarm?()
     }
 }

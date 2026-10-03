@@ -208,6 +208,14 @@ enum PhoneActions {
     /// and puts SHIP or STOP on the card. One press, changes no files.
     /// Drawn only against a Mac whose board says `review_run_writable`.
     static let boardReviewRun = "board_review_run"
+    /// Route: `BobDaemon.merge_cards` — land several finished cards on the
+    /// local main line one after another, each through the single card's
+    /// merge, nothing pushed. `card_ids` and `expected_tips` are comma-joined
+    /// in the same order. Armed then confirmed, sent by `post` and never
+    /// banked: a batch moves main up to eight times, so it happens at the
+    /// press or not at all. Drawn only against a Mac whose board says
+    /// `merge_batch_writable`.
+    static let boardMergeBatch = "board_merge_batch"
     /// Route: `BobDaemon.start_review` — open the chosen assistant on the
     /// Mac to review what is not yet on the project's remote, with the
     /// ticked after-steps as the only authorised ones. `root`, `tool` and

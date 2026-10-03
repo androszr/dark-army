@@ -2184,6 +2184,13 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
         self._branch_backfill_seen: set = set()
         self._branch_backfill_queue: list = []
         self._changes_lock = threading.Lock()
+        # A batch of merges from the phone: `{"token", "queue": [ids],
+        # "tips": {id: tip}, "total": n}`, or `{}`. Created on the loop,
+        # **replaced, never mutated** (`_merging`'s rule), so the decoration
+        # on the executor may read it; `_merge_batch_task` pops it by token.
+        # `_worktrees_lock` serialises the on-demand Worktrees read.
+        self._merge_batch: dict = {}
+        self._worktrees_lock = threading.Lock()
         # Which model each agent and helper runs on: the machine-wide table
         # (`agent_models`, `{provider: {slot: model}}`) and the per-project
         # override map (`agent_models_by_root`, keyed on the canonical root),

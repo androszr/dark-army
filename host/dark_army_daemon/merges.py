@@ -51,6 +51,9 @@ STATES = ("", "blocked", "conflict", "checks_failed", "merged")
 #: The two states the Fix press answers.
 FIX_STATES = ("conflict", "checks_failed")
 SNAPSHOT_MERGING = "merging"
+#: Snapshot-only like `merging`: a card waiting its turn in a batch. Never
+#: stored, never in `STATES`.
+SNAPSHOT_QUEUED = "queued"
 #: What `review_verdict` can hold.
 VERDICTS = ("", "ship", "stop")
 
@@ -132,6 +135,16 @@ PROJECT_MERGING_REFUSAL = ("Another card of this project is merging — press "
                            "again when it has finished.")
 TIP_CHANGED_REFUSAL = ("This card's branch changed since you looked — open "
                        "its changes again and press MERGE once more.")
+MERGE_QUEUED_NOTE = "Waiting its turn to merge — {0} of {1} in this batch."
+MERGE_QUEUED_REFUSAL = ("This card is waiting its turn in a batch of merges — "
+                        "press again when the batch has finished.")
+BATCH_RUNNING_REFUSAL = ("A batch of merges is already running — press "
+                         "again when it has finished.")
+BATCH_TOO_MANY_REFUSAL = "Merge at most 8 cards at a time."
+BATCH_EMPTY_REFUSAL = "No cards were chosen to merge."
+#: How long a batch waits for another merge of the project: above the
+#: merge, check and fast-forward bounds together.
+BATCH_WAIT_SECONDS = 2400.0
 REVIEW_RUNNING_REFUSAL = "A review of this card is already running."
 PREPARING_REFUSAL = ("Dark Army is preparing this card's folder — press "
                      "again in a moment.")
@@ -207,6 +220,31 @@ def merge_subject(card) -> str:
         title = title[:MAX_TITLE_CHARS - 1].rstrip() + "…"
     head = f"Merge {worktrees.BRANCH_PREFIX}{worktrees.short_id(card.get('id'))}"
     return f"{head}: {title}" if title else head
+
+
+def _clamp_title(title) -> str:
+    title = _SPACES.sub(" ", str(title or "")).strip()
+    if len(title) > MAX_TITLE_CHARS:
+        title = title[:MAX_TITLE_CHARS - 1].rstrip() + "…"
+    return title
+
+
+def batch_report(started, skipped) -> str:
+    """The batch press's reply: what is merging, in order, and what was not
+    taken and why. `started` is a list of titles, `skipped` a list of
+    `(title, words)`."""
+    started = list(started or [])
+    skipped = list(skipped or [])
+    left = "; ".join(f"{_clamp_title(t)} — {str(w).rstrip('.')}"
+                     for t, w in skipped)
+    if not started:
+        return f"Nothing was merged: {left}." if left else "Nothing was merged."
+    noun = "card" if len(started) == 1 else "cards"
+    text = (f"Merging {len(started)} {noun} into main, one after another: "
+            + ", ".join(_clamp_title(t) for t in started) + ".")
+    if left:
+        text += f" Not merged: {left}."
+    return text
 
 
 def merge_env(base=None) -> dict:
