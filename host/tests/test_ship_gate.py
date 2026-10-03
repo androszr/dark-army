@@ -587,3 +587,74 @@ def test_the_implement_reference_has_the_lane_and_one_copy_of_the_floors():
     assert "ios/BobPhone/|" not in gate, "the blanket phone match is retired"
     assert "ios/BobPhone/(Client|Pairing|Push|RelayTransport|RemoteAuth" in gate
     assert "the full suite at most once more and only when the fix reached a module" in text
+
+
+# --- dead worktree registrations ---------------------------------------------------
+
+def _porcelain(repo: Path) -> str:
+    return _git(repo, "worktree", "list", "--porcelain")
+
+
+def _detached(repo: Path, where: Path) -> Path:
+    _git(repo, "worktree", "add", "--detach", str(where), "HEAD")
+    return where
+
+
+def test_baseline_remove_forgets_a_registration_whose_folder_is_gone(run):
+    import shutil
+    repo, scratch = run
+    assert _gate(repo, scratch, "baseline", "tests/test_thing.py::test_b").returncode == 0
+    base = scratch / "baseline"
+    assert str(base.resolve()) in _porcelain(repo)
+    shutil.rmtree(base)
+    assert "prunable" in _porcelain(repo)
+    done = _gate(repo, scratch, "baseline", "--remove")
+    assert done.returncode == 0 and "baseline worktree removed" in done.stdout
+    assert str(scratch.resolve() / "baseline") not in _porcelain(repo)
+
+
+def test_snapshot_forgets_dead_registrations_and_keeps_a_present_tree(run):
+    import shutil
+    repo, scratch = run
+    dead = _detached(repo, scratch.parent / "dead")
+    live = _detached(repo, scratch.parent / "live")
+    shutil.rmtree(dead)
+    done = _gate(repo, scratch, "snapshot")
+    assert done.returncode == 0 and done.stderr == ""
+    listed = _porcelain(repo)
+    assert str(dead.resolve()) not in listed
+    assert str(live.resolve()) in listed and live.is_dir()
+    _git(repo, "worktree", "remove", "--force", str(live))
+
+
+def test_baseline_remove_still_removes_a_dirty_baseline(run):
+    repo, scratch = run
+    assert _gate(repo, scratch, "baseline", "tests/test_thing.py::test_b").returncode == 0
+    (scratch / "baseline" / "scribble.txt").write_text("dirty\n", encoding="utf-8")
+    done = _gate(repo, scratch, "baseline", "--remove")
+    assert "baseline worktree removed" in done.stdout
+    assert not (scratch / "baseline").exists()
+    assert str(scratch.resolve() / "baseline") not in _porcelain(repo)
+
+
+def test_baseline_remove_never_names_a_plain_folder_to_git(run):
+    repo, scratch = run
+    (scratch / "baseline").mkdir()
+    (scratch / "baseline" / "mine.txt").write_text("keep\n", encoding="utf-8")
+    done = _gate(repo, scratch, "baseline", "--remove")
+    assert "no baseline worktree to remove" in done.stdout
+    assert (scratch / "baseline" / "mine.txt").exists()
+
+
+def test_snapshot_refuses_the_prune_when_git_would_forget_a_present_folder(run):
+    import shutil
+    repo, scratch = run
+    hollow = _detached(repo, scratch.parent / "hollow")
+    (hollow / ".git").unlink()
+    dead = _detached(repo, scratch.parent / "dead")
+    shutil.rmtree(dead)
+    done = _gate(repo, scratch, "snapshot")
+    assert done.returncode == 0
+    assert "not pruning" in done.stderr and str(hollow.resolve()) in done.stderr
+    assert hollow.is_dir()
+    assert str(dead.resolve()) in _porcelain(repo)

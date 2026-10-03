@@ -763,3 +763,43 @@ def test_the_script_sends_only_session_tier_verbs_and_never_by_person():
             / "agent_pack" / "template" / ".claude" / "skills" / "ship"
             / "close-out.sh")
     assert filecmp.cmp(REPO_SCRIPT, twin, shallow=False)
+
+
+def test_a_baseline_whose_scratch_folder_is_gone_is_still_deregistered(
+        tmp_path, home):
+    """The scratchpad goes with its session; the registration outlives it.
+    Default mode with `SCRATCH` set runs `gate.sh baseline --remove` whether
+    or not the folder is there, and the dead entry goes."""
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    (repo / "a.txt").write_text("x\n")
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "init"], check=True)
+    scratch = tmp_path / "scratch"
+    base = scratch / "baseline"
+    base.parent.mkdir()
+    subprocess.run([*git, "worktree", "add", "--detach", str(base), "HEAD"],
+                   check=True, capture_output=True)
+    shutil.rmtree(scratch)
+    scratch.mkdir()
+    listed = subprocess.run([*git, "worktree", "list", "--porcelain"],
+                            capture_output=True, text=True).stdout
+    assert "prunable" in listed
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shutil.copy(REPO_SCRIPT, bin_dir / "close-out.sh")
+    shutil.copy(REPO_SCRIPT.with_name("gate.sh"), bin_dir / "gate.sh")
+    env = dict(os.environ, HOME=str(home), SCRATCH=str(scratch))
+    for name in ("GROK_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID",
+                 "BOB_CLOSE_OUT_SHIM"):
+        env.pop(name, None)
+    done = subprocess.run(["bash", str(bin_dir / "close-out.sh")], env=env,
+                          cwd=str(repo), capture_output=True, text=True,
+                          timeout=60)
+    assert done.returncode == 0
+    assert done.stdout.rstrip().endswith(LEFT_OPEN_LINE)
+    after = subprocess.run([*git, "worktree", "list", "--porcelain"],
+                           capture_output=True, text=True).stdout
+    assert "prunable" not in after

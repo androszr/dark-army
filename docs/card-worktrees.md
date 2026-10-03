@@ -383,6 +383,50 @@ success every card sharing the folder has its pair cleared
 (`clear_worktree`) and the trust copies are taken back. **The branch is never
 deleted**: it is there to merge.
 
+## Stale registrations
+
+Git keeps a registration for every linked worktree under the common git
+dir's `worktrees/`. A folder deleted without `git worktree remove` — a
+`/ship` baseline tree whose scratch folder went with its session, a card
+folder removed by hand — leaves the registration behind, and
+`git worktree list --porcelain` marks it `prunable <reason>`.
+`git worktree prune` (no `--expire`) drops exactly those and deletes no file
+on disk. Measured on Apple Git 2.50.1, two edge cases:
+
+- A **locked** entry prints `locked`, never `prunable`, and is kept even
+  when its folder is gone.
+- A **present** folder whose own `.git` file was deleted prints
+  `prunable gitdir file points to non-existent location`, and git prunes it
+  all the same. "Prune only forgets gone folders" is therefore not git's
+  guarantee, so the guard is literal: `worktrees.prune_decision` over
+  `parse_worktree_entries` returns `(missing, blocked)`, and a repository
+  with any `blocked` entry (prunable, path still a directory) is skipped
+  whole — git has no per-path prune — with one log line
+  (`worktrees.PRUNE_BLOCKED_LINE`) naming the folder.
+
+**Dark Army's sweep.** The executor half of `_reconcile_board` ends with
+`_consider_worktree_prunes`: once per process per root of
+`enrollment.enrolled_roots()`, a root with a `.git` (folder or a linked
+worktree's file) is queued — no git call there. The release task
+(`_kick_worktree_releases` → `_flush_worktree_releases`) drains the queue
+after its releases, through `_prune_stale_worktrees`: `worktree list`, the
+decision, then `worktree prune`, every call through `_run_git` (the 8 s
+bound). A root with a card in `_worktree_preparing` waits for a later task,
+so a prune never sits beside a `git worktree add`. It is silent unless
+something goes wrong: a blocked root or a failed git call is one `info`
+line. A registration that goes stale during a run waits for the next launch.
+
+**The ship tooling.** `gate.sh` (the repo's and the pack's generic twin) has
+`prune_stale_worktrees` with the same literal guard, called by `snapshot`,
+by `baseline_prepare` before its `worktree add` and by `baseline --remove`
+after the remove. `baseline --remove` names `$SCRATCH/baseline` to
+`git worktree remove --force` (its own tree, patched dirty by design) only
+when `git worktree list --porcelain` registers that path and the folder
+exists; a registration whose folder is gone goes through the prune.
+`close-out.sh` runs it whenever `SCRATCH` is set, not only while the folder
+exists. Neither half ever removes a folder, and the daemon's "no `--force`,
+anywhere" rule in `worktrees.py` is untouched.
+
 ## The switch
 
 On by default for every git project. `board_isolation_by_root` in

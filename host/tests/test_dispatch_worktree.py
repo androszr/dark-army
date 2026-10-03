@@ -2302,3 +2302,138 @@ async def test_a_stale_pack_temp_file_is_swept_on_the_next_carry(
     ok, detail = await d.dispatch_card(card["id"], allow_unplanned=True)
     assert ok, detail
     assert not os.path.exists(stale)
+
+
+# --- the stale-registration sweep ---------------------------------------------------
+
+def _enrolled_roots_are(monkeypatch, *roots):
+    monkeypatch.setattr(daemon_board.enrollment, "enrolled_roots",
+                        lambda: set(roots))
+
+
+async def _pruned(d):
+    """Kick the release task the sweep rides on and wait for it."""
+    await d._kick_worktree_releases()
+    task = getattr(d, "_worktree_release_task", None)
+    if task is not None:
+        await task
+
+
+def _detached(repo, tmp_path, name):
+    path = str(tmp_path / name)
+    _git(repo, "worktree", "add", "--detach", path, "HEAD")
+    return os.path.realpath(path)
+
+
+def _listed(repo):
+    return worktrees.parse_worktree_list(_git(repo, "worktree", "list",
+                                              "--porcelain"))
+
+
+@pytest.mark.asyncio
+async def test_prune_forgets_a_dead_registration_and_keeps_the_living(
+        daemon, repo, tmp_path, monkeypatch):
+    import shutil
+    d, _store = daemon
+    dead = _detached(repo, tmp_path, "dead")
+    live = _detached(repo, tmp_path, "live")
+    card = worktrees.worktree_dir(repo, "abcd1234")
+    _git(repo, "worktree", "add", "-b", "card/abcd1234-x", card, "main")
+    shutil.rmtree(dead)
+    _enrolled_roots_are(monkeypatch, repo)
+    calls = _git_calls(d, monkeypatch)
+    d._reconcile_board({})
+    assert d._worktree_prune_queue == [repo]
+    await _pruned(d)
+    assert [c[-2:] for c in _worktree_calls(calls, "list")] == [
+        ["list", "--porcelain"]]
+    assert len(_worktree_calls(calls, "prune")) == 1
+    listed = _listed(repo)
+    assert dead not in listed
+    assert live in listed and os.path.realpath(card) in listed
+    assert os.path.isdir(live) and os.path.isdir(card)
+
+
+@pytest.mark.asyncio
+async def test_prune_runs_once_per_root_per_process(
+        daemon, repo, tmp_path, monkeypatch):
+    import shutil
+    d, _store = daemon
+    shutil.rmtree(_detached(repo, tmp_path, "dead"))
+    _enrolled_roots_are(monkeypatch, repo)
+    calls = _git_calls(d, monkeypatch)
+    d._reconcile_board({})
+    await _pruned(d)
+    before = len(_worktree_calls(calls, "list")) \
+        + len(_worktree_calls(calls, "prune"))
+    assert before == 2
+    d._reconcile_board({})
+    await _pruned(d)
+    assert len(_worktree_calls(calls, "list")) \
+        + len(_worktree_calls(calls, "prune")) == before
+
+
+@pytest.mark.asyncio
+async def test_prune_makes_no_git_call_for_a_non_git_root(
+        daemon, tmp_path, monkeypatch):
+    d, _store = daemon
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _enrolled_roots_are(monkeypatch, str(plain))
+    calls = _git_calls(d, monkeypatch)
+    d._reconcile_board({})
+    await _pruned(d)
+    assert calls == []
+    assert not getattr(d, "_worktree_prune_queue", None)
+
+
+@pytest.mark.asyncio
+async def test_prune_with_nothing_dead_does_not_prune(
+        daemon, repo, tmp_path, monkeypatch):
+    d, _store = daemon
+    live = _detached(repo, tmp_path, "live")
+    _enrolled_roots_are(monkeypatch, repo)
+    calls = _git_calls(d, monkeypatch)
+    d._reconcile_board({})
+    await _pruned(d)
+    assert _worktree_calls(calls, "prune") == []
+    assert live in _listed(repo)
+
+
+@pytest.mark.asyncio
+async def test_prune_skips_a_root_whose_present_folder_lost_its_marker(
+        daemon, repo, tmp_path, monkeypatch, caplog):
+    import logging
+    import shutil
+    d, _store = daemon
+    hollow = _detached(repo, tmp_path, "hollow")
+    os.remove(os.path.join(hollow, ".git"))
+    shutil.rmtree(_detached(repo, tmp_path, "dead"))
+    _enrolled_roots_are(monkeypatch, repo)
+    calls = _git_calls(d, monkeypatch)
+    with caplog.at_level(logging.INFO, logger=daemon_board.logger.name):
+        d._reconcile_board({})
+        await _pruned(d)
+    assert _worktree_calls(calls, "prune") == []
+    lines = [r for r in caplog.records if hollow in r.getMessage()]
+    assert len(lines) == 1
+    assert os.path.isdir(hollow)
+
+
+@pytest.mark.asyncio
+async def test_prune_waits_while_a_card_is_being_prepared_in_the_root(
+        daemon, repo, tmp_path, monkeypatch):
+    import shutil
+    d, _store = daemon
+    shutil.rmtree(_detached(repo, tmp_path, "dead"))
+    _enrolled_roots_are(monkeypatch, repo)
+    calls = _git_calls(d, monkeypatch)
+    d._worktree_preparing = {"abcd1234": {"root": repo, "token": "t"}}
+    d._reconcile_board({})
+    await _pruned(d)
+    assert calls == []
+    assert d._worktree_prune_queue == [repo]
+    d._worktree_preparing = {}
+    await _pruned(d)
+    assert len(_worktree_calls(calls, "prune")) == 1
+    assert not d._worktree_prune_queue
