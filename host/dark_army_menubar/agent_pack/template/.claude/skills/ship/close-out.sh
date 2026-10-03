@@ -47,9 +47,12 @@ fi
 
 # A ship run's baseline worktree (`gate.sh baseline`, cut under the run's
 # scratch directory) is removed here: a worktree left behind survives the
-# scratch directory and clutters `git worktree list` for ever. Done before
-# the hand-off, so the project's copy acts on its own run.
-if [ -z "${BOB_CLOSE_OUT_SHIM:-}" ] && [ -n "${SCRATCH:-}" ] && [ -e "$SCRATCH/baseline" ]; then
+# scratch directory and clutters `git worktree list` for ever. Run whenever
+# SCRATCH is set, not only while the folder exists: a Claude session's
+# scratchpad goes with the session, and the registration outlives it —
+# `gate.sh baseline --remove` then forgets the dead entry. Done before the
+# hand-off, so the project's copy acts on its own run.
+if [ -z "${BOB_CLOSE_OUT_SHIM:-}" ] && [ -n "${SCRATCH:-}" ]; then
   gate="$(dirname "$0")/gate.sh"
   [ -f "$gate" ] || gate=".claude/skills/ship/gate.sh"
   [ -f "$gate" ] && SCRATCH="$SCRATCH" bash "$gate" baseline --remove

@@ -146,6 +146,9 @@ after a confirmed press per project.
   verifier and `references/implement.md` route every gate, every ledger row
   and the Phase 6.6 lane through it, as the local briefs do.
   `test_agent_pack_gate.py` runs each subcommand against a throwaway repo.
+  `snapshot`, `baseline` and `baseline --remove` also forget dead worktree
+  registrations, guarded as `docs/card-worktrees.md`, *Stale registrations*
+  states.
 
 - **Every profile ships the whole crew, profiles are folders, and a profile
   picks its areas** (22 Sep 2026): the template carries generic

@@ -223,3 +223,62 @@ def test_the_generic_briefs_route_every_gate_through_the_helper():
     assert "printf" not in implement and "grep -qE" not in implement
     assert "gate.sh" in adapter
     assert '"Bash(bash .claude/skills/ship/gate.sh:*)"' in settings
+
+
+# --- dead worktree registrations ---------------------------------------------------
+
+BASELINE_ENV = {"SHIP_BASELINE_CMD": "tests/runner.sh {id}"}
+
+
+def _porcelain(repo: Path) -> str:
+    return _git(repo, "worktree", "list", "--porcelain")
+
+
+def _detached(repo: Path, where: Path) -> Path:
+    _git(repo, "worktree", "add", "--detach", str(where), "HEAD")
+    return where
+
+
+def test_baseline_remove_forgets_a_registration_whose_folder_is_gone(run):
+    import shutil
+    assert run("baseline", "tests/thing.test::test_a", env=BASELINE_ENV).returncode == 0
+    base = run.scratch / "baseline"
+    assert str(base.resolve()) in _porcelain(run.repo)
+    shutil.rmtree(base)
+    assert "prunable" in _porcelain(run.repo)
+    out = run("baseline", "--remove")
+    assert out.stdout.strip() == "baseline worktree removed"
+    assert str(base.resolve()) not in _porcelain(run.repo)
+
+
+def test_snapshot_forgets_dead_registrations_and_keeps_a_present_tree(run):
+    import shutil
+    dead = _detached(run.repo, run.scratch.parent / "dead")
+    live = _detached(run.repo, run.scratch.parent / "live")
+    shutil.rmtree(dead)
+    out = run("snapshot")
+    assert out.returncode == 0 and out.stderr == ""
+    listed = _porcelain(run.repo)
+    assert str(dead.resolve()) not in listed
+    assert str(live.resolve()) in listed and live.is_dir()
+
+
+def test_baseline_remove_still_removes_a_dirty_baseline(run):
+    assert run("baseline", "tests/thing.test::test_a", env=BASELINE_ENV).returncode == 0
+    (run.scratch / "baseline" / "scribble.txt").write_text("dirty\n")
+    out = run("baseline", "--remove")
+    assert out.stdout.strip() == "baseline worktree removed"
+    assert not (run.scratch / "baseline").exists()
+
+
+def test_snapshot_refuses_the_prune_when_git_would_forget_a_present_folder(run):
+    import shutil
+    hollow = _detached(run.repo, run.scratch.parent / "hollow")
+    (hollow / ".git").unlink()
+    dead = _detached(run.repo, run.scratch.parent / "dead")
+    shutil.rmtree(dead)
+    out = run("snapshot")
+    assert out.returncode == 0
+    assert "not pruning" in out.stderr and str(hollow.resolve()) in out.stderr
+    assert hollow.is_dir()
+    assert str(dead.resolve()) in _porcelain(run.repo)

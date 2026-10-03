@@ -787,7 +787,10 @@ real columns and to what the prompt builders send.
   `<root>/.worktrees/card-<id8>/` (`worktrees.py`, `trust_marks.py`), records
   `worktree_path` / `worktree_branch` (`record_worktree`'s ring) and opens
   the terminal there; the release at Done never uses `--force`. The switch is
-  `board_isolation_by_root`. In full: `docs/card-worktrees.md`.
+  `board_isolation_by_root`. Dead registrations are forgotten once per
+  process per enrolled git project, never a present folder
+  (`docs/card-worktrees.md`, *Stale registrations*). In full:
+  `docs/card-worktrees.md`.
 
   Deliberately **not** passed: `--no-session-persistence`,
   `--setting-sources ""`, `--strict-mcp-config`, and

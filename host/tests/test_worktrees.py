@@ -331,3 +331,74 @@ def test_the_hidden_file_listing_has_its_own_larger_cap():
     assert worktrees.MAX_INDEX_DOTFILES_BYTES > work_record.MAX_GIT_OUTPUT_BYTES
     assert "too many hidden files" in worktrees.SETUP_TOO_MANY_HIDDEN_REFUSAL
     assert "APFS" in worktrees.SETUP_VOLUME_REFUSAL
+
+
+# --- stale registrations: the parser, the decision, the real thing -------------------
+
+PORCELAIN = (
+    "worktree /r\nHEAD 0123\nbranch refs/heads/main\n\n"
+    "worktree /gone\nHEAD 4567\ndetached\n"
+    "prunable gitdir file points to non-existent location\n\n"
+    "worktree /held\nHEAD 89ab\ndetached\nlocked\n"
+    "prunable gitdir file points to non-existent location\n")
+
+
+def test_parse_worktree_entries_reads_the_flags():
+    entries = worktrees.parse_worktree_entries(PORCELAIN)
+    assert [e["path"] for e in entries] == [
+        os.path.realpath(p) for p in ("/r", "/gone", "/held")]
+    assert [e["prunable"] for e in entries] == [False, True, True]
+    assert [e["locked"] for e in entries] == [False, False, True]
+    assert entries[1]["reason"] == "gitdir file points to non-existent location"
+    assert entries[0]["reason"] == ""
+    assert worktrees.parse_worktree_list(PORCELAIN) == {
+        e["path"] for e in entries}
+    assert worktrees.parse_worktree_entries("") == []
+
+
+def test_prune_decision_splits_missing_from_present():
+    entries = worktrees.parse_worktree_entries(PORCELAIN)
+    gone = os.path.realpath("/gone")
+    # Nothing exists: the missing prunable entry is forgettable; a locked
+    # one and a plain one are in neither list.
+    assert worktrees.prune_decision(entries, lambda p: False) == ([gone], [])
+    # The prunable entry's folder is still there: blocked, not missing.
+    assert worktrees.prune_decision(entries, lambda p: True) == ([], [gone])
+    assert worktrees.prune_decision([], lambda p: True) == ([], [])
+
+
+def test_the_blocked_line_names_the_root_and_the_folder():
+    line = worktrees.PRUNE_BLOCKED_LINE.format("/root", "/folder")
+    assert "/root" in line and "/folder" in line
+
+
+def _detached(repo, tmp_path, name):
+    path = str(tmp_path / name)
+    assert _run(work_record._git(repo) + [
+        "worktree", "add", "--detach", path, "HEAD"]).returncode == 0
+    return os.path.realpath(path)
+
+
+def test_prune_forgets_the_dead_and_keeps_the_living(repo, tmp_path):
+    import shutil
+    dead = _detached(repo, tmp_path, "dead")
+    live = _detached(repo, tmp_path, "live")
+    shutil.rmtree(dead)
+    entries = worktrees.parse_worktree_entries(
+        _run(worktrees.argv_worktree_list(repo)).stdout.decode())
+    by_path = {e["path"]: e for e in entries}
+    assert by_path[dead]["prunable"] and not by_path[live]["prunable"]
+    assert worktrees.prune_decision(entries, os.path.isdir) == ([dead], [])
+    assert _run(worktrees.argv_worktree_prune(repo)).returncode == 0
+    listed = worktrees.parse_worktree_list(
+        _run(worktrees.argv_worktree_list(repo)).stdout.decode())
+    assert dead not in listed and live in listed
+    assert os.path.isdir(live)
+
+
+def test_a_present_folder_without_its_git_file_is_blocked(repo, tmp_path):
+    hollow = _detached(repo, tmp_path, "hollow")
+    os.remove(os.path.join(hollow, ".git"))
+    entries = worktrees.parse_worktree_entries(
+        _run(worktrees.argv_worktree_list(repo)).stdout.decode())
+    assert worktrees.prune_decision(entries, os.path.isdir) == ([], [hollow])

@@ -353,16 +353,57 @@ def argv_exclude_path(root: str) -> list:
 
 # --- the parsers and the text --------------------------------------------------
 
-def parse_worktree_list(text) -> set:
-    """The folder of every worktree in `git worktree list --porcelain`,
-    realpath'd, so a stored path compares whatever the symlinks."""
-    out: set = set()
+def parse_worktree_entries(text) -> list:
+    """One dict per `worktree` stanza of `git worktree list --porcelain`:
+    `path` (realpath'd), `prunable` (git would forget it), `locked` (git
+    never prunes it) and `reason` (the text after `prunable `)."""
+    entries: list = []
+    current = None
     for line in str(text or "").splitlines():
         if line.startswith("worktree "):
             path = line[len("worktree "):].strip()
             if path:
-                out.add(os.path.realpath(path))
-    return out
+                current = {"path": os.path.realpath(path), "prunable": False,
+                           "locked": False, "reason": ""}
+                entries.append(current)
+            else:
+                current = None
+        elif current is None:
+            continue
+        elif line == "prunable" or line.startswith("prunable "):
+            current["prunable"] = True
+            current["reason"] = line[len("prunable"):].strip()
+        elif line == "locked" or line.startswith("locked "):
+            current["locked"] = True
+    return entries
+
+
+def parse_worktree_list(text) -> set:
+    """The folder of every worktree in `git worktree list --porcelain`,
+    realpath'd, so a stored path compares whatever the symlinks."""
+    return {entry["path"] for entry in parse_worktree_entries(text)}
+
+
+#: The one log sentence when a prune is refused: git would forget an entry
+#: whose folder is still there (its own `.git` marker file was deleted).
+PRUNE_BLOCKED_LINE = (
+    "worktrees: not pruning {0}: git would forget {1}, a folder that is "
+    "still there")
+
+
+def prune_decision(entries, is_dir) -> tuple:
+    """`(missing, blocked)` over `parse_worktree_entries`' answer. `missing`
+    is every prunable entry whose folder is gone; `blocked` every prunable
+    entry whose folder is still a directory (git prunes those too, when the
+    folder's `.git` file was deleted). A locked entry is git's to keep and
+    is in neither. Pure: `is_dir` is the caller's."""
+    missing: list = []
+    blocked: list = []
+    for entry in entries or []:
+        if not entry.get("prunable") or entry.get("locked"):
+            continue
+        (blocked if is_dir(entry["path"]) else missing).append(entry["path"])
+    return missing, blocked
 
 
 def base_from(symbolic: str) -> str:

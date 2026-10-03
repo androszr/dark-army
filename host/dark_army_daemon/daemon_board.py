@@ -6788,6 +6788,13 @@ class BoardVerbsMixin:
         # a quantum of turns, tokens or context that moved buys the frame
         # that draws it.
         changed |= self._run_health_drifted(cards, snapshot)
+        # Last, and queue-only: the enrolled projects whose dead git worktree
+        # registrations have not been looked at in this process.
+        try:
+            self._consider_worktree_prunes()
+        except Exception:
+            logger.warning("queueing the worktree prunes failed",
+                           exc_info=True)
         return changed
 
     def _run_health_drifted(self, cards: list, snapshot: dict) -> bool:
@@ -9784,6 +9791,74 @@ class BoardVerbsMixin:
         seen.add((cid, path))
         self._consider_worktree_release(card)
 
+    def _consider_worktree_prunes(self) -> None:
+        """Once per process per enrolled root: queue the root for the
+        stale-registration sweep (`_prune_stale_worktrees`) when it is a git
+        project (`<root>/.git`, a folder or a linked worktree's file).
+        Executor, one `os.path.exists` per new root, no git call; both
+        attributes are replaced, never mutated."""
+        seen = set(getattr(self, "_worktree_prune_seen", None) or ())
+        fresh = [r for r in enrollment.enrolled_roots() if r not in seen]
+        if not fresh:
+            return
+        queue = list(getattr(self, "_worktree_prune_queue", None) or [])
+        for root in fresh:
+            seen.add(root)
+            if os.path.exists(os.path.join(root, ".git")) \
+                    and root not in queue:
+                queue.append(root)
+        self._worktree_prune_seen = seen
+        self._worktree_prune_queue = queue
+
+    def _prune_root_busy(self, root: str) -> bool:
+        """Whether a card's folder is being prepared in `root`: its `git
+        worktree add` may be mid-flight, so the sweep waits for a later
+        round rather than pruning beside it."""
+        for entry in (getattr(self, "_worktree_preparing", None)
+                      or {}).values():
+            if dispatch.normalise_root(
+                    str((entry or {}).get("root") or "")) == root:
+                return True
+        return False
+
+    async def _prune_stale_worktrees(self, root: str) -> None:
+        """Forget git's registrations whose folders are gone in one project.
+        Reads git's own list first and refuses the whole prune when git
+        would forget an entry whose folder is still a directory (its `.git`
+        marker file was deleted): one log line, nothing done. Never removes
+        a folder, never names a path to git, never raises."""
+        try:
+            ok, out, reason = await self._run_git(
+                worktrees.argv_worktree_list(root), root)
+            if not ok:
+                logger.info("worktrees: could not list %s: %s", root, reason)
+                return
+            entries = worktrees.parse_worktree_entries(
+                out.decode("utf-8", "replace"))
+            loop = asyncio.get_running_loop()
+
+            def decide():
+                return worktrees.prune_decision(entries, os.path.isdir)
+
+            missing, blocked = await loop.run_in_executor(None, decide)
+            if blocked:
+                logger.info(worktrees.PRUNE_BLOCKED_LINE.format(
+                    root, blocked[0]))
+                return
+            if not missing:
+                logger.debug("worktrees: nothing to prune in %s", root)
+                return
+            ok, _out, reason = await self._run_git(
+                worktrees.argv_worktree_prune(root), root)
+            if not ok:
+                logger.info("worktrees: pruning %s failed: %s", root, reason)
+                return
+            logger.debug("worktrees: forgot %d dead registration(s) in %s",
+                         len(missing), root)
+        except Exception:
+            logger.warning("pruning the worktrees of %s failed", root,
+                           exc_info=True)
+
     def _forget_worktree_state(self, card_id: str) -> None:
         """A new run of this card: its old consideration is stale. Replaced,
         never mutated."""
@@ -9814,7 +9889,8 @@ class BoardVerbsMixin:
         rule); it awaits nothing. A pass while one runs starts nothing (the
         queue waits for the next)."""
         if not (getattr(self, "_worktree_release_queue", None)
-                or getattr(self, "_worktree_orphans", None)):
+                or getattr(self, "_worktree_orphans", None)
+                or getattr(self, "_worktree_prune_queue", None)):
             return
         task = getattr(self, "_worktree_release_task", None)
         if task is not None and not task.done():
@@ -9864,19 +9940,35 @@ class BoardVerbsMixin:
             fresh = [c for c in queue if ("card", c) not in handled]
             fresh_orphans = {k: v for k, v in orphans.items()
                              if ("orphan", k) not in handled}
-            if not fresh and not fresh_orphans:
+            prunes = list(getattr(self, "_worktree_prune_queue", None) or [])
+            fresh_prunes = [r for r in prunes
+                            if ("prune", r) not in handled
+                            and not self._prune_root_busy(r)]
+            if not fresh and not fresh_orphans and not fresh_prunes:
                 return
             self._worktree_release_queue = [c for c in queue
                                             if ("card", c) in handled]
             self._worktree_orphans = {k: v for k, v in orphans.items()
                                       if ("orphan", k) in handled}
+            self._worktree_prune_queue = [r for r in prunes
+                                          if r not in fresh_prunes]
             handled |= {("card", c) for c in fresh}
             handled |= {("orphan", k) for k in fresh_orphans}
+            handled |= {("prune", r) for r in fresh_prunes}
             self._worktree_releasing = set(fresh)
             try:
                 await self._release_batch(fresh, fresh_orphans)
             finally:
                 self._worktree_releasing = set()
+            for root in fresh_prunes:
+                if self._prune_root_busy(root):
+                    # A prepare started while the releases ran: left for
+                    # the next task (still in `handled`, so this one ends).
+                    self._worktree_prune_queue = list(
+                        getattr(self, "_worktree_prune_queue", None)
+                        or []) + [root]
+                    continue
+                await self._prune_stale_worktrees(root)
 
     async def _release_batch(self, queue: list, orphans: dict) -> None:
         for cid in queue:

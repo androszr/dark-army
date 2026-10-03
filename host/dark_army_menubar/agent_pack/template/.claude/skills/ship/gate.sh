@@ -144,7 +144,56 @@ excluded() {
     { [ -f "$IN_FLIGHT" ] && grep -qxF -- "$1" "$IN_FLIGHT"; }
 }
 
+# prune_stale_worktrees: forget git's registrations whose folders are gone
+# (a baseline tree whose scratch folder was deleted without `git worktree
+# remove`). Literal guard: git also prunes a PRESENT folder whose own `.git`
+# marker file was deleted, so the whole prune is refused when any prunable
+# entry's path is still a directory. Never removes a folder, never fails
+# the caller; prints nothing on success, one line when it does not prune.
+prune_stale_worktrees() {
+    local list
+    list="$(git -C "$REPO" worktree list --porcelain 2>/dev/null)" || return 0
+    if ! printf '%s\n' "$list" | python3 -c '
+import os, sys
+path, prunable, bad = "", False, ""
+entries = []
+for line in sys.stdin.read().splitlines() + ["worktree "]:
+    if line.startswith("worktree "):
+        if path and prunable:
+            entries.append(path)
+        path, prunable = line[len("worktree "):], False
+    elif line == "prunable" or line.startswith("prunable "):
+        prunable = True
+for p in entries:
+    if os.path.isdir(p):
+        print(p)
+        sys.exit(1)
+' > "$SCRATCH/.prune-blocked"; then
+        echo "gate.sh: not pruning worktrees: git would forget $(cat "$SCRATCH/.prune-blocked"), a folder that is still there" >&2
+        rm -f "$SCRATCH/.prune-blocked"
+        return 0
+    fi
+    rm -f "$SCRATCH/.prune-blocked"
+    git -C "$REPO" worktree prune >/dev/null 2>&1 \
+        || echo "gate.sh: git worktree prune failed — not pruning worktrees" >&2
+    return 0
+}
+
+# worktree_registered <path>: 0 when `git worktree list --porcelain` names
+# that realpath (the folder need not exist).
+worktree_registered() {
+    git -C "$REPO" worktree list --porcelain 2>/dev/null | python3 -c '
+import os, sys
+want = os.path.realpath(sys.argv[1])
+for line in sys.stdin.read().splitlines():
+    if line.startswith("worktree ") and os.path.realpath(line[9:]) == want:
+        sys.exit(0)
+sys.exit(1)
+' "$1"
+}
+
 cmd_snapshot() {
+    prune_stale_worktrees
     git -C "$REPO" diff -- . "${SNAPSHOT_EXCLUDES[@]}" > "$SCRATCH/pre-ship.patch"
     git -C "$REPO" diff --cached -- . "${SNAPSHOT_EXCLUDES[@]}" > "$SCRATCH/pre-ship-staged.patch"
     git -C "$REPO" status --porcelain --untracked-files=all > "$SCRATCH/pre-ship-status.txt"
@@ -294,6 +343,7 @@ baseline_prepare() {
     [ -d "$base/.git" ] || [ -f "$base/.git" ] && return 0
     head="$(cat "$SCRATCH/pre-ship-head.txt" 2>/dev/null || true)"
     [ -n "$head" ] || return 1
+    prune_stale_worktrees
     git -C "$REPO" worktree add --detach "$base" "$head" >/dev/null 2>&1 || return 1
     local filtered="$SCRATCH/.apply-patch"
     for patch in "$SCRATCH/pre-ship-staged.patch" "$SCRATCH/pre-ship.patch"; do
@@ -328,7 +378,17 @@ baseline_prepare() {
 # rule reads as yours, toward fixing.
 cmd_baseline() {
     if [ "${1:-}" = "--remove" ]; then
-        git -C "$REPO" worktree remove --force "$SCRATCH/baseline" >/dev/null 2>&1 && echo "baseline worktree removed" || echo "no baseline worktree to remove"
+        # Only a registered path is named to `remove --force` (own tree,
+        # patched dirty by design); a registration whose folder is gone is
+        # forgotten by the prune, which also tidies what other runs left.
+        local was=1 gone=1
+        worktree_registered "$SCRATCH/baseline" && was=0
+        if [ "$was" -eq 0 ] && [ -d "$SCRATCH/baseline" ]; then
+            git -C "$REPO" worktree remove --force "$SCRATCH/baseline" >/dev/null 2>&1 && gone=0
+        fi
+        prune_stale_worktrees
+        if [ "$was" -eq 0 ] && ! worktree_registered "$SCRATCH/baseline"; then gone=0; fi
+        if [ "$gone" -eq 0 ]; then echo "baseline worktree removed"; else echo "no baseline worktree to remove"; fi
         return 0
     fi
     [ $# -gt 0 ] || { echo "gate.sh baseline: no test ids" >&2; exit 2; }
