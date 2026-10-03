@@ -208,6 +208,13 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     reads (`_session_authorised`, `SESSION_ACTIONS`, `SESSION_READS`;
     `docs/transport-contract.md`, *The loopback door has two tokens*).
 
+    **Review and merge on a Done card** (`merges.py`, pure; `merge_card`,
+    `fix_merge_card`, `run_card_review` in `daemon_board.py`; loopback `GET
+    /api/card-changes`, the sealed `card_changes`, the verbs `board_merge`,
+    `board_merge_fix` and `board_review_run` on both phone tuples) is
+    `docs/card-worktrees.md`'s, *Review and merge*, and
+    `docs/transport-contract.md`'s, *`card_changes` is a sealed read*.
+
     **The Bearings digest** (`bearings.py`, pure; loopback `GET
     /api/bearings`; sealed `bearings` on both doors) is
     `docs/transport-contract.md`'s, *`bearings` is a sealed read*.

@@ -81,6 +81,11 @@ KINDS = (
     # access log holds the whole record; this is the diary's one line so
     # Recently and Catch up mention it.
     "access_burst",
+    # Review and merge (`docs/card-worktrees.md`): a landed merge, one that
+    # stopped, and a review's verdict. Words only, never a path.
+    "card_merged",
+    "card_merge_blocked",
+    "card_review_verdict",
 )
 
 #: Every key an entry may carry. The phone's `LogEntry` decodes exactly these
@@ -235,6 +240,18 @@ def sentence(kind: str, **fields) -> str:
         if count > 0:
             return f"{head}: {count} file" + ("s" if count != 1 else "")
         return head
+    if kind == "card_merged":
+        return f"{title or 'a card'} was merged into the main line{_in(project)}"
+    if kind == "card_merge_blocked":
+        state = str(merged.get("state") or "")
+        word = {"conflict": "stopped on a conflict",
+                "checks_failed": "stopped on failed checks"}.get(
+                    state, "was turned away")
+        return f"The merge of {title or 'a card'} {word}"
+    if kind == "card_review_verdict":
+        verdict = str(merged.get("verdict") or "").upper()
+        word = {"SHIP": "ship it", "STOP": "stop"}.get(verdict, "no verdict")
+        return f"The review of {title or 'a card'} says {word}"
     if kind == "access_burst":
         # `door` is the label (`access_log.door_label`, "Wi-Fi") and the
         # sentence supplies the noun; `peer` is an address or a paired

@@ -298,6 +298,14 @@ final class BoardState: ObservableObject {
     /// Retire, and Delete on this very card). Armed **only** where the press
     /// would really reach a session: see `BoardCardView.doneClears`.
     @Published var doneArmed: String?
+    /// The one card whose **MERGE** is armed, and the one whose **Fix** is.
+    /// Their own slots for `deleteArmed`'s stated reason: MERGE moves the
+    /// project's main line and Fix starts an assistant, different acts, and
+    /// one slot would let arming either silently re-aim the other or any of
+    /// the above. Armed only on a Done card (`CardMerge.offered`); the
+    /// daemon re-checks everything at the press.
+    @Published var mergeArmed: String?
+    @Published var fixArmed: String?
     /// The store-wide Done clear is deliberately three presses: intent, first
     /// confirmation, final confirmation. Count and exact membership ride
     /// together through every stage and are re-checked in SQLite.
@@ -410,6 +418,8 @@ final class BoardState: ObservableObject {
         armedHere = nil
         deleteArmed = nil
         doneArmed = nil
+        mergeArmed = nil
+        fixArmed = nil
         rowBatchArmed = false
         resetClearDoneGate()
     }
@@ -419,6 +429,8 @@ final class BoardState: ObservableObject {
         armed = nil
         deleteArmed = nil
         doneArmed = nil
+        mergeArmed = nil
+        fixArmed = nil
         rowBatchArmed = false
         resetClearDoneGate()
     }
@@ -428,6 +440,8 @@ final class BoardState: ObservableObject {
         armed = nil
         armedHere = nil
         doneArmed = nil
+        mergeArmed = nil
+        fixArmed = nil
         resetClearDoneGate()
     }
 
@@ -436,6 +450,32 @@ final class BoardState: ObservableObject {
         armed = nil
         armedHere = nil
         deleteArmed = nil
+        mergeArmed = nil
+        fixArmed = nil
+        resetClearDoneGate()
+    }
+
+    /// Arm MERGE on one card; any other armed verb is dropped.
+    func armMerge(_ id: String?) {
+        mergeArmed = id
+        armed = nil
+        armedHere = nil
+        deleteArmed = nil
+        doneArmed = nil
+        fixArmed = nil
+        rowBatchArmed = false
+        resetClearDoneGate()
+    }
+
+    /// Arm Fix on one card; any other armed verb is dropped.
+    func armFix(_ id: String?) {
+        fixArmed = id
+        armed = nil
+        armedHere = nil
+        deleteArmed = nil
+        doneArmed = nil
+        mergeArmed = nil
+        rowBatchArmed = false
         resetClearDoneGate()
     }
 
@@ -447,6 +487,8 @@ final class BoardState: ObservableObject {
         armedHere = nil
         deleteArmed = nil
         doneArmed = nil
+        mergeArmed = nil
+        fixArmed = nil
         resetClearDoneGate()
     }
 

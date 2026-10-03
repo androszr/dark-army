@@ -485,6 +485,9 @@ def test_the_diarys_kind_tuple_is_unchanged_by_the_auto_start():
         # The phone doors' burst alert (access_log.py) — its own event, not
         # a second name for the auto-start's.
         "access_burst",
+        # Review and merge (3 Oct 2026): a landed merge, one that stopped
+        # and a review's verdict, words only.
+        "card_merged", "card_merge_blocked", "card_review_verdict",
     )
 
 

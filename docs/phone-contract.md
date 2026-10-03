@@ -62,6 +62,30 @@ page is retained only after the original receipt checks succeed; Back may read
 it after consumption, but never after a lock, pairing change or new receipt.
 A card screen draws its WAITS ON section and the Add picker under EDIT CARD
 only where the board says `dependencies_supported` (`docs/card-dependencies.md`).
+A Done card that remembers its branch draws **review and merge**
+(`docs/card-worktrees.md`, *Review and merge*): a **CHANGES** fold row under
+MORE (`CardSections.Section.changes`, in the Done and ended orders behind MORE)
+that reads the sealed `card_changes` page **when the row opens** — commits,
+files with `+n −m` counts, a file's changes on a tap (the listing's index and
+the tip it was read at) — held for the screen's life and read by nothing else:
+never the poll, `backgroundRefresh` or the widget. **MERGE** and **Fix** are
+armed and then confirmed (`Arm.Slot.merge`, `.mergeFix`) and go through
+`send(... as: .merge / .mergeFix)` into the receipt queue, MERGE echoing the
+page's `branch_tip` as `expected_tip` (`PhoneCardAck.mergeFields`); **Run
+review** is one press (`.reviewRun`). They are drawn only where the shared rule
+(`CardMerge`, byte-pinned with the panel by `test_card_merge_rule.py`) offers
+them (the rule includes the Mac's `merge_offered` on the card: a Failed or
+open hand-check offers none of the three, an older Mac's absent key reads false)
+**and** the Mac's marker is true (`merge_writable`, `review_run_writable`,
+`card_changes_supported`); an older Mac publishes none and the phone shows
+none. The card's line (`merge_line`, `merge_state`, `review_verdict`,
+`review_running`) is the Mac's words verbatim, amber where the merge needs the
+person, and the receipt judges MERGE by `merge_state` moving
+(`ReceiptEffect.cardMergeState`) and Run review by `review_running`
+(`.cardReviewRunning`); each also lands when the card's `merge_line` (or, for a
+review, its `review_verdict`) differs from what the press saw, so a merge that
+ends in the state it began in, or a review that answers between two polls,
+still settles. These two effects are never judged "already landed" before sending (`evidenceBeforeSending` says no): a line or verdict that moved for another reason must not drop a queued MERGE or Run review; the Mac dedupes the token and refuses in words.
 
 | Subject | Ordinary text | Accessibility text |
 |---|---|---|

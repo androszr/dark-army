@@ -83,6 +83,17 @@ enum ReceiptEffect: Codable, Equatable {
     /// reads not-landed, `.cardRefining`'s own guard, so a card deleted
     /// mid-flight leaves the press SENT until the effect deadline.
     case cardsRefining(cardIds: [String])
+    /// The card's merge should shortly read differently from what the person
+    /// was looking at: its `merge_state` (`before`) or its `merge_line`
+    /// (`line`) moved — `merging`, a stop, `merged`, or a stop with new
+    /// words. MERGE's judge — the Mac's 200 only says it started working,
+    /// and a merge that ends in the state it began in (conflict to
+    /// conflict) still changes the line while it runs.
+    case cardMergeState(cardId: String, before: String, line: String)
+    /// The card should shortly show a review at work (`review_running`) or
+    /// carry a verdict other than `verdict`, the one it had at the press — a
+    /// review that answers before the next poll still lands.
+    case cardReviewRunning(cardId: String, verdict: String)
     /// The bot's grant should shortly be in this position
     /// (`set_bot_access`), judged against the Mac's `bot_access`. **Never
     /// re-sent**: `evidenceBeforeSending` drops such a record before any
@@ -245,6 +256,9 @@ struct Receipt: Identifiable, Codable, Equatable {
         case PhoneActions.boardManualClear: return "Mark a check done"
         case PhoneActions.boardReview: return "Mark a result reviewed"
         case PhoneActions.boardPromote: return "Promote a report to a build card"
+        case PhoneActions.boardMerge: return "Merge a card into main"
+        case PhoneActions.boardMergeFix: return "Fix a card's merge"
+        case PhoneActions.boardReviewRun: return "Review a card's branch"
         default: return action
         }
     }
@@ -772,6 +786,15 @@ final class ReceiptLedger: ObservableObject {
         switch effect {
         case .cardRevision, .doneScopeChanged, .replyHold, .none:
             return false
+        case .cardMergeState, .cardReviewRunning:
+            // Never dropped unsent: their "landed" reads the card's line and
+            // verdict, which move for reasons that are not this press (a
+            // helper leaving the folder flips the line's suffix), and a
+            // dropped MERGE or Run review is a press that silently never
+            // happened. Resending is safe: the Mac dedupes the receipt token
+            // and refuses in words. The comparison settles a press the Mac
+            // has already answered 200, nothing more.
+            return false
         case .botAccess:
             // Dropped, landed or not: see the case's own comment.
             return true
@@ -855,6 +878,14 @@ final class ReceiptLedger: ObservableObject {
                 || card.column != "prep"
         case .cardsRefining(let cardIds):
             return cardIds.allSatisfy { landed(.cardRefining(cardId: $0), in: snapshot) }
+        case .cardMergeState(let cardId, let before, let line):
+            guard let card = snapshot.board.cards.first(where: { $0.id == cardId })
+            else { return false }
+            return card.mergeState != before || card.mergeLine != line
+        case .cardReviewRunning(let cardId, let verdict):
+            guard let card = snapshot.board.cards.first(where: { $0.id == cardId })
+            else { return false }
+            return card.reviewRunning || card.reviewVerdict != verdict
         case .botAccess(let deviceId, let side, let mode):
             guard let access = snapshot.devices.devices
                 .first(where: { $0.id == deviceId })?.botAccess else { return false }
@@ -910,6 +941,14 @@ final class ReceiptLedger: ObservableObject {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
             return ids.isEmpty ? .none : .cardsRefining(cardIds: ids)
+        case PhoneActions.boardMerge:
+            // The card's `merge_state` at the press is filled in by
+            // `PhoneClient.enqueue`, which can read the snapshot.
+            return card.isEmpty ? .none
+                : .cardMergeState(cardId: card, before: "", line: "")
+        case PhoneActions.boardReviewRun:
+            return card.isEmpty ? .none
+                : .cardReviewRunning(cardId: card, verdict: "")
         case PhoneActions.boardUpdate:
             guard !card.isEmpty else { return .none }
             if let column = fields["column_name"], !column.isEmpty {

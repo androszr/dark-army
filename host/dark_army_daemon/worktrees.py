@@ -11,9 +11,9 @@ argv here runs through `BobDaemon._run_git`, bounded and on the executor.
 It runs no subprocess, opens no file and imports nothing from the daemon
 but `work_record`, whose `_git` head every argv here is built on — so
 `--no-optional-locks` and `core.quotePath=false` ride every call, and
-`work_record.git_env` is the environment. **The git argv live in two pure
-modules, `work_record.py` and this one; every call runs through `_run_git`**
-— a grep criterion, not a style note (`docs/card-worktrees.md`).
+`work_record.git_env` is the environment. **The git argv live in three pure
+modules, `work_record.py`, this one and `merges.py`; every call runs through
+`_run_git`** — a grep criterion, not a style note (`docs/card-worktrees.md`).
 
 **No `--force`, anywhere.** `git worktree remove` without it refuses a tree
 with modified tracked files or untracked files (ignored ones — `.venv`,
@@ -184,9 +184,10 @@ def pack_manifest_path(root: str, card_id) -> str:
                         f"{FOLDER_PREFIX}{short_id(card_id)}{PACK_MANIFEST_SUFFIX}")
 
 
-def setup_script_path(root: str) -> str:
-    """Where the person's optional setup script would be."""
-    return os.path.join(str(root), SETUP_SCRIPT)
+def setup_script_path(root: str, rel: str = SETUP_SCRIPT) -> str:
+    """Where the person's optional setup script (or, with `rel`, the merge
+    check script beside it) would be."""
+    return os.path.join(str(root), rel)
 
 
 def inside(root: str, path: str) -> bool:
@@ -292,7 +293,7 @@ def _fold(text: str) -> str:
     return unicodedata.normalize("NFKC", text).casefold()
 
 
-def index_script_candidates(output) -> list:
+def index_script_candidates(output, rel: str = SETUP_SCRIPT) -> list:
     """The index entries that could be the setup script under another
     spelling: every entry whose first path component NFKC-normalises and
     casefolds to `.dark-army` (the Kelvin sign, a case variant with
@@ -302,8 +303,8 @@ def index_script_candidates(output) -> list:
         text = bytes(output or b"").decode("utf-8", "surrogateescape")
     except (TypeError, ValueError):
         return []
-    folder = _fold(SETUP_SCRIPT.split("/", 1)[0])
-    whole = _fold(SETUP_SCRIPT)
+    folder = _fold(rel.split("/", 1)[0])
+    whole = _fold(rel)
     out = []
     for entry in text.split("\0"):
         if not entry:
@@ -483,10 +484,10 @@ def setup_volume_allows(fstype) -> bool:
     return str(fstype or "").strip().lower() == SETUP_VOLUME_TYPE
 
 
-def setup_script_where(root_real: str) -> str:
+def setup_script_where(root_real: str, rel: str = SETUP_SCRIPT) -> str:
     """Where the script must resolve to: the realpath'd root's own
-    `.dark-army/worktree-setup.sh`, no link anywhere on the way."""
-    return os.path.join(str(root_real), SETUP_SCRIPT)
+    `.dark-army/worktree-setup.sh` (or `rel`), no link anywhere on the way."""
+    return os.path.join(str(root_real), rel)
 
 
 def setup_script_safe(st_uid: int, st_mode: int, uid: int) -> bool:

@@ -62,7 +62,7 @@ from . import (access_log, agent_report, attachments, bearings, board,
                command_receipts, conversation, daemon_board,
                devices, enrollment, event_log, fleet_figures, grok_billing,
                image_preview,
-               lan_hosts, limits, live_activity, manual_check,
+               lan_hosts, limits, live_activity, manual_check, merges,
                mission, relay, scout_index, srp, terminal_stream, vtgrid,
                work_record, workspace)
 from .paths import STATE_DIR, ensure_state_dir
@@ -89,7 +89,7 @@ SESSION_ACTIONS = ("close_terminal", "close_refinement_terminal", "reveal_panel"
 # as does the resizing `/api/terminal`.
 SESSION_READS = ("/api/conversation", "/api/knowledge", "/api/scout-reports",
                  "/api/scout-report", "/api/plans", "/api/plan",
-                 "/api/manual-checks")
+                 "/api/manual-checks", "/api/card-changes")
 # The 403 detail a session-token holder gets for a desk verb. Words for a
 # person, never the token.
 DESK_TOKEN_REFUSAL = ("that needs Dark Army's desk token — the one on disk only "
@@ -1367,6 +1367,20 @@ class ApiServer:
                                         b'{"error":"forbidden"}')
                     return
                 status, ctype, body = await self._manual_checks_for(
+                    request.query)
+                await self._respond(writer, status, ctype, body)
+                return
+            if request.path == "/api/card-changes" and request.method == "GET":
+                # Token-gated although a read: a branch's commits and file
+                # list is project content. `?card=<id>` is the page,
+                # `&file=<n>&tip=<sha>` one file's changes. Either token
+                # (`_session_authorised`); empty Origin is allowed on GET.
+                # Host already ran above.
+                if not self._session_authorised(request):
+                    await self._respond(writer, 403, "application/json",
+                                        b'{"error":"forbidden"}')
+                    return
+                status, ctype, body = await self._card_changes_for(
                     request.query)
                 await self._respond(writer, status, ctype, body)
                 return
@@ -2724,7 +2738,7 @@ class ApiServer:
                     "terminal", "conversation", "done", "knowledge",
                     "access_log", "bearings", "scout_reports",
                     "scout_report", "manual_checks", "plans", "plan", "image",
-                    "history_week", "action"):
+                    "history_week", "card_changes", "action"):
             status, ctype, out = await self._sealed_run(
                 kind, payload, device_id, actions=self.LAN_ACTIONS,
                 check_lease=False, record=False)
@@ -3154,7 +3168,17 @@ class ApiServer:
                      # worked one at a time. Keyed on `card_ids`, handled
                      # before the card_id check. On both phone tuples since
                      # 25 Sep 2026 — see `LAN_ACTIONS`.
-                     "board_start_batch")
+                     "board_start_batch",
+                     # Review and merge on a Done card
+                     # (`docs/card-worktrees.md`). Each is keyed on card_id
+                     # and on both phone tuples — see `LAN_ACTIONS`.
+                     # Landing a card's branch on the local main line.
+                     "board_merge",
+                     # Starting the card's own assistant in its folder to
+                     # fix a merge that stopped.
+                     "board_merge_fix",
+                     # Starting an assistant that reviews the branch.
+                     "board_review_run")
 
     #: The phone writes, and the whole set of them. Named here rather than
     #: matched with a prefix: a prefix test would enrol whatever a future
@@ -3290,6 +3314,25 @@ class ApiServer:
         # the bot itself by its verified identity, never by a payload name.
         # Its own line, chosen on purpose; no parenthesis in this block.
         "set_bot_access",
+        # Landing a Done card's branch on the local main line, from the
+        # phone at home. The person's own press, armed and then confirmed
+        # on the phone, never an agent run: merge_card re-runs its gate at
+        # the press and the task re-checks the card, the folder and the
+        # main checkout at the moment each is touched. It pushes nothing,
+        # carries expected_tip as the phone's current-state echo, and
+        # answers at once. Keyed on card_id. No parenthesis in this block.
+        "board_merge",
+        # Starting the card's own assistant in the card's folder to fix a
+        # merge that stopped. It is board_dispatch repeated under the same
+        # launch guards: dispatch.helper_guard under _dispatch_lock, refused
+        # outright when board_dispatch is off. Keyed on card_id. No
+        # parenthesis in this block.
+        "board_merge_fix",
+        # Starting an assistant that reviews a Done card's branch and
+        # answers onto the card. It changes no files, files no cards and
+        # is refused outright when board_dispatch is off. Keyed on card_id.
+        # No parenthesis in this block.
+        "board_review_run",
     )
 
     #: The phone writes **from away**, and the whole set of them. It starts
@@ -3424,6 +3467,22 @@ class ApiServer:
         # BobDaemon.set_bot_access, so it can never lengthen its own grant.
         # No parenthesis in this block.
         "set_bot_access",
+        # Away as well as at home, and its own decision: finishing a card's
+        # work from the train is the point of the press. Away it rides the
+        # phone's lease, Face ID and the receipt token like every write,
+        # and it can only land a branch a person already finished and
+        # checked, onto the local main line, pushing nothing. No
+        # parenthesis in this block.
+        "board_merge",
+        # Away as well as at home, and its own decision: it starts one
+        # assistant in the card's own folder, behind board_dispatch and the
+        # launch guards, to fix a merge that stopped. No parenthesis in
+        # this block.
+        "board_merge_fix",
+        # Away as well as at home, and its own decision: it starts one
+        # assistant that only reads and reports a verdict. No parenthesis
+        # in this block.
+        "board_review_run",
     )
 
     #: The board names inside `LAN_ACTIONS`. Membership, not a prefix.
@@ -3446,6 +3505,11 @@ class ApiServer:
         "board_refine_batch",
         # Keyed on `card_ids`, handled above the `card_id` check.
         "board_start_batch",
+        # `_board_action` reads `card_id` alone, and `expected_tip` for the
+        # first, an echo that rides the payload intact.
+        "board_merge",
+        "board_merge_fix",
+        "board_review_run",
     })
 
     async def _lan_run(self, action: str, payload: dict,
@@ -3995,6 +4059,13 @@ class ApiServer:
             # `q`, `status` and `path` ride the JSON body, never a query
             # string.
             return await self._manual_checks_for(payload)
+        if kind == "card_changes":
+            # A Done card's branch against the main line: commits, files with
+            # counts, one file's changes. `manual_checks`' rule: a **read**,
+            # above the `action` branch — neither action tuple, no lease
+            # check, no `remote_activity` record. `card`, `file` and `tip`
+            # ride the JSON body, never a query string.
+            return await self._card_changes_for(payload)
         if kind == "plans":
             # Every watched project's plans, newest first, no bodies.
             # `scout_reports`' rule: a **read**, above the `action` branch —
@@ -4305,6 +4376,75 @@ class ApiServer:
         except (ValueError, TypeError) as exc:
             return 400, "application/json", json.dumps(
                 {"error": str(exc)}).encode()
+
+    async def _card_changes_for(self, query_or_payload):
+        """A Done card's Changes — loopback `GET /api/card-changes` and the
+        sealed `card_changes` kind. With `file`, one file's changes (the
+        listing's integer **index**, never a path, and the `tip` the list was
+        read at); otherwise the page. A malformed request is 400 in words;
+        a branch that moved since the list is 409; every other problem is
+        `available: false` with the reason (never a 500)."""
+        try:
+            if isinstance(query_or_payload, dict):
+                params = {k: v for k, v in query_or_payload.items()
+                          if k in ("card", "file", "tip")}
+            else:
+                raw = parse_qs(query_or_payload or "", keep_blank_values=True)
+                if any(len(v) != 1 for v in raw.values()):
+                    raise ValueError("report parameters must not repeat")
+                params = {k: v[0] for k, v in raw.items()}
+            card = str(params.get("card") or "").strip()
+            if not card or len(card) > 200:
+                raise ValueError("card must be a card id")
+            if "file" not in params:
+                handler = getattr(self._daemon, "card_changes_report", None)
+                report = (await handler(card) if handler else {
+                    "available": False, "card_id": card, "files": [],
+                    "commits": [], "reason": "Dark Army cannot read changes"})
+                return 200, "application/json", self._card_changes_page_bytes(
+                    report)
+            raw_index = params.get("file")
+            if isinstance(raw_index, bool) or not (
+                    isinstance(raw_index, int)
+                    or (isinstance(raw_index, str) and raw_index.isascii()
+                        and raw_index.isdigit() and len(raw_index) <= 6)):
+                raise ValueError("file must be a whole number")
+            index = int(raw_index)
+            if index < 0 or index > 999_999:
+                raise ValueError("file must be a whole number")
+            tip = str(params.get("tip") or "").strip()
+            if not merges.is_tip(tip):
+                raise ValueError("a file's changes need the tip the list "
+                                 "was read at")
+            handler = getattr(self._daemon, "card_change_diff", None)
+            if handler is None:
+                return 200, "application/json", json.dumps(
+                    {"available": False, "path": "", "text": "",
+                     "truncated": False,
+                     "reason": "Dark Army cannot read changes"}).encode()
+            status, document = await handler(card, index, tip)
+            return int(status), "application/json", json.dumps(
+                document, allow_nan=False).encode()
+        except (ValueError, TypeError) as exc:
+            return 400, "application/json", json.dumps(
+                {"error": str(exc)}).encode()
+
+    @staticmethod
+    def _card_changes_page_bytes(report):
+        """Bound plaintext at 300 000 bytes before sealing,
+        `_manual_checks_page_bytes`' rule: oversize drops `files` from the
+        tail and sets `files_truncated: true`; a listed file is never
+        shortened."""
+        files = report.get("files")
+        if not isinstance(files, list):
+            report["files"] = []
+            files = report["files"]
+        while True:
+            body = json.dumps(report, allow_nan=False).encode()
+            if len(body) <= 300_000 or not files:
+                return body
+            files.pop()
+            report["files_truncated"] = True
 
     @staticmethod
     def _manual_checks_page_bytes(report):
@@ -5194,6 +5334,20 @@ class ApiServer:
                 "card_id": (card or {}).get("id", ""),
             }).encode()
             return (200 if card is not None else 409), "application/json", body
+        if action.startswith("board_") \
+                and action[len("board_"):] in self._MERGE_PRESSES:
+            # Review and merge on a Done card (`docs/card-worktrees.md`):
+            # `merge_card` (with the phone's `expected_tip` echo, read with
+            # the present-key rule: absent means no guard), `fix_merge_card`
+            # and `run_card_review`. Every gate is the daemon's; this branch
+            # adds none and turns a refusal into a 409 in words.
+            verb = getattr(self._daemon,
+                           self._MERGE_PRESSES[action[len("board_"):]])
+            extra = (self._echo_kwargs(payload, ("expected_tip",))
+                     if action == "board_" + "merge" else {})
+            ok, detail = await verb(card_id, **extra)
+            body = json.dumps({"ok": ok, "detail": detail}).encode()
+            return (200 if ok else 409), "application/json", body
         if action in ("board_accept_outcome", "board_request_revision"):
             result, detail = await self._daemon.decide_card_outcome(
                 card_id, self._outcome_integer(payload.get("expected_outcome_revision")),
@@ -5345,6 +5499,11 @@ class ApiServer:
                                "detail": detail}).encode()
             return (200 if card is not None else 409), "application/json", body
         return 400, "application/json", b'{"error":"unknown board action"}'
+
+    #: The three presses on a Done card's branch, by the part of the action's
+    #: name after `board_` -> the daemon method each runs.
+    _MERGE_PRESSES = {"merge": "merge_card", "merge_fix": "fix_merge_card",
+                      "review_run": "run_card_review"}
 
     #: Ranges the Done archive offers. Days, or None for everything on record.
     BOARD_RANGES = {"30d": 30, "90d": 90, "all": None}

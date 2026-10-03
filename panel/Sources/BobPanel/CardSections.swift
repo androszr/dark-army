@@ -61,6 +61,11 @@ enum CardSections {
         /// keep their lines). Pinned beside QUEUED, because a card held by a
         /// dependency says so in the queued line and the reason sits here.
         case dependencies = "WAITS ON"
+        /// A finished card's branch against the main line: its commits,
+        /// the files it changed and each one's changes (added 3 Oct 2026,
+        /// after WAITS ON so the earlier labels keep their lines). Fetched
+        /// on the row's open, never on a poll.
+        case changes = "CHANGES"
     }
 
     /// Where the card is in its life. Four columns, with In progress split
@@ -132,14 +137,15 @@ enum CardSections {
                     .thread, .otherVerbs, .objective, .collaboration, .timeline,
                     .attachments, .documents, .danger]
         case .ended:
-            return [.status, .report, .verbs, .queue, .dependencies, .more, .workRecord, .run,
+            return [.status, .report, .verbs, .queue, .dependencies, .more, .workRecord,
+                    .changes, .run,
                     .manualCheck, .closeSignature, .plan, .instructions, .editor,
                     .session, .thread, .crew, .otherVerbs, .objective,
                     .collaboration, .timeline, .attachments,
                     .documents, .danger]
         case .done:
             return [.status, .closeSignature, .report, .verbs, .queue, .dependencies, .more,
-                    .objective, .workRecord, .run, .plan, .instructions, .crew,
+                    .objective, .workRecord, .changes, .run, .plan, .instructions, .crew,
                     .session, .thread, .editor, .otherVerbs, .collaboration,
                     .timeline, .attachments, .documents, .danger]
         }

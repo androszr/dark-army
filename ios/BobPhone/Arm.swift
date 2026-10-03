@@ -34,6 +34,10 @@ final class Arm: ObservableObject {
         /// checked arm can never confirm an outcome.
         case manualOutcome
         case review
+        /// MERGE and Fix on a Done card (`CardMerge`). Their own slots, so
+        /// an arm for one can never confirm the other or any verb above.
+        case merge
+        case mergeFix
         /// End on the Comm tab: closes Mission Control's terminal.
         case missionEnd
         /// The Prep row's batch Refine on the Board tab. Its own slot, so a
@@ -62,6 +66,8 @@ final class Arm: ObservableObject {
     @Published private(set) var manualClear: String?
     @Published private(set) var manualOutcome: String?
     @Published private(set) var review: String?
+    @Published private(set) var merge: String?
+    @Published private(set) var mergeFix: String?
     @Published private(set) var missionEnd: String?
     @Published private(set) var refineBatch: String?
     @Published private(set) var startBatch: String?
@@ -88,6 +94,8 @@ final class Arm: ObservableObject {
         manualClear = nil
         manualOutcome = nil
         review = nil
+        merge = nil
+        mergeFix = nil
         missionEnd = nil
         refineBatch = nil
         startBatch = nil
@@ -106,6 +114,8 @@ final class Arm: ObservableObject {
         case .manualClear: manualClear = id
         case .manualOutcome: manualOutcome = id
         case .review: review = id
+        case .merge: merge = id
+        case .mergeFix: mergeFix = id
         case .missionEnd: missionEnd = id
         case .refineBatch: refineBatch = id
         case .startBatch: startBatch = id
@@ -145,6 +155,8 @@ final class Arm: ObservableObject {
         case .manualClear: armed = manualClear
         case .manualOutcome: armed = manualOutcome
         case .review: armed = review
+        case .merge: armed = merge
+        case .mergeFix: armed = mergeFix
         case .missionEnd: armed = missionEnd
         case .refineBatch: armed = refineBatch
         case .startBatch: armed = startBatch
@@ -173,6 +185,8 @@ final class Arm: ObservableObject {
         manualClear = nil
         manualOutcome = nil
         review = nil
+        merge = nil
+        mergeFix = nil
         missionEnd = nil
         refineBatch = nil
         startBatch = nil

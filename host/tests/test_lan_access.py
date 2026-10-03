@@ -2636,3 +2636,101 @@ def test_an_unauthorised_loopback_board_message_is_not_routed():
         "POST", "/api/action", "", {"x-bob-token": "t"},
         b'{"action": "board_message", "card_id": "c1", "text": "hi"}')
     assert srv._board_request(ok)[0] == "board_message"
+
+
+# --- review and merge: the three verbs on both phone tuples --------------------
+
+_MERGE_VERBS = ("board_merge", "board_merge_fix", "board_review_run")
+
+
+def test_merge_and_review_verbs_are_on_both_phone_tuples():
+    """Chosen four times over, each its own line: the loopback gate, what
+    `_lan_run` hands to `_board_action`, and the two phone tuples (home and
+    from anywhere — two decisions). The standing bound holds, and the comment
+    blocks inside the tuples hold no parenthesis (other pins slice the tuples
+    at the first one)."""
+    for verb in _MERGE_VERBS:
+        assert ApiServer.BOARD_ACTIONS.count(verb) == 1, verb
+        assert ApiServer.LAN_ACTIONS.count(verb) == 1, verb
+        assert ApiServer.REMOTE_ACTIONS.count(verb) == 1, verb
+        assert verb in ApiServer._LAN_BOARD, verb
+    assert set(ApiServer.REMOTE_ACTIONS) <= set(ApiServer.LAN_ACTIONS)
+    src = inspect.getsource(ApiServer)
+    for name in ("LAN_ACTIONS = (", "REMOTE_ACTIONS = ("):
+        body = src.split(name, 1)[1].split("\n    )\n", 1)[0]
+        mine = body[body.index('"set_bot_access",'):]
+        assert "(" not in mine, name
+        for verb in _MERGE_VERBS:
+            assert f'"{verb}"' in mine, (name, verb)
+    # The Mac's own gate carries all three, behind the desk token.
+    srv = api_mod.ApiServer(object())
+    srv.token = "t"
+    for verb in _MERGE_VERBS:
+        ok = api_mod._Request("POST", "/api/action", "", {"x-bob-token": "t"},
+                              json.dumps({"action": verb,
+                                          "card_id": "c1"}).encode())
+        assert srv._board_request(ok)[0] == verb
+        bare = api_mod._Request("POST", "/api/action", "", {},
+                                json.dumps({"action": verb,
+                                            "card_id": "c1"}).encode())
+        assert srv._board_request(bare) is None
+
+
+@pytest.mark.asyncio
+async def test_a_sealed_board_merge_reaches_merge_card_with_expected_tip():
+    daemon = BobDaemon(headless=True)
+    seen: list = []
+
+    async def merge(card_id, **kw):
+        seen.append(("merge", card_id, kw))
+        return True, "Merging…"
+
+    async def fix(card_id):
+        seen.append(("fix", card_id))
+        return False, "no conflict to fix"
+
+    async def review(card_id):
+        seen.append(("review", card_id))
+        return True, "started"
+
+    daemon.merge_card = merge
+    daemon.fix_merge_card = fix
+    daemon.run_card_review = review
+    srv = ApiServer(daemon, port=0)
+    run = lambda payload, **kw: srv._sealed_run(  # noqa: E731
+        "action", payload, "phone", actions=ApiServer.LAN_ACTIONS,
+        check_lease=False, record=False, **kw)
+    status, _, body = await run({"action": "board_merge", "card_id": "c1",
+                                 "expected_tip": "a" * 40})
+    assert status == 200 and json.loads(body)["ok"] is True
+    # Absent means no guard: no keyword at all.
+    await run({"action": "board_merge", "card_id": "c2"})
+    status, _, body = await run({"action": "board_merge_fix", "card_id": "c3"})
+    assert status == 409
+    assert json.loads(body) == {"ok": False, "detail": "no conflict to fix"}
+    status, _, _body = await run({"action": "board_review_run",
+                                  "card_id": "c4"})
+    assert status == 200
+    status, _, body = await run({"action": "board_merge"})
+    assert status == 400
+    assert seen == [("merge", "c1", {"expected_tip": "a" * 40}),
+                    ("merge", "c2", {}), ("fix", "c3"), ("review", "c4")]
+
+
+@pytest.mark.asyncio
+async def test_a_sealed_board_merge_away_rides_the_lease(monkeypatch):
+    daemon = BobDaemon(headless=True)
+    calls: list = []
+
+    async def merge(card_id, **kw):
+        calls.append(card_id)
+        return True, "Merging…"
+
+    daemon.merge_card = merge
+    srv = ApiServer(daemon, port=0)
+    monkeypatch.setattr(relay, "lease_valid", lambda _device: False)
+    status, _, body = await srv._remote_run(
+        "action", {"action": "board_merge", "card_id": "c1"}, "phone")
+    assert status == 403
+    assert json.loads(body)["detail"] == relay.LEASE_REFUSAL
+    assert calls == []

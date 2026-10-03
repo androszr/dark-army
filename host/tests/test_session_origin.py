@@ -868,3 +868,23 @@ def test_area_line_kept_on_tombstone():
     row = _row_for(d,"area-ended")
     assert row["area"] == "backbone"
     assert row["area_line"] == areas.lead_line(row["nickname"],"backbone")
+
+
+# --- review and merge: the two helper kinds ------------------------------------
+
+
+def test_the_review_and_merge_fix_kinds_stamp_parse_and_read_as_sentences():
+    """A review helper and a merge-fix helper are stamped like every other
+    press: a known kind, round-tripped, and a sentence both clients draw
+    verbatim (`docs/card-worktrees.md`, *Review and merge*)."""
+    for kind in ("card-review", "card-merge-fix"):
+        assert kind in origin.KINDS
+        stamp = origin.stamp(kind, "c1")
+        assert stamp == f"{kind}|c1|"
+        assert origin.parse(stamp)["by"] == kind
+    assert origin.sentence("card-review", "Add the thing") \
+        == "Dark Army started this to review Add the thing"
+    assert origin.sentence("card-merge-fix", "Add the thing") \
+        == "Dark Army started this to fix the merge of Add the thing"
+    # A kind nobody listed is still no stamp.
+    assert origin.stamp("card-merge", "c1") == ""

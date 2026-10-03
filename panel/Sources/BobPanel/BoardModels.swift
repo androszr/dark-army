@@ -279,6 +279,164 @@ struct WorkRecordDiff: Decodable {
     }
 }
 
+/// One commit on a card's branch, as the Changes read lists it.
+struct CardChangeCommit: Decodable, Equatable, Identifiable {
+    var sha8 = ""
+    var author = ""
+    var at: Double = 0
+    var subject = ""
+
+    var id: String { sha8 + subject }
+
+    enum CodingKeys: String, CodingKey { case sha8, author, at, subject }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sha8 = c.value(.sha8, "")
+        author = c.value(.author, "")
+        at = c.value(.at, 0)
+        subject = c.value(.subject, "")
+    }
+}
+
+/// One file the branch changed. A binary file carries no counts of its own
+/// (`binary` is stated); the view names it rather than drawing zeros.
+struct CardChangeFile: Decodable, Equatable, Identifiable {
+    var path = ""
+    var added = 0
+    var removed = 0
+    var binary = false
+
+    var id: String { path }
+
+    enum CodingKeys: String, CodingKey { case path, added, removed, binary }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = c.value(.path, "")
+        added = c.value(.added, 0)
+        removed = c.value(.removed, 0)
+        binary = c.value(.binary, false)
+    }
+}
+
+/// The review a card carries, as the Changes read states it: `current` is
+/// false when the branch moved since the version judged.
+struct CardChangeReview: Decodable, Equatable {
+    var verdict = ""
+    var tip = ""
+    var current = false
+
+    enum CodingKeys: String, CodingKey { case verdict, tip, current }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        verdict = c.value(.verdict, "")
+        tip = c.value(.tip, "")
+        current = c.value(.current, false)
+    }
+
+    init() {}
+}
+
+/// `GET /api/card-changes?card=` — a Done card's branch against the main
+/// line. `available` is **stated**; `files` absent decodes empty.
+/// `branchTip` is echoed back on a file's changes and on MERGE.
+struct CardChangesReport: Decodable, Equatable {
+    var available = false
+    var cardId = ""
+    var branch = ""
+    var trunk = ""
+    var mergeBase = ""
+    var branchTip = ""
+    var ahead = 0
+    var behind = 0
+    var commits: [CardChangeCommit] = []
+    var files: [CardChangeFile] = []
+    var filesTotal = 0
+    var filesTruncated = false
+    var commitsTruncated = false
+    var mergeOffered = false
+    var mergeRefusal = ""
+    var mergeState = ""
+    var mergeNote = ""
+    var review = CardChangeReview()
+    var generatedAt: Double = 0
+    var reason = ""
+
+    enum CodingKeys: String, CodingKey {
+        case available, branch, trunk, ahead, behind, commits, files, review, reason
+        case cardId = "card_id"
+        case mergeBase = "merge_base"
+        case branchTip = "branch_tip"
+        case filesTotal = "files_total"
+        case filesTruncated = "files_truncated"
+        case commitsTruncated = "commits_truncated"
+        case mergeOffered = "merge_offered"
+        case mergeRefusal = "merge_refusal"
+        case mergeState = "merge_state"
+        case mergeNote = "merge_note"
+        case generatedAt = "generated_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        cardId = c.value(.cardId, "")
+        branch = c.value(.branch, "")
+        trunk = c.value(.trunk, "")
+        mergeBase = c.value(.mergeBase, "")
+        branchTip = c.value(.branchTip, "")
+        ahead = c.value(.ahead, 0)
+        behind = c.value(.behind, 0)
+        commits = c.value(.commits, [])
+        files = c.value(.files, [])
+        filesTotal = c.value(.filesTotal, 0)
+        filesTruncated = c.value(.filesTruncated, false)
+        commitsTruncated = c.value(.commitsTruncated, false)
+        mergeOffered = c.value(.mergeOffered, false)
+        mergeRefusal = c.value(.mergeRefusal, "")
+        mergeState = c.value(.mergeState, "")
+        mergeNote = c.value(.mergeNote, "")
+        review = c.value(.review, CardChangeReview())
+        generatedAt = c.value(.generatedAt, 0)
+        reason = c.value(.reason, "")
+    }
+}
+
+/// One file's changes on a card's branch, fetched on demand.
+struct CardChangeDiff: Decodable, Equatable {
+    var available = false
+    var path = ""
+    var text = ""
+    var truncated = false
+    var reason = ""
+
+    /// What the sheet draws when the read itself failed (no answer, or the
+    /// branch moved since the list was read): words, never a blank.
+    static var unreadable: CardChangeDiff {
+        var diff = CardChangeDiff()
+        diff.reason = "Dark Army could not read that file's changes — "
+            + "open the list again."
+        return diff
+    }
+
+    init() {}
+
+    enum CodingKeys: String, CodingKey {
+        case available, path, text, truncated, reason
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        path = c.value(.path, "")
+        text = c.value(.text, "")
+        truncated = c.value(.truncated, false)
+        reason = c.value(.reason, "")
+    }
+}
+
 /// Formatting for a record, in one place so the sheet composes nothing.
 enum WorkRecordFormat {
     /// `+3 −1`, or the word for a file with no line counts. A binary file and
@@ -441,6 +599,19 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// The daemon's one line about the card's folder — being prepared, or
     /// kept because it holds unsaved work. Drawn verbatim; `""` for none.
     var worktreeNote = ""
+    /// Review and merge on a Done card (`docs/card-worktrees.md`): what the
+    /// last MERGE press came to (`""`, `merging`, `blocked`, `conflict`,
+    /// `checks_failed`, `merged`), the daemon's one sentence about it, a
+    /// review's verdict (`""`, `ship`, `stop`) and whether a review is
+    /// running. Drawn verbatim; an absent key — an older daemon — decodes
+    /// empty or false and draws nothing.
+    var mergeState = ""
+    var mergeLine = ""
+    var reviewVerdict = ""
+    var reviewRunning = false
+    /// The daemon's one fact for MERGE, Fix and Run review: the gate without
+    /// its busy rungs (`merge_offered`). Absent — an older daemon — is false.
+    var mergeOffered = false
     var isScout: Bool { kind == "scout" }
     /// The number `cardOrder` sorts on. `""` and `"0"` fold together here
     /// exactly as `CAST(priority AS INTEGER)` folds them in
@@ -788,6 +959,11 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case isolation
         case worktreeBranch = "worktree_branch"
         case worktreeNote = "worktree_note"
+        case mergeState = "merge_state"
+        case mergeLine = "merge_line"
+        case reviewVerdict = "review_verdict"
+        case reviewRunning = "review_running"
+        case mergeOffered = "merge_offered"
         case revision
         case refineState = "refine_state"
         case refineSessionId = "refine_session_id"
@@ -878,6 +1054,11 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         isolation = c.value(.isolation, "")
         worktreeBranch = c.value(.worktreeBranch, "")
         worktreeNote = c.value(.worktreeNote, "")
+        mergeState = c.value(.mergeState, "")
+        mergeLine = c.value(.mergeLine, "")
+        reviewVerdict = c.value(.reviewVerdict, "")
+        reviewRunning = c.value(.reviewRunning, false)
+        mergeOffered = c.value(.mergeOffered, false)
         revision = c.value(.revision, 0)
         refineState = c.value(.refineState, "")
         refineSessionId = c.value(.refineSessionId, "")

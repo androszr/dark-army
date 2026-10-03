@@ -14,6 +14,7 @@ import secrets
 import signal
 import socket
 import sys
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, replace
@@ -2150,6 +2151,25 @@ class BobDaemon(BoardVerbsMixin):
         # "kept" line a card draws is derived from the card and the disk
         # (`_worktree_note`), never remembered here.
         self._worktree_considered: set = set()
+        # Review and merge (`docs/card-worktrees.md`, *Review and merge*).
+        # `_merging`: card id -> `{"root", "since", "token"}` while a MERGE
+        # press is being worked; created on the loop, **replaced, never
+        # mutated**, so the decoration on the executor may read it; the
+        # task's `finally` pops by token. `_merge_tasks` holds the detached
+        # tasks, `_merge_helpers` the fix helpers' spawn receipts (card id ->
+        # `{"root", "since"}`), `_merge_attempts` / `_review_attempts` the
+        # last press of each helper per card (the consult ladder's rung),
+        # `_branch_backfill_*` the once-per-process look for the branch a
+        # finished card's name implies, and `_changes_lock` serialises the
+        # on-demand Changes read (`_scout_search_lock`'s rule).
+        self._merging: dict = {}
+        self._merge_tasks: set = set()
+        self._merge_helpers: dict = {}
+        self._merge_attempts: dict = {}
+        self._review_attempts: dict = {}
+        self._branch_backfill_seen: set = set()
+        self._branch_backfill_queue: list = []
+        self._changes_lock = threading.Lock()
         # Which model each agent and helper runs on: the machine-wide table
         # (`agent_models`, `{provider: {slot: model}}`) and the per-project
         # override map (`agent_models_by_root`, keyed on the canonical root),
@@ -11539,6 +11559,12 @@ class BobDaemon(BoardVerbsMixin):
             await self._flush_work_records()
         except Exception:
             logger.debug("work record collection failed", exc_info=True)
+        # And the branches the reconcile asked about: a finished card that
+        # predates the card remembering its branch. One detached task.
+        try:
+            await self._flush_branch_backfill()
+        except Exception:
+            logger.debug("branch backfill failed to start", exc_info=True)
         # After the snapshot, not before: an alert names a session, and a surface
         # told to reveal one it has not been shown yet has nothing to reveal.
         self._deliver_alerts()

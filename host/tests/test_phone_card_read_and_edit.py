@@ -162,7 +162,9 @@ def test_the_screen_posts_no_verb_beyond_the_approval():
     DONE & CLOSE press on an ended run (the fleet's own Close, which
     finishes the card after the tab closes), plus `board_manual_outcome` —
     Passed / Failed on a card flagged with a check file, chosen on both
-    phone tuples and armed here — and nothing else."""
+    phone tuples and armed here — plus `board_merge`, `board_merge_fix` and
+    `board_review_run` (3 Oct 2026), chosen on both phone tuples, the first
+    two armed here and the third one press — and nothing else."""
     import re
     src = _read(DETAIL)
     named = set(re.findall(r"PhoneActions\.([A-Za-z]+)", src))
@@ -171,7 +173,8 @@ def test_the_screen_posts_no_verb_beyond_the_approval():
                      "boardDispatch", "boardRefine", "boardApprovePlan",
                      "boardMessage", "boardManualClear", "boardReview",
                      "boardPromote", "closeTerminal",
-                     "boardManualOutcome"}, named
+                     "boardManualOutcome", "boardMerge", "boardMergeFix",
+                     "boardReviewRun"}, named
 
 
 def test_the_changed_plan_refusal_has_its_own_matcher_and_label():

@@ -363,6 +363,64 @@ extension DaemonClient {
         await post(["action": "board_promote", "card_id": cardId])
     }
 
+    /// Land a Done card's branch on the local main line
+    /// (`docs/card-worktrees.md`, *Review and merge*). The daemon answers at
+    /// once and merges in the background; every refusal comes back in
+    /// `detail`. `expectedTip` is the branch tip the Changes list was read at
+    /// — absent on the Mac's plain press, which sends no guard.
+    func boardMerge(_ cardId: String, expectedTip: String = "") async -> ActionResult {
+        var body = ["action": "board_merge", "card_id": cardId]
+        if !expectedTip.isEmpty { body["expected_tip"] = expectedTip }
+        return await post(body)
+    }
+
+    /// Start the card's own assistant in the card's folder to fix a merge
+    /// that stopped on a conflict or failed checks.
+    func boardMergeFix(_ cardId: String) async -> ActionResult {
+        await post(["action": "board_merge_fix", "card_id": cardId])
+    }
+
+    /// Start an assistant that reviews the card's branch and answers onto the
+    /// card. Unarmed: it changes no files.
+    func boardReviewRun(_ cardId: String) async -> ActionResult {
+        await post(["action": "board_review_run", "card_id": cardId])
+    }
+
+    /// A Done card's branch against the main line — commits and files with
+    /// counts. Fetched when the CHANGES section opens, never on a poll.
+    /// `workRecord`'s shape: percent-encode, nil on any transport or decode
+    /// failure; a longer timeout, because the daemon runs a few git reads.
+    func cardChanges(_ cardId: String) async -> CardChangesReport? {
+        guard let data = await cardChangesData(cardId, query: "") else { return nil }
+        return try? JSONDecoder().decode(CardChangesReport.self, from: data)
+    }
+
+    /// One file's changes, by its index in the list the daemon sent and the
+    /// branch tip that list was read at (a moved branch is refused, not
+    /// drawn against the wrong listing).
+    func cardChangeDiff(_ cardId: String, file: Int, tip: String) async -> CardChangeDiff? {
+        guard let encoded = tip.addingPercentEncoding(
+            withAllowedCharacters: .alphanumerics),
+              let data = await cardChangesData(
+                cardId, query: "&file=\(file)&tip=\(encoded)") else { return nil }
+        return try? JSONDecoder().decode(CardChangeDiff.self, from: data)
+    }
+
+    private func cardChangesData(_ cardId: String, query: String) async -> Data? {
+        guard !cardId.isEmpty,
+              let encoded = cardId.addingPercentEncoding(
+                withAllowedCharacters: .alphanumerics) else { return nil }
+        var req = request("/api/card-changes?card=\(encoded)\(query)")
+        req.timeoutInterval = 15
+        guard let (data, response) = try? await URLSession.shared.data(for: req) else {
+            return nil
+        }
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        noteAuthRefused(code)
+        guard code == 200 else { return nil }
+        return data
+    }
+
     /// Say "yes, this wording" about the plan a card points at. The digest is
     /// the panel's own hash of the text it just read and drew, and the daemon
     /// re-reads the file and refuses unless the two still agree — so an

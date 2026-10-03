@@ -36,7 +36,8 @@ def test_every_kind_has_a_sentence_case_here():
         "session_start", "session_end", "session_error", "permission_ask",
         "permission_resolved", "card_dispatched", "card_done", "card_manual",
         "card_manual_outcome", "card_dispatch_failed", "card_plan_attached", "card_plan_approved",
-        "card_work_recorded", "access_burst",
+        "card_work_recorded", "access_burst", "card_merged",
+        "card_merge_blocked", "card_review_verdict",
     }
     assert covered == set(KINDS)
     for kind in KINDS:
@@ -390,3 +391,21 @@ def test_access_burst_names_the_count_the_source_and_the_door():
     assert sentence("access_burst", detail={"window_seconds": 30}) \
         == ("Dark Army refused 0 connection attempts from an unknown source "
             "at the phone door in 1 minute")
+
+
+def test_the_review_and_merge_lines_read_plainly_and_carry_no_path():
+    assert sentence("card_merged", title="Add it", project="bob") \
+        == "Add it was merged into the main line in bob"
+    assert sentence("card_merge_blocked", title="Add it", state="conflict") \
+        == "The merge of Add it stopped on a conflict"
+    assert sentence("card_merge_blocked", title="Add it", state="checks_failed") \
+        == "The merge of Add it stopped on failed checks"
+    assert sentence("card_merge_blocked", title="Add it", state="blocked") \
+        == "The merge of Add it was turned away"
+    assert sentence("card_review_verdict", title="Add it", verdict="ship") \
+        == "The review of Add it says ship it"
+    assert sentence("card_review_verdict", title="Add it", verdict="stop") \
+        == "The review of Add it says stop"
+    for kind in ("card_merged", "card_merge_blocked", "card_review_verdict"):
+        assert "/" not in sentence(kind, title="Add it", state="conflict",
+                                   verdict="ship", project="bob")

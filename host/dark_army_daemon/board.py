@@ -45,7 +45,7 @@ import uuid
 from pathlib import Path
 from typing import Iterable, Optional
 
-from . import attachments, board_outcomes, scout_report, work_record
+from . import attachments, board_outcomes, merges, scout_report, work_record
 from .board_lifecycle_store import LifecycleStoreMixin
 from .board_outcome_store import OutcomeStoreMixin
 from .board_queue import queue_key
@@ -102,7 +102,12 @@ logger = logging.getLogger("dark-army.board")
 #: through the ADD COLUMN list: the folder and branch a started card works in
 #: (`docs/card-worktrees.md`), `''` on every card that works in the main
 #: checkout. Written by `record_worktree` / `clear_worktree` alone.
-SCHEMA_VERSION = 30
+#: v31 adds four `cards` columns, `merge_state` / `merge_note` (what the last
+#: MERGE press came to) and `review_verdict` / `review_tip` (a review's
+#: verdict and the branch version it judged), through the ADD COLUMN list
+#: (`docs/card-worktrees.md`, *Review and merge*). Written by `record_merge`
+#: and `record_review_verdict` alone.
+SCHEMA_VERSION = 31
 
 #: Ceiling for board.db-wal, applied per connection in `connect()`. SQLite
 #: reuses a WAL file from its start after a checkpoint but never shrinks
@@ -508,6 +513,16 @@ CREATE TABLE IF NOT EXISTS cards (
     -- against each other by a grep.
     worktree_path TEXT NOT NULL DEFAULT '',
     worktree_branch TEXT NOT NULL DEFAULT '',
+    -- Review and merge, at v31 (`docs/card-worktrees.md`): what the last
+    -- MERGE press came to (`merges.STATES`) with its sentence, and a
+    -- review's verdict (`merges.VERDICTS`) with the branch tip it judged.
+    -- Daemon bookkeeping, written by `record_merge` and
+    -- `record_review_verdict` alone — never `_WRITABLE`, never an API
+    -- field, never counted by `revision`.
+    merge_state TEXT NOT NULL DEFAULT '',
+    merge_note TEXT NOT NULL DEFAULT '',
+    review_verdict TEXT NOT NULL DEFAULT '',
+    review_tip TEXT NOT NULL DEFAULT '',
     -- Retired at v22 as unused '' text. Kept so an older build's INSERT
     -- and SELECT still work. This build never reads or writes them.
     initiative_id   TEXT NOT NULL DEFAULT '',
@@ -859,6 +874,13 @@ SINGLE_WRITER = {
     # at a folder Dark Army never made.
     "worktree_path": "record_worktree",
     "worktree_branch": "record_worktree",
+    # Review and merge (v31): the merge pair is `record_merge`'s, the review
+    # pair `record_review_verdict`'s. Leaving Done empties the merge pair
+    # through `update()`, `closed_by`'s documented bypass.
+    "merge_state": "record_merge",
+    "merge_note": "record_merge",
+    "review_verdict": "record_review_verdict",
+    "review_tip": "record_review_verdict",
 }
 
 #: Which columns the card's `revision` counts.
@@ -1250,6 +1272,12 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         # worktree_branch TEXT NOT NULL DEFAULT ''.
         ("worktree_path", "TEXT NOT NULL DEFAULT ''"),
         ("worktree_branch", "TEXT NOT NULL DEFAULT ''"),
+        # Review and merge, at v31. Same DEFAULT rule: a schema-30 build goes
+        # on INSERTing without any of them and never reads them.
+        ("merge_state", "TEXT NOT NULL DEFAULT ''"),
+        ("merge_note", "TEXT NOT NULL DEFAULT ''"),
+        ("review_verdict", "TEXT NOT NULL DEFAULT ''"),
+        ("review_tip", "TEXT NOT NULL DEFAULT ''"),
     ),
         # `card_runs` gains columns the same way (v24), keyed on its own
         # table: `_add_missing_columns` is PRAGMA-driven per table, so an
@@ -2557,6 +2585,11 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
                 # next agent close, skip the review banner for a close nobody
                 # has seen. Clearing is the safe direction.
                 updates["reviewed_at"] = None
+                # And the merge pair: a card out of Done has no merge to
+                # report (a new Start makes a fresh branch). The review pair
+                # stays — it is a verdict of a version, aged by `review_tip`.
+                updates["merge_state"] = ""
+                updates["merge_note"] = ""
             # A hand-move of a queued card is the person overriding the queue,
             # so the queue slot goes with it — in *both* directions, which is
             # why this sits outside the done/not-done branch above. The
@@ -2770,13 +2803,15 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         `rowcount == 0` meaning the card is gone. No `revision` step — what
         folder a run works in is Dark Army's record, not a person's edit,
         and a change number that moved here would refuse the save of
-        whoever had the card open. Both values must be non-empty: the
+        whoever had the card open. The branch must be non-empty; the path may
+        be empty (a finished card keeps the memory of its branch after the
+        folder goes, and the backfill records one found by name). The
         emptying is `clear_worktree`'s, never a record of `''`.
         """
         path = str(path or "")
         branch = str(branch or "")
-        if not path or not branch:
-            return None, "a worktree needs a folder and a branch"
+        if not branch:
+            return None, "a worktree needs a branch"
         if len(path) > self.MAX_WORKTREE_FIELD_CHARS \
                 or len(branch) > self.MAX_WORKTREE_FIELD_CHARS:
             return None, "that worktree name is too long"
@@ -2791,21 +2826,80 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
             return None, "that card is gone"
         return self.get(card_id), "recorded"
 
-    def clear_worktree(self, card_id: str) -> tuple:
+    def clear_worktree(self, card_id: str, *, branch: bool = False) -> tuple:
         """`record_worktree`'s other half: the folder has been removed.
-        `(card_or_None, detail)`. The branch is never deleted by Dark Army;
-        only the card's note of the folder goes. A card with nothing
-        recorded is `rowcount == 0` — nothing to clear."""
+        `(card_or_None, detail)`. By default only the card's note of the
+        folder goes and **the branch name stays** — the card's memory of the
+        branch it has not yet merged. `branch=True` (a landed merge that
+        deleted the branch) empties the name too. A card with nothing to
+        clear is `rowcount == 0`."""
+        if branch:
+            sql = ("UPDATE cards SET worktree_path = '', worktree_branch = '',"
+                   " updated_at = ? WHERE id = ?"
+                   " AND (worktree_path != '' OR worktree_branch != '')")
+        else:
+            sql = ("UPDATE cards SET worktree_path = '', updated_at = ?"
+                   " WHERE id = ? AND worktree_path != ''")
         with self._lock:
-            cur = self._conn.execute(
-                "UPDATE cards SET worktree_path = '', worktree_branch = '',"
-                " updated_at = ? WHERE id = ? AND worktree_path != ''",
-                (time.time(), str(card_id)))
+            cur = self._conn.execute(sql, (time.time(), str(card_id)))
             self._conn.commit()
             changed = cur.rowcount
         if not changed:
             return None, "that card has no worktree recorded"
         return self.get(card_id), "cleared"
+
+    #: A stored merge sentence is cut here; the daemon composes it, the
+    #: bound is a belt for a path-heavy conflict.
+    MAX_MERGE_NOTE_CHARS = 2000
+
+    def record_merge(self, card_id: str, state: str, note: str = "") -> tuple:
+        """What the last MERGE press came to. `(card_or_None, detail)`.
+
+        The one writer of the pair (`SINGLE_WRITER`), `record_worktree`'s
+        shape: one UPDATE, the card's Done column and the guard in its own
+        WHERE, `rowcount == 0` meaning the card is gone or not in Done. `state`
+        is one of `merges.STATES`; `''` empties both columns (the press
+        starting over). No `revision` step: it is Dark Army's record, not a
+        person's edit.
+        """
+        state = str(state or "")
+        if state not in merges.STATES:
+            return None, "that is not a merge state"
+        note = "" if not state else str(note or "")[:self.MAX_MERGE_NOTE_CHARS]
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE cards SET merge_state = ?, merge_note = ?,"
+                " updated_at = ? WHERE id = ? AND column_name = 'done'",
+                (state, note, time.time(), str(card_id)))
+            self._conn.commit()
+            changed = cur.rowcount
+        if not changed:
+            return None, "that card is gone or not in Done"
+        return self.get(card_id), "recorded"
+
+    def record_review_verdict(self, card_id: str, verdict: str,
+                              tip: str = "") -> tuple:
+        """A review's verdict and the branch tip it judged. `(card_or_None,
+        detail)`. `verdict` is one of `merges.VERDICTS`; `tip` a full commit
+        hash or `''`. The one writer of the pair; no `revision` step."""
+        verdict = str(verdict or "")
+        tip = str(tip or "")
+        if verdict not in merges.VERDICTS:
+            return None, "that is not a review verdict"
+        if tip and not merges.is_tip(tip):
+            return None, "that is not a commit"
+        if not verdict:
+            tip = ""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE cards SET review_verdict = ?, review_tip = ?,"
+                " updated_at = ? WHERE id = ?",
+                (verdict, tip, time.time(), str(card_id)))
+            self._conn.commit()
+            changed = cur.rowcount
+        if not changed:
+            return None, "that card is gone"
+        return self.get(card_id), "recorded"
 
     def clear_manual(self, card_id: str,
                      expected_manual_steps: Optional[str] = None) -> tuple:

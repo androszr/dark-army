@@ -62,7 +62,12 @@ ENV_KEY_RE = re.compile(r"\ABOB_COMPANION_ORIGIN\Z")
 #: unattributed row this module exists to remove. `mission` is the other
 #: cardless kind: the one standing Mission Control terminal Dark Army opens
 #: on the Comm tab's first visit (`mission.py`).
-KINDS = ("card-start", "card-refine", "card-consult", "adhoc", "mission")
+#: `card-review` and `card-merge-fix` are the Done card's review and merge-fix
+#: helpers (`docs/card-worktrees.md`, *Review and merge*).
+KINDS = ("card-start", "card-refine", "card-consult",
+         "card-review",
+         "card-merge-fix",
+         "adhoc", "mission")
 
 #: The stored and transported bound. Small on purpose: this is a label, and
 #: anything longer is either a bug or somebody probing.
@@ -160,6 +165,8 @@ _VERBS = {
     "card-start": "to build",
     "card-refine": "to plan",
     "card-consult": "to answer a question about",
+    "card-review": "to review",
+    "card-merge-fix": "to fix the merge of",
 }
 
 #: The kinds that name no card at all, and so are a whole sentence rather than

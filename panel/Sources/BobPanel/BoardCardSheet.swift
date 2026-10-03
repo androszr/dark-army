@@ -105,6 +105,14 @@ struct BoardCardSheet: View {
     /// list — an index, never a path, which is the whole containment story.
     @State private var openFile: Int?
     @State private var fileDiff: WorkRecordDiff?
+    /// The CHANGES section's page: the card's branch against the main line,
+    /// fetched when the section opens (never on a poll), and the one file
+    /// whose changes are open, by its index in that page's own list.
+    /// `changesFailed` is the read itself failing, not the daemon saying no.
+    @State private var changes: CardChangesReport?
+    @State private var changesFailed = false
+    @State private var changeFile: Int?
+    @State private var changeDiff: CardChangeDiff?
     /// The revision the store reported inside a `CARD_CHANGED_REFUSAL`, or
     /// nil. While it is set the sheet offers **Save anyway** at exactly that
     /// number and nothing else; cleared by a successful save or by Leave it.
@@ -202,6 +210,10 @@ struct BoardCardSheet: View {
         .task(id: threadFetchKey) { await loadThread() }
         .task(id: live?.sessionId ?? "") { await loadRunRecord() }
         .task(id: workRecordFetchKey) { await loadWorkRecord() }
+        // Keyed on the card, whether CHANGES is open, and the moments its
+        // page can go stale (a merge landing, a verdict arriving): fetched
+        // when the section opens and nowhere else.
+        .task(id: changesFetchKey) { await loadChanges() }
         // Keyed on the card and its stage — never the snapshot's `revision`,
         // or every Save would refetch. One structured task, so a swap or a
         // column move cancels the request still in flight for the last card.
@@ -351,12 +363,13 @@ struct BoardCardSheet: View {
         case .verbs: return nextAction != .none
         case .otherVerbs:
             return canRefine(live) || (reach.canStart && nextAction != .start)
-                || canPromote(live)
+                || canPromote(live) || mergeControls(live)
         case .collaboration: return client.snapshot.collaboration != nil
         case .more: return CardSections.hidden(for: stage).contains { hasContent($0) }
         case .plan: return !live.planPath.isEmpty
         case .report: return live.isScout
         case .workRecord: return live.workRecord != nil
+        case .changes: return showsChanges(live)
         case .run: return !live.sessionId.isEmpty
         case .editor: return true
         case .instructions, .crew: return false
@@ -426,6 +439,7 @@ struct BoardCardSheet: View {
         case .plan: planSection
         case .report: reportSection
         case .workRecord: workRecordSection
+        case .changes: changesSection
         case .run: runSection
         case .editor: fields
         case .instructions, .crew: EmptyView()
@@ -685,6 +699,23 @@ struct BoardCardSheet: View {
                      + " — " + bucketLabel(row, bucket))
                     .font(.system(size: 12))
                     .foregroundStyle(bucket == "waiting" ? Color.red : Color.secondary)
+            }
+            // What the last MERGE press came to and the review's verdict —
+            // the daemon's words, verbatim, as the card face draws them.
+            if !live.mergeLine.isEmpty {
+                Text(live.mergeLine)
+                    .font(.system(size: 12))
+                    .foregroundStyle(["blocked", "conflict", "checks_failed"]
+                        .contains(live.mergeState) ? Theme.amber : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let verdict = CardMerge.verdictLine(
+                verdict: live.reviewVerdict, running: live.reviewRunning,
+                current: changes?.review.current ?? true) {
+                Text(verdict)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             // The card face's cost-and-time line, under the status here:
             // `RunFigures.line`, absent where the card has never run.
@@ -1863,6 +1894,9 @@ struct BoardCardSheet: View {
                 .foregroundStyle(Theme.faint)
                 .clickable()
         }
+        if let live, mergeControls(live) {
+            mergeVerbs(live)
+        }
         if let live, canRefine(live) {
             VStack(alignment: .leading, spacing: 6) {
                 Button(live.startWhenPlanned
@@ -1906,6 +1940,284 @@ struct BoardCardSheet: View {
             let result = await client.boardPromote(live.id)
             if !result.ok { state.refusals[live.id] = result.detail }
             await client.refresh()
+        }
+    }
+
+    // MARK: - Review and merge
+
+    /// Whether this window draws any of the three merge controls on the
+    /// card (`CardMerge`, the rule the tile and the phone read too). The
+    /// daemon decides the rest at the press.
+    private func mergeControls(_ live: BoardCard) -> Bool {
+        mergeOffered(live)
+            || CardMerge.fixOffered(mergeState: live.mergeState,
+                                    daemonOffers: live.mergeOffered)
+            || CardMerge.reviewOffered(column: live.column, branch: live.worktreeBranch,
+                                       reviewRunning: live.reviewRunning,
+                                       manualDue: live.needsManualCheck,
+                                       daemonOffers: live.mergeOffered)
+    }
+
+    /// MERGE is offered where the rule says so, which includes the daemon's
+    /// own fact on the card (`merge_offered`: a Failed hand-check shows
+    /// nowhere else).
+    private func mergeOffered(_ live: BoardCard) -> Bool {
+        CardMerge.offered(column: live.column, branch: live.worktreeBranch,
+                          mergeState: live.mergeState,
+                          manualDue: live.needsManualCheck,
+                          daemonOffers: live.mergeOffered)
+    }
+
+    /// The three buttons. MERGE and Fix arm and then confirm, each in its
+    /// own `BoardState` slot; Run review is one press. Refusals land in the
+    /// card's refusal line, which the footer draws.
+    @ViewBuilder
+    private func mergeVerbs(_ live: BoardCard) -> some View {
+        HStack(spacing: 10) {
+            if mergeOffered(live) {
+                let armed = state.mergeArmed == live.id
+                Button(CardMerge.mergeLabel(mergeState: live.mergeState, armed: armed)) {
+                    if armed {
+                        state.disarm()
+                        merge(live)
+                    } else {
+                        state.armMerge(live.id)
+                    }
+                }
+                .buttonStyle(.plain)
+                .controlSize(.small)
+                .foregroundStyle(armed ? Color.orange : Theme.faint)
+                .clickable()
+            } else if live.mergeState == "merging" {
+                Text(CardMerge.mergeLabel(mergeState: "merging", armed: false))
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.faint)
+            }
+            if CardMerge.fixOffered(mergeState: live.mergeState,
+                                    daemonOffers: live.mergeOffered) {
+                let armed = state.fixArmed == live.id
+                Button(CardMerge.fixLabel(armed: armed)) {
+                    if armed {
+                        state.disarm()
+                        fixMerge(live)
+                    } else {
+                        state.armFix(live.id)
+                    }
+                }
+                .buttonStyle(.plain)
+                .controlSize(.small)
+                .foregroundStyle(armed ? Color.orange : Theme.faint)
+                .clickable()
+            }
+            if CardMerge.reviewOffered(column: live.column, branch: live.worktreeBranch,
+                                       reviewRunning: live.reviewRunning,
+                                       manualDue: live.needsManualCheck,
+                                       daemonOffers: live.mergeOffered) {
+                Button("Run review") {
+                    state.disarm()
+                    runReview(live)
+                }
+                .buttonStyle(.plain)
+                .controlSize(.small)
+                .foregroundStyle(Theme.faint)
+                .clickable()
+            }
+        }
+        .font(Theme.mono(11))
+    }
+
+    private func merge(_ live: BoardCard) {
+        state.refusals[live.id] = ""
+        let tip = changes?.branchTip ?? ""
+        Task { @MainActor in
+            let result = await client.boardMerge(live.id, expectedTip: tip)
+            if !result.ok { state.refusals[live.id] = result.detail }
+            await client.refresh()
+            await loadChanges()
+        }
+    }
+
+    private func fixMerge(_ live: BoardCard) {
+        state.refusals[live.id] = ""
+        Task { @MainActor in
+            let result = await client.boardMergeFix(live.id)
+            if !result.ok { state.refusals[live.id] = result.detail }
+            await client.refresh()
+        }
+    }
+
+    private func runReview(_ live: BoardCard) {
+        state.refusals[live.id] = ""
+        Task { @MainActor in
+            let result = await client.boardReviewRun(live.id)
+            if !result.ok { state.refusals[live.id] = result.detail }
+            await client.refresh()
+        }
+    }
+
+    /// CHANGES is drawn on a Done or ended card that remembers a branch.
+    private func showsChanges(_ live: BoardCard) -> Bool {
+        !live.worktreeBranch.isEmpty && (stage == .done || stage == .ended)
+    }
+
+    private var changesOpen: Bool {
+        openedSections.contains(.changes)
+    }
+
+    /// One request per open and per moment the page can go stale — never
+    /// per frame, and never while the section is closed.
+    private var changesFetchKey: String {
+        guard changesOpen, let live else { return "closed" }
+        return "\(live.id)-\(live.mergeState)-\(live.reviewVerdict)-\(live.reviewRunning)"
+    }
+
+    private func loadChanges() async {
+        guard changesOpen, !isComposer, let live, showsChanges(live) else {
+            changes = nil
+            changesFailed = false
+            changeFile = nil
+            changeDiff = nil
+            return
+        }
+        if let report = await client.cardChanges(live.id) {
+            changes = report
+            changesFailed = false
+        } else {
+            changesFailed = changes == nil
+        }
+        changeFile = nil
+        changeDiff = nil
+    }
+
+    private func openChange(_ index: Int) {
+        guard let live, let tip = changes?.branchTip, !tip.isEmpty else { return }
+        if changeFile == index {
+            changeFile = nil
+            changeDiff = nil
+            return
+        }
+        changeFile = index
+        changeDiff = nil
+        Task {
+            let fetched = await client.cardChangeDiff(live.id, file: index, tip: tip)
+            guard changeFile == index else { return }
+            changeDiff = fetched ?? CardChangeDiff.unreadable
+        }
+    }
+
+    /// The branch against the main line: commits, then files with their
+    /// added and removed lines, a file's changes on a tap, the review's
+    /// verdict and the three buttons. Every sentence is the daemon's or the
+    /// rule's; this view composes none.
+    @ViewBuilder
+    private var changesSection: some View {
+        if let live, showsChanges(live) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("CHANGES")
+                    .font(Theme.mono(11, weight: .semibold))
+                    .foregroundStyle(Theme.phosphor)
+                if let report = changes {
+                    changesBody(report)
+                } else if changesFailed {
+                    Text("Dark Army could not read this branch's changes.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("Reading the branch…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                if mergeControls(live) {
+                    mergeVerbs(live)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func changesBody(_ report: CardChangesReport) -> some View {
+        if !report.available {
+            Text(report.reason)
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text("\(report.ahead) ahead of \(report.trunk), \(report.behind) behind")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            ForEach(report.commits) { commit in
+                HStack(spacing: 8) {
+                    Text(commit.sha8)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(.secondary)
+                    Text(commit.subject)
+                        .font(.system(size: 12))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if report.commitsTruncated {
+                Text("· more commits than are listed")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            ForEach(Array(report.files.enumerated()), id: \.offset) { pair in
+                changeFileRow(pair.offset, pair.element)
+            }
+            if report.filesTruncated {
+                Text("· \(report.filesTotal) files changed, not all listed")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            if !report.mergeOffered, !report.mergeRefusal.isEmpty {
+                Text(report.mergeRefusal)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func changeFileRow(_ index: Int, _ file: CardChangeFile) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(file.path)
+                    .font(Theme.mono(11))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(file.binary ? "binary" : "+\(file.added) \u{2212}\(file.removed)")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { openChange(index) }
+            .clickable()
+            if changeFile == index {
+                if let diff = changeDiff {
+                    if diff.available {
+                        ScrollView(.horizontal) {
+                            Text(diff.text)
+                                .font(Theme.mono(10))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxHeight: 320)
+                        if diff.truncated {
+                            Text("· cut short")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                    } else {
+                        Text(diff.reason)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                    }
+                } else {
+                    Text("Reading that file…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 

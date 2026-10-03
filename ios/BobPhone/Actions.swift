@@ -184,6 +184,22 @@ enum PhoneActions {
     /// on the Mac: it destroys nothing. Drawn only against a Mac whose
     /// board says `promote_supported`; an older Mac 404s the verb.
     static let boardPromote = "board_promote"
+    /// Route: `BobDaemon.merge_card` — land a Done card's branch on the
+    /// local main line as a merge commit, after the project's checks, with
+    /// nothing pushed. The press echoes the branch tip the CHANGES list was
+    /// read at (`PhoneCardAck.mergeFields`), the Mac refuses a branch that
+    /// moved, answers at once and works in the background. Armed then
+    /// confirmed here, `boardManualClear`'s thumb rule. Drawn only against
+    /// a Mac whose board says `merge_writable`.
+    static let boardMerge = "board_merge"
+    /// Route: `BobDaemon.fix_merge_card` — start the card's own assistant in
+    /// the card's folder to fix a merge that stopped. Armed then confirmed:
+    /// it opens a terminal on the Mac.
+    static let boardMergeFix = "board_merge_fix"
+    /// Route: `BobDaemon.run_card_review` — an assistant reads the branch
+    /// and puts SHIP or STOP on the card. One press, changes no files.
+    /// Drawn only against a Mac whose board says `review_run_writable`.
+    static let boardReviewRun = "board_review_run"
 
     /// The sealed home route every read and action rides. Named here so no
     /// other file spells it.
@@ -317,6 +333,15 @@ enum PhoneCardAck {
 
     static func manualClearFields(_ card: BoardCard) -> [String: String] {
         ["card_id": card.id, "expected_manual_steps": card.manualSteps]
+    }
+
+    /// `card_id`, and the branch tip the list was read at when there is one:
+    /// the Mac refuses a MERGE whose branch moved since. Absent tip means no
+    /// guard, `expected_revision`'s rule.
+    static func mergeFields(_ card: BoardCard, tip: String) -> [String: String] {
+        var fields = ["card_id": card.id]
+        if !tip.isEmpty { fields["expected_tip"] = tip }
+        return fields
     }
 
     static func reviewFields(_ card: BoardCard) -> [String: String] {

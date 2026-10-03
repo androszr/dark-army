@@ -1363,6 +1363,15 @@ struct Board: Decodable {
     /// Its twin for Mark reviewed — `board_review`. Two flags, not one, so a
     /// Mac that honours one verb and not the other hides exactly one button.
     var reviewWritable = false
+    /// Review and merge on a Done card (`docs/card-worktrees.md`). Three
+    /// markers, `manualOutcomeWritable`'s argument: whether this Mac serves
+    /// the sealed `card_changes` read, and whether it honours `board_merge`
+    /// / `board_merge_fix` and `board_review_run` from a phone. Absent from
+    /// an older Mac is **false**, so the CHANGES row, MERGE, Fix and Run
+    /// review are drawn **absent** rather than present and 404ing.
+    var cardChangesSupported = false
+    var mergeWritable = false
+    var reviewRunWritable = false
     /// Whether the next Start opens Dark Army's own terminal. START HERE
     /// is drawn only while this is off, so the two buttons cannot do the
     /// same thing. Absent from an older Mac is **false**.
@@ -1437,6 +1446,9 @@ struct Board: Decodable {
         case manualChecksSupported = "manual_checks_supported"
         case manualOutcomeWritable = "manual_outcome_writable"
         case reviewWritable = "review_writable"
+        case cardChangesSupported = "card_changes_supported"
+        case mergeWritable = "merge_writable"
+        case reviewRunWritable = "review_run_writable"
         case ownTerminalEnabled = "own_terminal_enabled"
         case ownTerminalSpawnSupported = "own_terminal_spawn_supported"
         case doneClearToken = "done_clear_token"
@@ -1496,6 +1508,9 @@ struct Board: Decodable {
         manualChecksSupported = c.value(.manualChecksSupported, false)
         manualOutcomeWritable = c.value(.manualOutcomeWritable, false)
         reviewWritable = c.value(.reviewWritable, false)
+        cardChangesSupported = c.value(.cardChangesSupported, false)
+        mergeWritable = c.value(.mergeWritable, false)
+        reviewRunWritable = c.value(.reviewRunWritable, false)
         ownTerminalEnabled = c.value(.ownTerminalEnabled, false)
         ownTerminalSpawnSupported = c.value(.ownTerminalSpawnSupported, false)
         doneClearToken = c.value(.doneClearToken, "")
@@ -1950,6 +1965,164 @@ enum WorkRecordFormat {
     }
 }
 
+/// One commit on a card's branch, as the sealed `card_changes` read lists it.
+struct CardChangeCommit: Decodable, Equatable, Identifiable {
+    var sha8 = ""
+    var author = ""
+    var at: Double = 0
+    var subject = ""
+
+    var id: String { sha8 + subject }
+
+    enum CodingKeys: String, CodingKey { case sha8, author, at, subject }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sha8 = c.value(.sha8, "")
+        author = c.value(.author, "")
+        at = c.value(.at, 0)
+        subject = c.value(.subject, "")
+    }
+}
+
+/// One file the branch changed. A binary file carries no counts of its own
+/// (`binary` is stated); the view names it rather than drawing zeros.
+struct CardChangeFile: Decodable, Equatable, Identifiable {
+    var path = ""
+    var added = 0
+    var removed = 0
+    var binary = false
+
+    var id: String { path }
+
+    enum CodingKeys: String, CodingKey { case path, added, removed, binary }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = c.value(.path, "")
+        added = c.value(.added, 0)
+        removed = c.value(.removed, 0)
+        binary = c.value(.binary, false)
+    }
+}
+
+/// The review a card carries, as the Changes read states it: `current` is
+/// false when the branch moved since the version judged.
+struct CardChangeReview: Decodable, Equatable {
+    var verdict = ""
+    var tip = ""
+    var current = false
+
+    enum CodingKeys: String, CodingKey { case verdict, tip, current }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        verdict = c.value(.verdict, "")
+        tip = c.value(.tip, "")
+        current = c.value(.current, false)
+    }
+
+    init() {}
+}
+
+/// The sealed `card_changes` page — a Done card's branch against the main
+/// line. `available` is **stated**; `files` absent decodes empty.
+/// `branchTip` is echoed back on a file's changes and on MERGE.
+struct CardChangesReport: Decodable, Equatable {
+    var available = false
+    var cardId = ""
+    var branch = ""
+    var trunk = ""
+    var mergeBase = ""
+    var branchTip = ""
+    var ahead = 0
+    var behind = 0
+    var commits: [CardChangeCommit] = []
+    var files: [CardChangeFile] = []
+    var filesTotal = 0
+    var filesTruncated = false
+    var commitsTruncated = false
+    var mergeOffered = false
+    var mergeRefusal = ""
+    var mergeState = ""
+    var mergeNote = ""
+    var review = CardChangeReview()
+    var generatedAt: Double = 0
+    var reason = ""
+
+    enum CodingKeys: String, CodingKey {
+        case available, branch, trunk, ahead, behind, commits, files, review, reason
+        case cardId = "card_id"
+        case mergeBase = "merge_base"
+        case branchTip = "branch_tip"
+        case filesTotal = "files_total"
+        case filesTruncated = "files_truncated"
+        case commitsTruncated = "commits_truncated"
+        case mergeOffered = "merge_offered"
+        case mergeRefusal = "merge_refusal"
+        case mergeState = "merge_state"
+        case mergeNote = "merge_note"
+        case generatedAt = "generated_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        cardId = c.value(.cardId, "")
+        branch = c.value(.branch, "")
+        trunk = c.value(.trunk, "")
+        mergeBase = c.value(.mergeBase, "")
+        branchTip = c.value(.branchTip, "")
+        ahead = c.value(.ahead, 0)
+        behind = c.value(.behind, 0)
+        commits = c.value(.commits, [])
+        files = c.value(.files, [])
+        filesTotal = c.value(.filesTotal, 0)
+        filesTruncated = c.value(.filesTruncated, false)
+        commitsTruncated = c.value(.commitsTruncated, false)
+        mergeOffered = c.value(.mergeOffered, false)
+        mergeRefusal = c.value(.mergeRefusal, "")
+        mergeState = c.value(.mergeState, "")
+        mergeNote = c.value(.mergeNote, "")
+        review = c.value(.review, CardChangeReview())
+        generatedAt = c.value(.generatedAt, 0)
+        reason = c.value(.reason, "")
+    }
+}
+
+/// One file's changes on a card's branch, fetched on demand.
+struct CardChangeDiff: Decodable, Equatable {
+    var available = false
+    var path = ""
+    var text = ""
+    var truncated = false
+    var reason = ""
+
+    enum CodingKeys: String, CodingKey {
+        case available, path, text, truncated, reason
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        path = c.value(.path, "")
+        text = c.value(.text, "")
+        truncated = c.value(.truncated, false)
+        reason = c.value(.reason, "")
+    }
+
+    init() {}
+
+    /// What the screen draws when the read itself failed (no answer, or the
+    /// branch moved since the list was read): words, never a blank.
+    static var unreadable: CardChangeDiff {
+        var diff = CardChangeDiff()
+        diff.reason = "Dark Army could not read that file's changes — "
+            + "open the list again."
+        return diff
+    }
+}
+
 struct BoardCard: Decodable, Identifiable, Equatable {
     var outcomeRevision = 0
     var outcomeStatus = "unaccepted"
@@ -2012,6 +2185,20 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// The store's own bound on one card's list (`board.MAX_BLOCKERS`).
     static let maxDependencies = 8
     var manualCheckDue = false
+    /// The card's branch (`card/…`), `""` where it never had one. With the
+    /// next four it is what `CardMerge` reads: the branch the daemon
+    /// remembers, what the last MERGE press came to (`merge_state`) with the
+    /// daemon's sentence about it (`merge_line`, drawn verbatim), a review's
+    /// verdict and whether one is running. Absent keys — an older Mac —
+    /// decode empty or false and draw nothing.
+    var worktreeBranch = ""
+    var mergeState = ""
+    var mergeLine = ""
+    var reviewVerdict = ""
+    var reviewRunning = false
+    /// The Mac's one fact for MERGE, Fix and Run review (`merge_offered`);
+    /// absent from an older Mac is false.
+    var mergeOffered = false
     /// The daemon decides which cards have lost their session.
     var needsYou = false
     /// Mission Control asked for this card to be started (the daemon's
@@ -2197,6 +2384,12 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case queueState = "queue_state"
         case queueReason = "queue_reason"
         case manualCheckDue = "manual_check_due"
+        case worktreeBranch = "worktree_branch"
+        case mergeState = "merge_state"
+        case mergeLine = "merge_line"
+        case reviewVerdict = "review_verdict"
+        case reviewRunning = "review_running"
+        case mergeOffered = "merge_offered"
         case needsYou = "needs_you"
         case startAskId = "start_ask_id"
         case startAskedAt = "start_asked_at"
@@ -2249,6 +2442,12 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         queueState = c.value(.queueState, "")
         queueReason = c.value(.queueReason, "")
         manualCheckDue = c.value(.manualCheckDue, false)
+        worktreeBranch = c.value(.worktreeBranch, "")
+        mergeState = c.value(.mergeState, "")
+        mergeLine = c.value(.mergeLine, "")
+        reviewVerdict = c.value(.reviewVerdict, "")
+        reviewRunning = c.value(.reviewRunning, false)
+        mergeOffered = c.value(.mergeOffered, false)
         manualSteps = c.value(.manualSteps, "")
         manualCheckPath = c.value(.manualCheckPath, "")
         needsYou = c.value(.needsYou, false)

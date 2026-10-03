@@ -552,6 +552,12 @@ tile's; `closeEditor()` disarms. Phone copy byte-equal
 draws the file in its manual-check section with **Passed** / **Failed** and
 **Open in Checks** (the Checks window, `ManualChecksWindow.swift`, from
 Settings → Projects), where Mark checked is hidden.
+**A Done card that remembers its branch draws review and merge**
+(`CardMerge.swift`, one rule with the phone's byte-equal copy): dim **MERGE**
+and **Fix** (armed in `BoardState.mergeArmed` / `fixArmed`) and **Review** on
+the tile, a **CHANGES** section behind MORE fetched on open
+(`GET /api/card-changes`), and the daemon's `merge_line` and verdict
+verbatim; `docs/card-worktrees.md`, *Review and merge*.
 
 The composer is the same view with `card == nil`, plus three things a card
 could never show. **The documents the card points at**: `BoardDocuments` pulls

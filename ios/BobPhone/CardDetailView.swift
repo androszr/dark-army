@@ -233,7 +233,17 @@ struct PhoneCardDetailView: View {
         case start, startHere, done, refine, delete, move, tool, model
         case save, approve, message, startWhenPlanned
         case manualClear, manualOutcome, review, promote, dependencies
+        case merge, mergeFix, reviewRun
     }
+
+    /// The CHANGES page (`card_changes`), fetched when its fold row opens and
+    /// held for this screen's life; the one file whose changes are open, by
+    /// its index in that page and the tip the page was read at. View state
+    /// only: on no card, in no cache, never read by the poll.
+    @State private var changes: CardChangesReport?
+    @State private var changesFailed = false
+    @State private var openChangeFile: Int?
+    @State private var changeDiff: CardChangeDiff?
 
     private var board: Board { client.snapshot.board }
 
@@ -517,11 +527,19 @@ struct PhoneCardDetailView: View {
             pendingTool = nil
             pendingModel = nil
             openedSections = []
+            changes = nil
+            changesFailed = false
+            openChangeFile = nil
+            changeDiff = nil
         }
         // A card that moves column while its screen is up starts back at the
         // rule for where it is now.
         .onChange(of: stage) { _, _ in openedSections = [] }
         .task(id: seed.id) { await loadFull() }
+        // The branch against the main line, read when CHANGES opens and
+        // again only when a merge or a review moves the card — never from
+        // the poll, `backgroundRefresh` or the widget.
+        .task(id: changesFetchKey) { await loadChanges() }
     }
 
     // MARK: - Which sections lead, and which fold
@@ -579,10 +597,15 @@ struct PhoneCardDetailView: View {
                 || (canRefine && board.startWhenPlannedSupported)
                 || (canStart && nextAction != .start)
                 || (arm.done != nil && nextAction != .done)
+                || mergeControlsShown
         case .collaboration: return client.snapshot.collaboration != nil
         case .more: return CardSections.hidden(for: stage).contains { hasContent($0) }
         case .plan: return !card.planPath.isEmpty && plan != nil
         case .workRecord: return card.workRecord != nil
+        case .changes:
+            return cardIsLive && board.cardChangesSupported
+                && !card.worktreeBranch.isEmpty
+                && (stage == .done || stage == .ended)
         case .run, .documents, .attachments, .session: return false
         case .editor: return true
         case .instructions: return !fullPrompt.isEmpty
@@ -649,6 +672,7 @@ struct PhoneCardDetailView: View {
         case .workRecord:
             PhoneWorkRecordSection(client: client, card: card)
                 .id(card.id)
+        case .changes: changesSection
         case .run, .documents, .attachments, .session: EmptyView()
         case .editor:
             Rectangle().fill(Theme.hair).frame(height: 1)
@@ -871,6 +895,26 @@ struct PhoneCardDetailView: View {
                 .foregroundStyle(card.isBatchWaiting ? Theme.faint : Theme.phosphor)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel(card.batchLine)
+        }
+        // What the last MERGE press came to and the review's verdict, the
+        // Mac's words verbatim (`merge_line`, `CardMerge.verdictLine`) —
+        // drawn only against a Mac that publishes them, amber where it
+        // needs you.
+        if board.mergeWritable, !card.mergeLine.isEmpty {
+            Text(card.mergeLine)
+                .font(Theme.mono(12))
+                .foregroundStyle(["blocked", "conflict", "checks_failed"]
+                    .contains(card.mergeState) ? Theme.amber : Theme.dim)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(card.mergeLine)
+        }
+        if board.reviewRunWritable, let verdict = CardMerge.verdictLine(
+            verdict: card.reviewVerdict, running: card.reviewRunning,
+            current: changes?.review.current ?? true) {
+            Text(verdict)
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.dim)
+                .fixedSize(horizontal: false, vertical: true)
         }
         liveState
         // How the run is going — `RunHealthLine.text`, byte-equal with the
@@ -1243,6 +1287,272 @@ struct PhoneCardDetailView: View {
             }
         } else {
             arm.arm(.review, id: card.id)
+        }
+    }
+
+    // MARK: - Review and merge
+
+    /// MERGE: the shared rule (`CardMerge`) and this Mac's marker, on a live
+    /// card — a seed could still read Done after the Mac merged it. Once
+    /// the CHANGES page is read, the Mac's own `merge_offered` also has its
+    /// say (a Failed hand-check shows nowhere else on the card).
+    private var showsMerge: Bool {
+        cardIsLive && board.mergeWritable
+            && CardMerge.offered(column: card.column, branch: card.worktreeBranch,
+                                 mergeState: card.mergeState,
+                                 manualDue: !card.manualSteps.isEmpty,
+                                 daemonOffers: card.mergeOffered)
+    }
+
+    private var showsMergeFix: Bool {
+        cardIsLive && board.mergeWritable
+            && CardMerge.fixOffered(mergeState: card.mergeState,
+                                    daemonOffers: card.mergeOffered)
+    }
+
+    private var showsReviewRun: Bool {
+        cardIsLive && board.reviewRunWritable
+            && CardMerge.reviewOffered(column: card.column,
+                                       branch: card.worktreeBranch,
+                                       reviewRunning: card.reviewRunning,
+                                       manualDue: !card.manualSteps.isEmpty,
+                                       daemonOffers: card.mergeOffered)
+    }
+
+    private var mergeControlsShown: Bool {
+        showsMerge || showsMergeFix || showsReviewRun
+            || (board.mergeWritable && card.mergeState == "merging")
+    }
+
+    /// The three presses. MERGE and Fix are armed then confirmed, each in
+    /// its own `Arm` slot; Run review is one press. `queueMark` and
+    /// `queueNote` speak for them as for every verb.
+    @ViewBuilder
+    private var mergeVerbs: some View {
+        if showsMerge {
+            DecryptButton(mergeLabel) { pressMerge() }
+                .buttonStyle(AlarmOutline())
+                .disabled(sending)
+                .accessibilityLabel(pressed == .merge
+                    ? spokenMark
+                    : (arm.merge != nil ? "Merge into main, press again to confirm"
+                                        : "Merge into main"))
+        } else if board.mergeWritable && card.mergeState == "merging" {
+            Text(CardMerge.mergeLabel(mergeState: "merging", armed: false))
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.dim)
+        }
+        if showsMergeFix {
+            DecryptButton(fixLabel) { pressMergeFix() }
+                .buttonStyle(AlarmOutline())
+                .disabled(sending)
+                .accessibilityLabel(pressed == .mergeFix
+                    ? spokenMark
+                    : (arm.mergeFix != nil ? "Fix the merge, press again to confirm"
+                                           : "Fix the merge"))
+        }
+        if showsReviewRun {
+            DecryptButton(pressed == .reviewRun ? mark : "RUN REVIEW") { pressReviewRun() }
+                .buttonStyle(AlarmOutline())
+                .disabled(sending)
+                .accessibilityLabel(pressed == .reviewRun ? spokenMark : "Run a review")
+        }
+    }
+
+    private var mergeLabel: String {
+        if pressed == .merge { return mark }
+        return CardMerge.mergeLabel(mergeState: card.mergeState,
+                                    armed: arm.merge != nil)
+    }
+
+    private var fixLabel: String {
+        if pressed == .mergeFix { return mark }
+        return CardMerge.fixLabel(armed: arm.mergeFix != nil)
+    }
+
+    /// Echoes the branch tip the CHANGES page was read at when it was read;
+    /// the Mac refuses a branch that moved since, in words.
+    private func pressMerge() {
+        let fields = PhoneCardAck.mergeFields(card, tip: changes?.branchTip ?? "")
+        if arm.confirm(.merge, id: card.id) {
+            Task {
+                let result = await send(PhoneActions.boardMerge, fields,
+                                        as: .merge)
+                apply(result)
+            }
+        } else {
+            arm.arm(.merge, id: card.id)
+        }
+    }
+
+    private func pressMergeFix() {
+        if arm.confirm(.mergeFix, id: card.id) {
+            Task {
+                let result = await send(PhoneActions.boardMergeFix,
+                                        ["card_id": card.id], as: .mergeFix)
+                apply(result)
+            }
+        } else {
+            arm.arm(.mergeFix, id: card.id)
+        }
+    }
+
+    /// One press, no arm: a review changes no files and a second press is
+    /// refused in words while one is running.
+    private func pressReviewRun() {
+        Task {
+            let result = await send(PhoneActions.boardReviewRun,
+                                    ["card_id": card.id], as: .reviewRun)
+            apply(result)
+        }
+    }
+
+    /// One request per open of the fold row and per moment the page can go
+    /// stale (a merge landing, a verdict arriving). `"closed"` while the row
+    /// is shut, so nothing is read for a card nobody is looking at.
+    private var changesFetchKey: String {
+        guard openedSections.contains(.changes), cardIsLive,
+              board.cardChangesSupported else { return "closed" }
+        return "\(card.id)-\(card.mergeState)-\(card.reviewVerdict)-\(card.reviewRunning)"
+    }
+
+    private func loadChanges() async {
+        guard changesFetchKey != "closed" else { return }
+        let wanted = card.id
+        let fetched = await client.fetchCardChanges(wanted)
+        guard wanted == card.id else { return }
+        if let fetched {
+            changes = fetched
+            changesFailed = false
+        } else {
+            changesFailed = changes == nil
+        }
+        openChangeFile = nil
+        changeDiff = nil
+    }
+
+    private func openChange(_ index: Int) {
+        guard let tip = changes?.branchTip, !tip.isEmpty else { return }
+        if openChangeFile == index {
+            openChangeFile = nil
+            changeDiff = nil
+            return
+        }
+        openChangeFile = index
+        changeDiff = nil
+        let wanted = card.id
+        Task {
+            let fetched = await client.fetchCardChangeDiff(wanted, file: index,
+                                                           tip: tip)
+            guard wanted == card.id, openChangeFile == index else { return }
+            changeDiff = fetched ?? CardChangeDiff.unreadable
+        }
+    }
+
+    /// The branch against the main line: commits, then files with their
+    /// counts, a file's changes on a tap. Every sentence is the Mac's; the
+    /// phone counts and words nothing itself.
+    @ViewBuilder
+    private var changesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let report = changes {
+                if !report.available {
+                    Text(report.reason)
+                        .font(Theme.mono(12))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("\(report.ahead) ahead of \(report.trunk), \(report.behind) behind")
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.dim)
+                    ForEach(report.commits) { commit in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(commit.sha8)
+                                .font(Theme.mono(11))
+                                .foregroundStyle(Theme.faint)
+                            Text(commit.subject)
+                                .font(Theme.mono(12))
+                                .foregroundStyle(Theme.phosphor)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    if report.commitsTruncated {
+                        Text("· more commits than are listed")
+                            .font(Theme.mono(11))
+                            .foregroundStyle(Theme.faint)
+                    }
+                    ForEach(Array(report.files.enumerated()), id: \.offset) { pair in
+                        changeFileRow(pair.offset, pair.element)
+                    }
+                    if report.filesTruncated {
+                        Text("· \(report.filesTotal) files changed, not all listed")
+                            .font(Theme.mono(11))
+                            .foregroundStyle(Theme.faint)
+                    }
+                    if !report.mergeOffered, !report.mergeRefusal.isEmpty {
+                        Text(report.mergeRefusal)
+                            .font(Theme.mono(12))
+                            .foregroundStyle(Theme.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } else if changesFailed {
+                Text("Dark Army could not be reached for this branch's changes.")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.dim)
+            } else {
+                Text("Reading the branch…")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.dim)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func changeFileRow(_ index: Int, _ file: CardChangeFile) -> some View {
+        let counts = file.binary ? "binary" : "+\(file.added) \u{2212}\(file.removed)"
+        DecryptButton(action: { openChange(index) }) {
+            HStack(spacing: 8) {
+                Text(file.path)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.phosphor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(.leading)
+                Text(counts)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.dim)
+            }
+            .frame(minHeight: 44)
+            .accessibilityElement(children: .combine)
+        }
+        .buttonStyle(.plain)
+        if openChangeFile == index {
+            if let diff = changeDiff {
+                if diff.available {
+                    ScrollView(.horizontal) {
+                        Text(diff.text)
+                            .font(Theme.mono(10))
+                            .foregroundStyle(Theme.dim)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if diff.truncated {
+                        Text("· only the start of this file's changes")
+                            .font(Theme.mono(11))
+                            .foregroundStyle(Theme.faint)
+                    }
+                } else {
+                    Text(diff.reason)
+                        .font(Theme.mono(12))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text("Reading that file…")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.dim)
+            }
         }
     }
 
@@ -1692,6 +2002,7 @@ struct PhoneCardDetailView: View {
         if arm.done != nil && nextAction != .done {
             doneArmedButton
         }
+        mergeVerbs
         // "Start the work by itself the moment the plan lands." Unarmed:
         // setting it destroys nothing and the undo is pressing it again. Two
         // gates, `canRefine` and the version marker, so it sits exactly where
@@ -2726,6 +3037,11 @@ enum CardSections {
         /// keep their lines). Pinned beside QUEUED, because a card held by a
         /// dependency says so in the queued line and the reason sits here.
         case dependencies = "WAITS ON"
+        /// A finished card's branch against the main line: its commits,
+        /// the files it changed and each one's changes (added 3 Oct 2026,
+        /// after WAITS ON so the earlier labels keep their lines). Fetched
+        /// on the row's open, never on a poll.
+        case changes = "CHANGES"
     }
 
     /// Where the card is in its life. Four columns, with In progress split
@@ -2797,14 +3113,15 @@ enum CardSections {
                     .thread, .otherVerbs, .objective, .collaboration, .timeline,
                     .attachments, .documents, .danger]
         case .ended:
-            return [.status, .report, .verbs, .queue, .dependencies, .more, .workRecord, .run,
+            return [.status, .report, .verbs, .queue, .dependencies, .more, .workRecord,
+                    .changes, .run,
                     .manualCheck, .closeSignature, .plan, .instructions, .editor,
                     .session, .thread, .crew, .otherVerbs, .objective,
                     .collaboration, .timeline, .attachments,
                     .documents, .danger]
         case .done:
             return [.status, .closeSignature, .report, .verbs, .queue, .dependencies, .more,
-                    .objective, .workRecord, .run, .plan, .instructions, .crew,
+                    .objective, .workRecord, .changes, .run, .plan, .instructions, .crew,
                     .session, .thread, .editor, .otherVerbs, .collaboration,
                     .timeline, .attachments, .documents, .danger]
         }

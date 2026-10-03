@@ -152,7 +152,9 @@ def compose(nickname: str, name: str, project: str = "") -> str:
 #: the words `daemon_board` gave the terminal at the spawn, kept so a planning
 #: tab and a building tab for one card still read apart. Start has no prefix:
 #: building is the default reading of a card's name.
-ORIGIN_PREFIX = {"card-refine": "refine: ", "card-consult": "ask: "}
+ORIGIN_PREFIX = {"card-refine": "refine: ", "card-consult": "ask: ",
+                 "card-review": "review: ",
+                 "card-merge-fix": "fix: "}
 
 #: `daemon.UNNAMED_SESSION`, spelled here rather than imported: this module
 #: is pure and the daemon imports it, not the other way round.
