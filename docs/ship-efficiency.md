@@ -726,8 +726,9 @@ What changed, and what it measured:
   module, or a tree the test greps, or the id is green at the baseline),
   `PRE-EXISTING` (red at the baseline too — never fixed in the run) and
   `IN-FLIGHT` (a candidate dirty now, clean at this run's baseline, and
-  absent from the delta — including `ios/BobPhone/` for phone source-grep
-  tests whose Swift moved under another card). Two cards building in one
+  absent from the delta — including `ios/BobPhone/`, `docs/`, or the agent trees
+  `.claude/agents/`, `.codex/agents/`, `.grok/agents/` for tests that read
+  them). Two cards building in one
   tree stop sorting each other's red tests. An unbuildable baseline still
   classifies those dirty sources as `IN-FLIGHT`, not `YOURS`.
 - **The full suite runs twice per clean run** — the implementer's once at the

@@ -125,7 +125,7 @@ Every red id outside the files you touched goes through `bash
 of three words per id:
 
 - **YOURS** — the delta touches the test, the module it is named after, or a
-  tree the test greps (`ios/BobPhone/` for phone source-grep tests), or the
+  tree the test greps (`ios/BobPhone/`, `docs/`, or the agent trees `.claude/agents/`, `.codex/agents/`, `.grok/agents/`), or the
   id is green at a working baseline with no such dirty sources: fix it.
 - **PRE-EXISTING** — red at the baseline too. The helper replays the id in a
   baseline worktree, a second tree beside this one cut with `git worktree add`
@@ -135,7 +135,8 @@ of three words per id:
   keeps it out of `failing_ids` so it cannot trip the same-failure stop.
 - **IN-FLIGHT** — another run's half-built work: a candidate dirty now, clean
   at this run's baseline, and absent from the delta. For phone source-grep
-  tests that includes `ios/BobPhone/`; for the inventory tests, `docs/`
+  tests that includes `ios/BobPhone/`; for inventory tests, `docs/`; for agent
+  readers, the agent trees `.claude/agents/`, `.codex/agents/`, `.grok/agents/`
   (`gate.sh` holds the list), even when this card touched one file of that
   tree. List it under `IN-FLIGHT:`, never fix it, never count it; the last
   run to finish is the one that must be green on the whole tree.
