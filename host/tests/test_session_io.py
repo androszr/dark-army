@@ -90,6 +90,32 @@ def test_a_pty_that_takes_no_words_gets_no_enter(monkeypatch):
     assert typed == ["hello"], "an Enter after unsent words would submit a stale line"
 
 
+def test_an_enter_that_does_not_land_is_not_sent(monkeypatch):
+    """The pty went away in the gap: the words were typed, the line was
+    never submitted, and the reply must not say `sent`."""
+    replies = iter([{"sent": True, "matchedBy": "pty"}, None])
+    monkeypatch.setattr(ptyhost, "owns", lambda pid: "pty-1")
+    monkeypatch.setattr(ptyhost, "send", lambda handle, text, newline=True: next(replies))
+    monkeypatch.setattr(session_io, "PTY_ENTER_GAP_SECONDS", 0.0)
+    assert asyncio.run(session_io.send_text(42, "", "hello")) is None
+
+
+def test_two_lines_to_one_pty_never_interleave(monkeypatch):
+    """The gap hands the loop away; a second line in that window waits for
+    the first line's Enter instead of landing between its words and it."""
+    typed = []
+    monkeypatch.setattr(ptyhost, "owns", lambda pid: "pty-1")
+    monkeypatch.setattr(ptyhost, "send", lambda handle, text, newline=True:
+                        typed.append(text) or {"sent": True})
+    monkeypatch.setattr(session_io, "PTY_ENTER_GAP_SECONDS", 0.01)
+
+    async def both():
+        await asyncio.gather(session_io.send_text(42, "", "one"),
+                             session_io.send_text(42, "", "two"))
+    asyncio.run(both())
+    assert typed == ["one", "\r", "two", "\r"]
+
+
 def test_send_text_falls_through_with_the_callers_positional_shape(monkeypatch):
     """The stubs every other suite uses: `async def _send(pid, tty, text,
     newline=True)`. `newline=` is passed only when it is not the default."""

@@ -135,8 +135,9 @@ RUN_HEALTH_PATH = STATE_DIR / 'run-health.json'
 MISSION_PATH = STATE_DIR / "mission.json"
 # The last successful Rebuild & restart (rebuild_state.py): when it started and
 # when it finished, written by the menu-bar app just before it restarts, so the
-# fresh daemon can say the rebuild landed. No secret in it, so deliberately not
-# in `_PRIVATE_FILES`.
+# fresh daemon can say the rebuild landed. It also holds the last phone press's
+# one-time command token (so a replay after the restart is refused), so 0600 in
+# `_PRIVATE_FILES` like the other files a token rides.
 REBUILD_STAMP_PATH = STATE_DIR / "rebuild-stamp.json"
 # The statusLine command we displaced, if the user already had one. Our script
 # shells out to it and prints its output verbatim, so installing Dark Army never costs
@@ -228,6 +229,9 @@ _PRIVATE_FILES = ("decisions.db", "decisions.db-wal", "decisions.db-shm",
                   # Dark Army's frozen run-health readings (run_health.py): card
                   # ids, project roots and counts, so the same ring.
                   "run-health.json",
+                  # The last Rebuild & restart (rebuild_state.py): it holds
+                  # the press's one-time command token, so the same ring.
+                  "rebuild-stamp.json",
                   # Mission Control's record (mission.py): a broker handle
                   # and a project root, so the same ring.
                   "mission.json",

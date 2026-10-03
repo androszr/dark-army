@@ -97,6 +97,7 @@ from . import inbox_ack
 from . import card_prepare
 from . import card_priority
 from . import attachments
+from . import worktrees
 from .session_store import save_sessions, load_sessions, load_pending_questions
 from .paths import PID_PATH, LOCK_PATH, STATE_DIR, ensure_state_dir
 from .daemon_board import BoardVerbsMixin
@@ -9758,10 +9759,17 @@ class BobDaemon(BoardVerbsMixin):
             # `self._rebuild` is replaced whole on the loop, so this executor
             # read is one frame stale at worst (the `can_low_priority`
             # precedent).
+            # A card folder (`<checkout>/.worktrees/card-…`) is never
+            # enrolled on its own, so `root_enrolled` would answer the main
+            # checkout for it — and a rebuild there would ship main without
+            # the card's unmerged branch while every surface said it landed.
+            # A card agent's row has no root for this rule.
+            row_cwd = entry.get("cwd", "") or ""
             entry["rebuild_offered"] = rebuild_state.offered(
                 getattr(stats, "rebuild_marker_at", 0.0),
                 stamp, own_root,
-                enrollment.root_enrolled(entry.get("cwd", "") or ""),
+                "" if worktrees.checkout_root(row_cwd) != row_cwd
+                else enrollment.root_enrolled(row_cwd),
                 self._rebuild)
             # What those numbers are *doing*. Computed here rather than in
             # signals.py so the rules stay pure functions of one entry — and

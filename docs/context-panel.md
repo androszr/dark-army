@@ -416,17 +416,8 @@ in full in `docs/phone-contract.md`.
 
 **The Mac board's ticks outlive looking away too** (25 Sep 2026): a
 search, a project change or a fold keeps select mode and its ticks, the
-batch button counts every ticked card drawn or not, and **a tick never
-moves a tile** (28 Sep 2026): the row keeps its column order, the tick box
-is an overlay on the card's corner rather than a slot before the title, the
-title is a second tick box, the other rows keep their SELECT, and the "tick
-at least" hint shares the buttons' line — anything that changed a height
-above the reader slid the card being read off the screen. A tile reads
-`BoardTileFacts`, its own slice of `BoardState`, and is `.equatable()`, so a
-tick or an arm redraws the tiles it names and no others; `BoardVisible.Slot`
-reuses the filter pass until the board, the project filter or the query
-change. A row past `BoardVisible.rowTileCap` (24) draws that many and a
-"show all" line, Done, a search and an opened row excepted.
+batch button counts every ticked card drawn or not, and a tick never
+moves a tile (`BoardTileFacts`, `BoardVisible.rowTileCap`).
 
 **The drop is the dispatch.** `.draggable(card.id)` on the card,
 `.dropDestination` on the row, and `BoardView.drop(_:into:)` resolves

@@ -146,6 +146,16 @@ def test_not_offered_in_another_project(monkeypatch, tmp_path):
 
 
 def test_not_offered_in_a_card_worktree(monkeypatch, tmp_path):
+    """The real layout: a card folder inside our own checkout, which
+    `root_enrolled` answers with the checkout itself. A rebuild there would
+    ship main without the card's branch."""
+    for cwd in (ROOT + "/.worktrees/card-abcd1234",
+                ROOT + "/.worktrees/card-abcd1234/host"):
+        row = _daemon(monkeypatch, tmp_path, cwd=cwd)
+        assert row["rebuild_offered"] is False, cwd
+
+
+def test_not_offered_when_our_root_is_another_checkout(monkeypatch, tmp_path):
     row = _daemon(monkeypatch, tmp_path, own=ROOT + "/main")
     assert row["rebuild_offered"] is False
 

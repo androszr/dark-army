@@ -338,8 +338,9 @@ struct PanelView: View {
     ///
     /// The inbox routes and does not answer: a session entry goes to the
     /// process table, where the permission bar and the question buttons
-    /// already know the burst rules, and a card entry reveals the card on the
-    /// board. A target that no longer resolves is a log line and nothing else.
+    /// already know the burst rules, and a card entry goes to its agent's row
+    /// while that agent is live, else reveals the card on the board. A target
+    /// that no longer resolves is a log line and nothing else.
     private func open(item: InboxItem) {
         switch item.target {
         case .session(let id):
@@ -349,6 +350,13 @@ struct PanelView: View {
             }
             show(row)
         case .card(let id):
+            // A card whose assistant is still in the fleet opens that agent's
+            // row and its detail tabs, the card one press away; the card
+            // itself only once the agent is gone (3 Oct 2026).
+            if !item.sessionId.isEmpty, let row = focusableRow(item.sessionId) {
+                show(row)
+                return
+            }
             guard let card = client.snapshot.board.cards.first(where: { $0.id == id }) else {
                 Trace.log("inbox — card gone \(id.prefix(8))")
                 return

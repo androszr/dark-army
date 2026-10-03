@@ -159,9 +159,10 @@ def offered(marker_at, stamp: dict, own_root: str, row_root: str,
     """Whether an agent's row carries the Rebuild button.
 
     `marker_at` is the transcript clock of the report's marker (0.0 for none);
-    `row_root` is the enrolled root the agent works in. The equality with
-    `own_root` is strict: a card worktree is its own root and is not Dark
-    Army's own checkout."""
+    `row_root` is the enrolled root the agent works in, or "" for an agent
+    in a card folder (the daemon's pass blanks it: a card folder is never
+    enrolled itself, so `root_enrolled` would name the main checkout). The
+    equality with `own_root` is strict."""
     try:
         marker = float(marker_at or 0.0)
     except (TypeError, ValueError):

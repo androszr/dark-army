@@ -451,15 +451,8 @@ bookkeeping, `batch_id`'s ring, and a surface that could write the path could
 aim the release at a folder Dark Army never made. The release also refuses a
 path not under `<root>/.worktrees/` (`worktrees.inside`).
 
-**A card's `root` is never a card folder.** A run inside a card folder files
-follow-up cards from its own cwd, and a card naming that folder was refused
-"no open window for that project" once the folder was released (28 Sep 2026).
-`worktrees.checkout_root` maps `<root>/.worktrees/card-…[/…]` to `<root>`,
-and it runs in `BoardStore.create`, in `update`'s `root`, in the channel's
-add-card path and, for cards already stored, in `_repair_worktree_roots` on
-every open (`revision` untouched). `_known_project_roots` admits the checkout
-of every live session's card folder, so such a card is dispatchable while no
-window has the checkout open.
+A card's `root` is never a card folder: `worktrees.checkout_root`,
+`_repair_worktree_roots`.
 
 ## The git argv
 

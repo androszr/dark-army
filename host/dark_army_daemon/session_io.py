@@ -35,6 +35,21 @@ from . import ptyhost, vscode_reveal
 #: the question burst's `QUESTION_KEY_GAP_SECONDS`, for the same reason.
 PTY_ENTER_GAP_SECONDS = 0.12
 
+#: One lock per (event loop, pty handle): the pause above hands the loop away
+#: between a line's words and its Enter, and a second line typed into the same
+#: pty in that window would read `text1text2\r\r` — one garbled submit. Keyed
+#: by the loop too, because an `asyncio.Lock` belongs to the loop that first
+#: waits on it.
+_PTY_LOCKS: dict = {}
+
+
+def _pty_lock(handle) -> asyncio.Lock:
+    key = (id(asyncio.get_running_loop()), handle)
+    lock = _PTY_LOCKS.get(key)
+    if lock is None:
+        lock = _PTY_LOCKS[key] = asyncio.Lock()
+    return lock
+
 
 def can_send_text(pid, tty: str = "") -> bool:
     """Could Dark Army type into this process's terminal?"""
@@ -62,23 +77,31 @@ async def send_text(pid, tty: str, text: str, newline: bool = True) -> Optional[
         return None
     handle = ptyhost.owns(pid)
     if handle is not None:
-        if not newline:
-            return ptyhost.send(handle, text, False)
-        # The words, a pause, then Enter as its own write. One write of
-        # `text + "\r"` reaches the TUI as a single burst, which Claude Code
-        # reads as a paste: the Enter lands as a line break in the input box
-        # and nothing is submitted (3 Oct 2026 — four phone messages to a
-        # card agent shown "delivered", none ever submitted). The question
-        # burst already spaces its keys by the same gap.
-        typed = ptyhost.send(handle, text, False)
-        if not (typed and typed.get("sent")):
-            return typed
-        await asyncio.sleep(PTY_ENTER_GAP_SECONDS)
-        entered = ptyhost.send(handle, "\r", False)
-        return entered if entered else typed
+        async with _pty_lock(handle):
+            return await _type_into_pty(handle, text, newline)
     if newline:
         return await vscode_reveal.send_text(pid, tty, text)
     return await vscode_reveal.send_text(pid, tty, text, newline=False)
+
+
+async def _type_into_pty(handle, text: str, newline: bool) -> Optional[dict]:
+    """`send_text`'s pty half, run under the handle's lock."""
+    if not newline:
+        return ptyhost.send(handle, text, False)
+    # The words, a pause, then Enter as its own write. One write of
+    # `text + "\r"` reaches the TUI as a single burst, which Claude Code
+    # reads as a paste: the Enter lands as a line break in the input box
+    # and nothing is submitted (3 Oct 2026 — four phone messages to a
+    # card agent shown "delivered", none ever submitted). The question
+    # burst already spaces its keys by the same gap.
+    typed = ptyhost.send(handle, text, False)
+    if not (typed and typed.get("sent")):
+        return typed
+    await asyncio.sleep(PTY_ENTER_GAP_SECONDS)
+    # The Enter's own answer, never the words': a pty that went away in the
+    # gap left the line unsubmitted, and saying `sent` would be the very
+    # "delivered, never submitted" this split exists to end.
+    return ptyhost.send(handle, "\r", False)
 
 
 async def close_terminal(pid, tty: str) -> Optional[dict]:
