@@ -88,4 +88,34 @@ final class AgentSheetSwipeTests: XCTestCase {
         router.replaceTop(.agent(agent("s1"), .waiting))
         XCTAssertEqual(router.topState!.replyDraft(for: "s1").text, "half")
     }
+
+    // MARK: - the position mark
+
+    func testThePositionIsOneBasedAndNeedsTwoWaiters() {
+        let o = ["a", "b", "c"]
+        XCTAssertEqual(AgentSheetSwipe.position(of: "a", in: o), .init(index: 1, count: 3))
+        XCTAssertEqual(AgentSheetSwipe.position(of: "b", in: o), .init(index: 2, count: 3))
+        XCTAssertEqual(AgentSheetSwipe.position(of: "c", in: o), .init(index: 3, count: 3))
+        XCTAssertNil(AgentSheetSwipe.position(of: "a", in: ["a"]))
+        XCTAssertNil(AgentSheetSwipe.position(of: "a", in: []))
+    }
+
+    func testAnAbsentAgentHasNoPosition() {
+        XCTAssertNil(AgentSheetSwipe.position(of: "zz", in: ["a", "b", "c"]))
+        XCTAssertEqual(AgentSheetSwipe.position(of: "a", in: ["a", "b", "a"]), .init(index: 1, count: 3))
+    }
+
+    func testTheMarkAndItsSpokenForm() {
+        XCTAssertEqual(AgentSheetSwipe.mark(.init(index: 2, count: 5)), "2 of 5")
+        XCTAssertEqual(AgentSheetSwipe.mark(.init(index: 1, count: 2)), "1 of 2")
+        XCTAssertEqual(AgentSheetSwipe.spokenMark(.init(index: 2, count: 5)), "2 of 5 waiting")
+    }
+
+    func testTheMarkYieldsAtAccessibilitySizes() {
+        let p = AgentSheetSwipe.Position(index: 2, count: 5)
+        XCTAssertTrue(AgentSheetSwipe.showsMark(p, accessibilitySize: false))
+        XCTAssertFalse(AgentSheetSwipe.showsMark(p, accessibilitySize: true))
+        XCTAssertFalse(AgentSheetSwipe.showsMark(nil, accessibilitySize: false))
+        XCTAssertFalse(AgentSheetSwipe.showsMark(nil, accessibilitySize: true))
+    }
 }

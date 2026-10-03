@@ -403,6 +403,9 @@ in full in `docs/phone-contract.md`.
 
 **A Prep or Backlog card swipes on the phone too** (3 Oct 2026): START or Refine and a dots menu holding a confirmed Delete, the card screen's own presses behind a sideways swipe; in full in `docs/phone-contract.md`.
 
+**The agent sheet's header carries a "2 of 5" position mark** (29 Sep 2026) —
+in full in `docs/phone-contract.md`.
+
 **The Mac board's ticks outlive looking away too** (25 Sep 2026): a
 search, a project change or a fold keeps select mode and its ticks, the
 batch button counts every ticked card drawn or not, and the selecting row

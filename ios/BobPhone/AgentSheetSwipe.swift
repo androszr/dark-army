@@ -50,4 +50,39 @@ enum AgentSheetSwipe {
         }
         return result
     }
+
+    /// Where the sheet's agent stands in the Needs you order, in the person's
+    /// words: `index` counts from one.
+    struct Position: Equatable {
+        let index: Int
+        let count: Int
+    }
+
+    /// The agent's place in `order` (the `order(_:id:)` result, the same list
+    /// the swipe reads, taken at the moment the header draws); nil for fewer
+    /// than two waiters, where there is no swipe and so no mark, and for a
+    /// session that is not in the list.
+    static func position(of session: String, in order: [String]) -> Position? {
+        guard order.count >= 2, let index = order.firstIndex(of: session) else { return nil }
+        return Position(index: index + 1, count: order.count)
+    }
+
+    /// The words drawn after the name.
+    static func mark(_ position: Position) -> String {
+        "\(position.index) of \(position.count)"
+    }
+
+    /// The words VoiceOver adds to the title.
+    static func spokenMark(_ position: Position) -> String {
+        "\(position.index) of \(position.count) waiting"
+    }
+
+    /// The header row has one flexible slot, the title, and the phone never
+    /// clips prose: the mark is a trailing run of that title and, at the
+    /// accessibility text sizes, the first and only thing that yields; the
+    /// spoken title keeps it. The threshold is the environment's
+    /// `isAccessibilitySize`, read by the view and passed in, never measured.
+    static func showsMark(_ position: Position?, accessibilitySize: Bool) -> Bool {
+        position != nil && !accessibilitySize
+    }
 }
