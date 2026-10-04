@@ -12,7 +12,7 @@ from __future__ import annotations
 from . import merges, worktrees
 
 #: The statuses, in the order the rule tries them (after `no_card`).
-STATUSES = ("no_card", "merging", "queued", "merged", "conflict",
+STATUSES = ("no_card", "merging", "queued", "merged", "gone", "conflict",
             "checks_failed", "blocked", "working", "unreadable",
             "waiting", "nothing", "done")
 
@@ -21,6 +21,7 @@ STATUS_WORDS = {
     "merging": "Merging…",
     "queued": "Waiting its turn to merge",
     "merged": "Merged",
+    "gone": "Nothing left to merge",
     "conflict": "Conflict",
     "checks_failed": "Checks failed",
     "blocked": "Merge stopped",
@@ -48,13 +49,19 @@ NO_CARD_LINE = ("A folder under .worktrees that no card on the board names. "
                 "Dark Army leaves it alone.")
 RUNNING_LINE = "The card is still running."
 NOTHING_LINE = "Main already has everything on this branch."
+#: A card whose recorded branch is gone and whose merge commit is on main:
+#: merged by hand (`git merge`), outside Dark Army's own merge.
+LANDED_LINE = "Merged into main outside Dark Army; its branch is gone."
+#: A card whose recorded branch and folder are gone and nothing on main
+#: names it: there is nothing left to read, so nothing to merge.
+GONE_LINE = "Its branch and folder are gone, so there is nothing to merge."
 
 #: The statuses a person may tick (with no gate refusal and a clean folder).
 MERGEABLE = ("done", "nothing", "conflict", "checks_failed", "blocked")
 
 _RANK = {"unreadable": 2, "done": 0, "nothing": 0, "conflict": 0, "checks_failed": 0,
          "blocked": 0, "waiting": 0, "queued": 1, "merging": 1,
-         "working": 2, "merged": 3, "no_card": 4}
+         "working": 2, "merged": 3, "gone": 3, "no_card": 4}
 
 
 def _plural(n: int, one: str, many: str) -> str:
@@ -64,12 +71,15 @@ def _plural(n: int, one: str, many: str) -> str:
 def status_for(card, *, dirty: int = 0, ahead: int = 0, merging: bool = False,
                queued: bool = False, gate_refusal: str = "",
                merge_line: str = "", live: bool = False,
-               failure: str = "") -> tuple:
+               failure: str = "", landed: bool = False,
+               gone: bool = False) -> tuple:
     """`(status, word, line)` — the first rung that applies. `card` is None
     for a folder no card names. `dirty` is the count of uncommitted entries
     (`-1`, a failed read, counts as dirty), `ahead` the branch's commits the
     trunk lacks, `gate_refusal` the gate's words with its busy rungs left
-    out, `merge_line` the card's own merge sentence."""
+    out, `merge_line` the card's own merge sentence. `landed` and `gone`
+    describe a card whose recorded branch no longer exists: merged by hand
+    (its merge commit is on the trunk), or simply gone."""
     if not card:
         return "no_card", STATUS_WORDS["no_card"], NO_CARD_LINE
     state = str(card.get("merge_state") or "")
@@ -80,6 +90,10 @@ def status_for(card, *, dirty: int = 0, ahead: int = 0, merging: bool = False,
         return "queued", STATUS_WORDS["queued"], merge_line
     if state == "merged":
         return "merged", STATUS_WORDS["merged"], merge_line
+    if landed:
+        return "merged", STATUS_WORDS["merged"], LANDED_LINE
+    if gone:
+        return "gone", STATUS_WORDS["gone"], GONE_LINE
     if state in ("conflict", "checks_failed", "blocked"):
         return state, STATUS_WORDS[state], merge_line
     if str(card.get("column_name") or "") != "done" or live or dirty != 0:

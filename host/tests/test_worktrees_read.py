@@ -366,3 +366,29 @@ def test_a_sharer_that_cannot_merge_never_wins_the_branch(setup):
     assert rows["late sharer"]["mergeable"]
     assert rows["late sharer"]["line"] != merges.SHARED_BRANCH_REFUSAL.format(
         "early sharer")
+
+
+def test_a_branch_merged_by_hand_reads_merged_never_could_not_read(setup):
+    """A card merged with a plain `git merge` and its branch deleted still
+    records the branch. Its merge commit is on main, so the row says Merged —
+    not "a git call failed", which offered nothing to do."""
+    api, daemon, store, root = setup
+    card = _card(store, root, "by hand")
+    branch = card["worktree_branch"]
+    _git(root, "merge", "--no-ff", "-q", branch,
+         "-m", f"Merge {branch.split('-', 1)[0]}: by hand")
+    _git(root, "branch", "-D", branch)
+    row = _by_title(daemon._worktrees_sync())["by hand"]
+    assert row["status"] == "merged", row
+    assert row["line"] == worktree_list.LANDED_LINE
+    assert row["mergeable"] is False
+
+
+def test_a_branch_deleted_unmerged_reads_nothing_left(setup):
+    api, daemon, store, root = setup
+    card = _card(store, root, "dropped")
+    _git(root, "branch", "-D", card["worktree_branch"])
+    row = _by_title(daemon._worktrees_sync())["dropped"]
+    assert row["status"] == "gone", row
+    assert row["word"] == "Nothing left to merge"
+    assert row["mergeable"] is False

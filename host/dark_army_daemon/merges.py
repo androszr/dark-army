@@ -270,6 +270,17 @@ def argv_tip(root: str, ref: str) -> list:
         "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"]
 
 
+def argv_landed(root: str, trunk: str, branch: str) -> list:
+    """The newest trunk commit whose message names `branch`'s merge, or
+    nothing: Dark Army's own `Merge card/<id8>: <title>` or git's default
+    `Merge branch '<branch>'`. Read only for a card whose branch is gone."""
+    head = str(branch).split("-", 1)[0]
+    return work_record._git(root) + [
+        "log", "-1", "--format=%H", "--fixed-strings",
+        f"--grep=Merge {head}:", f"--grep=Merge branch '{branch}'",
+        str(trunk), "--"]
+
+
 def argv_merge_base(root: str, left: str, right: str) -> list:
     return work_record._git(root) + ["merge-base", str(left), str(right)]
 

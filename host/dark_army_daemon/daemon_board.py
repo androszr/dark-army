@@ -12595,6 +12595,7 @@ class BoardVerbsMixin:
         ahead = 0
         ahead_read = False
         tip = ""
+        gone = landed = False
         if branch:
             ok, out, _why = self._git_blocking(
                 merges.argv_tip(root, f"refs/heads/{branch}"), root)
@@ -12614,7 +12615,17 @@ class BoardVerbsMixin:
                 no_trunk = True
             elif branch and not tip and str(
                     card.get("merge_state") or "") != "merged":
-                failed = True
+                # The recorded branch is gone. Not a failed read: either it
+                # was merged by hand (its merge commit is on the trunk) or
+                # it was removed, and either way there is nothing to merge.
+                if path and os.path.isdir(path):
+                    failed = True
+                else:
+                    gone = True
+                    if trunk:
+                        ok, out, _why = self._git_blocking(
+                            merges.argv_landed(root, trunk, branch), root)
+                        landed = ok and bool(out.strip())
         try:
             gate = self._merge_gate_sync(card, busy=False, cached=True)[0]
         except Exception:
@@ -12634,7 +12645,8 @@ class BoardVerbsMixin:
             gate_refusal=gate, merge_line=merge_line, live=live,
             failure=(merges.NO_TRUNK_REFUSAL if no_trunk else
                      merges.GIT_FAILED_REFUSAL.format("a git call failed")
-                     if failed else ""))
+                     if failed else ""),
+            landed=landed, gone=gone and not landed)
         mergeable = not gate and not failed and not live and bool(tip) \
             and str(card.get("column_name") or "") == "done"
         item = worktree_list.row(

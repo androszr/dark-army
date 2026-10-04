@@ -107,7 +107,7 @@ def test_the_view_clips_no_prose_and_titles_are_literal():
     view = _code(_read("WorktreesView.swift"))
     assert ".lineLimit(" not in view
     assert ".navigationTitle(" not in view
-    assert "CARD · " in view and "sheets.show(.card(live))" in view
+    assert "OPEN CARD" in view and "sheets.show(.card(live))" in view
     assert "WorktreeRows.maximum" in view
     assert "[-]" in view and "Cannot be ticked" in view
     # The tick follows the row's own rule, not the view's.

@@ -31,6 +31,9 @@ struct WorktreesView: View {
     /// `.task(id:)` restarting nor a pull ending cancels it, so a change of
     /// `fetchKey` mid-read can never lose both reads.
     @State private var readTask: Task<Void, Never>?
+    /// The finished group (merged, gone, no card) is folded by default: it
+    /// holds nothing to do.
+    @State private var showFinished = false
 
     private var board: Board { client.snapshot.board }
 
@@ -76,6 +79,84 @@ struct WorktreesView: View {
         return seen
     }
 
+    /// What a person can do with a row, which is how the screen groups it.
+    private enum Bucket: CaseIterable {
+        case ready, attention, notReady, finished
+
+        var heading: String {
+            switch self {
+            case .ready: return "READY TO MERGE"
+            case .attention: return "NEEDS A FIX"
+            case .notReady: return "NOT READY YET"
+            case .finished: return "ALREADY MERGED OR GONE"
+            }
+        }
+
+        var blurb: String {
+            switch self {
+            case .ready: return "Tick the ones you want on main."
+            case .attention: return "A merge stopped. Fix it, then merge again."
+            case .notReady: return "Still being worked on, or waiting on something."
+            case .finished: return "Nothing to do here."
+            }
+        }
+    }
+
+    private func bucket(_ row: WorktreeRow) -> Bucket {
+        if isTickable(row) { return .ready }
+        switch row.status {
+        case "conflict", "checks_failed", "blocked", "unreadable": return .attention
+        case "merged", "gone", "no_card": return .finished
+        default: return .notReady
+        }
+    }
+
+    private func rows(in bucket: Bucket) -> [WorktreeRow] {
+        rows.filter { self.bucket($0) == bucket }
+    }
+
+    /// The one sentence under the prompt that says what this screen is for
+    /// right now.
+    private var guide: String {
+        let ready = rows(in: .ready).count
+        if ready > 0 {
+            return "Tick the finished cards you want on main, then press MERGE. "
+                + "They land one after another; a conflict stops only that card."
+        }
+        if !rows(in: .attention).isEmpty {
+            return "Nothing is ready to merge. A merge below stopped: "
+                + "press Fix to send a helper, then merge it again."
+        }
+        return "Nothing is ready to merge yet. A card can merge once it is in "
+            + "Done, its work is committed and its hand-check is settled."
+    }
+
+    /// What to do next with one row, in the person's words.
+    private func nextStep(_ row: WorktreeRow, canTick: Bool, isTicked: Bool) -> String {
+        if canTick {
+            return isTicked ? "→ Ticked. Press MERGE above." : "→ Tap to tick it for the merge."
+        }
+        switch row.status {
+        case "working":
+            return "→ Finish it on the board first. It can merge once it is in Done."
+        case "waiting":
+            return "→ Settle what the line above says, then come back."
+        case "merging", "queued":
+            return "→ Nothing to do. It is on its way to main."
+        case "conflict", "checks_failed", "blocked":
+            if let live = card(for: row), showsFix(live) {
+                return "→ Press Fix to send a helper. Once fixed, merge it again."
+            }
+            return "→ Open the card to see what stopped it."
+        case "unreadable":
+            return "→ Pull down to read again. If it stays, open the card."
+        case "done", "nothing":
+            return "→ Open the card. Something must be settled first."
+        default:
+            return ""
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -96,10 +177,16 @@ struct WorktreesView: View {
                 if failed && !rows.isEmpty {
                     CommentLine(text: "Could not reach the Mac — this list may be out of date.")
                 }
+                if loaded && !rows.isEmpty {
+                    Text(guide)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if showsMerge { mergeBar }
                 pressReply
-                ForEach(projects, id: \.self) { project in
-                    projectSection(project)
+                ForEach(Bucket.allCases, id: \.self) { bucket in
+                    bucketSection(bucket)
                 }
                 if page.truncated {
                     CommentLine(text: "The list is cut short; some rows are not shown.")
@@ -142,16 +229,37 @@ struct WorktreesView: View {
 
     // MARK: rows
 
-    private func projectSection(_ project: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(project)
-                .font(Theme.mono(12, weight: .semibold))
-                .foregroundStyle(Theme.phosphorBright)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-            ForEach(rows.filter { $0.project == project }) { row in
-                rowView(row)
+    @ViewBuilder
+    private func bucketSection(_ bucket: Bucket) -> some View {
+        let members = rows(in: bucket)
+        if !members.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("\(bucket.heading) · \(members.count)")
+                    .font(Theme.mono(12, weight: .semibold))
+                    .foregroundStyle(bucket == .attention ? Theme.amber
+                                     : bucket == .finished ? Theme.dim
+                                     : Theme.phosphorBright)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                Text(bucket.blurb)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+                if bucket == .finished && !showFinished {
+                    DecryptButton("SHOW \(members.count)") { showFinished = true }
+                        .font(Theme.mono(11, weight: .medium))
+                        .foregroundStyle(Theme.phosphor)
+                        .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Show \(members.count) finished worktrees")
+                } else {
+                    ForEach(members) { row in
+                        rowView(row)
+                    }
+                }
             }
+            .padding(.top, 6)
         }
     }
 
@@ -183,6 +291,13 @@ struct WorktreesView: View {
                                     .foregroundStyle(Theme.dim)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
+                            let step = nextStep(row, canTick: canTick, isTicked: isTicked)
+                            if !step.isEmpty {
+                                Text(step)
+                                    .font(Theme.mono(11, weight: .medium))
+                                    .foregroundStyle(canTick ? Theme.phosphor : Theme.dim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                             if !detailLine(row).isEmpty {
                                 Text(detailLine(row))
                                     .font(Theme.mono(11))
@@ -202,7 +317,7 @@ struct WorktreesView: View {
             }
             HStack(spacing: 14) {
                 if let live = card(for: row) {
-                    DecryptButton("CARD · \(live.title)") { sheets.show(.card(live)) }
+                    DecryptButton("OPEN CARD") { sheets.show(.card(live)) }
                         .font(Theme.mono(11, weight: .medium))
                         .foregroundStyle(Theme.phosphor)
                         .multilineTextAlignment(.leading)
@@ -221,6 +336,7 @@ struct WorktreesView: View {
 
     private func detailLine(_ row: WorktreeRow) -> String {
         var parts: [String] = []
+        if projects.count > 1 && !row.project.isEmpty { parts.append(row.project) }
         if !row.branch.isEmpty { parts.append(row.branch) }
         if !row.branch.isEmpty && row.ahead >= 0
             && (row.ahead > 0 || row.status == "nothing") {
@@ -234,6 +350,8 @@ struct WorktreesView: View {
     private func spokenRow(_ row: WorktreeRow, canTick: Bool, isTicked: Bool) -> String {
         var words = (row.title.isEmpty ? row.folder : row.title) + ". " + row.word
         if !row.line.isEmpty { words += ". " + row.line }
+        let step = nextStep(row, canTick: canTick, isTicked: isTicked)
+        if !step.isEmpty { words += ". " + step.replacingOccurrences(of: "→ ", with: "") }
         let detail = detailLine(row)
         if !detail.isEmpty { words += ". " + detail }
         words += canTick ? (isTicked ? ". Ticked" : ". Not ticked")
@@ -244,7 +362,7 @@ struct WorktreesView: View {
     private func statusColour(_ row: WorktreeRow) -> Color {
         switch row.status {
         case "conflict", "checks_failed", "blocked", "unreadable": return Theme.amber
-        case "done", "merged": return Theme.phosphorBright
+        case "done", "nothing": return Theme.phosphorBright
         default: return Theme.dim
         }
     }
@@ -330,6 +448,7 @@ struct WorktreesView: View {
         let words = sending ? "MERGING…"
             : (tooMany ? WorktreeRows.tooManyLine
                : (armed ? WorktreeRows.armedVerb(count: count)
+                        : count == 0 ? "MERGE · tick a card first"
                         : WorktreeRows.verb(count: count)))
         return VStack(alignment: .leading, spacing: 6) {
             DecryptButton(words) { pressMerge() }
