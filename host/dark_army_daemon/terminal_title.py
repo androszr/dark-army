@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 from typing import Optional
 
@@ -161,6 +162,9 @@ ORIGIN_PREFIX = {"card-refine": "refine: ", "card-consult": "ask: ",
 #: is pure and the daemon imports it, not the other way round.
 _UNNAMED = "New session"
 
+#: `dispatch.stacked_title`'s shape with an agent in front.
+_STACKED = re.compile(r"^[^·]+ · (Stacked cards \d+)$")
+
 
 def title_for(entry: dict) -> str:
     """The tab title for one snapshot row, or "".
@@ -179,6 +183,12 @@ def title_for(entry: dict) -> str:
     card_title = _clean(entry.get("card_title", ""))
     if card_title and (not name or name == _UNNAMED):
         name = card_title
+    # A stacked session is launched as `<Agent> · Stacked cards N`
+    # (`dispatch.stacked_title`); the badge already names the agent — the
+    # live one, which a bind may have changed — so the tab drops the copy.
+    stacked = _STACKED.match(name)
+    if stacked:
+        name = stacked.group(1)
     if name:
         name = ORIGIN_PREFIX.get(str(entry.get("origin_by") or ""), "") + name
     return compose(entry.get("nickname", ""), name, entry.get("project", ""))

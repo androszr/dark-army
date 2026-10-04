@@ -1872,10 +1872,11 @@ class ApiServer:
         if not self._authorised(request):
             return None
         payload = request.json()
-        if payload.get("action") != "stop_session":
+        if not isinstance(payload, dict) or payload.get("action") != "stop_session":
             return None
         session_id = payload.get("session_id", "")
-        if not session_id or session_id.startswith("codex:"):
+        if (not isinstance(session_id, str) or not session_id
+                or session_id.startswith("codex:")):
             return None
         return session_id
 

@@ -357,3 +357,17 @@ def test_a_review_and_a_merge_fix_tab_keep_their_verbs():
         assert tt.ORIGIN_PREFIX[by] == prefix
         row = {"nickname": NAMES[0], "name": "Add the thing", "origin_by": by}
         assert tt.title_for(row).endswith(f"{prefix}Add the thing")
+
+
+def test_a_stacked_session_names_its_agent_once():
+    """`claude --name "Vex · Stacked cards 3"` makes that the row's name; the
+    badge already says who, so the tab never reads `Vex · Vex · …`, and a
+    bind that picked another cast member shows the live one."""
+    from dark_army_daemon import terminal_title
+    row = {"nickname": "Vex", "name": "Vex · Stacked cards 3"}
+    assert terminal_title.title_for(row) == "Vex · Stacked cards 3"
+    row = {"nickname": "Gil", "name": "Vex · Stacked cards 3"}
+    assert terminal_title.title_for(row) == "Gil · Stacked cards 3"
+    row = {"nickname": "Elliot", "name": "Elliot · Stacked cards 2",
+           "origin_by": "card-refine"}
+    assert terminal_title.title_for(row).endswith("refine: Stacked cards 2")

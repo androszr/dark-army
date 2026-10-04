@@ -436,3 +436,36 @@ async def test_a_raising_preparation_leaves_no_journal_id_behind(tmp_path, monke
         assert card["id"] not in w.d._prepare_journal
     finally:
         w.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_preparation_raising_in_process_is_closed_not_recovered(
+        tmp_path, monkeypatch):
+    """A `git worktree add` that raises after its intent was written is a
+    crash in-process, not a restart: the action is closed `refused`, so the
+    next launch has nothing open and puts no restart note on the card."""
+    w = World(tmp_path, "raise-add", monkeypatch)
+    try:
+        root = w.dir / "repo"
+        root.mkdir()
+        card = w.card(root=str(root))
+
+        async def run_git(argv, cwd, timeout=None):
+            text = " ".join(argv)
+            if "worktree add" in text:
+                raise RuntimeError("git exploded")
+            return (True, b"", "") if "worktree list" in text else (False, b"", "")
+
+        async def base(_root):
+            return "HEAD"
+
+        w.d._run_git = run_git
+        w.d._worktree_base = base
+        w.d._worktree_preparing = {card["id"]: {"token": "t"}}
+        await w.d._prepare_worktree_then_dispatch(
+            w.store.get(card["id"]), str(root), {"card_id": card["id"]},
+            token="t")
+        assert w.store.journal_counts()["intents"] >= 2
+        assert w.store.journal_open() == []
+    finally:
+        w.store.close()

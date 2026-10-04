@@ -9699,6 +9699,7 @@ class BoardVerbsMixin:
         queued card, `_fail_prepare`), and `finally` always pops.
         """
         cid = str(head.get("id") or "")
+        prepare_action = ""
         try:
             path, branch, error = await self._prepare_worktree(head, root)
             prepare_action = self.__dict__.get("_prepare_journal", {}).pop(cid, "")
@@ -9762,6 +9763,12 @@ class BoardVerbsMixin:
         except Exception:
             logger.warning("preparing the worktree for card %s failed",
                            cid[:8], exc_info=True)
+            # Close the journalled action as `card_start` closes a raised
+            # spawn: a crash in-process is not a restart, and an open intent
+            # would make the next launch note "restart during prepare".
+            await self._close_raised_prepare(
+                prepare_action
+                or self.__dict__.get("_prepare_journal", {}).get(cid, ""), cid)
             try:
                 await self._fail_prepare(cid, worktrees.ADD_FAILED_REFUSAL,
                                          replay)
@@ -9776,6 +9783,31 @@ class BoardVerbsMixin:
             except Exception:
                 logger.debug("board publish after preparing failed",
                              exc_info=True)
+
+    async def _close_raised_prepare(self, action_id: str, cid: str) -> None:
+        """Resolve every open step of a preparation that raised, and write
+        the missing `record` step refused, so recovery has nothing to do.
+        Never raises: a journal that cannot be written is one warning."""
+        if not action_id:
+            return
+        try:
+            actions = await self._board_call("journal_open") or []
+            action = next((a for a in actions
+                           if a.get("action_id") == action_id), None)
+            if action is None:
+                return
+            steps = action.get("steps") or []
+            for step in steps:
+                if step.get("result") is None:
+                    await self._journal_result(step["id"], "refused", "raised")
+            if not any(st.get("step") == "record" for st in steps):
+                await self._journal_result(
+                    await self._journal_intent(
+                        action_id, "worktree_prepare", cid, "record",
+                        {"card_id": cid}), "refused", "raised")
+        except Exception:
+            logger.warning("journal: could not close a raised preparation",
+                           exc_info=True)
 
     async def _worktree_base(self, root: str) -> str:
         """Where a new card branch starts. `origin/HEAD` after the fetch —
