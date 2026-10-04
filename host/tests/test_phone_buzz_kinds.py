@@ -210,3 +210,8 @@ def test_the_phone_reads_nothing_off_the_payload():
     assert '"kind"' not in text
     assert "UNNotificationSound" not in text
     assert "buzz-" not in text
+
+
+def test_picks_plays_the_question_cue_and_adds_no_file():
+    sounds = _sounds_table()
+    assert sounds["picks"] == sounds["question"]

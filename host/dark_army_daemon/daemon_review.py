@@ -40,6 +40,9 @@ from . import work_record
 
 logger = logging.getLogger("dark-army.review")
 
+# Held across `_review_publish`'s build and rebind (see there).
+_PUBLISH_LOCK = threading.Lock()
+
 DISPATCH_OFF_REFUSAL = "Dark Army is not allowed to start sessions (see the ⋯ menu)"
 REVIEW_BUSY_REFUSAL = "a review of this project is already running"
 REVIEW_STEPS_REFUSAL = "that step is not one this project offers"
@@ -186,6 +189,10 @@ class ReviewVerbsMixin:
             if expect_state is not None and rec.get("state") != expect_state:
                 return False
             rec.update(fields)
+        # Outside the lock (`review_snapshot` takes it): the alert gate and
+        # the Live Activity read the published list, which must move with
+        # the writer, not only when a client happens to ask for `state()`.
+        self._review_publish()
         return True
 
     def _review_notify(self) -> None:
@@ -568,6 +575,21 @@ class ReviewVerbsMixin:
         """The `review` section of `/api/state`. **Never a handle, a digest
         or a path to the run folder**; the newest `MAX_PUBLISHED_RUNS` runs
         with the bounded fields."""
+        return self._review_publish()
+
+    def _review_publish(self) -> dict:
+        """Build the `review` section and rebind `_review_published` to its
+        runs, whole. Called by `review_snapshot` and by the writer
+        (`_review_set`, `_reconcile_review` on the executor), so the picks
+        buzz and the Lock Screen card read a list that is current with no
+        client connected. Build and rebind are one step under a publish lock,
+        so an executor reconcile and a loop verb racing cannot land an older
+        list last; `_review_lock` is taken inside it and never the other way
+        round (`_review_set` publishes after releasing it)."""
+        with _PUBLISH_LOCK:
+            return self._review_publish_locked()
+
+    def _review_publish_locked(self) -> dict:
         with self._review_lock:
             newest = sorted(self._review_runs,
                             key=lambda r: float(r.get("started_at") or 0.0),
@@ -617,6 +639,9 @@ class ReviewVerbsMixin:
                      "words": ln.get("words")}
                     for ln in rec.get("ledger") or []],
             })
+        # The published list, rebound whole: the alert gate (executor) and
+        # the Live Activity (loop) read it lock-free for the picks buzz.
+        self._review_published = list(out)
         return {"available": True, "runs": out}
 
     # --- the launch bound, the handle, restart -----------------------------

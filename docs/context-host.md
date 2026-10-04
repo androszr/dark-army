@@ -347,7 +347,9 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     (`live_activity.py`, `_push_live_activity`; `register_activity_token` on
     both phone tuples, the token on no snapshot): in full in
     `docs/phone-contract.md`, *The waiting agent is a Live Activity*, and
-    `docs/transport-contract.md`, *The buzz has a live-card leg*.
+    `docs/transport-contract.md`, *The buzz has a live-card leg*; a review
+    run waiting on picks is a subject of its own (`picks`,
+    `docs/review-runs.md`).
   - **Mission Control** (`mission.py`; verbs in `daemon_board.py`) — the
     standing chief-of-staff session on Dark Army's own pty in **Dark Army's
     own checkout**, agent `mission-control` with

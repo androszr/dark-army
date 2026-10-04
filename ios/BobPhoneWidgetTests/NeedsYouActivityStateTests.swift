@@ -31,6 +31,31 @@ final class NeedsYouActivityStateTests: XCTestCase {
         XCTAssertEqual(state.sessionId, "s-1")
     }
 
+    func testARunIdDecodesAndIsAbsentTolerant() throws {
+        let run = try decode("""
+        {"nickname":"repo","slug":"","kind":"picks","since":10,"session_id":"",
+         "run_id":"r-1"}
+        """)
+        XCTAssertEqual(run.runId, "r-1")
+        XCTAssertEqual(run.kindWord, "pick fixes")
+        // No session, but a run id: the face row is still drawn.
+        XCTAssertTrue(run.hasFace)
+        let plain = try decode("{\"nickname\":\"Vex\",\"session_id\":\"s-1\"}")
+        XCTAssertEqual(plain.runId, "")
+        XCTAssertTrue(plain.hasFace)
+        XCTAssertFalse(try decode("{}").hasFace)
+        // An empty run id is not written back out.
+        let data = try JSONEncoder().encode(plain)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("run_id"))
+        let back = try JSONEncoder().encode(run)
+        XCTAssertTrue(String(decoding: back, as: UTF8.self).contains("\"run_id\":\"r-1\""))
+    }
+
+    func testAnOlderPhonesUnknownWordStaysAttention() throws {
+        let state = try decode("{\"kind\":\"picks-v2\",\"session_id\":\"s-1\"}")
+        XCTAssertEqual(state.kindWord, "attention")
+    }
+
     func testAMissingWorkDecodesEmptyAndAMissingKindIsAttention() throws {
         let state = try decode("""
         {"nickname":"Vex","slug":"vex","since":10,"session_id":"s-1"}

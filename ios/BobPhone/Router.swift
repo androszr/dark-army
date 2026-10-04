@@ -90,7 +90,7 @@ final class PhoneRouter: ObservableObject {
     }
 
     /// A `bobphone://<tab>` deep link. An unknown host routes nowhere —
-    /// never a guess. `?session=<id>` (the widget's face, `FleetLinks.agent`)
+    /// never a guess. `?run=<id>` (the Lock Screen card's review link) and `?session=<id>` (the widget's face, `FleetLinks.agent`)
     /// asks for that agent's sheet once the tab is in front; it is held in
     /// memory only and consumed with the tab, behind the face check like
     /// everything else a link can aim.
@@ -100,8 +100,14 @@ final class PhoneRouter: ObservableObject {
         // `bobphone://usage` names a Menu section: the tab comes forward
         // and the section opens on it.
         pendingSection = MenuSection(rawValue: url.host ?? "")
-        pendingSession = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?.first { $0.name == "session" }?.value ?? ""
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        pendingSession = items?.first { $0.name == "session" }?.value ?? ""
+        // `?run=<id>` (`FleetLinks.review`): the review the Lock Screen card
+        // named, kept only in the shape the mailbox and the Mac both check.
+        // Assigned on every link, so a run held by an earlier press never
+        // outlives a link that names something else.
+        let run = items?.first { $0.name == "run" }?.value ?? ""
+        pendingReviewRun = pendingSection == .review && LockScreenActions.idOK(run) ? run : ""
         go(tab)
     }
 
@@ -120,6 +126,7 @@ final class PhoneRouter: ObservableObject {
     /// forward with the Review screen open and the run to show held for it.
     /// Posts nothing — it only moves the screen.
     func openReview(runId: String) {
+        guard LockScreenActions.idOK(runId) else { return }
         pendingSection = .review
         pendingReviewRun = runId
         go(.menu)

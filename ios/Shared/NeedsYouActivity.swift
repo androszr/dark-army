@@ -6,10 +6,10 @@ import Foundation
 /// Compiled into the app, the widget extension and the widget tests.
 ///
 /// Foundation + ActivityKit only. The content state is the closed set of
-/// at most fourteen keys `push.js` writes into `aps.content-state` — the
+/// at most fifteen keys `push.js` writes into `aps.content-state` — the
 /// six face keys `nickname`, `slug`, `kind`, `work`, `since`, `session_id`,
-/// the relay's own send time `updated_at`, plus the seven optional fleet
-/// fields — spelled as the Mac spells them,
+/// the optional `run_id` (a review run waiting on picks), the relay's own
+/// send time `updated_at`, plus the seven optional fleet fields — spelled as the Mac spells them,
 /// and decoded tolerantly: a missing key takes its default, so a Mac one
 /// field ahead or behind never leaves the Lock Screen blank. A missing
 /// count or cost is unknown, never zero.
@@ -28,8 +28,8 @@ struct NeedsYouAttributes: ActivityAttributes {
         /// The portrait slug (`Cast.character(for:)` on the app, the Mac's
         /// `cast.character_for`), lowercase; empty draws an initial.
         var slug: String = ""
-        /// `permission`, `question` or `attention`; anything else is drawn
-        /// as attention.
+        /// `permission`, `question`, `picks` or `attention`; anything else is
+        /// drawn as attention.
         var kind: String = "attention"
         /// The bound card's title, else the session's own name — the buzz's
         /// `work` line, clamped to 80 on the Mac.
@@ -39,6 +39,10 @@ struct NeedsYouAttributes: ActivityAttributes {
         /// The session the card is about; the deep link's target. Empty
         /// means nobody is waiting and the face row is not drawn.
         var sessionId: String = ""
+        /// The review run the card is about (`picks`), or empty. A run with
+        /// no bound agent has no `sessionId`; this id alone then gives the
+        /// card a face row (the project's initial).
+        var runId: String = ""
         /// The strip's three counts. Nil when the mailbox dropped them —
         /// drawn as a dash, never as zero.
         var working: Int?
@@ -61,6 +65,7 @@ struct NeedsYouAttributes: ActivityAttributes {
         enum CodingKeys: String, CodingKey {
             case nickname, slug, kind, work, since
             case sessionId = "session_id"
+            case runId = "run_id"
             case working = "working"
             case needsYou = "needs_you"
             case standingBy = "standing_by"
@@ -73,6 +78,7 @@ struct NeedsYouAttributes: ActivityAttributes {
 
         init(nickname: String = "", slug: String = "", kind: String = "attention",
              work: String = "", since: Double = 0, sessionId: String = "",
+             runId: String = "",
              working: Int? = nil, needsYou: Int? = nil, standingBy: Int? = nil,
              costUsd: Double? = nil, tokensK: Int? = nil,
              costUsdHour: Double? = nil, tokensKHour: Int? = nil,
@@ -83,6 +89,7 @@ struct NeedsYouAttributes: ActivityAttributes {
             self.work = work
             self.since = since
             self.sessionId = sessionId
+            self.runId = runId
             self.working = working
             self.needsYou = needsYou
             self.standingBy = standingBy
@@ -108,6 +115,7 @@ struct NeedsYouAttributes: ActivityAttributes {
                 since = 0
             }
             sessionId = (try? c.decodeIfPresent(String.self, forKey: .sessionId)) ?? ""
+            runId = (try? c.decodeIfPresent(String.self, forKey: .runId)) ?? ""
             working = (try? c.decodeIfPresent(Int.self, forKey: .working)) ?? nil
             needsYou = (try? c.decodeIfPresent(Int.self, forKey: .needsYou)) ?? nil
             standingBy = (try? c.decodeIfPresent(Int.self, forKey: .standingBy)) ?? nil
@@ -144,6 +152,7 @@ struct NeedsYouAttributes: ActivityAttributes {
             try c.encode(work, forKey: .work)
             try c.encode(since, forKey: .since)
             try c.encode(sessionId, forKey: .sessionId)
+            if !runId.isEmpty { try c.encode(runId, forKey: .runId) }
             try c.encodeIfPresent(working, forKey: .working)
             try c.encodeIfPresent(needsYou, forKey: .needsYou)
             try c.encodeIfPresent(standingBy, forKey: .standingBy)
@@ -161,7 +170,7 @@ struct NeedsYouAttributes: ActivityAttributes {
         }
 
         /// A face row is drawn only while somebody is waiting.
-        var hasFace: Bool { !sessionId.isEmpty }
+        var hasFace: Bool { !sessionId.isEmpty || !runId.isEmpty }
 
         /// The one place the cost is spelled. A missing figure is the
         /// words, never `$0`.
@@ -211,6 +220,7 @@ struct NeedsYouAttributes: ActivityAttributes {
             switch kind {
             case "permission": return "permission"
             case "question": return "question"
+            case "picks": return "pick fixes"
             default: return "attention"
             }
         }

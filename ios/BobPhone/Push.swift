@@ -64,6 +64,14 @@ final class PushDelegate: NSObject, UIApplicationDelegate,
         didReceive response: UNNotificationResponse
     ) async {
         let info = response.notification.request.content.userInfo
+        // Open review: a foreground button that writes nothing. Banked like
+        // a tap, then the router's slot takes the run behind the gate.
+        if let runId = LockScreenActions.opens(actionIdentifier: response.actionIdentifier,
+                                               userInfo: info) {
+            await PushRegistrar.shared.bank(response.notification, tapped: true)
+            await MainActor.run { PhoneRouter.shared.openReview(runId: runId) }
+            return
+        }
         // A button on the banner: one write, then done — the app is not
         // opened and the gate is not passed. An unknown button falls
         // through to nothing.

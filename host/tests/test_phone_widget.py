@@ -619,6 +619,28 @@ LIVE_ACTIVITY = ROOT / "ios" / "BobPhone" / "LiveActivity.swift"
 APP_INFO = ROOT / "ios" / "BobPhone" / "Info.plist"
 
 
+def test_the_picks_card_links_to_the_review():
+    """(success criterion) The Lock Screen card for a review waiting on
+    picks links to the review run; the banner's Open review button routes
+    to the same router slot."""
+    summary = _read(SUMMARY)
+    assert "static func review(_ runId: String)" in summary
+    assert 'parts.host = "review"' in summary
+    assert 'URLQueryItem(name: "run"' in summary
+    assert "static func waiter(" in summary and 'kind == "picks"' in summary
+    router = (ROOT / "ios" / "BobPhone" / "Router.swift").read_text()
+    assert '$0.name == "run"' in router and "LockScreenActions.idOK(run)" in router
+    assert "func takeReviewRun()" in router and "func openReview(runId:" in router
+    assert "guard LockScreenActions.idOK(runId)" in router
+    review = (ROOT / "ios" / "BobPhone" / "ReviewView.swift").read_text()
+    assert "HeldReviewRun.decide(" in review and "pictureAsOf > heldAt" in review
+    assert ".onDisappear { heldRun = \"\" }" in review
+    assert review.count("takeReviewRun()") == 1       # one consumer ...
+    assert ".onChange(of: router.signal)" in review   # ... on appear and on signal
+    push = (ROOT / "ios" / "BobPhone" / "Push.swift").read_text()
+    assert "LockScreenActions.opens(" in push and "PhoneRouter.shared.openReview(runId:" in push
+
+
 def test_the_activity_views_render_only_and_clip_nothing():
     """ActivityKit drives every redraw: the widget's second configuration
     draws the portrait through the same loader the tile uses, counts up on
@@ -630,7 +652,8 @@ def test_the_activity_views_render_only_and_clip_nothing():
     assert "style: .timer" in text
     assert ".lineLimit(" not in text
     assert "context.isStale" in text
-    assert "FleetLinks.agent(" in text
+    assert text.count("FleetLinks.waiter(") == 2
+    assert "FleetLinks.agent(" not in text
     for word in ("URLSession", "URLRequest", "TimelineProvider", "fetchLog"):
         assert word not in text, word
     assert "NeedsYouActivityWidget()" in _read(WIDGET)
@@ -704,3 +727,17 @@ def test_the_lock_screen_card_fits_inside_the_system_height():
     # The island keeps its stacked cells: only the Lock Screen goes inline.
     island = text.split("struct NeedsYouLockScreenView")[0]
     assert "inline: true" not in island
+
+
+def test_the_live_card_names_a_review_run_waiting_on_picks():
+    """Source pins for the fourth kind and the run id: the shared state
+    decodes `run_id`, draws "pick fixes" and counts a run id as a face; the
+    rule lists the review wire among the kinds that may be the subject."""
+    shared = _read(ACTIVITY_SHARED)
+    assert shared.count('case runId = "run_id"') == 1
+    assert shared.count('case "picks": return "pick fixes"') == 1
+    assert "!sessionId.isEmpty || !runId.isEmpty" in shared
+    rule = _read(LIVE_ACTIVITY)
+    assert ".reviewPicks" in rule.split("static let sessionKinds")[1].split("\n\n")[0]
+    assert "a.runId == b.runId" in rule
+    assert rule.count("reviewPicks") >= 2

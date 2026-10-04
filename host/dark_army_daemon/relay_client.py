@@ -102,7 +102,8 @@ PUSH_MAX_PER_MINUTE = 10
 # The kind words a buzz may carry — `alerts.KINDS`, restated here so the wire
 # check reads as a closed set in the file that writes the wire. Anything else
 # is not sent: the mailbox then plays its default sound, exactly as before.
-PUSH_KINDS = ("security", "permission", "question", "attention", "finished")
+PUSH_KINDS = ("security", "permission", "question", "picks", "attention",
+              "finished")
 #: Cast slugs a buzz may name as its portrait. `identity.NAMES` lowercased,
 #: every one ASCII (`test_identity.py` pins that). The live card's slug is
 #: checked against the same tuple (`push_activity`).
@@ -131,7 +132,7 @@ PUSH_NEED_CHARS = 120
 #: `card_id` a single-alert buzz carries on every device so the phone can
 #: open the card or agent from the picture it holds; a value out of shape
 #: is dropped silently (`work`'s rule), never a refusal.
-PUSH_ACTS = ("permission", "acknowledge")
+PUSH_ACTS = ("permission", "acknowledge", "review")
 PUSH_ID_SHAPE = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
 #: The live card's leg (`push_activity`): the kind words a card may wear —
 #: `live_activity.KINDS`, restated here because this file writes the wire and
@@ -139,7 +140,7 @@ PUSH_ID_SHAPE = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
 #: slug's shape (a lowercase cast name, or empty). Never `title`: an
 #: undeployed mailbox answers a body without one with 400, which is exactly
 #: the refusal an old relay should give the new leg — never a mis-sent buzz.
-ACTIVITY_KINDS = ("permission", "question", "attention")
+ACTIVITY_KINDS = ("permission", "question", "picks", "attention")
 ACTIVITY_EVENTS = ("update", "end")
 #: What `push_activity_outcome` can answer; the daemon's retry rule reads it.
 ACTIVITY_OUTCOMES = ("landed", "refused", "dead", "unreachable", "skipped")
@@ -724,7 +725,14 @@ class RelayConnector:
         # act rides only on the shaped `session_id` already in `fields` — it
         # does not re-assign it — and a permission also needs a shaped rid.
         act = str((body or {}).get("act") or "")
-        if act in PUSH_ACTS and "session_id" in fields:
+        if act == "review":
+            # A foreground button naming a review run: no session needed, and
+            # `run_id` joins the alert leg only with this act.
+            run = str((body or {}).get("run_id") or "")
+            if PUSH_ID_SHAPE.match(run):
+                fields["act"] = "review"
+                fields["run_id"] = run
+        elif act in PUSH_ACTS and "session_id" in fields:
             rid = str((body or {}).get("request_id") or "")
             if act != "permission" or PUSH_ID_SHAPE.match(rid):
                 fields["act"] = act
@@ -865,6 +873,11 @@ class RelayConnector:
         sid = str(body.get("session_id") or "")
         if PUSH_ID_SHAPE.match(sid):
             fields["session_id"] = sid
+        # A review run's id (`picks`): joined by the same shape, and only
+        # when there is one — every other card's wire is unchanged.
+        run_id = str(body.get("run_id") or "")
+        if PUSH_ID_SHAPE.match(run_id):
+            fields["run_id"] = run_id
         for field in ("working", "needs_you", "standing_by", "tokens_k",
                       "tokens_k_hour"):
             if field not in body:

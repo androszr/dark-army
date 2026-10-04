@@ -6,6 +6,9 @@ import WidgetKit
 /// of Needs you: the portrait, the nickname, the kind word, a clock counting
 /// from when the row went quiet, and the card or session it is working.
 ///
+/// A tap opens the review (`bobphone://review?run=`) while the card names a
+/// review waiting on picks, the agent otherwise (`FleetLinks.waiter`).
+///
 /// Rendering only — ActivityKit drives every redraw, the app starts and
 /// ends the activity and the Mac updates it by push; no timeline provider
 /// and no network (`test_phone_widget.py` pins both). The portrait loads
@@ -20,7 +23,7 @@ struct NeedsYouActivityWidget: Widget {
             NeedsYouLockScreenView(state: context.state, stale: context.isStale)
                 .activityBackgroundTint(WidgetTheme.bg)
                 .activitySystemActionForegroundColor(WidgetTheme.accent)
-                .widgetURL(FleetLinks.agent(context.state.sessionId))
+                .widgetURL(FleetLinks.waiter(kind: context.state.kind, runId: context.state.runId, sessionId: context.state.sessionId))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
@@ -66,7 +69,7 @@ struct NeedsYouActivityWidget: Widget {
             } minimal: {
                 IslandMinimal(state: context.state, stale: context.isStale)
             }
-            .widgetURL(FleetLinks.agent(context.state.sessionId))
+            .widgetURL(FleetLinks.waiter(kind: context.state.kind, runId: context.state.runId, sessionId: context.state.sessionId))
             .keylineTint(WidgetTheme.attention)
         }
     }

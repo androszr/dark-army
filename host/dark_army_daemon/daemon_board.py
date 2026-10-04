@@ -7109,6 +7109,7 @@ class BoardVerbsMixin:
         try:
             changed = self._observe_review_runs(self._review_pty_facts)
             changed |= self._review_drifted()
+            self._review_publish()
             return changed
         except Exception:
             logger.warning("review reconcile failed", exc_info=True)

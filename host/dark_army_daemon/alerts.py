@@ -29,8 +29,18 @@ The rules, in the order they matter:
   one per flap.
 * **Muted agents say nothing at all**, and muting is per session because the
   agent you have decided to ignore is rarely the whole fleet.
+* **A review waiting on picks is its own alert.** A run in the `picks`
+  state (the published `review` section, `docs/review-runs.md`) raises one
+  `picks`-kind alert (`REVIEW_PICKS_RULE`), once per entry into `picks`
+  (keyed on the run: a findings file that grows while the run waits is not
+  a second event), outside the per-session cooldown both ways, withheld
+  when its bound session is muted or being looked at, and never for a run
+  whose findings landed before this daemon started (`started_at`: `_fired`
+  is memory-only, runs persist). The session bound
+  to a run in `picks` speaks through the run: its card and report rules
+  are skipped; its prompt is not. Never a finding's words.
 * **A kind rides every alert.** One word from `KINDS` — permission, question,
-  attention, finished — decided here, where the question slot, the card's
+  picks, attention, finished — decided here, where the question slot, the card's
   hook and the prompt's tool are all in hand, and never re-derived
   downstream. The phone's buzz reads it for its words and its sound.
 * **A finished report is a quiet banner on the Mac and nothing else.** The
@@ -96,14 +106,19 @@ _GENERIC_CARD_HOOKS = {"Stop", "Notification"}
 # (`access_log.BurstDetector`) is the one interruption about the machine
 # itself rather than an agent, and a buzz collapsing it with an agent's
 # ask should play the more urgent cue.
-KINDS = ("security", "permission", "question", "attention", "finished")
+KINDS = ("security", "permission", "question", "picks", "attention",
+         "finished")
 # The kinds that hang a portrait. A plain needs-you (`attention`) and a
 # machine warning (`security`) do not. The menu bar restates this tuple;
 # it does not import this module. `test_phone_buzz_kinds.py` pins them equal.
 FACE_KINDS = ("question", "permission", "finished")
 KIND_ATTENTION = "attention"
+KIND_PICKS = "picks"
 KIND_SECURITY = "security"
 KIND_FINISHED = "finished"
+
+#: The rule a review run waiting on picks raises its one buzz under.
+REVIEW_PICKS_RULE = "review_picks"
 
 #: The rule a finished work report raises its one quiet banner under.
 REPORT_RULE = "report"
@@ -150,6 +165,9 @@ class Alert:
     #: the permission prompt this alert is about, for a phone that may
     #: answer it from the lock screen; `""` for every other rule.
     request_id: str = ""
+    #: the review run this alert is about, for a phone that may open it from
+    #: the banner; `""` on every other rule.
+    run_id: str = ""
     answerable: bool = True
     #: what the agent is asking for, in its own words — the question's text
     #: or the `bob-tldr` summary (`_need`); `""` where it said nothing. The
@@ -161,7 +179,7 @@ class Alert:
 
     def as_dict(self) -> dict:
         return {"id": self.id, "session_id": self.session_id,
-                "request_id": self.request_id,
+                "request_id": self.request_id, "run_id": self.run_id,
                 "answerable": self.answerable,
                 "need": self.need, "tool": self.tool,
                 "nickname": self.nickname, "title": self.title,
@@ -178,6 +196,18 @@ def _title(nickname: str, project: str) -> str:
     78be5105 needs you" is a log line. The nickname is why identity was built."""
     who = nickname or project or "An agent"
     return f"{who} needs you"
+
+
+def _title_picks(who: str) -> str:
+    """"Vex is waiting on your picks" — a review run's one buzz."""
+    return f"{who} is waiting on your picks"
+
+
+def _picks_runs(review_runs: Optional[list]) -> list[dict]:
+    """The published runs waiting on picks, malformed ones dropped."""
+    return [r for r in review_runs or []
+            if isinstance(r, dict) and r.get("state") == "picks"
+            and str(r.get("id") or "")]
 
 
 def _report_fresh(entry: dict) -> bool:
@@ -354,7 +384,8 @@ class AlertPolicy:
                  suppressed: Iterable[str] = (),
                  prompts: Optional[dict] = None,
                  panel_focused: Iterable[str] = (),
-                 report_hold: Iterable[str] = ()) -> list[Alert]:
+                 report_hold: Iterable[str] = (),
+                 review_runs: Optional[list] = None) -> list[Alert]:
         """Alerts to raise for this tick.
 
         `snapshot` is the assembled agent map, `cards` maps session id to the
@@ -383,6 +414,15 @@ class AlertPolicy:
         # nor stamped this tick, so a later reading can still suppress it.
         hold = set(report_hold)
         live: set[str] = set()
+        # Every published run, in any state, keeps its `review:<id>` key
+        # alive through `_forget_gone`: a key not shaped like a session id
+        # is otherwise dropped on the next tick and the buzz would repeat.
+        for run in review_runs or []:
+            if isinstance(run, dict) and run.get("id"):
+                live.add(f"review:{run['id']}")
+        picks_runs = _picks_runs(review_runs)
+        review_bound = {str(r.get("session_id")): r for r in picks_runs
+                        if r.get("session_id")}
 
         for category, entries in snapshot.items():
             if category == "finished":
@@ -458,7 +498,7 @@ class AlertPolicy:
                 # With no summary, a work report's headline stands in: it is
                 # the agent's own words about the turn, one line long, and
                 # still better than the constant (`work_report.headline_of`).
-                if card and category == "waiting":
+                if card and category == "waiting" and sid not in review_bound:
                     body = str(card.get("message") or "Waiting for input")
                     summary = str(entry.get("last_summary") or "").strip()
                     if card.get("hook") in _GENERIC_CARD_HOOKS:
@@ -512,6 +552,7 @@ class AlertPolicy:
                 # Last, and only for a row nobody is being asked anything
                 # about: a finished report. No card, no prompt, not waiting.
                 if (category in REPORT_CATEGORIES and not card and not prompt
+                        and sid not in review_bound
                         and isinstance(entry.get("work_report"), dict)
                         and _report_fresh(entry) and sid not in hold):
                     alert = self._report_alert(sid, entry, now, nickname,
@@ -519,8 +560,68 @@ class AlertPolicy:
                     if alert:
                         out.append(alert)
 
+        for run in picks_runs:
+            alert = self._review_picks_alert(run, snapshot, now, skip)
+            if alert:
+                out.append(alert)
+
         self._forget_gone(live)
         return out
+
+    def _review_picks_alert(self, run: dict, snapshot: dict, now: float,
+                            skip: set[str]) -> Optional[Alert]:
+        """One buzz per set of findings in a run waiting on picks.
+
+        `_report_alert`'s cooldown shape on purpose: it does not *wait* on
+        `_last_per_session` (the review session's own generic Stop card
+        stamped it a few seconds earlier) and does not *stamp* it. Keyed on
+        the run and the findings, never on a session id, so
+        `evaluate` names `review:<id>` in `live`. Withheld, and marked as
+        delivered, while the bound session is muted or being looked at.
+        Once per entry into `picks`, not per version of the findings.
+        Only who and how many: no finding's words reach the alert.
+        """
+        run_id = str(run.get("id") or "")
+        sid = str(run.get("session_id") or "")
+        key = (f"review:{run_id}", "picks")
+        if key in self._fired:
+            return None
+        self._fired[key] = now
+        try:
+            landed = float(run.get("findings_at") or 0.0)
+        except (TypeError, ValueError):
+            landed = 0.0
+        # `findings_at` is published as whole seconds; compare like with like.
+        if self.started_at > 0 and 0 < landed < int(self.started_at):
+            return None             # news for a previous daemon's run
+        if sid and (sid in self._muted or sid in skip):
+            return None
+        row: dict = {}
+        if sid:
+            for category, entries in snapshot.items():
+                if category == "finished":
+                    continue
+                for entry in entries:
+                    if (entry.get("session_id") or "") == sid:
+                        row = entry
+                        break
+                if row:
+                    break
+        nickname = str(row.get("nickname") or "")
+        project = str(run.get("project") or row.get("project") or "")
+        who = nickname or project
+        count = len(run.get("findings") or [])
+        self._counter += 1
+        return Alert(
+            id=f"review:{run_id}:picks:{self._counter}", session_id=sid,
+            nickname=who, title=_title_picks(who or "A review"),
+            body=f"{count} finding" + ("" if count == 1 else "s") + " — pick the fixes", severity="warn",
+            rule=REVIEW_PICKS_RULE, created_at=now,
+            actions=("reveal", "mute") if sid else (),
+            subtitle=_subtitle(nickname, project, ""),
+            character=cast.character_for(nickname, sid) if sid else "",
+            state="", kind=KIND_PICKS, run_id=run_id,
+            need=f"Pick the fixes: {count} finding" + ("" if count == 1 else "s"))
 
     def _maybe(self, sid: str, rule: str, now: float, nickname: str,
                title: str, body: str, severity: str,
@@ -687,5 +788,6 @@ def clear_resolved(policy: AlertPolicy, snapshot: dict, cards: dict) -> None:
 
 __all__ = ["Alert", "AlertPolicy", "clear_resolved", "PER_SESSION_COOLDOWN",
            "INTERRUPT_RULES", "INTERRUPT_SEVERITIES", "NEVER_INTERRUPT",
-           "KINDS", "KIND_FINISHED", "REPORT_RULE", "marker_current",
+           "KINDS", "KIND_FINISHED", "KIND_PICKS", "REPORT_RULE",
+           "REVIEW_PICKS_RULE", "marker_current",
            "offered_reply", "report_pending"]
