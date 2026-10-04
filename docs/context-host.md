@@ -23,7 +23,8 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   A human may close a proven stopped native root via `can_close`; fresh
   journal/holder/turn checks and bridge 0.1.12+ apply (`docs/codex-contract.md`).
   Codex board MCP exposes add/attach/close only. Private planning-terminal close
-  requires a ten-minute receipt from successful session-attributed attachment.
+  requires a ten-minute receipt from successful session-attributed attachment
+  (one receipt per session; a batch's members extend it).
   Opt-in stopped-native reply uses exact ownership and bridge 0.1.21+;
   shared-server TUI replies instead use the local server's explicit direct-input
   capability and addressed turn protocol (`codex_input.py`), including queued

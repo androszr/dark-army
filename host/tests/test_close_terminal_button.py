@@ -895,6 +895,9 @@ async def test_refinement_validates_whole_descendant_tree(refinement_handoff, gr
     ('implementation', 'before_attach'), ('implementation', 'after_attach'),
     ('implementation', 'final_scan'), ('refinement', 'after_attach'),
     ('refinement', 'final_scan'),
+    ('batch_member_live', 'before_attach'),
+    ('batch_member_live', 'after_attach'),
+    ('batch_member_live', 'final_scan'),
 ])
 async def test_refinement_refuses_conflicting_card_scope(refinement_handoff, monkeypatch, phase, when):
     from dark_army_daemon import codex_rollouts
@@ -903,18 +906,35 @@ async def test_refinement_refuses_conflicting_card_scope(refinement_handoff, mon
     other, detail = store.create({'title': 'Other work', 'root': records[0].cwd,
                                  'project': 'bob', 'tool': 'codex'})
     assert other, detail
+    if phase == 'batch_member_live':
+        token = 'batch-close-scope'
+        member, detail = store.create({'title': 'Second member', 'root': records[0].cwd,
+                                       'project': 'bob', 'tool': 'codex'})
+        assert member, detail
+        for rank, bound in enumerate((card, member), start=1):
+            updated, detail = store.update(bound['id'], {
+                'refine_session_id': sid, 'refine_state': 'live',
+                'batch_id': token, 'batch_rank': str(rank)})
+            assert updated, detail
+        plan.write_text(f"# First\n- **Card:** {card['id']}\n")
+        member_plan = plan.parent / 'second-member.md'
+        member_plan.write_text(f"# Second\n- **Card:** {member['id']}\n")
 
     def bind():
         if phase == 'implementation':
             linked, reason = store.bind_session(other['id'], sid)
         else:
-            linked, reason = store.update(other['id'], {
-                'refine_session_id': sid, 'refine_state': 'live'})
+            fields = {'refine_session_id': sid, 'refine_state': 'live'}
+            if phase == 'batch_member_live':
+                fields.update({'batch_id': token, 'batch_rank': '3'})
+            linked, reason = store.update(other['id'], fields)
         assert linked, reason
 
     if when == 'before_attach':
         bind()
     assert (await d.attach_plan_by_session(sid, str(plan)))[0]
+    if phase == 'batch_member_live':
+        assert (await d.attach_plan_by_session(sid, str(member_plan)))[0]
     if when == 'after_attach':
         bind()
     elif when == 'final_scan':
@@ -934,6 +954,8 @@ async def test_refinement_refuses_conflicting_card_scope(refinement_handoff, mon
     assert not ok and detail
     assert posts == [] and sid not in d._closed_ids
     assert store.get(card['id'])['column_name'] == 'backlog'
+    if phase == 'batch_member_live':
+        assert store.get(member['id'])['column_name'] == 'backlog'
     linked = store.get(other['id'])
     assert linked['session_id' if phase == 'implementation' else 'refine_session_id'] == sid
     if when == 'final_scan':

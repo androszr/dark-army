@@ -3129,8 +3129,10 @@ class BoardVerbsMixin:
             "attach_plan", card["id"], resolved, session_id)
         if attached is not None:
             attached = await self._seed_from_plan(attached, resolved)
+            # The store clears attached's batch mark; use the pre-attach card.
             self._remember_refinement_attachment(
-                session_id, attached, close_capture, project_root, journal)
+                session_id, attached, close_capture, project_root, journal,
+                batch_id=str(card.get("batch_id") or ""))
             await self._publish_board()
             self._log_card_event(
                 attached, "card_plan_attached", session_id=session_id,

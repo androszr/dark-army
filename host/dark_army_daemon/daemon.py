@@ -107,7 +107,7 @@ from .daemon_review import ReviewVerbsMixin
 
 @dataclass(frozen=True)
 class RefinementCloseReceipt:
-    """Private, single-use authority for one attached plan and one Codex turn."""
+    """Private, single-use authority for one attached plan, or every plan of one batch, and one Codex turn."""
 
     card_id: str
     root: codex_rollouts.CodexTitleRoot
@@ -118,6 +118,8 @@ class RefinementCloseReceipt:
     card_updated_at: float
     expires: float
     state: str = "ready"
+    batch_id: str = ""
+    members: tuple[tuple[str, str, float], ...] = ()
 
 
 REFINEMENT_CLOSE_SECONDS = 600.0
@@ -4491,25 +4493,56 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                 self._refinement_receipts.pop(sid, None)
 
     def _remember_refinement_attachment(self, session_id, attached, captured,
-                                       project_root, journal):
+                                       project_root, journal, *, batch_id=""):
         self._prune_refinement_receipts()
         if (not captured or not journal
                 or self._refinement_root_capture(session_id) != captured
                 or self._codex_records.get(session_id) is not captured[0]
                 or captured[1].cwd != project_root):
             return
+        member = (str(attached["id"]), str(attached["plan_path"]),
+                  float(attached["updated_at"]))
         previous = self._refinement_receipts.get(session_id)
         if previous is not None:
-            # Neither a second card nor reattachment renews spent authority.
-            if previous.card_id != attached["id"]:
-                self._refinement_receipts[session_id] = replace(previous, state="ambiguous")
+            if member[0] == previous.card_id or any(
+                    existing[0] == member[0] for existing in previous.members):
+                return  # Reattachment renews nothing.
+            if (batch_id and previous.state == "ready"
+                    and previous.batch_id == batch_id
+                    and previous.project_root == project_root):
+                self._refinement_receipts[session_id] = replace(
+                    previous, members=previous.members + (member,),
+                    expires=time.monotonic() + REFINEMENT_CLOSE_SECONDS)
+                return
+            self._refinement_receipts[session_id] = replace(previous, state="ambiguous")
             return
         if len(self._refinement_receipts) >= 500:
             return
         self._refinement_receipts[session_id] = RefinementCloseReceipt(
             str(attached["id"]), captured[1], project_root,
             str(attached["plan_path"]), journal, captured[2],
-            float(attached["updated_at"]), time.monotonic() + REFINEMENT_CLOSE_SECONDS)
+            float(attached["updated_at"]), time.monotonic() + REFINEMENT_CLOSE_SECONDS,
+            batch_id=batch_id, members=(member,))
+
+    def _receipt_cards_unchanged(self, store, receipt, session_id):
+        if not receipt.members:
+            return None
+        cards = []
+        for cid, path, updated in receipt.members:
+            card = store.get(cid)
+            if (not card or card.get("column_name") != "backlog"
+                    or card.get("updated_at") != updated
+                    or card.get("plan_path") != path
+                    or os.path.realpath(card.get("root") or "") != receipt.project_root
+                    or card.get("session_id") or card.get("link_state")
+                    or card.get("refine_state")
+                    or card.get("refine_session_id") != session_id):
+                return None
+            resolved, refusal = self._plan_path_refusal(receipt.project_root, path)
+            if refusal or resolved != path:
+                return None
+            cards.append(card)
+        return cards
 
     def _refinement_descendants(self, record):
         """Capture the whole known subtree, including children missing in stats."""
@@ -4585,6 +4618,7 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                             return None
                         def observe():
                             store = self._board
+                            member_ids = {m[0] for m in receipt.members}
 
                             def scope_clear():
                                 # A successful attachment grants no authority to
@@ -4595,31 +4629,22 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                                 return (store is not None and self._board is store
                                         and not any(c.get("column_name") != "done"
                                                     for c in store.by_session(session_id))
-                                        and not any(c.get("id") != receipt.card_id
+                                        and not any(c.get("id") not in member_ids
                                                     and c.get("refine_state") in ("dispatching", "live")
                                                     for c in store.by_refine_session(session_id)))
 
                             if not scope_clear():
                                 return None
-                            card = store.get(receipt.card_id)
-                            if (not card or card.get("column_name") != "backlog"
-                                    or card.get("updated_at") != receipt.card_updated_at
-                                    or card.get("plan_path") != receipt.plan_path
-                                    or os.path.realpath(card.get("root") or "") != receipt.project_root
-                                    or card.get("session_id") or card.get("link_state")
-                                    or card.get("refine_state")
-                                    or card.get("refine_session_id") != session_id):
-                                return None
-                            resolved, refusal = self._plan_path_refusal(receipt.project_root, receipt.plan_path)
-                            if refusal or resolved != receipt.plan_path:
+                            cards = self._receipt_cards_unchanged(store, receipt, session_id)
+                            if cards is None:
                                 return None
                             proof = codex_rollouts.refinement_close_observation(
                                 tuple(r.root for r in captured[1]), receipt.root,
                                 receipt.journal, receipt.turn_id, children)
                             # A worker-side observer can write the store while
                             # loop-owned locks are held; reject any intervening edit.
-                            current = store.get(receipt.card_id)
-                            return proof if current == card and scope_clear() else None
+                            current = self._receipt_cards_unchanged(store, receipt, session_id)
+                            return proof if current == cards and scope_clear() else None
                         proof = await asyncio.get_running_loop().run_in_executor(None, observe)
                         return proof if self._refinement_current(session_id, receipt, captured, children) else None
 
@@ -4648,6 +4673,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                                        "It may still be open; no retry or clear was sent.")
                     self._note_closed(session_id, pid=proof.pid, create_time=proof.create_time)
                     self._settle_codex_stop(session_id, "closed", observed=captured[0][session_id])
+                    if len(receipt.members) > 1:
+                        return True, "Planning terminal closed; the attached plans stay in Backlog."
                     return True, "Planning terminal closed; the attached plan stays in Backlog."
         except TimeoutError:
             if sent:

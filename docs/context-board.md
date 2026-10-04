@@ -104,7 +104,8 @@ the pair the batch-implement sibling reuses beside `link_state`), which
 attaches by its plan's `- **Card:**` header, and a member left planless
 ends with `BATCH_UNPLANNED_NOTE`. The session's spend is recorded on every
 card of the batch, and its origin stamp names the first card. Long form:
-`docs/channel-tools.md`.
+`docs/channel-tools.md`; a Codex batch's close receipt covers every member
+(`docs/codex-contract.md`).
 
 **Several Backlog cards may be built by one press** (25 Sep 2026):
 `board_start_batch` (on both phone tuples behind `start_batch_supported`; the phone's Backlog select mode is `docs/phone-contract.md`'s) → `start_cards` runs every Start rung

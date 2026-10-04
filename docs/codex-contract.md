@@ -143,10 +143,12 @@ existing add/attach attribution, never completion or channel authority.
 
 **Planning completion has one separate close permission.** Successful
 Codex `attach_plan_by_session` mints a private in-memory receipt for one
-card, canonical project/plan/journal, root and turn, expiring after ten
-minutes. Two distinct attachments make it ambiguous. The authenticated
-loopback-only `close_refinement_terminal` action verifies that unchanged
-Backlog card and exact native journal holder, twice, off-loop under an
+card, or for every card of one batch, canonical project/plan/journal, root and turn,
+expiring after ten minutes. Members sharing one non-empty `batch_id` from the
+same session extend the receipt and restart its ten minutes. Any attach outside
+that batch, or to a card with no batch mark, makes it ambiguous. The authenticated
+loopback-only `close_refinement_terminal` action verifies every unchanged
+Backlog member and the exact native journal holder, twice, off-loop under an
 eight-second deadline. It permits the final running tool command while
 refusing a new/unknown turn, questions, permissions and live children;
 retained completed child journals are not live work. Successful task-path spawn
