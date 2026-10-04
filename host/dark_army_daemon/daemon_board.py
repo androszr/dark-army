@@ -4174,7 +4174,15 @@ class BoardVerbsMixin:
                         model=launch_model)))
         name = (card.get("title") or "agent")[:40]
         if batch is not None:
-            name = (f"batch: {len(batch)} cards")[:40]
+            # Named for the lead the head card will be bound as, so the
+            # phone's Claude app and the tab read `Vex · Stacked cards 3`
+            # rather than the CLI's random slug.
+            shown = getattr(self, "_nicknames_shown", {}) or {}
+            agent = self._role_nickname(
+                "start", str(card.get("id") or ""),
+                str(card.get("area") or ""), list(shown.values()))
+            name = dispatch.stacked_title(agent, len(batch))
+            argv = dispatch.with_session_name(card["tool"], argv, name)
         # Everything the fleet already had. The session this launch produces is
         # the first one that is *not* in here — see `_bind_dispatched_card`.
         # Taken *before* the spawn await: the extension's reply can lose the
@@ -5065,7 +5073,12 @@ class BoardVerbsMixin:
             model=self._agent_model_for(root, tool, "main"),
             effort=self._agent_effort_for(root, tool, "main"))
         n = len(cards)
-        name = (f"refine: {n} cards")[:40]
+        shown = getattr(self, "_nicknames_shown", {}) or {}
+        agent = self._role_nickname(
+            "refine", str(cards[0].get("id") or ""),
+            str(cards[0].get("area") or ""), list(shown.values()))
+        name = dispatch.stacked_title(agent, n)
+        argv = dispatch.with_session_name(tool, argv, name)
         # Before the spawn await, `_refine_card_locked`'s stated reason.
         baseline = self._live_session_ids()
         spawner = dispatch.spawn_local if use_own else dispatch.spawn

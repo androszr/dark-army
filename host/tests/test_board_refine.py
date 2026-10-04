@@ -1276,7 +1276,8 @@ async def test_refine_cards_spawns_one_session_and_marks_every_card(
     ok, detail = await d.refine_cards([c["id"] for c in cards])
     assert ok, detail
     assert len(spawns) == 1
-    assert spawns[0]["name"] == "refine: 3 cards"
+    assert spawns[0]["name"] == "Cipher · Stacked cards 3"
+    assert spawns[0]["argv"][1:3] == ["--name", "Cipher · Stacked cards 3"]
     prompt = spawns[0]["argv"][-1]
     assert prompt.startswith("/ship batch:")
     for k, card in enumerate(cards, start=1):

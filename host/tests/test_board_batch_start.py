@@ -113,7 +113,11 @@ async def test_start_cards_opens_one_terminal_and_marks_the_rest_waiting(
                                       cards[1]["id"]])
     assert ok, detail
     assert len(opened) == 1, "a batch opens one terminal, never three"
-    assert opened[0]["name"] == "batch: 3 cards"
+    name = opened[0]["name"]
+    assert name.endswith("Stacked cards 3"), name
+    # The phone's Claude app shows the same title, never a random slug.
+    argv = opened[0]["argv"]
+    assert argv[1:3] == ["--name", name]
     prompt = opened[0]["argv"][-1]
     assert prompt.startswith("/ship batch: implement")
     for k in (1, 2, 3):

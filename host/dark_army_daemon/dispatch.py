@@ -976,6 +976,35 @@ def refine_batch_prompt(cards: list) -> str:
     return "\n".join(parts)
 
 
+def stacked_title(agent: str, count: int) -> str:
+    """The name a several-card session wears: `<agent> · Stacked cards <n>`.
+
+    Without one, Claude's Remote Control list on the phone shows the CLI's
+    own random slug for a batch (`<host>-cheerful-sutherland`), because a
+    batch prompt opens on `/ship batch:` and gives the CLI nothing to title
+    it from. The agent is the cast member the session will be bound as
+    (`_role_nickname`); an empty one leaves just the count. Clamped to the
+    terminal tab's 40 characters.
+    """
+    base = f"Stacked cards {int(count)}"
+    agent = str(agent or "").strip()
+    return (f"{agent} · {base}" if agent else base)[:40]
+
+
+def with_session_name(tool: str, argv: list, name: str) -> list:
+    """`argv` with `--name <name>` after the executable, for claude only.
+
+    The CLI's display name (prompt box, `/resume`, terminal title and the
+    Remote Control session on the phone). `--name` takes exactly one value,
+    so it cannot swallow the prompt, which stays the last element. Codex and
+    Grok have no such flag and get `argv` back unchanged, as does an empty
+    name.
+    """
+    if tool != "claude" or not name or not argv:
+        return list(argv)
+    return [argv[0], "--name", str(name), *argv[1:]]
+
+
 def implement_batch_prompt(cards: list) -> str:
     """The prompt one implementation session opens with when it builds
     several planned Backlog cards, one after another. Pure.

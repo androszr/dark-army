@@ -3125,3 +3125,22 @@ async def test_card_effort_the_launch_model_offers_still_starts(
     argv = seen["argv"]
     assert argv[argv.index("--model") + 1] == "gpt-5.5"
     assert argv[argv.index("-c") + 1] == "model_reasoning_effort=xhigh"
+
+
+# --- a stacked session's name -------------------------------------------------
+
+
+def test_stacked_title_puts_the_agent_first():
+    assert dispatch.stacked_title("Vex", 3) == "Vex · Stacked cards 3"
+    assert dispatch.stacked_title("", 2) == "Stacked cards 2"
+    assert len(dispatch.stacked_title("x" * 60, 3)) == 40
+
+
+def test_with_session_name_is_claude_only_and_keeps_the_prompt_last():
+    argv = ["/bin/claude", "--model", "opus", "/ship batch: go"]
+    named = dispatch.with_session_name("claude", argv, "Vex · Stacked cards 3")
+    assert named == ["/bin/claude", "--name", "Vex · Stacked cards 3",
+                     "--model", "opus", "/ship batch: go"]
+    codex = ["/bin/codex", "--", "go"]
+    assert dispatch.with_session_name("codex", codex, "Vex") == codex
+    assert dispatch.with_session_name("claude", argv, "") == argv
