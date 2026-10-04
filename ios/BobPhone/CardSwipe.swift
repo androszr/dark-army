@@ -1,7 +1,7 @@
 import Foundation
 
 /// The Board tab's sideways swipe on a Prep or Backlog card: which verb the
-/// first button wears, the words of the buttons and their two confirmations,
+/// first button wears, the words of the buttons,
 /// and the arithmetic of the slide. Every rule here is the card screen's own
 /// (`PhoneCardDetailView`), moved or read, never copied: `canStart` is the
 /// card screen's Start gate, read by both surfaces, and `primary` is the two
@@ -60,22 +60,14 @@ enum PhoneCardSwipe {
 
     // MARK: - Words
 
-    /// The card screen's `startLabel` words, minus the changed-plan one (the
-    /// card screen is the one place that confirmation is answered).
-    static func startLabel(armed: Bool, unplanned: Bool) -> String {
-        if !armed { return "START" }
-        return unplanned ? "Start unplanned?" : "Really start?"
-    }
-
-    static func refineLabel(armed: Bool) -> String {
-        armed ? "Really refine?" : "Refine"
-    }
-
-    static let moreLabel = "⋯"
-    static let moreSpoken = "More actions"
-    static let deleteRow = "Delete card"
-    static let deleteTitle = "Delete this card?"
-    static let deleteMessage = "Are you sure? There is no undo."
+    /// The swipe's buttons send on the first press (4 Oct 2026): a person who
+    /// slid the card aside and pressed a verb has already said it twice. The
+    /// card screen keeps its own armed confirmations.
+    static let startLabel = "START"
+    static let refineLabel = "Refine"
+    static let deleteLabel = "Delete"
+    static let deleteSpoken = "Delete card"
+    static let deleteIcon = "trash"
 
     // MARK: - The slide
 

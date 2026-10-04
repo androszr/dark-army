@@ -408,7 +408,7 @@ Pinned by `host/tests/test_phone_card_hold.py` and
 ## A Prep or Backlog card is swiped on the Board tab
 
 A card in the Prep or Backlog row slides left (3 Oct 2026) to show two
-buttons: the card's one next action and a dots button. The board is one
+buttons: the card's one next action and a red Delete. The board is one
 `ScrollView`, not a `List`, so `.swipeActions` is not available: the slide
 is `SwipeRevealRow`. On iOS 18 and later it is `CardSwipePan`, a UIKit pan
 that begins only when the first movement is mostly sideways and that the
@@ -427,10 +427,11 @@ is the two arms of `CardSections.nextAction` this view reaches (Prep: Refine
 if `PhoneRowSelection.tickable("prep", …)`, else Start if startable;
 Backlog: Start if startable), pinned equal to the Mac's
 `CardActionWeight.primary`. `PhoneCardSwipe.canStart` is the card screen's
-Start gate, **moved there verbatim** so both read one body. The first press
-arms ("Really start?", or "Start unplanned?" on a card with no plan and not a
-scout), the second sends `board_dispatch` (or `board_refine`) through
-`enqueue` under the card's scope, as `pressStart` does; START HERE, the plain
+Start gate, **moved there verbatim** so both read one body. **Every swipe
+button sends on its first press** (4 Oct 2026: the slide is the deliberate
+gesture, so no arm and no dialog): START sends `board_dispatch` (with
+`skip_plan_gate` on a card with no plan that is not a scout) and Refine
+`board_refine`, through `enqueue` under the card's scope; START HERE, the plain
 move and the changed-plan confirmation stay on the card screen, and a
 plan-gate refusal is drawn under the tile and read like any other (the
 card screen's `noteArrived` arms its confirmation off the note whether or
@@ -440,13 +441,10 @@ queued Delete says so under the tile. The Mac's refusal is drawn under the
 card in orange, ahead of the phone's own, and the phone's own clears when
 the press's mark appears. A cancelled or failed slide snaps the tile back.
 
-**The dots open a menu, and Delete card is behind it**: a confirmation
-dialog with Delete card in red and Cancel, then "Are you sure?" with Delete
-and Cancel; Delete sends `board_delete` through `enqueue` (no `Arm`, the
-dialog is the confirmation) and the tile dims through `cardLeaving`. The
-menu is built for more quiet verbs; only Delete card ships. For VoiceOver the
-card carries the same verbs as actions (the first button, and Delete card,
-which goes straight to "Are you sure?"). The three verbs were already on
+**Delete is the red trash button beside it** and sends `board_delete`
+through `enqueue` at once; the tile dims through `cardLeaving`. The card
+screen keeps its own armed confirmations. For VoiceOver the card carries the
+same verbs as actions (the first button, and Delete card), each one press. The three verbs were already on
 both phone doors; no daemon code changed. Pinned by
 `host/tests/test_phone_card_swipe.py` and
 `ios/BobPhoneTests/CardSwipeTests.swift`; the gesture's arbitration inside

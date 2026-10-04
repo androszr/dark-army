@@ -2,7 +2,7 @@
 
 `plans/2026-10-03-phone-card-swipe-actions.md`. A sideways swipe on a card in
 the Prep or Backlog row shows two buttons: the card's one next action (START,
-or Refine in Prep) and a dots button whose menu holds a confirmed Delete.
+or Refine in Prep) and Delete; each sends on its first press.
 The rule (`ios/BobPhone/CardSwipe.swift`) is Foundation-only and runs here
 under `swiftc`, beside the Mac's `CardActionWeight`; the wiring in
 `BoardView.swift` and the card screen is pinned by source greps; the
@@ -84,15 +84,11 @@ enum Runner {
                                            canStart: p.canStart)
             print("COLUMN \(column) \(r.map { "\($0)" } ?? "nil")")
         }
-        print("LABEL start \(PhoneCardSwipe.startLabel(armed: false, unplanned: true))")
-        print("LABEL start-armed \(PhoneCardSwipe.startLabel(armed: true, unplanned: false))")
-        print("LABEL start-armed-unplanned \(PhoneCardSwipe.startLabel(armed: true, unplanned: true))")
-        print("LABEL start-unarmed-planned \(PhoneCardSwipe.startLabel(armed: false, unplanned: false))")
-        print("LABEL refine \(PhoneCardSwipe.refineLabel(armed: false))")
-        print("LABEL refine-armed \(PhoneCardSwipe.refineLabel(armed: true))")
-        print("LABEL delete-row \(PhoneCardSwipe.deleteRow)")
-        print("LABEL delete-title \(PhoneCardSwipe.deleteTitle)")
-        print("LABEL more \(PhoneCardSwipe.moreLabel)")
+        print("LABEL start \(PhoneCardSwipe.startLabel)")
+        print("LABEL refine \(PhoneCardSwipe.refineLabel)")
+        print("LABEL delete \(PhoneCardSwipe.deleteLabel)")
+        print("LABEL delete-spoken \(PhoneCardSwipe.deleteSpoken)")
+        print("LABEL delete-icon \(PhoneCardSwipe.deleteIcon)")
         print("ROWS " + PhoneCardSwipe.rows.joined(separator: ","))
         print("WIDTHS \(PhoneCardSwipe.minimumDrag) \(PhoneCardSwipe.revealTravel) \(PhoneCardSwipe.actionsWidth)")
         for t in p.translations {
@@ -238,14 +234,10 @@ def test_the_labels_are_the_card_screens_words(rule_bin):
             labels[name] = value
     assert labels == {
         "start": "START",
-        "start-armed": "Really start?",
-        "start-armed-unplanned": "Start unplanned?",
-        "start-unarmed-planned": "START",
         "refine": "Refine",
-        "refine-armed": "Really refine?",
-        "delete-row": "Delete card",
-        "delete-title": "Delete this card?",
-        "more": "⋯",
+        "delete": "Delete",
+        "delete-spoken": "Delete card",
+        "delete-icon": "trash",
     }
     card = _read(CARD)
     for word in ("Really start?", "Start unplanned?", "Really refine?"):
@@ -328,12 +320,16 @@ def test_the_swipe_is_wired_to_the_card_screens_presses():
     assert board.count("client.enqueue(action: PhoneActions.boardRefine,") == 1
     assert board.count("client.enqueue(action: PhoneActions.boardDelete") == 1
     assert board.count("client.post(") == 2
-    # The plan gate is skipped only on the confirmed press, as the card does.
+    # One press sends (4 Oct 2026): no arm, no dialog. An unplanned card
+    # skips the plan gate on that press, since there is no second one.
     assert board.count("skip_plan_gate") == 1
     start = board.split("    private func pressSwipeStart(", 1)[1].split("\n    }\n", 1)[0]
-    assert start.index("arm.confirm(.start, id: card.id)") < start.index("skip_plan_gate")
+    assert "arm." not in start
+    assert start.index("card.planPath.isEmpty && !card.isScout") < start.index("skip_plan_gate")
     refine = board.split("    private func pressSwipeRefine(", 1)[1].split("\n    }\n", 1)[0]
-    assert "arm.confirm(.refine, id: card.id)" in refine
+    assert "arm." not in refine
+    buttons = board.split("    private func swipeButtons(for", 1)[1].split("\n    }\n", 1)[0]
+    assert "sendSwipeDelete(card)" in buttons
     assert "own_terminal" not in board
     assert board.count(
         ".simultaneousGesture(DragGesture(minimumDistance: PhoneCardSwipe.minimumDrag") == 1
@@ -347,9 +343,8 @@ def test_the_swipe_is_wired_to_the_card_screens_presses():
     assert "shouldBeRequiredToFailBy" in pan
     assert "case .cancelled, .failed:" in pan
     assert ".highPriorityGesture(" not in board
-    assert board.count(".confirmationDialog(") == 2
-    assert board.count("role: .destructive") == 2
-    assert "PhoneCardSwipe.deleteMessage" in board
+    assert ".confirmationDialog(" not in board
+    assert "role: .destructive" not in board
     link = board.split("    private func cardLink(_ card: BoardCard)", 1)[1].split(
         "    // MARK:", 1)[0]
     assert link.count(".accessibilityActions {") == 1
@@ -384,7 +379,7 @@ def test_the_swipe_survives_a_cancelled_drag_and_reads_every_note():
     assert ".onChange(of: client.queueMark(for: card.id))" in board
     # A reveal change, and only one, disarms.
     assert board.count("arm.disarm()") >= 3
-    assert "Task { @MainActor in deleting = card }" in board
+    assert "deleting = card" not in board
 
 
 def test_the_doors_already_carry_the_three_verbs():
@@ -423,6 +418,6 @@ def test_the_contract_says_so():
     assert contract.count("\n" + heading + "\n") == 1
     section = contract.split(heading, 1)[1].split("\n## ", 1)[0]
     for word in ("CardSections.nextAction", "enqueue", "Delete card",
-                 "Are you sure?", "VoiceOver", "test_phone_card_swipe.py"):
+                 "first press", "VoiceOver", "test_phone_card_swipe.py"):
         assert word in section, word
     assert "A Prep or Backlog card swipes on the phone too" in _read(PANEL_DOC)

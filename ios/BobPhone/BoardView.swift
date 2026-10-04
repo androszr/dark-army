@@ -59,9 +59,6 @@ struct BoardView: View {
     /// open at a time (`docs/phone-contract.md`, *A Prep or Backlog card is
     /// swiped on the Board tab*).
     @State private var revealed: String?
-    /// The card whose dots menu is up, and the card whose "Are you sure?" is.
-    @State private var moreFor: BoardCard?
-    @State private var deleting: BoardCard?
     /// The receipt whose note a swiped card last drew, so a redraw reads a
     /// note once (`batchNoteSeen`'s pattern).
     @State private var swipeNoteSeen = ""
@@ -246,28 +243,6 @@ struct BoardView: View {
 
     private var columnsHandled: some View {
         columnsBody
-        .confirmationDialog(moreFor.map { "More for \($0.title)" } ?? "More",
-                            isPresented: Binding(get: { moreFor != nil },
-                                                 set: { if !$0 { moreFor = nil } }),
-                            titleVisibility: .visible,
-                            presenting: moreFor) { card in
-            DecryptButton(PhoneCardSwipe.deleteRow, role: .destructive) {
-                // The second dialog opens on the next turn, after this one
-                // has dismissed, so iOS does not drop the presentation.
-                Task { @MainActor in deleting = card }
-            }
-            DecryptButton("Cancel", role: .cancel) {}
-        }
-        .confirmationDialog(PhoneCardSwipe.deleteTitle,
-                            isPresented: Binding(get: { deleting != nil },
-                                                 set: { if !$0 { deleting = nil } }),
-                            titleVisibility: .visible,
-                            presenting: deleting) { card in
-            DecryptButton(Verbs.delete.label, role: .destructive) { sendSwipeDelete(card) }
-            DecryptButton("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text(PhoneCardSwipe.deleteMessage)
-        }
         // A changed set of ticks is a different press: the arm was keyed on
         // the old list, so it goes rather than firing on a set nobody read.
         .onChange(of: selection) { _, _ in disarmBatch() }
@@ -664,7 +639,7 @@ struct BoardView: View {
                                         pressSwipe(primary, card)
                                     }
                                 }
-                                DecryptButton(PhoneCardSwipe.deleteRow) { deleting = card }
+                                DecryptButton(PhoneCardSwipe.deleteSpoken) { sendSwipeDelete(card) }
                                 if holdable {
                                     DecryptButton("Select") { hold(card) }
                                 }
@@ -708,14 +683,13 @@ struct BoardView: View {
                let mark = client.queueMark(for: card.id) {
                 return mark
             }
-            return PhoneCardSwipe.startLabel(armed: arm.start == card.id,
-                                             unplanned: card.planPath.isEmpty && !card.isScout)
+            return PhoneCardSwipe.startLabel
         case .refine:
             if client.queuedAction(for: card.id) == PhoneActions.boardRefine,
                let mark = client.queueMark(for: card.id) {
                 return mark
             }
-            return PhoneCardSwipe.refineLabel(armed: arm.refine == card.id)
+            return PhoneCardSwipe.refineLabel
         }
     }
 
@@ -726,8 +700,8 @@ struct BoardView: View {
         }
     }
 
-    /// The buttons under a slid-aside card: the one next action, and the
-    /// dots, whose menu holds the quiet verbs (Delete card today).
+    /// The buttons under a slid-aside card: the one next action and Delete.
+    /// Each sends on its first press; the slide was the deliberate gesture.
     @ViewBuilder
     private func swipeButtons(for card: BoardCard,
                               primary: PhoneCardSwipe.Primary?) -> some View {
@@ -739,16 +713,17 @@ struct BoardView: View {
                 .buttonStyle(AlarmOutline(size: 11))
                 .frame(maxWidth: .infinity)
             }
-            DecryptButton(action: { moreFor = card }) {
-                Text(PhoneCardSwipe.moreLabel)
+            DecryptButton(action: { sendSwipeDelete(card) }) {
+                Image(systemName: PhoneCardSwipe.deleteIcon)
                     .font(Theme.mono(16, weight: .medium))
                     .foregroundStyle(.white)
                     .frame(minWidth: 44, minHeight: 44)
-                    .background(SwipeInk.more)
+                    .background(SwipeInk.close)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(PhoneCardSwipe.moreSpoken)
+            .disabled(client.queuedAction(for: card.id) == PhoneActions.boardDelete)
+            .accessibilityLabel(PhoneCardSwipe.deleteSpoken)
         }
     }
 
@@ -771,42 +746,33 @@ struct BoardView: View {
         }
     }
 
-    /// Start, the card screen's `pressStart` / `dispatchStart` line for line:
-    /// the first press arms, the second sends. START HERE and the plain
-    /// move stay on the card screen.
+    /// Start in one press: `board_dispatch` through `enqueue` under the
+    /// card's scope. A card with no plan (and not a scout) skips the plan
+    /// gate, since the swipe has no second press to answer it with. START
+    /// HERE and the plain move stay on the card screen.
     private func pressSwipeStart(_ card: BoardCard) {
-        let skip = card.planPath.isEmpty && !card.isScout
-        if arm.confirm(.start, id: card.id) {
-            var fields = ["card_id": card.id]
-            if skip { fields["skip_plan_gate"] = "true" }
-            swipeRefusal[card.id] = nil
-            let sent = fields
-            Task {
-                let result = await client.enqueue(action: PhoneActions.boardDispatch,
-                                                  fields: sent, scope: card.id)
-                if !result.ok { swipeRefusal[card.id] = result.detail }
-            }
-        } else {
-            arm.arm(.start, id: card.id)
+        var fields = ["card_id": card.id]
+        if card.planPath.isEmpty && !card.isScout { fields["skip_plan_gate"] = "true" }
+        swipeRefusal[card.id] = nil
+        let sent = fields
+        Task {
+            let result = await client.enqueue(action: PhoneActions.boardDispatch,
+                                              fields: sent, scope: card.id)
+            if !result.ok { swipeRefusal[card.id] = result.detail }
         }
     }
 
     private func pressSwipeRefine(_ card: BoardCard) {
-        if arm.confirm(.refine, id: card.id) {
-            swipeRefusal[card.id] = nil
-            Task {
-                let result = await client.enqueue(action: PhoneActions.boardRefine,
-                                                  fields: ["card_id": card.id], scope: card.id)
-                if !result.ok { swipeRefusal[card.id] = result.detail }
-            }
-        } else {
-            arm.arm(.refine, id: card.id)
+        swipeRefusal[card.id] = nil
+        Task {
+            let result = await client.enqueue(action: PhoneActions.boardRefine,
+                                              fields: ["card_id": card.id], scope: card.id)
+            if !result.ok { swipeRefusal[card.id] = result.detail }
         }
     }
 
-    /// The card screen's confirmed Delete without its `Arm`: the dialog is
-    /// the confirmation here, and there is no screen to leave — the tile
-    /// dims through `client.cardLeaving`.
+    /// Delete in one press: no `Arm` and no dialog, and there is no screen
+    /// to leave — the tile dims through `client.cardLeaving`.
     private func sendSwipeDelete(_ card: BoardCard) {
         revealed = nil
         swipeRefusal[card.id] = nil

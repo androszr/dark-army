@@ -48,16 +48,11 @@ final class CardSwipeTests: XCTestCase {
     }
 
     func testTheLabelsAreTheCardScreensWords() {
-        XCTAssertEqual(PhoneCardSwipe.startLabel(armed: false, unplanned: true), "START")
-        XCTAssertEqual(PhoneCardSwipe.startLabel(armed: true, unplanned: false), "Really start?")
-        XCTAssertEqual(PhoneCardSwipe.startLabel(armed: true, unplanned: true), "Start unplanned?")
-        XCTAssertEqual(PhoneCardSwipe.refineLabel(armed: false), "Refine")
-        XCTAssertEqual(PhoneCardSwipe.refineLabel(armed: true), "Really refine?")
-        XCTAssertEqual(PhoneCardSwipe.deleteRow, "Delete card")
-        XCTAssertEqual(PhoneCardSwipe.deleteTitle, "Delete this card?")
-        XCTAssertEqual(PhoneCardSwipe.deleteMessage, "Are you sure? There is no undo.")
-        XCTAssertEqual(PhoneCardSwipe.moreLabel, "⋯")
-        XCTAssertEqual(PhoneCardSwipe.moreSpoken, "More actions")
+        XCTAssertEqual(PhoneCardSwipe.startLabel, "START")
+        XCTAssertEqual(PhoneCardSwipe.refineLabel, "Refine")
+        XCTAssertEqual(PhoneCardSwipe.deleteLabel, "Delete")
+        XCTAssertEqual(PhoneCardSwipe.deleteSpoken, "Delete card")
+        XCTAssertEqual(PhoneCardSwipe.deleteIcon, "trash")
     }
 
     func testTheGestureHelpersClampAndThreshold() {
