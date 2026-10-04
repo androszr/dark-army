@@ -12,6 +12,7 @@ before unplanned work enters In progress.
 import asyncio
 import os
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -1033,6 +1034,171 @@ async def test_second_distinct_attachment_revokes_automatic_close(refinement_han
     assert d._refinement_receipts[sid].state == 'ambiguous'
     assert not (await d.close_refinement_terminal(sid))[0]
     assert posts == []
+
+
+def _codex_batch_receipt_cards(handoff, count=3, *, token="batch-close-1", session_index=0):
+    d, store, first, plan, records, processes, posts = handoff
+    sid = records[session_index].session_id
+    root = records[session_index].cwd
+    cards = [first] if session_index == 0 else []
+    cards += [_make(store, root=root, tool="codex", author=sid)
+              for _ in range(count - len(cards))]
+    plans = []
+    for rank, card in enumerate(cards, start=1):
+        updated, detail = store.update(card["id"], {
+            "refine_session_id": sid, "refine_state": "live",
+            "batch_id": token, "batch_rank": str(rank)})
+        assert updated, detail
+        member_plan = plan.parent / f"batch-{session_index}-{rank}.md"
+        member_plan.write_text(f"# Plan {rank}\n- **Card:** {card['id']}\n")
+        plans.append(member_plan)
+    return sid, cards, plans
+
+
+async def _attach_receipt_members(daemon, sid, plans):
+    attached = []
+    for plan in plans:
+        card, detail = await daemon.attach_plan_by_session(sid, str(plan))
+        assert card, detail
+        attached.append(card)
+    return attached
+
+
+@pytest.mark.asyncio
+async def test_batch_members_extend_one_close_receipt(refinement_handoff):
+    d, store, card, plan, records, processes, posts = refinement_handoff
+    token = "batch-close-1"
+    sid, cards, plans = _codex_batch_receipt_cards(refinement_handoff, token=token)
+    attached = await _attach_receipt_members(d, sid, plans)
+    receipt = d._refinement_receipts[sid]
+    assert len(d._refinement_receipts) == 1
+    assert receipt.state == "ready" and receipt.batch_id == token
+    assert receipt.card_id == cards[0]["id"]
+    assert receipt.members == tuple((row["id"], row["plan_path"], row["updated_at"])
+                                    for row in attached)
+    assert receipt.expires > time.monotonic() + 590
+
+
+@pytest.mark.asyncio
+async def test_batch_receipt_closes_after_the_last_member(refinement_handoff, monkeypatch):
+    d, store, card, plan, records, processes, posts = refinement_handoff
+    sid, cards, plans = _codex_batch_receipt_cards(refinement_handoff)
+    await _attach_receipt_members(d, sid, plans)
+    real_settle = d._settle_codex_stop
+    consumed = []
+
+    def settle(*args, **kwargs):
+        consumed.append(d._refinement_receipts[sid].state)
+        return real_settle(*args, **kwargs)
+
+    monkeypatch.setattr(d, "_settle_codex_stop", settle)
+    ok, detail = await d.close_refinement_terminal(sid)
+    assert ok, detail
+    assert "attached plans stay in Backlog" in detail
+    assert len(posts) == 1
+    assert all(store.get(c["id"])["column_name"] == "backlog" for c in cards)
+    assert [store.get(c["id"])["plan_path"] for c in cards] == [
+        os.path.realpath(str(p)) for p in plans]
+    assert consumed == ["consumed"]
+    assert sid not in d._refinement_receipts
+
+
+async def _attach_outside_batch_and_check(refinement_handoff, outside_token):
+    d, store, card, plan, records, processes, posts = refinement_handoff
+    sid, cards, plans = _codex_batch_receipt_cards(refinement_handoff, count=2)
+    await _attach_receipt_members(d, sid, plans)
+    outside = _make(store, root=records[0].cwd, tool="codex", author=sid)
+    updated, detail = store.update(outside["id"], {
+        "refine_session_id": sid, "refine_state": "live",
+        "batch_id": outside_token, "batch_rank": "1" if outside_token else ""})
+    assert updated, detail
+    outside_plan = plan.parent / "outside-batch.md"
+    outside_plan.write_text(f"# Outside\n- **Card:** {outside['id']}\n")
+    assert (await d.attach_plan_by_session(sid, str(outside_plan)))[0]
+    assert d._refinement_receipts[sid].state == "ambiguous"
+    assert not (await d.close_refinement_terminal(sid))[0]
+    assert posts == []
+
+
+@pytest.mark.asyncio
+async def test_attach_outside_the_batch_still_revokes_close(refinement_handoff):
+    await _attach_outside_batch_and_check(refinement_handoff, "")
+
+
+@pytest.mark.asyncio
+async def test_attach_with_a_different_batch_id_still_revokes_close(refinement_handoff):
+    await _attach_outside_batch_and_check(refinement_handoff, "another-batch")
+
+
+@pytest.mark.asyncio
+async def test_batch_receipt_of_another_session_is_never_extended(refinement_handoff):
+    d, store, card, plan, records, processes, posts = refinement_handoff
+    token = "shared-token"
+    sid0, cards0, plans0 = _codex_batch_receipt_cards(
+        refinement_handoff, count=1, token=token)
+    sid1, cards1, plans1 = _codex_batch_receipt_cards(
+        refinement_handoff, count=1, token=token, session_index=1)
+    await _attach_receipt_members(d, sid0, plans0)
+    first_receipt = d._refinement_receipts[sid0]
+    await _attach_receipt_members(d, sid1, plans1)
+    assert d._refinement_receipts[sid0] is first_receipt
+    assert len(first_receipt.members) == 1
+    assert d._refinement_receipts[sid1].card_id == cards1[0]["id"]
+    assert len(d._refinement_receipts[sid1].members) == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_batch_receipt_refuses(refinement_handoff):
+    d, store, card, plan, records, processes, posts = refinement_handoff
+    sid, cards, plans = _codex_batch_receipt_cards(refinement_handoff, count=2)
+    await _attach_receipt_members(d, sid, plans)
+    d._refinement_receipts[sid] = replace(d._refinement_receipts[sid], expires=0)
+    ok, detail = await d.close_refinement_terminal(sid)
+    assert not ok and detail == "No unexpired, unused plan attachment permits this close. Left open."
+    assert posts == []
+
+
+@pytest.mark.asyncio
+async def test_batch_receipt_is_single_use(refinement_handoff):
+    d, store, card, plan, records, processes, posts = refinement_handoff
+    sid, cards, plans = _codex_batch_receipt_cards(refinement_handoff, count=2)
+    await _attach_receipt_members(d, sid, plans)
+    assert (await d.close_refinement_terminal(sid))[0]
+    assert not (await d.close_refinement_terminal(sid))[0]
+    assert len(posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["bind_session", "edited", "prep"])
+async def test_a_started_or_edited_member_refuses_the_batch_close(
+        refinement_handoff, mutation):
+    d, store, card, plan, records, processes, posts = refinement_handoff
+    sid, cards, plans = _codex_batch_receipt_cards(refinement_handoff, count=2)
+    await _attach_receipt_members(d, sid, plans)
+    target = cards[1] if mutation == "prep" else cards[0]
+    if mutation == "bind_session":
+        changed, detail = store.bind_session(target["id"], records[1].session_id)
+    else:
+        changed, detail = store.update(target["id"], {
+            "summary": "edited"} if mutation == "edited" else {"column_name": "prep"})
+    assert changed, detail
+    assert not (await d.close_refinement_terminal(sid))[0]
+    assert posts == []
+
+
+@pytest.mark.asyncio
+async def test_a_same_member_reattached_renews_nothing(refinement_handoff):
+    d, store, card, plan, records, processes, posts = refinement_handoff
+    sid, cards, plans = _codex_batch_receipt_cards(refinement_handoff, count=2)
+    await _attach_receipt_members(d, sid, plans[:1])
+    receipt = d._refinement_receipts[sid]
+    d._remember_refinement_attachment(
+        sid, store.get(cards[0]["id"]), d._refinement_root_capture(sid),
+        records[0].cwd, receipt.journal, batch_id=receipt.batch_id)
+    assert d._refinement_receipts[sid] is receipt
+    assert receipt.members == ((cards[0]["id"], receipt.plan_path,
+                                receipt.card_updated_at),)
+    assert d._refinement_receipts[sid].expires == receipt.expires
 
 
 # --- the gate's second rung: an approved plan that has since been edited --------
