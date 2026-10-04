@@ -37,12 +37,23 @@ def test_every_kind_has_a_sentence_case_here():
         "permission_resolved", "card_dispatched", "card_done", "card_manual",
         "card_manual_outcome", "card_dispatch_failed", "card_plan_attached", "card_plan_approved",
         "card_work_recorded", "access_burst", "card_merged",
-        "card_merge_blocked", "card_review_verdict",
+        "card_merge_blocked", "card_review_verdict", "action_interrupted",
     }
     assert covered == set(KINDS)
     for kind in KINDS:
         assert sentence(kind, nickname="Vex", title="t", project="bob",
                         tool="Bash", outcome="allow") != ""
+
+
+def test_action_interrupted():
+    assert sentence("action_interrupted", nickname="Vex",
+                    detail={"kind": "stop_session", "step": "terminate"}) \
+        == "Vex: stopping a session interrupted by a Dark Army restart"
+    assert sentence("action_interrupted",
+                    detail={"kind": "autocompact", "step": "type"}) \
+        == "Asking a session to compact was interrupted by a Dark Army restart"
+    assert sentence("action_interrupted", detail={"kind": "nope"}) \
+        == "An action was interrupted by a Dark Army restart"
 
 
 def test_session_start():

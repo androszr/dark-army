@@ -441,6 +441,10 @@ class AgentInfo:
     # predates this field and leaves it empty; Codex collaboration items report
     # pendingInit/running/completed/etc explicitly.
     activity: str = ""
+    # The spawn record's own transcript time, epoch seconds; 0.0 when the
+    # record carried none. A batch member's fix rounds are the implementer
+    # spawns inside its window (`run_health.fix_rounds_between`).
+    spawned_at: float = 0.0
 
 
 @dataclass
@@ -943,6 +947,7 @@ def _fold_line(line: str, acc: _Accum) -> None:
                     _tool_use_id_of(msg.get("content")), ""
                 ),
                 model=str(tur.get("resolvedModel") or ""),
+                spawned_at=_spawn_time(obj.get("timestamp")),
             )
 
 
@@ -1714,6 +1719,33 @@ def spawn_counts(s: SessionStats) -> dict:
     return counts
 
 
+#: `spawn_log` keeps the newest this many spawns; far past a batch of
+#: eight cards' stages and fix rounds.
+MAX_SPAWN_LOG = 120
+
+
+def _spawn_time(value) -> float:
+    """A transcript timestamp as epoch seconds; `0.0` when unparseable."""
+    try:
+        parsed = _parse_ts(value)
+        return float(parsed.timestamp()) if parsed is not None else 0.0
+    except (ValueError, OverflowError, OSError):
+        return 0.0
+
+
+def spawn_log(s: SessionStats) -> list:
+    """`[[subagent_type, spawned_at], ...]` per spawn in transcript order —
+    the timed companion of `spawn_counts`, which a card's window cuts. An
+    empty type is skipped; the newest `MAX_SPAWN_LOG` are kept."""
+    log = []
+    for info in s.agents.values():
+        name = str(getattr(info, "subagent_type", "") or "")
+        if not name:
+            continue
+        log.append([name, float(getattr(info, "spawned_at", 0.0) or 0.0)])
+    return log[-MAX_SPAWN_LOG:]
+
+
 def stats_to_dict(s: SessionStats) -> dict:
     """Flatten SessionStats (including computed properties) to a plain dict for
     the menu-bar layer. datetimes are dropped in favour of duration_seconds."""
@@ -1739,4 +1771,5 @@ def stats_to_dict(s: SessionStats) -> dict:
         "git_branch": s.git_branch,
         "cwd": s.cwd,
         "spawn_counts": spawn_counts(s),
+        "spawns": spawn_log(s),
     }

@@ -435,6 +435,39 @@ def _batch_rank(card: Optional[dict]) -> int:
         return 0
 
 
+def _card_window(card: Optional[dict], shared: Optional[bool] = None):
+    """A card's own window: `None` for a card that is not shared (it keeps
+    the session-wide reading it always had), else `(since, until)` — each
+    `None` when open — and `()` for a shared card whose `dispatched_at` is not
+    written yet (the advance binds, then writes it; a pass between must
+    withhold, never read the whole session). Pure.
+
+    A card is shared when it is a batch member (`batch_id`) or `shared` says
+    its session carries several cards. `since` is `dispatched_at`; `until`
+    is `done_at` for a card in Done, else `session_ended_at` for a card left
+    `ended`."""
+    card = card or {}
+    if shared is None:
+        shared = bool(str(card.get("batch_id") or ""))
+    if not shared:
+        return None
+
+    def _num(key):
+        try:
+            return float(card.get(key) or 0.0) or None
+        except (TypeError, ValueError):
+            return None
+
+    since = _num("dispatched_at")
+    if since is None:
+        return ()
+    until = None
+    if str(card.get("column_name") or "") == "done":
+        until = _num("done_at")
+    elif str(card.get("link_state") or "") == "ended":
+        until = _num("session_ended_at")
+    return since, until
+
 
 #: Held across the outcome press's place check, header re-read and write, so
 #: two presses on one check cannot both see `Status: open` and both write.
@@ -1325,6 +1358,23 @@ class BoardVerbsMixin:
         size = int((batch_sizes or {}).get(bid) or 0)
         return {"rank": rank, "size": max(size, rank), "state": state}
 
+    def _card_shares_session(self, card: dict) -> bool:
+        """Whether a card is shared: a batch member, or another card carries
+        its `session_id` — an ended former member whose `batch_id` was cleared
+        at the session's end still is. The one rule the trail, the live line
+        and the freeze share (`_reconcile_board`'s `sessions_shared` is the
+        same test over one pass). Never raises."""
+        if str(card.get("batch_id") or ""):
+            return True
+        sid = str(card.get("session_id") or "")
+        if not sid or self._board is None:
+            return False
+        try:
+            return len(self._board.by_session(sid)) > 1
+        except Exception:
+            logger.debug("shared-session check failed", exc_info=True)
+            return False
+
     def _run_health_for(self, card: dict, run_counts: Optional[dict],
                         run_ledger, snapshot: Optional[dict] = None
                         ) -> Optional[dict]:
@@ -1350,7 +1400,9 @@ class BoardVerbsMixin:
             if row is None and entry is None:
                 return None
             cuts = ledger.cuts_for(str(card.get("root") or ""))
-            return run_health.compose(row, counts, entry, cuts)
+            return run_health.compose(
+                row, counts, entry, cuts,
+                window=_card_window(card, self._card_shares_session(card)))
         except Exception:
             logger.debug("run health for %s unavailable", cid, exc_info=True)
             return None
@@ -1386,7 +1438,10 @@ class BoardVerbsMixin:
             if self._board is not None:
                 counts = self._board.run_health_counts([cid]).get(cid)
             reading = run_health.compose(row, counts, None,
-                                         ledger.cuts_for(root))
+                                         ledger.cuts_for(root),
+                                         window=_card_window(
+                                             card,
+                                             self._card_shares_session(card)))
             if reading is None:
                 return
             ledger.freeze(cid, root, reading, run_at)
@@ -2820,6 +2875,20 @@ class BoardVerbsMixin:
                 + " (run python3 .claude/skills/scout/scout_check.py on it)")
 
     @staticmethod
+    def _same_entry(a: str, b: str) -> bool:
+        """Whether `a` and `b` are one directory entry on this disk.
+
+        **Blocking** (two `lstat`) — executor only. `lstat`, never `stat`: a
+        link's own inode is compared, so a link can never be "the same entry"
+        as a name that does not exist."""
+        try:
+            sa = os.lstat(a)
+            sb = os.lstat(b)
+        except OSError:
+            return False
+        return (sa.st_dev, sa.st_ino) == (sb.st_dev, sb.st_ino)
+
+    @staticmethod
     def _canonical_path(path: str) -> str:
         """`path`'s realpath spelled the way the disk spells it.
 
@@ -2830,8 +2899,14 @@ class BoardVerbsMixin:
         press from the list would never find the card the flag stored. Each
         component is replaced by the directory entry it names: the exact
         name when present, else the one entry that matches it without
-        case; an unreadable directory keeps the rest as typed. The flag, the
-        list and the press all store and compare this spelling."""
+        case, and only when `os.lstat` of both spellings names one
+        `(st_dev, st_ino)` — which a case-insensitive volume answers yes and
+        a case-sensitive one never does for a name that does not exist. A
+        typed name that does not exist stays as typed, so the containment and
+        existence checks that follow see the real path (security review of
+        the manual-check-folder plan, 25 Sep 2026); an unreadable directory
+        keeps the rest as typed. The flag, the list and the press all store
+        and compare this spelling."""
         resolved = os.path.realpath(str(path or ""))
         out = os.sep
         parts = [part for part in resolved.split(os.sep) if part]
@@ -2843,7 +2918,9 @@ class BoardVerbsMixin:
             if part not in names:
                 folded = [name for name in names
                           if name.casefold() == part.casefold()]
-                if len(folded) == 1:
+                if len(folded) == 1 and BoardVerbsMixin._same_entry(
+                        os.path.join(out, part),
+                        os.path.join(out, folded[0])):
                     part = folded[0]
             out = os.path.join(out, part)
         return out
@@ -4209,11 +4286,31 @@ class BoardVerbsMixin:
         # `cwd` only where it differs from the root, so a start in the main
         # checkout is the call the spawners always received.
         where = {"cwd": cwd} if cwd and cwd != card["root"] else {}
-        spawned, spawn_detail, shell_pid = await spawner(
-            card["root"], argv, name,
-            stamp=origin.stamp("card-start", card["id"], next_stage),
-            **where)
+        # The intent is written, and committed, before the terminal opens; a
+        # restart between here and the update below finds it with no result
+        # and never opens a second terminal (`docs/action-journal.md`).
+        journal_action = await self._journal_begin("card_start", card["id"])
+        spawn_intent = await self._journal_intent(
+            journal_action, "card_start", card["id"], "spawn", {
+                "card_id": card["id"], "root": card["root"],
+                "cwd": cwd or "", "tool": card["tool"], "use_own": bool(use_own),
+                "queued_replay": bool(queued_replay),
+                "pre_start_column": ("backlog" if card.get("plan_path")
+                                     else "prep"),
+                "batch": batch is not None})
+        try:
+            spawned, spawn_detail, shell_pid = await spawner(
+                card["root"], argv, name,
+                stamp=origin.stamp("card-start", card["id"], next_stage),
+                **where)
+        except Exception:
+            # The spawner raised rather than refused: no terminal opened in
+            # this process, so say so, and the next launch does not put a
+            # restart note on a card no restart interrupted.
+            await self._journal_result(spawn_intent, "refused", "raised")
+            raise
         if not spawned:
+            await self._journal_result(spawn_intent, "refused", spawn_detail)
             if spawn_detail == dispatch.WORKTREE_WINDOW_REFUSAL:
                 # Not transient: the window stays too old until somebody
                 # reloads it, so a queued replay is dequeued with the words
@@ -4227,6 +4324,10 @@ class BoardVerbsMixin:
         getattr(self, "_own_terminal_dispatch", set()).discard(card["id"])
 
         now = time.time()
+        await self._journal_result(spawn_intent, "spawned", "", {
+            "shell_pid": int(shell_pid or 0) if not use_own else 0,
+            "pty_pid": int(shell_pid or 0) if use_own else 0,
+            "now": now, "use_own": bool(use_own)})
         self._dispatch_attempts[card["id"]] = now
         self._dispatch_baseline[card["id"]] = baseline
         self._forget_worktree_state(str(card["id"]))
@@ -4276,8 +4377,14 @@ class BoardVerbsMixin:
             self._last_batch_token = secrets.token_hex(8)
             fields["batch_id"] = self._last_batch_token
             fields["batch_rank"] = "1"
+        record_intent = await self._journal_intent(
+            journal_action, "card_start", card["id"], "record", {
+                "card_id": card["id"], "now": now, "cwd": cwd or "",
+                "root": str(card.get("root") or ""),
+                "batch": batch is not None})
         await self._board_call("update", card["id"], fields, bump=False)
         await self._publish_board()
+        await self._journal_result(record_intent, "completed")
         # Where this project stood the moment work started, so the record
         # written at the end has something to measure against. Scheduled and
         # **never awaited**: it is one `git rev-parse` and a slow or missing
@@ -5362,6 +5469,13 @@ class BoardVerbsMixin:
         now = time.time()
         if current:
             left = current[0]
+            # The reconcile skips an `ended` batch member from here on, so a
+            # stage that started after its last pass is recorded now or never.
+            await loop.run_in_executor(
+                None, functools.partial(
+                    self._record_card_stages, str(left["id"]), session_id,
+                    since=(_card_window(left, True) or (None,))[0],
+                    until=now, shared=True))
             await self._board_call("mark_ended", left["id"], when=now)
             snapshot = self._agents_snapshot_cache or {}
             await loop.run_in_executor(
@@ -6777,6 +6891,16 @@ class BoardVerbsMixin:
             logger.debug("board reconcile could not read cards", exc_info=True)
             return False
 
+        # Sessions carrying more than one card (a batch): one in-memory pass.
+        # `_record_card_stages` withholds, rather than misfiles, a trail it
+        # cannot cut to a card's window.
+        seen_sessions: dict = {}
+        for card in cards:
+            csid = str(card.get("session_id") or "")
+            if csid:
+                seen_sessions[csid] = seen_sessions.get(csid, 0) + 1
+        sessions_shared = {k for k, n in seen_sessions.items() if n > 1}
+
         # A card's project label follows the enrolled folder's name, once.
         # The board joins card to session **by label** — `_bind_dispatched_card`
         # refuses a candidate whose row `project` differs before it ever looks
@@ -6895,7 +7019,15 @@ class BoardVerbsMixin:
                 if state != "live":
                     self._board.mark_live(cid)
                     changed = True
-                changed |= self._record_card_stages(cid, sid)
+                shared = sid in sessions_shared
+                win = _card_window(card, shared or bool(card.get("batch_id")))
+                if win == ():
+                    # A shared or batch card whose `dispatched_at` is not
+                    # written yet: the append-only trail takes nothing.
+                    continue
+                win = win or (None, None)
+                changed |= self._record_card_stages(
+                    cid, sid, since=win[0], until=win[1], shared=shared)
                 continue
             first_missing = self._board_missing_since.setdefault(cid, now)
             if state != "ended" and now - first_missing >= self.BOARD_SESSION_GRACE:
@@ -7296,11 +7428,53 @@ class BoardVerbsMixin:
             logger.debug("queue decision failed", exc_info=True)
             self._queue_candidates = []
 
-    def _record_card_stages(self, card_id: str, session_id: str) -> bool:
-        """Append observed stage names; recorded faces remain the store's memory."""
+    def _record_card_stages(self, card_id: str, session_id: str, *,
+                            since: Optional[float] = None,
+                            until: Optional[float] = None,
+                            shared: bool = False) -> bool:
+        """Append observed stage names; recorded faces remain the store's memory.
+
+        A batch member reads only the stage starts inside its own window
+        (`since <= at < until`, `_card_window`), off the session's timed
+        `subagent_spawns`. `shared` says the session carries several cards:
+        where no timed record exists (Codex's untimed `observed_roles`, a
+        state restored from a build without the log) nothing is recorded,
+        because withheld beats wrong. A single card reads as it always did."""
         state = self._session_states.get(session_id) or {}
         codex = self._codex_records.get(session_id)
-        observed = codex.observed_roles if codex is not None else state.get("subagents_seen") or []
+        # `shared`: several cards are bound to this session. A batch head
+        # alone is a window (`since`) but not shared, so a Codex batch's first
+        # card still records its roles.
+        if shared and since is None:
+            # A shared card whose window has not opened (bound, `dispatched_at`
+            # not yet written): the append-only trail takes nothing.
+            return False
+        if codex is not None:
+            if shared:
+                return False
+            observed = codex.observed_roles
+        elif not shared and since is None:
+            observed = state.get("subagents_seen") or []
+        else:
+            spawns = state.get("subagent_spawns")
+            if isinstance(spawns, list):
+                observed = []
+                for item in spawns:
+                    if not isinstance(item, (list, tuple)) or len(item) != 2:
+                        continue
+                    role, at = item
+                    if isinstance(at, bool) or not isinstance(at, (int, float)):
+                        continue
+                    if since is not None and at < since:
+                        continue
+                    if until is not None and at >= until:
+                        continue
+                    if role not in observed:
+                        observed.append(role)
+            elif shared:
+                return False
+            else:
+                observed = state.get("subagents_seen") or []
         names = [n for n in observed if self._stage_name_ok(n)]
         if not names:
             return False
@@ -7894,7 +8068,8 @@ class BoardVerbsMixin:
 
         Ladder, fail closed on ambiguity: (a) a consult whose bound session
         is the caller, `via=consultant`, retire the consult; (b) exactly one
-        non-Done card via `by_session`, `via=session`; (c) exactly one Done
+        non-Done card via `by_session` after the batch narrowing the close
+        uses (`_narrow_batch_open`), `via=session`; (c) exactly one Done
         card via `by_session`. Writes `card_messages` only.
         """
         if self._board is None:
@@ -7941,8 +8116,13 @@ class BoardVerbsMixin:
             return (await self._board_call("get", cid)), "answered"
 
         cards = await self._board_call("by_session", session_id) or []
-        open_cards = [c for c in cards if c.get("column_name") != "done"]
-        if len(open_cards) > 1:
+        # A batch session is bound to every card it has worked; the one it
+        # is on now is the one the close reaches (`_narrow_batch_open`).
+        pre = [c for c in cards if c.get("column_name") != "done"]
+        open_cards = self._narrow_batch_open(pre)
+        if len(open_cards) > 1 or (pre and not open_cards):
+            # Narrowing that drops every open card is not "no open card":
+            # the one-Done-card rung below must not pick up its place.
             return None, ("this session is on more than one card — "
                           "say which on the board")
         if len(open_cards) == 1:
@@ -9518,7 +9698,14 @@ class BoardVerbsMixin:
         cid = str(head.get("id") or "")
         try:
             path, branch, error = await self._prepare_worktree(head, root)
+            prepare_action = self.__dict__.get("_prepare_journal", {}).pop(cid, "")
             if error:
+                # The folder step ended in words, not a crash: close the
+                # action so the next launch does not read it as a lost press.
+                await self._journal_result(
+                    await self._journal_intent(
+                        prepare_action, "worktree_prepare", cid, "record",
+                        {"card_id": cid}), "skipped", str(error)[:200])
                 logger.info("card %s: worktree not ready: %s", cid[:8], error)
                 if await self._board_call("get", cid) is None:
                     # Deleted while this ran: nobody will record or release
@@ -9529,8 +9716,15 @@ class BoardVerbsMixin:
                     return
                 await self._fail_prepare(cid, error, replay)
                 return
+            record_intent = await self._journal_intent(
+                prepare_action, "worktree_prepare", cid, "record", {
+                    "card_id": cid, "root": root, "path": path,
+                    "branch": branch,
+                    "queued_replay": bool(replay.get("queued_replay"))})
             recorded, why = await self._board_call(
                 "record_worktree", cid, path, branch) or (None, "")
+            await self._journal_result(
+                record_intent, "gone" if recorded is None else "completed")
             if recorded is None:
                 logger.info("card %s: worktree ready but not recorded (%s)",
                             cid[:8], why)
@@ -9573,6 +9767,7 @@ class BoardVerbsMixin:
                              cid[:8], exc_info=True)
         finally:
             self._pop_preparing(cid, token)
+            self.__dict__.get("_prepare_journal", {}).pop(cid, None)
             try:
                 await self._publish_board()
             except Exception:
@@ -9757,6 +9952,26 @@ class BoardVerbsMixin:
         registered = os.path.realpath(path) in listed
         present = registered and await loop.run_in_executor(
             None, os.path.isdir, path)
+        # Journalled (`docs/action-journal.md`): every preparation leaves the
+        # same shape, an `add` intent and its result, `reused` when the folder
+        # was already there. Only a Start's own preparation carries `start`,
+        # so a merge or review that makes the folder again leaves no note on
+        # the card after a restart.
+        starting = cid in (getattr(self, "_worktree_preparing", None) or {})
+        # Only a Start's own preparation is journalled: a merge, Fix or Review
+        # that remakes the folder has no `record` step to close the action.
+        journal_action = (await self._journal_begin("worktree_prepare", cid)
+                          if starting else "")
+        if starting and journal_action:
+            self.__dict__.setdefault("_prepare_journal", {})[cid] = journal_action
+        add_payload = {
+            "card_id": cid, "root": root, "path": path, "branch": branch,
+            "start": starting,
+            "queued_replay": str(head.get("queue_state") or "") == "queued"}
+        if present:
+            reused = await self._journal_intent(
+                journal_action, "worktree_prepare", cid, "add", add_payload)
+            await self._journal_result(reused, "reused")
         if not present:
             if registered:
                 # Registered but gone from disk (removed by hand): git would
@@ -9784,10 +9999,15 @@ class BoardVerbsMixin:
             base = await self._worktree_base(root)
             existing, _o, _w = await self._run_git(
                 worktrees.argv_branch_exists(root, branch), root)
+            add_intent = await self._journal_intent(
+                journal_action, "worktree_prepare", cid, "add", add_payload)
             added, _o, why = await self._run_git(
                 worktrees.argv_worktree_add(root, path, branch, base,
                                             existing=existing),
                 root, timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
+            await self._journal_result(
+                add_intent, "added" if added else "refused",
+                "" if added else str(why or ""))
             if not added:
                 logger.info("card %s: git worktree add refused in %s (%s)",
                             cid[:8], root, why)

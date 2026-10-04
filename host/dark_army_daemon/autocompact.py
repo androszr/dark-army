@@ -177,6 +177,16 @@ class AutoCompactPolicy:
         state["failed"] = True
         return PASS
 
+    def restore(self, session_id: str, sent_at: float) -> None:
+        """Seed an episode a previous process began (`docs/action-journal.md`),
+        so a restart inside `settle_seconds` answers `HOLD` rather than typing
+        the command a second time. A session that already has state is left
+        alone. Pure: the caller names the time, nothing here reads a clock."""
+        if session_id in self._state:
+            return
+        self._state[session_id] = {"sent_at": sent_at, "sent_pct": None,
+                                   "failed": False, "cleared_at": None}
+
     def note_failed(self, session_id: str) -> None:
         """The type-in itself did not land — the window went away between the
         snapshot and the send. Give the session straight back to the alert path

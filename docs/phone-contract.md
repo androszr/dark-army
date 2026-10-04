@@ -590,7 +590,7 @@ the emulator's keyboard up an always-open strip left the terminal a
 sliver. An older Mac
 (`terminal_stream_supported` absent) gets one sentence and no emulator.
 
-**A picture an agent names opens in a sheet.** `ImageLinks.paths` finds each picture path in an agent's message (a bare name right after a path takes that folder; web addresses and hidden folders never match; at most twelve) and `ConversationImageChips` draws them as chips under the message, outside its combined accessibility element. A tap opens **that one picture** in its own sheet (`PicturePopup`, `.picturePopup` on `ConversationScreen` and `HelperConversationPane`) presented over the conversation, never a rung on the sheet trail — a rung replaced the agent screen, which came back rebuilt on Main at the top — so Close or a drag down returns to the same tab at the same scroll position; and only a tapped picture is ever asked of the Mac, which serves it only from Dark Army's own checkout or an onboarded project, never Documents, Desktop or elsewhere at home (the sealed `image` read, `docs/transport-contract.md`) — no prefetch, no neighbours, no filmstrip. The sheet draws it with pinch and double-tap zoom (`ZoomablePicture`, a `UIScrollView`, so a GIF still moves), the Mac's facts about the file and what was shrunk, and offers **no way to save it**: no Share, no Photos. The phone's only copy is `ImageMemo` — memory only, never disk, sixteen at most, each dropped a day after it arrived (pruned on every applied state) and all of them with the pairing.
+**A picture an agent names opens in a sheet.** `ImageLinks.paths` finds each picture path in an agent's message (a bare name right after a path takes that folder; web addresses and hidden folders never match; at most twelve) and `ConversationImageChips` draws them as chips under the message, outside its combined accessibility element. A tap opens **that one picture** in its own sheet (`PicturePopup`, `.picturePopup` on `ConversationScreen` and `HelperConversationPane`) presented over the conversation, never a rung on the sheet trail — a rung replaced the agent screen, which came back rebuilt on Main at the top — so Close or a drag down returns to the same tab at the same scroll position; and only a tapped picture is ever asked of the Mac, which serves it only from Dark Army's own checkout or an onboarded project, never Documents, Desktop or elsewhere at home (the sealed `image` read, `docs/sealed-reads-contract.md`) — no prefetch, no neighbours, no filmstrip. The sheet draws it with pinch and double-tap zoom (`ZoomablePicture`, a `UIScrollView`, so a GIF still moves), the Mac's facts about the file and what was shrunk, and offers **no way to save it**: no Share, no Photos. The phone's only copy is `ImageMemo` — memory only, never disk, sixteen at most, each dropped a day after it arrived (pruned on every applied state) and all of them with the pairing.
 
 **Main carries the card's journey** (`CardJourney`, `JourneyRail` in
 `AgentDetailView.swift`, 26 Sep 2026): under the lead, on a session working
@@ -741,7 +741,7 @@ from `enum LedgerWeek {` down (`test_ledger_week.py`), so the numbers are
 the Mac's; the day keys are the phone's own local days, so a phone in
 another time zone can place a figure on a neighbouring day while the week's
 total is unchanged. The week is the sealed `history_week` read
-(`docs/transport-contract.md`), relay first when away, asked **on appear
+(`docs/sealed-reads-contract.md`), relay first when away, asked **on appear
 and on pull only** — never the poll, `backgroundRefresh` or the widget —
 and held for the life of the screen, never on disk; while it loads Dark
 Army talks (`AgentChatterView`), and a Mac out of reach is one sentence and
@@ -777,7 +777,7 @@ byte-pinned with the Mac. A tapped row pushes `ScoutReportReaderView`
 on the poll or `backgroundRefresh`, and draws the answer block as labelled
 lines (`ScoutReportHeader.rows`) above the body through `MarkdownText`, the
 card screen's call. The list and the body are the sealed `scout_reports` /
-`scout_report` reads (`docs/transport-contract.md`), relay first when away.
+`scout_report` reads (`docs/sealed-reads-contract.md`), relay first when away.
 After a 300 ms pause on three or more characters, and only against a Mac
 publishing `scout_reports_body_search_supported`, the screen asks the
 sealed `scout_reports` read again with `q` in the body and merges the hits
@@ -804,7 +804,7 @@ opens that card's screen through `PhoneSheetRouter` —
 `PhoneInbox.sheet(for:snapshot:)`'s rule, resolved at the draw; a card the
 board no longer carries draws no button. Read-only: nothing here writes,
 starts or deletes a plan. The list and the body are the sealed `plans` /
-`plan` reads (`docs/transport-contract.md`), relay first when away. An
+`plan` reads (`docs/sealed-reads-contract.md`), relay first when away. An
 older Mac leaves the tile dim and the page that says so. Pinned by
 `host/tests/test_phone_plans.py`.
 

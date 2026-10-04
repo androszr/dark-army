@@ -103,6 +103,7 @@ from . import worktrees
 from .session_store import save_sessions, load_sessions, load_pending_questions
 from .paths import PID_PATH, LOCK_PATH, STATE_DIR, ensure_state_dir
 from .daemon_board import BoardVerbsMixin
+from .daemon_recovery import RecoveryMixin
 from .daemon_review import ReviewVerbsMixin
 
 @dataclass(frozen=True)
@@ -516,6 +517,12 @@ LOW_PRIORITY_ALREADY_REFUSAL = ("Low priority was already switched on for "
 # — `/ship` runs five — and the board applies its own, smaller bound again at
 # the store.
 MAX_SEEN_SUBAGENTS = 40
+# How many timed stage starts one session's `subagent_spawns` holds. It is per
+# spawn, never deduped (a second `bc-implementer` is the point), so it is
+# larger than `MAX_SEEN_SUBAGENTS`; a batch of `board.MAX_BATCH_CARDS` (8)
+# cards, five `/ship` stages each plus fix rounds, is well under it. The
+# newest entries are kept.
+MAX_SUBAGENT_SPAWNS = 120
 # How long a live-subagent entry may park its parent with no
 # `subagent_start`/`subagent_stop` traffic at all. Hook delivery is
 # best-effort, so a dropped SubagentStop used to leave the parent's `subagents`
@@ -1607,7 +1614,7 @@ class _HookStep(NamedTuple):
     now_mono: float
 
 
-class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
+class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
     def __init__(
         self,
         observer: Optional["DaemonObserver"] = None,
@@ -5518,6 +5525,12 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
         capture = getattr(self, "_decisions", None)
         episode_id = capture.session_items.get(session_id) if capture else None
         self._answering.add(session_id)
+        # Written before the first keystroke; resolved in the `finally`.
+        burst_intent = await self._journal_intent(
+            await self._journal_begin("answer_burst", session_id),
+            "answer_burst", session_id, "type",
+            {"session_id": session_id, "questions": len(questions)})
+        burst_outcome, burst_reached = "failed", 0
         try:
             # `reached` counts the questions whose first digit landed: on a
             # later failure inside that question the terminal is on it and
@@ -5547,8 +5560,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                     result = await session_io.send_text(
                         pid, "", keystroke, newline=False)
                     if not (result and result.get("sent")):
+                        burst_reached = reached
                         if not sent_any:
                             return False, _typed_nothing_refusal(result) or NO_TYPING_WINDOW_REFUSAL
+                        burst_outcome = "partial"
                         return False, (f"Answered {reached} of "
                                        f"{len(questions)} — the window "
                                        "stopped answering; finish the rest "
@@ -5575,11 +5590,15 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                 result = await session_io.send_text(
                     pid, "", "\r", newline=False)
                 if not (result and result.get("sent")):
+                    burst_reached, burst_outcome = reached, "partial"
                     return False, (f"All {len(questions)} answers were "
                                    "entered, but the confirmation was not "
                                    "sent — confirm it in the terminal.")
+            burst_outcome, burst_reached = "typed", reached
         finally:
             self._answering.discard(session_id)
+            await self._journal_result(burst_intent, burst_outcome, "",
+                                       {"reached": burst_reached})
 
         capture = getattr(self, "_decisions", None)
         if capture is not None:
@@ -6509,6 +6528,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
         role = step.subagent_type or step.agent_id
         if role not in ran and len(ran) < MAX_SEEN_SUBAGENTS:
             ran.append(role)
+        # The timed companion: `[role, at]` per start, so a batch member's
+        # trail can be cut to its own window (`_record_card_stages`).
+        spawns = entry.setdefault("subagent_spawns", [])
+        spawns.append([role, float(step.now)])
+        del spawns[:-MAX_SUBAGENT_SPAWNS]
         # `subagent_event_at` is the parking clock `_parked_reason` reads.
         entry["last_event"] = entry["subagent_event_at"] = step.now
 
@@ -8805,7 +8829,19 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                 )
                 self._agents_poller.poll_soon()
                 return
-            proc.kill()
+            kill_intent = await self._journal_intent(
+                await self._journal_begin("stop_session", session_id),
+                "stop_session", session_id, "kill",
+                {"session_id": session_id, "pid": pid})
+            try:
+                proc.kill()
+            except psutil.NoSuchProcess:
+                await self._journal_result(kill_intent, "gone")
+                raise
+            except (psutil.AccessDenied, OSError) as exc:
+                await self._journal_result(kill_intent, "refused", str(exc))
+                raise
+            await self._journal_result(kill_intent, "killed")
             logger.info("sent SIGKILL to PID %d (%s)", pid, session_id[:12])
         except psutil.NoSuchProcess:
             self._forget_stopped(session_id)
@@ -10272,7 +10308,15 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                 pid = self._ensure_session_pid(sid, st) or self._roster_pid(sid)
             text = autocompact.command_for(provider or "claude")
             result = None
+            compact_intent = ""
             if pid:
+                # Written, and committed, before the keys are typed: a restart
+                # after this line never types them a second time
+                # (`docs/action-journal.md`).
+                compact_intent = await self._journal_intent(
+                    await self._journal_begin("autocompact", sid),
+                    "autocompact", sid, "type",
+                    {"session_id": sid, "provider": provider or "claude"})
                 # Clear the input line first. We cannot see what is on it, and
                 # appending to a half-typed draft sends *and submits* something
                 # the user never wrote (`please rewri/compact`). Ctrl-U is the
@@ -10280,6 +10324,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
                 # discarded draft rather than a submitted mangled one.
                 result = await session_io.send_text(pid, "", INPUT_LINE_CLEAR + text)
             ok = bool(result and result.get("sent"))
+            await self._journal_result(compact_intent,
+                                       "sent" if ok else "not_landed")
             if ok:
                 where = result.get("terminalName") or result.get("matchedBy") or "terminal"
                 logger.info("Auto-compacting %s via %s", sid[:12], where)
@@ -13855,6 +13901,14 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin):
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._board.connect)
             await loop.run_in_executor(None, self._sweep_orphan_attachments)
+            # After the store opens and before anything reads the cards: finish
+            # the harmless half of whatever the last process was doing and
+            # refuse to repeat the dangerous half (`docs/action-journal.md`).
+            try:
+                await self.recover_actions()
+            except Exception:
+                logger.warning("action journal recovery failed; continuing",
+                               exc_info=True)
             filled = await loop.run_in_executor(
                 None, self._backfill_board_workflows)
             if filled:

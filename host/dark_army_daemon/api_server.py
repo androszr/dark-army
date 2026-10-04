@@ -1467,6 +1467,14 @@ class ApiServer:
                 status, ctype, body = await self._board_action(*board_call)
                 await self._respond(writer, status, ctype, body)
                 return
+            # A stop is awaited so its intent can be journalled on the executor
+            # before the signal goes (`docs/action-journal.md`); the verb itself
+            # is `stop_session`, unchanged.
+            stop = self._stop_request(request)
+            if stop is not None:
+                status, ctype, body = await self._stop(stop)
+                await self._respond(writer, status, ctype, body)
+                return
             # Reveal is the one action that has to be awaited (it reports whether
             # the window actually came forward), and it is handled here rather
             # than inside `_action` so that `_route` stays synchronous — every
@@ -1855,6 +1863,27 @@ class ApiServer:
         return 400, "application/json", json.dumps(
             {"error": "unknown action", "action": action}
         ).encode()
+
+    def _stop_request(self, request: _Request) -> Optional[str]:
+        """The session id of an authorised, non-Codex `stop_session`, else
+        None (the ordinary `_route` path answers everything else)."""
+        if request.path != "/api/action" or request.method != "POST":
+            return None
+        if not self._authorised(request):
+            return None
+        payload = request.json()
+        if payload.get("action") != "stop_session":
+            return None
+        session_id = payload.get("session_id", "")
+        if not session_id or session_id.startswith("codex:"):
+            return None
+        return session_id
+
+    async def _stop(self, session_id: str):
+        """Stop a session, journalled; the 200/409 shape is `_action`'s."""
+        ok, detail = await self._daemon.stop_session_recorded(session_id)
+        body = json.dumps({"ok": ok, "detail": detail}).encode()
+        return (200 if ok else 409), "application/json", body
 
     def _reveal_request(self, request: _Request) -> Optional[str]:
         """The session id if this request is an authorised reveal, else None.
@@ -3989,6 +4018,12 @@ class ApiServer:
                 {"ok": ok, "detail": detail or ""}).encode()
         if action in self.REVIEW_ACTIONS:
             return await self._review_run(action, payload)
+        if action == "stop_session" and payload.get("session_id") \
+                and not isinstance(payload["session_id"], str):
+            return 400, "application/json", b'{"error":"bad session id"}'
+        if action == "stop_session" and payload.get("session_id") \
+                and not payload["session_id"].startswith("codex:"):
+            return await self._stop(payload["session_id"])
         if action in ("dismiss", "stop_session", "delete_agent"):
             return self._action(payload)
         return 404, "application/json", b'{"error":"not found"}'

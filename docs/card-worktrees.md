@@ -466,6 +466,12 @@ emptied by leaving Done through `update()`'s documented bypass) and
 leaving Done and age by `review_tip`). None is in `_WRITABLE`,
 `ApiServer._BOARD_FIELDS` or `REVISED_COLUMNS`.
 
+The `add` and `record` steps of a Start's preparation are journalled
+(`docs/action-journal.md`). A restart in the middle of either writes
+`RESTART_DURING_PREPARE_NOTE` on the card, dequeues a queued press, records
+the folder when it exists and leaves it for the next Start to reuse; recovery
+runs no git command and does not start the card.
+
 A card's `root` is never a card folder: `worktrees.checkout_root`,
 `_repair_worktree_roots`.
 
@@ -693,7 +699,7 @@ never ride a snapshot. No git runs on the snapshot path. `_worktree_note`
 returns `""` while `merge_state` is `conflict` or `checks_failed`.
 
 **The Changes read** (`card_changes`, loopback `GET /api/card-changes?card=`
-and the sealed kind on both doors, `docs/transport-contract.md`) is on demand
+and the sealed kind on both doors, `docs/sealed-reads-contract.md`) is on demand
 only — a few read-only git calls under `_changes_lock`, from the project's root
 so it works with the folder released: the commits since the merge base
 (`argv_log`, at most 100), the files with added and removed counts

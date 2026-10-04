@@ -771,3 +771,159 @@ async def test_delete_judges_the_batch_on_the_card_as_it_is_under_the_lock(
     third = store.get(cards[2]["id"])
     assert third["batch_id"] == ""
     assert third["dispatch_error"] == daemon_board.BATCH_LEFT_NOTE
+
+
+@pytest.mark.asyncio
+async def test_answer_under_a_batch_reaches_the_card_the_session_is_on(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    cards, _opened = await _started_batch(d, store, project, monkeypatch)
+    sid = "s-batch"
+    await d.advance_batch_by_session(sid)  # card 1 left open, card 2 live
+    got, why = await d.answer_card_by_session(sid, "the answer")
+    assert got is not None, why
+    assert got["id"] == cards[1]["id"]
+    assert store.messages(cards[1]["id"])[-1]["via"] == "session"
+    assert store.messages(cards[0]["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_answer_after_a_proper_close_still_reaches_the_next_card(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    cards, _opened = await _started_batch(d, store, project, monkeypatch)
+    sid = "s-batch"
+    await d.close_card_by_session(sid, "card 1 built")
+    await d.advance_batch_by_session(sid)
+    got, why = await d.answer_card_by_session(sid, "the answer")
+    assert got is not None, why
+    assert got["id"] == cards[1]["id"]
+    assert store.messages(cards[0]["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_answer_is_refused_when_the_narrowing_drops_every_open_card(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    cards, _opened = await _started_batch(d, store, project, monkeypatch)
+    sid = "s-batch"
+    await d.close_card_by_session(sid, "card 1 built")
+    for _ in range(3):
+        await d.advance_batch_by_session(sid)
+    got, why = await d.answer_card_by_session(sid, "the answer")
+    assert got is None
+    assert "more than one card" in why
+    for c in cards:
+        assert store.messages(c["id"]) == []
+
+
+# --- a member's trail is its own ----------------------------------------------
+
+
+def _stamp(d, sid, *roles_at):
+    log = d._session_states.setdefault(sid, {"state": "working",
+                                             "last_event": time.time()})
+    log.setdefault("subagent_spawns", []).extend(
+        [role, at] for role, at in roles_at)
+
+
+def _trail(store, cid):
+    return board.parse_stages(store.get(cid)["agent_trail"])
+
+
+@pytest.mark.asyncio
+async def test_each_batch_member_carries_only_its_own_stages(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    d._run_figures_drifted = lambda: False
+    cards, _opened = await _started_batch(d, store, project, monkeypatch)
+    sid = "s-batch"
+    snap = {"running": [{"session_id": sid}]}
+    base = time.time() + 1000.0   # after every `dispatched_at` the head wrote
+    store.update(cards[0]["id"], {"dispatched_at": base - 10}, bump=False)
+    _stamp(d, sid, ("bc-implementer", base), ("bc-verifier", base + 1))
+    d._reconcile_board(snap)
+    closed, why = await d.close_card_by_session(sid, "one")
+    assert closed is not None, why
+    store.update(cards[0]["id"], {"done_at": base + 2}, bump=False)
+    # The second card's window opens at the bind; stamp after it.
+    monkeypatch.setattr(daemon_board.time, "time", lambda: base + 3)
+    ok, detail, _b = await d.advance_batch_by_session(sid)
+    assert ok, detail
+    _stamp(d, sid, ("bc-implementer", base + 4), ("bc-implementer", base + 5),
+           ("bc-verifier", base + 6))
+    d._reconcile_board(snap)
+    first_trail = _trail(store, cards[0]["id"])
+    assert first_trail == ["bc-implementer", "bc-verifier"]
+    assert _trail(store, cards[1]["id"]) == ["bc-implementer", "bc-verifier"]
+    assert _trail(store, cards[2]["id"]) == []
+    assert _trail(store, cards[0]["id"]) == first_trail
+
+
+@pytest.mark.asyncio
+async def test_a_left_member_records_the_stage_that_started_just_before_the_advance(
+        daemon, project, monkeypatch):
+    d, store = daemon
+    cards, _opened = await _started_batch(d, store, project, monkeypatch)
+    sid = "s-batch"
+    now = time.time()
+    store.update(cards[0]["id"], {"dispatched_at": now - 100}, bump=False)
+    _stamp(d, sid, ("bc-implementer", now - 50))
+    ok, detail, _b = await d.advance_batch_by_session(sid)
+    assert ok, detail
+    assert store.get(cards[0]["id"])["link_state"] == "ended"
+    assert _trail(store, cards[0]["id"]) == ["bc-implementer"]
+
+
+@pytest.mark.asyncio
+async def test_the_batch_walk_leaves_a_single_start_byte_identical(
+        daemon, project, monkeypatch):
+    """A card started alone: its window opens before its session existed and
+    never closes while the session is on it, so the trail is the session's
+    seen list, spawn for spawn."""
+    d, store = daemon
+    d._run_figures_drifted = lambda: False
+    opened: list = []
+    _stub_spawn(d, monkeypatch, project, opened)
+    card = _make(store, project, "alone")
+    ok, detail = await d.dispatch_card(card["id"])
+    assert ok, detail
+    store.bind_session(card["id"], "s-alone")
+    at = time.time() + 5
+    _stamp(d, "s-alone", ("bc-planner", at), ("bc-implementer", at + 1),
+           ("bc-implementer", at + 2))
+    d._session_states["s-alone"]["subagents_seen"] = [
+        "bc-planner", "bc-implementer"]
+    d._reconcile_board({"running": [{"session_id": "s-alone"}]})
+    assert _trail(store, card["id"]) == ["bc-planner", "bc-implementer"]
+
+
+@pytest.mark.asyncio
+async def test_a_reconcile_between_the_bind_and_dispatched_at_copies_nothing(
+        daemon, project, monkeypatch):
+    """`bind_waiting_member` and the `dispatched_at` write are two hops; a
+    pass landing between them must not give the new card the session's
+    earlier stages (the trail is append-only)."""
+    d, store = daemon
+    d._run_figures_drifted = lambda: False
+    cards, _ = await _started_batch(d, store, project, monkeypatch)
+    sid = "s-batch"
+    snap = {"running": [{"session_id": sid}]}
+    base = time.time() + 1000.0
+    store.update(cards[0]["id"], {"dispatched_at": base - 10}, bump=False)
+    _stamp(d, sid, ("bc-implementer", base), ("bc-verifier", base + 1))
+    d._reconcile_board(snap)
+    closed, why = await d.close_card_by_session(sid, "one")
+    assert closed is not None, why
+    store.update(cards[0]["id"], {"done_at": base + 2}, bump=False)
+    real = store.bind_waiting_member
+
+    def bind_then_reconcile(*a, **k):
+        out = real(*a, **k)
+        d._reconcile_board(snap)
+        return out
+
+    monkeypatch.setattr(store, "bind_waiting_member", bind_then_reconcile)
+    ok, detail, _b = await d.advance_batch_by_session(sid)
+    assert ok, detail
+    assert _trail(store, cards[1]["id"]) == []

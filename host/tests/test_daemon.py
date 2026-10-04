@@ -3000,3 +3000,200 @@ def test_the_headline_rides_the_snapshot_and_absence_means_no_record(tmp_path):
                    for v in head.values())
     finally:
         store.close()
+
+
+# ── the timed spawn log and the window a card's trail is cut to ─────────────
+
+
+def _start(daemon, sid, role, at):
+    daemon._update_session_state("subagent_start", "SubagentStart", sid,
+                                 agent_id=role)
+    daemon._session_states[sid]["subagent_spawns"][-1][1] = at
+
+
+def test_subagent_spawns_keeps_every_start_with_its_time(tmp_path):
+    daemon = BobDaemon(sessions_path=tmp_path / "sessions.json")
+    daemon._update_session_state("session_start", "SessionStart", "s1")
+    for _ in range(3):
+        daemon._update_session_state("subagent_start", "SubagentStart", "s1",
+                                     agent_id="bc-implementer")
+    state = daemon._session_states["s1"]
+    log = state["subagent_spawns"]
+    assert [r for r, _ in log] == ["bc-implementer"] * 3
+    assert all(isinstance(t, float) for _, t in log)
+    assert [t for _, t in log] == sorted(t for _, t in log)
+    assert state["subagents_seen"] == ["bc-implementer"]
+
+
+def test_subagent_spawns_is_bounded_and_keeps_the_newest(tmp_path):
+    from dark_army_daemon.daemon import MAX_SUBAGENT_SPAWNS
+    daemon = BobDaemon(sessions_path=tmp_path / "sessions.json")
+    daemon._update_session_state("session_start", "SessionStart", "s1")
+    for n in range(MAX_SUBAGENT_SPAWNS + 5):
+        daemon._update_session_state("subagent_start", "SubagentStart", "s1",
+                                     agent_id=f"role-{n}")
+    log = daemon._session_states["s1"]["subagent_spawns"]
+    assert len(log) == MAX_SUBAGENT_SPAWNS
+    assert log[-1][0] == f"role-{MAX_SUBAGENT_SPAWNS + 4}"
+    assert log[0][0] == "role-5"
+
+
+def test_subagent_spawns_survives_a_prompt_and_a_round_trip(tmp_path):
+    from dark_army_daemon.session_store import load_sessions, save_sessions
+    daemon = BobDaemon(sessions_path=tmp_path / "sessions.json")
+    daemon._update_session_state("session_start", "SessionStart", "s1")
+    daemon._update_session_state("subagent_start", "SubagentStart", "s1",
+                                 agent_id="bc-implementer")
+    daemon._update_session_state("user_prompt", "UserPromptSubmit", "s1")
+    assert len(daemon._session_states["s1"]["subagent_spawns"]) == 1
+    path = tmp_path / "round.json"
+    save_sessions(daemon._session_states, path)
+    assert load_sessions(path)["s1"]["subagent_spawns"][0][0] == "bc-implementer"
+
+
+def _windowed(tmp_path, **card_fields):
+    daemon, store = _board_daemon(tmp_path)
+    daemon._run_figures_drifted = lambda: False
+    card, _ = store.create({"title": "the work", "project": "bob",
+                            "root": "/tmp", "tool": "claude",
+                            "column_name": "in_progress"})
+    store.bind_session(card["id"], "s1")
+    if card_fields:
+        store.update(card["id"], card_fields, bump=False)
+    return daemon, store, card["id"]
+
+
+_SNAP = {"running": [{"session_id": "s1"}], "waiting": [],
+         "sleeping": [], "finished": [], "abandoned": []}
+
+
+def test_the_reconcile_records_only_the_stages_inside_the_window(tmp_path):
+    from dark_army_daemon.board import parse_stages
+    daemon, store, cid = _windowed(tmp_path, dispatched_at=100.0,
+                                   batch_id="b1", batch_rank="1")
+    try:
+        daemon._session_states["s1"] = {
+            **_fresh("working"),
+            "subagent_spawns": [["bc-planner", 50.0], ["bc-implementer", 120.0],
+                                ["bc-verifier", 130.0]],
+        }
+        assert daemon._reconcile_board(_SNAP) is True
+        assert parse_stages(store.get(cid)["agent_trail"]) == [
+            "bc-implementer", "bc-verifier"]
+        assert daemon._reconcile_board(_SNAP) is False
+    finally:
+        store.close()
+
+
+def test_a_done_card_stops_at_its_close(tmp_path):
+    from dark_army_daemon.board import parse_stages
+    daemon, store, cid = _windowed(tmp_path, dispatched_at=100.0,
+                                   batch_id="b1", batch_rank="1")
+    try:
+        store.update(cid, {"column_name": "done", "done_at": 125.0}, bump=False)
+        daemon._session_states["s1"] = {
+            **_fresh("working"),
+            "subagent_spawns": [["bc-implementer", 120.0],
+                                ["bc-verifier", 130.0]],
+        }
+        daemon._reconcile_board(_SNAP)
+        assert parse_stages(store.get(cid)["agent_trail"]) == ["bc-implementer"]
+        daemon._session_states["s1"]["subagent_spawns"].append(
+            ["bc-bug-auditor", 140.0])
+        daemon._reconcile_board(_SNAP)
+        assert parse_stages(store.get(cid)["agent_trail"]) == ["bc-implementer"]
+    finally:
+        store.close()
+
+
+def test_a_restored_state_without_the_log_reads_the_seen_list_for_one_card_and_nothing_for_two(
+        tmp_path):
+    from dark_army_daemon.board import parse_stages
+    daemon, store, cid = _windowed(tmp_path)
+    try:
+        daemon._session_states["s1"] = {**_fresh("working"),
+                                        "subagents_seen": ["bc-planner"]}
+        daemon._reconcile_board(_SNAP)
+        assert parse_stages(store.get(cid)["agent_trail"]) == ["bc-planner"]
+        other, _ = store.create({"title": "second", "project": "bob",
+                                 "root": "/tmp", "tool": "claude",
+                                 "column_name": "in_progress"})
+        store.bind_session(other["id"], "s1")
+        daemon._reconcile_board(_SNAP)
+        assert parse_stages(store.get(other["id"])["agent_trail"]) == []
+    finally:
+        store.close()
+
+
+def test_a_codex_session_on_a_second_card_records_no_trail(tmp_path):
+    from types import SimpleNamespace
+    from dark_army_daemon.board import parse_stages
+    daemon, store, cid = _windowed(tmp_path)
+    try:
+        other, _ = store.create({"title": "second", "project": "bob",
+                                 "root": "/tmp", "tool": "codex",
+                                 "column_name": "in_progress"})
+        store.bind_session(other["id"], "s1")
+        daemon._codex_records["s1"] = SimpleNamespace(
+            observed_roles=["bc-implementer"])
+        assert daemon._record_card_stages(cid, "s1", shared=True) is False
+        daemon._reconcile_board(_SNAP)
+        assert parse_stages(store.get(cid)["agent_trail"]) == []
+        assert parse_stages(store.get(other["id"])["agent_trail"]) == []
+        # Alone, a Codex card reads as before.
+        assert daemon._record_card_stages(cid, "s1") is True
+    finally:
+        store.close()
+
+
+def test_a_single_card_reads_the_whole_session_whatever_its_column(tmp_path):
+    """No window for a card on its own: a card dragged to Done while its
+    session lives, and a spawn stamped before its `dispatched_at`, still
+    read as they did before batches."""
+    from dark_army_daemon.board import parse_stages
+    daemon, store, cid = _windowed(tmp_path, dispatched_at=100.0)
+    try:
+        store.update(cid, {"column_name": "done", "done_at": 125.0}, bump=False)
+        daemon._session_states["s1"] = {
+            **_fresh("working"),
+            "subagents_seen": ["bc-planner", "bc-implementer", "bc-verifier"],
+            "subagent_spawns": [["bc-planner", 0.0], ["bc-implementer", 120.0],
+                                ["bc-verifier", 130.0]],
+        }
+        daemon._reconcile_board(_SNAP)
+        assert parse_stages(store.get(cid)["agent_trail"]) == [
+            "bc-planner", "bc-implementer", "bc-verifier"]
+    finally:
+        store.close()
+
+
+def test_a_batch_member_with_no_dispatched_at_yet_records_nothing(tmp_path):
+    from dark_army_daemon.board import parse_stages
+    daemon, store, cid = _windowed(tmp_path, batch_id="b1", batch_rank="2")
+    try:
+        daemon._session_states["s1"] = {
+            **_fresh("working"),
+            "subagents_seen": ["bc-implementer"],
+            "subagent_spawns": [["bc-implementer", 120.0]],
+        }
+        daemon._reconcile_board(_SNAP)
+        assert parse_stages(store.get(cid)["agent_trail"]) == []
+    finally:
+        store.close()
+
+
+def test_a_codex_batch_head_alone_records_its_trail(tmp_path):
+    """Every batch card carries `batch_id` from the press, but only a session
+    with several cards bound is shared: the head alone still gets its roles."""
+    from types import SimpleNamespace
+    from dark_army_daemon.board import parse_stages
+    daemon, store, cid = _windowed(tmp_path, dispatched_at=100.0,
+                                   batch_id="b1", batch_rank="1", tool="codex")
+    try:
+        daemon._session_states["s1"] = _fresh("working")
+        daemon._codex_records["s1"] = SimpleNamespace(
+            observed_roles=["bc-implementer"])
+        daemon._reconcile_board(_SNAP)
+        assert parse_stages(store.get(cid)["agent_trail"]) == ["bc-implementer"]
+    finally:
+        store.close()

@@ -755,7 +755,7 @@ def test_a_v18_file_gains_crew_trail_by_alter(tmp_path):
         assert card["agent_trail"] == "bc-planner"
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -1137,7 +1137,7 @@ def test_a_schema_25_file_gains_manual_check_path_by_alter(tmp_path):
         assert store.get("c2")["manual_check_path"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -1267,7 +1267,7 @@ def test_a_schema_3_file_gains_the_close_columns_by_alter(tmp_path):
         assert card["closed_by"] == "" and card["close_note"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
         assert store.declare_done("c1", "sess-1", "checked")[0] is not None
     finally:
         store.close()
@@ -1321,7 +1321,7 @@ def test_a_schema_4_file_gains_blocked_by_by_alter(tmp_path):
         assert store.get("c2")["blocked_by"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -1373,7 +1373,7 @@ def test_a_schema_24_file_gains_kind_and_report_path_by_alter(tmp_path):
         assert store.get("c2")["report_path"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -1571,7 +1571,7 @@ def test_a_schema_28_file_has_its_leftover_dependencies_cleared_once(tmp_path):
         assert store.get("c1")["blocked_by"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
         got, detail = store.update("c1", {"blocked_by": "c2"})
         assert got is not None, detail
     finally:
@@ -1652,7 +1652,7 @@ def test_a_schema_5_file_gains_the_refine_columns_and_moves_nothing(tmp_path):
         assert store.get("c2")["plan_path"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -2025,7 +2025,7 @@ def test_a_schema_7_file_gains_the_queue_pair_by_alter(tmp_path):
         assert store.get("c2")["queue_state"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -2087,7 +2087,7 @@ def test_a_schema_8_file_gains_manual_steps_by_alter(tmp_path):
         assert store.get("c2")["manual_steps"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -2251,7 +2251,7 @@ def test_schema_10_and_a_v9_shaped_file_gains_reviewed_at_via_the_seam(tmp_path)
     """The `_ADDED_COLUMNS` promise for v10. Nullable is the shape the seam's
     rule explicitly admits (`queued_at` is the precedent), so a v9 build goes
     on INSERTing without naming the column."""
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
     path = tmp_path / "v9.db"
     conn = sqlite3.connect(path)
     conn.execute(
@@ -2322,7 +2322,7 @@ def test_schema_11_and_a_v10_shaped_file_gains_queue_rank(tmp_path):
     """The `_ADDED_COLUMNS` promise for v11. Nullable is the shape the seam's
     rule explicitly admits (`queued_at` is the precedent), so a v10 build
     goes on INSERTing without naming the column."""
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
     path = tmp_path / "v10.db"
     conn = sqlite3.connect(path)
     conn.execute(
@@ -2372,7 +2372,7 @@ def test_the_create_path_and_the_alter_path_agree_on_attachments():
 def test_schema_11_and_a_v10_shaped_file_gains_attachments(tmp_path):
     """The `_ADDED_COLUMNS` promise for the attachments column at v11. DEFAULT
     `''` means a v10 build goes on INSERTing without naming it."""
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
     path = tmp_path / "v10-attach.db"
     conn = sqlite3.connect(path)
     conn.execute(
@@ -2597,7 +2597,7 @@ def test_a_file_without_card_messages_gains_the_table(tmp_path):
         assert msg is not None, detail
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -2904,7 +2904,7 @@ def test_effort_a_pre_v32_file_gains_the_column(tmp_path):
         assert reopened.get(card["id"])["effort"] == ""
         value = reopened._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()[0]
-        assert value == "32"
+        assert value == "33"
     finally:
         reopened.close()
 
@@ -3009,7 +3009,7 @@ def test_the_create_and_alter_spellings_agree_on_create_token():
     assert ("create_token", "TEXT NOT NULL DEFAULT ''") \
         in BoardStore._ADDED_COLUMNS["cards"]
     assert "create_token TEXT NOT NULL DEFAULT ''" in board_mod._SCHEMA
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
 
 
 def test_a_pre_v14_file_gains_the_create_token_column(tmp_path):
@@ -3059,7 +3059,7 @@ def test_a_pre_v14_file_gains_the_create_token_column(tmp_path):
         assert "cards_by_create_token" in indexes
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row["value"]) == SCHEMA_VERSION == 32
+        assert int(row["value"]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -3264,7 +3264,7 @@ def test_the_create_and_alter_spellings_agree_on_start_when_planned():
     assert ("start_when_planned", "TEXT NOT NULL DEFAULT ''") \
         in BoardStore._ADDED_COLUMNS["cards"]
     assert "start_when_planned TEXT NOT NULL DEFAULT ''" in board_mod._SCHEMA
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
 
 
 def test_start_when_planned_is_in_the_rings_a_person_writes():
@@ -3366,7 +3366,7 @@ def test_a_v16_shaped_file_gains_the_column_with_its_default(tmp_path):
 def test_schema_version_names_the_priority_column():
     """Bumped in the same change as the column, or `_migrate`'s forward-only
     marker says 18 while the table is v19."""
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
 
 
 def test_the_create_and_alter_spellings_of_priority_match_exactly():
@@ -3574,10 +3574,10 @@ def test_area_version22_file_opens_at23(tmp_path):
     conn.execute("UPDATE schema_meta SET value = '22' WHERE key = 'version'")
     conn.commit(); conn.close()
     s = BoardStore(path); s.connect()
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
     card, _ = s.create({"title": "old file"})
     assert card["area"] == ""
-    assert s._conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()[0] == "32"
+    assert s._conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()[0] == "33"
     s.close()
 
 
@@ -3640,7 +3640,7 @@ def test_a_vacuum_sized_wal_is_cut_back_to_the_cap(tmp_path):
 def test_v27_batch_columns_are_there_with_an_empty_default(tmp_path):
     """Two ring-2 columns, spelled alike in the CREATE and the ALTER list, in
     `_WRITABLE` and in neither `SINGLE_WRITER` nor `REVISED_COLUMNS`."""
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
     for name in ("batch_id", "batch_rank"):
         assert (name, "TEXT NOT NULL DEFAULT ''") \
             in BoardStore._ADDED_COLUMNS["cards"]
@@ -3683,7 +3683,7 @@ def test_a_v26_file_gains_the_batch_columns(tmp_path):
         assert got["batch_id"] == "" and got["batch_rank"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row[0]) == SCHEMA_VERSION == 32
+        assert int(row[0]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -3713,7 +3713,7 @@ def test_v27_file_gains_the_verdict_columns(tmp_path):
         assert got["report_recommendation"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row[0]) == SCHEMA_VERSION == 32
+        assert int(row[0]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -3900,7 +3900,7 @@ def test_v30_worktree_columns_are_bookkeeping_with_one_writer():
     surface reaches — `_WRITABLE`, `ApiServer._BOARD_FIELDS`,
     `REVISED_COLUMNS` (`docs/card-worktrees.md`, *The store*)."""
     from dark_army_daemon.api_server import ApiServer
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
     for name in ("worktree_path", "worktree_branch"):
         assert (name, "TEXT NOT NULL DEFAULT ''") \
             in BoardStore._ADDED_COLUMNS["cards"]
@@ -3935,7 +3935,7 @@ def test_a_v29_file_gains_the_worktree_columns_and_keeps_its_cards(tmp_path):
         assert got["worktree_path"] == "" and got["worktree_branch"] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row[0]) == SCHEMA_VERSION == 32
+        assert int(row[0]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 
@@ -3992,7 +3992,7 @@ def test_v31_columns_are_bookkeeping_with_their_own_writers():
     writer each in `SINGLE_WRITER`, and in none of the three rings a surface
     reaches (`docs/card-worktrees.md`, *Review and merge*)."""
     from dark_army_daemon.api_server import ApiServer
-    assert SCHEMA_VERSION == 32
+    assert SCHEMA_VERSION == 33
     writers = {"merge_state": "record_merge", "merge_note": "record_merge",
                "review_verdict": "record_review_verdict",
                "review_tip": "record_review_verdict"}
@@ -4030,7 +4030,7 @@ def test_a_v30_file_gains_the_merge_columns_and_keeps_its_cards(tmp_path):
             assert got[name] == ""
         row = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-        assert int(row[0]) == SCHEMA_VERSION == 32
+        assert int(row[0]) == SCHEMA_VERSION == 33
     finally:
         store.close()
 

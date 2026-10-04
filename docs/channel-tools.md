@@ -110,7 +110,12 @@ they did not have:
   `<enrolled root>/manual-check/<folder>/check.md` — the enrolled project
   the card's root belongs to, exactly three segments, `manual-check` and
   `check.md` in that exact case, `_manual_check_home`, the one rule the
-  list and the press share (else `board.MANUAL_CHECK_PLACE_REFUSAL`) — and a
+  list and the press share (else `board.MANUAL_CHECK_PLACE_REFUSAL`); a
+  component typed in a different case is taken from the directory only when
+  `os.lstat` of both spellings names one `(st_dev, st_ino)`
+  (`_canonical_path`), and a typed name that does not exist stays as typed
+  and is refused by the checks that follow, so a case-sensitive volume never
+  has a different folder or a link swapped in — and a
   clean check (else
   `board.MANUAL_CHECK_MALFORMED_REFUSAL` and the problems), and
   `flag_manual` stores the realpath in `manual_check_path` in the same
@@ -141,9 +146,22 @@ they did not have:
   names the next card's title and plan, or says the batch is finished.
   Only the batch's owning session (`_batch_owner`, its lowest-ranked bound
   card) may walk or release it; a marked card outside Backlog is refused a
-  single Start until Leave batch.
+  single Start until Leave batch. Each member's stage trail and fix rounds
+  are read inside its own window — from its `dispatched_at` (the press for
+  the head, the advance's bind for a later member) to its `done_at` or the
+  advance that left it — off the session's timed spawn log
+  (`subagent_spawns`) and the transcript's per-spawn `spawns` list; a
+  member the session leaves unclosed is recorded once more at the advance;
+  Codex keeps no timed record, so a Codex session on a second card records
+  no trail and shows no fix rounds — withheld, never wrong. A spawn between
+  a close and the next call falls in no window: a track short by one, never
+  a wrong one.
 - `dark_army_answer_card` — one message onto the thread of the card Dark Army just
   asked about. Same no-`card_id` shape; changes nothing else.
+  **In a batch it answers the card the session is on** (29 Sep 2026): the open
+  cards are narrowed by the same positional rule the `dark_army_close_card`
+  bullet states, so a member the session moved past is not counted; the consult
+  rung before it and the one-Done-card rung after it are unchanged.
 - `dark_army_knowledge_read` / `dark_army_knowledge_write` — **the project's own
   question-and-answer notes**, in full in `docs/knowledge-notes.md`; what
   must hold: `knowledge_store.py` is schema 20's one table, keyed on the
@@ -183,9 +201,11 @@ every enrolled machine and baked into every running session's
 old name holds the old tool list until it exits. So one installed script,
 `~/.dark-army/dark-army-channel`, answers to either name, and
 `channel_install` registers it twice at user scope — both names removed
-before either is added, so the previous build's flagless `bob` never sits
-beside the new `dark-army` (the cost is a brief window with no board tools),
-then `dark-army` first:
+before either is added (`bob` removed first), so the previous build's flagless `bob` never sits
+beside the new `dark-army` (the cost is a brief window with no board tools;
+a remove that fails for any reason other than the name not being registered
+stops the install before any add, and because `bob` goes first a failed
+remove never leaves only the passive `bob` registration); the adds then put `dark-army` first:
 
 - `dark-army` — `--name=dark-army`, tools `dark_army_*`,
   `<channel source="dark-army">`, launch line

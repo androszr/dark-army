@@ -1566,3 +1566,19 @@ def test_restore_skips_a_session_that_is_not_waiting(tmp_path):
         {"s1": {"text": "Postgres or SQLite?", "id": "toolu_1"}},
     )
     assert BobDaemon(sessions_path=path)._pending_questions == {}
+
+
+def test_a_non_list_subagent_spawns_is_dropped_on_restore(tmp_path):
+    """`subagent_spawns` is read by iterating it; a string from a damaged
+    file would be walked a character at a time. A list survives."""
+    from dark_army_daemon.session_store import load_sessions, save_sessions
+    path = tmp_path / "sessions.json"
+    now = time.time()
+    save_sessions({
+        "bad": {"state": "idle", "last_event": now, "subagent_spawns": "oops"},
+        "good": {"state": "idle", "last_event": now,
+                 "subagent_spawns": [["bc-implementer", 5.0]]},
+    }, path)
+    loaded = load_sessions(path)
+    assert "subagent_spawns" not in loaded["bad"]
+    assert loaded["good"]["subagent_spawns"] == [["bc-implementer", 5.0]]

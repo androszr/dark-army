@@ -94,7 +94,7 @@ Sessions whose PID is gone are evicted immediately; sessions that never got a PI
 
 ## Subagent tracking
 
-`SubagentStart`/`SubagentStop` hooks track active `agent_id`s per session; a session with active subagents is never evicted and counts as "working". Grok's hook often has only `subagentType` and fires `SubagentStop` *inside the child*, so the converter prefers `subagent_id`, attributes start/stop to `parentSessionId`, and `_sync_grok_subagents` replaces a stale type-set from `chat_history.jsonl`.
+`SubagentStart`/`SubagentStop` hooks track active `agent_id`s per session; a session with active subagents is never evicted and counts as "working". Grok's hook often has only `subagentType` and fires `SubagentStop` *inside the child*, so the converter prefers `subagent_id`, attributes start/stop to `parentSessionId`, and `_sync_grok_subagents` replaces a stale type-set from `chat_history.jsonl`. `subagent_spawns` is the timed companion to `subagents_seen` — `[role, at]` per start, never deduped, newest `MAX_SUBAGENT_SPAWNS` kept, persisted with the state and dropped on restore when it is not a list — read by `_record_card_stages` to fill a batch member's trail from its own window alone.
 
 ## Finished sessions
 

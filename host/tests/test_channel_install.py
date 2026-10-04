@@ -3,7 +3,8 @@
 The interesting part is *not* writing a file — it is that the registration goes
 through `claude mcp add` rather than through `~/.claude.json` directly, and that
 a half-install is reported as not installed. For the dual-name window it is
-registered twice, `dark-army` then `bob`, each with its own `--name=`.
+registered twice, `dark-army` then `bob`, each with its own `--name=`. A failed
+remove stops the install before any add.
 """
 import json
 import subprocess
@@ -141,7 +142,7 @@ def test_every_name_is_removed_before_any_is_added(installer):
     _, calls = installer
     ci.install()
     claude = [(c[1], c[4]) for c in calls if c[0] == "mcp" and len(c) > 4]
-    assert claude == [("remove", "dark-army"), ("remove", "bob"),
+    assert claude == [("remove", "bob"), ("remove", "dark-army"),
                       ("add", "dark-army"), ("add", "bob")]
     first_add = next(i for i, c in enumerate(calls) if c[:2] == ["mcp", "add"])
     removes = [i for i, c in enumerate(calls) if c[:2] == ["mcp", "remove"]]
@@ -533,3 +534,100 @@ def test_uninstall_forgets_the_recorded_install(installer):
     calls.clear()
     assert ci.install() is True
     assert any(c[:2] == ["mcp", "add"] for c in calls)
+
+
+def _remove_answers(monkeypatch, calls, answers):
+    """Fake the CLI: `answers` maps a name to its remove reply; all else succeeds."""
+    def fake(*args):
+        calls.append(list(args))
+        if args[:2] == ("mcp", "remove") and args[4] in answers:
+            return answers[args[4]]
+        return True, ""
+    monkeypatch.setattr(ci, "_claude", fake)
+
+
+def _watch_codex(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ci, "_codex", lambda *a: seen.append(a) or (False, "absent"))
+    return seen
+
+
+def _no_add(calls):
+    return not any(c[:2] == ["mcp", "add"] for c in calls)
+
+
+@pytest.mark.parametrize("name", ci.SERVER_NAMES)
+def test_a_timed_out_remove_stops_before_any_add(installer, monkeypatch, name):
+    _, calls = installer
+    codex = _watch_codex(monkeypatch)
+    _remove_answers(monkeypatch, calls, {name: (
+        False, f"Command '['claude', 'mcp', 'remove', '-s', 'user', '{name}']' "
+               "timed out after 20.0 seconds")})
+    assert ci.install() is False
+    assert _no_add(calls)
+    assert not ci._marker_path().exists()
+    assert codex == []
+
+
+def test_an_unrunnable_cli_on_remove_stops_before_any_add(installer, monkeypatch):
+    _, calls = installer
+    codex = _watch_codex(monkeypatch)
+    _remove_answers(monkeypatch, calls, {"bob": (
+        False, "[Errno 2] No such file or directory: '/x/claude'")})
+    assert ci.install() is False
+    assert _no_add(calls)
+    assert not ci._marker_path().exists()
+    assert codex == []
+
+
+def test_an_unregistered_name_is_a_finished_remove(installer, monkeypatch):
+    _, calls = installer
+    _remove_answers(monkeypatch, calls, {"bob": (
+        False, 'No MCP server named "bob" in user scope')})
+    assert ci.install() is True
+    assert [c[4] for c in calls if c[:2] == ["mcp", "add"]] == ["dark-army", "bob"]
+    assert ci._marker_path().exists()
+
+
+def test_a_fresh_machine_has_nothing_to_remove(installer, monkeypatch):
+    _, calls = installer
+    _remove_answers(monkeypatch, calls, {
+        n: (False, f'No MCP server named "{n}" in user scope')
+        for n in ci.SERVER_NAMES})
+    assert ci.install() is True
+    assert [c[4] for c in calls if c[:2] == ["mcp", "add"]] == ["dark-army", "bob"]
+
+
+@pytest.mark.parametrize("reply, expected", [
+    ((True, ""), True),
+    ((False, 'No MCP server named "bob" in user scope'), True),
+    ((False, "No MCP server named 'bob' found."), True),
+    ((False, "Command '[...]' timed out after 20.0 seconds"), False),
+    ((False, "[Errno 2] No such file or directory: '/x/claude'"), False),
+    ((False, "claude is not installed on this Mac (looked on PATH)"), False),
+    ((False, ""), False),
+])
+def test_remove_claude_reads_the_cli_reply(monkeypatch, reply, expected):
+    monkeypatch.setattr(ci, "_claude", lambda *a: reply)
+    assert ci._remove_claude("bob") is expected
+
+
+def test_claude_wrapper_reports_a_timeout_the_remove_check_treats_as_failure(
+        monkeypatch):
+    monkeypatch.setattr(ci, "find_claude_binary", lambda: "/opt/bin/claude")
+    monkeypatch.setattr(ci.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(
+        subprocess.TimeoutExpired("claude", 20)))
+    assert ci._remove_claude("bob") is False
+
+
+def test_a_failed_second_remove_leaves_only_the_current_name(installer, monkeypatch):
+    """Removes run legacy first: when the `dark-army` remove then fails, `bob`
+    is already gone and the surviving registration is the active `dark-army`."""
+    _, calls = installer
+    _remove_answers(monkeypatch, calls, {"dark-army": (
+        False, "Command '[...]' timed out after 20.0 seconds")})
+    assert ci.install() is False
+    removes = [c[4] for c in calls if c[:2] == ["mcp", "remove"]]
+    assert removes == ["bob", "dark-army"]
+    assert _no_add(calls)
+    assert not ci._marker_path().exists()

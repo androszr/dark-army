@@ -4,7 +4,7 @@ Seams: `test_manual_check_api.py`'s — a real `BobDaemon` and `BoardStore` on a
 temp file, `enrollment` patched to the temp project, the loopback GET driven
 through `_handle_client`, the sealed kind through `_sealed_run` on both doors
 — over a real git repository under `tmp_path`, so the commits, the counts and
-the per-file diff are git's own (`docs/transport-contract.md`, *card_changes
+the per-file diff are git's own (`docs/sealed-reads-contract.md`, *card_changes
 is a sealed read*).
 """
 

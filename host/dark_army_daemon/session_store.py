@@ -83,6 +83,8 @@ def _restored(state: object) -> Optional[dict]:
     # letter. Both container shapes are readable, anything else goes.
     if "subagents_async" in state and not isinstance(state["subagents_async"], (dict, list)):
         del state["subagents_async"]
+    if "subagent_spawns" in state and not isinstance(state["subagent_spawns"], list):
+        del state["subagent_spawns"]
     live = state.pop("subagents", None)
     if isinstance(live, list):
         state["subagents"] = set(live)

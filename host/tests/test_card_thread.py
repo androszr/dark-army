@@ -425,3 +425,47 @@ async def test_answer_pops_consult_when_the_card_is_gone(daemon):
     assert got is None
     assert "no such card" in detail
     assert cid not in d._consults
+
+
+@pytest.mark.asyncio
+async def test_answer_under_a_batch_lands_on_the_card_the_session_is_on(daemon):
+    d, store = daemon
+    a = _make(store, title="one")
+    b = _make(store, title="two")
+    store.update(a["id"], {"session_id": "s-batch", "link_state": "ended",
+                           "batch_id": "b1", "batch_rank": "1",
+                           "column_name": "in_progress"})
+    store.update(b["id"], {"session_id": "s-batch", "link_state": "live",
+                           "batch_id": "b1", "batch_rank": "2",
+                           "column_name": "in_progress"})
+    got, detail = await d.answer_card_by_session("s-batch", "yes, covered")
+    assert got is not None, detail
+    assert got["id"] == b["id"]
+    assert detail == "answered"
+    last = store.messages(b["id"])[-1]
+    assert last["kind"] == "answer"
+    assert last["via"] == "session"
+    assert last["author"] == "s-batch"
+    assert last["text"] == "yes, covered"
+    assert store.messages(a["id"]) == []
+    closed, why = await d.close_card_by_session("s-batch", "built")
+    assert closed is not None, why
+    assert closed["id"] == b["id"]
+
+
+@pytest.mark.asyncio
+async def test_answer_from_a_session_on_two_batches_is_still_refused(daemon):
+    d, store = daemon
+    a = _make(store, title="one")
+    b = _make(store, title="two")
+    store.update(a["id"], {"session_id": "shared", "link_state": "live",
+                           "batch_id": "b1", "batch_rank": "1",
+                           "column_name": "in_progress"})
+    store.update(b["id"], {"session_id": "shared", "link_state": "live",
+                           "batch_id": "b2", "batch_rank": "1",
+                           "column_name": "in_progress"})
+    got, detail = await d.answer_card_by_session("shared", "which?")
+    assert got is None
+    assert "more than one card" in detail
+    assert store.messages(a["id"]) == []
+    assert store.messages(b["id"]) == []

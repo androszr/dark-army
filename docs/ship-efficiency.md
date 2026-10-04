@@ -404,6 +404,7 @@ against the tree on that date; the digests are the bound, the counts a reading.
 | `d87f40572036` | Extension dependencies use `npm ci` | `docs/context-development.md` (the product-name sweep, 22 Sep 2026) | 37 → 38 |
 | `387a53d2fbc0` | One source of truth for the buckets | `docs/context-host.md` (`confused` counts only beside a card, 22 Sep 2026) | 61 → 70 |
 | `87a6fa8164e0` | The gate lives inside `_dispatch_card_locked` | `docs/context-board.md` (card dependencies, 24 Sep 2026) | 84 → 74 |
+| `4a16e136909b` | Three rules in the API layer (`Models.swift` — envelope and fleet | `docs/context-panel.md` (the flag count dropped, 3 Oct 2026: the *split transport contract* plan) | 127 → 126 |
 
 | Old section | Paragraphs | Where they are now |
 |---|---:|---|

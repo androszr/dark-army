@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from . import attachments, board_outcomes, merges, scout_report, work_record, worktrees
+from .board_journal_store import JournalStoreMixin
 from .board_lifecycle_store import LifecycleStoreMixin
 from .board_outcome_store import OutcomeStoreMixin
 from .board_queue import queue_key
@@ -110,7 +111,9 @@ logger = logging.getLogger("dark-army.board")
 #: v32 adds one `cards` column, `effort`, beside `model`: the reasoning effort
 #: the card's session launches at, `''` meaning Default (no flag), through the
 #: ADD COLUMN list (`docs/context-board.md`, *A card may name the effort*).
-SCHEMA_VERSION = 32
+#: v33: the action journal's three tables, `docs/action-journal.md`; additive,
+#: no `cards` column.
+SCHEMA_VERSION = 33
 
 #: Ceiling for board.db-wal, applied per connection in `connect()`. SQLite
 #: reuses a WAL file from its start after a checkpoint but never shrinks
@@ -987,7 +990,8 @@ CARD_ORDER_SQL = (" ORDER BY column_name,"
                   " CAST(priority AS INTEGER) DESC, position, created_at")
 
 
-class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
+class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
+                JournalStoreMixin):
     """Thread-safe SQLite wrapper for the board. Synchronous — see the docstring."""
 
     #: Columns a caller may set. Anything else in a fields dict is ignored
@@ -1353,6 +1357,7 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin):
         self._sweep_orphan_runs()
         self._connect_outcomes()
         self._connect_lifecycle()
+        self._connect_journal()
         # Last, and not swept: the knowledge notes are keyed on the project
         # root, not on a card, so they have no orphan to sweep.
         self._connect_knowledge()

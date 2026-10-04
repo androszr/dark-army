@@ -6,7 +6,7 @@ press Continue, and one terminal fixes exactly those and then performs exactly
 the ticked steps, reporting each. The Mac panel has a **Review** tab between
 Comm and History; the phone has a **Review** tile on its Menu tab. This is the
 long-form contract; `docs/context-host.md`, `docs/context-panel.md`,
-`docs/phone-contract.md`, `docs/transport-contract.md` and
+`docs/phone-contract.md`, `docs/sealed-reads-contract.md` and
 `docs/agent-pack.md` point here.
 
 ## Why a record and not a card

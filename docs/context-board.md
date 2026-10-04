@@ -71,7 +71,7 @@ attach on the executor, replaced by a re-attach, empty for a report with no
 block — drawn through `ScoutVerdictLine` on the tile, the card window and the
 phone's card screen; the Reports list still reads the file. Every report also lists in the Mac's Reports tab
 and the phone's Scouting tile on the Menu; the index and the body read are
-`docs/transport-contract.md`'s.
+`docs/sealed-reads-contract.md`'s.
 
 **A card may hold a standing instruction to take the second path by itself.**
 `start_when_planned` (v17, ring 1, `''` off / `'1'` on, normalised at both
@@ -118,7 +118,7 @@ ends, a bind that expires, or a reset of the current card sends the
 unreached members back with `BATCH_LEFT_NOTE`. Only the batch's owning
 session (its lowest-ranked bound card, `_batch_owner`) can walk or release
 it, and a marked card outside Backlog is refused a single Start until Leave
-batch. Cost, trail and fix rounds are session-wide. Long form:
+batch. Cost is session-wide until *Split a batch implementation's cost across its cards* lands; the trail and fix rounds are each member's own, inside its window from bind to close or leave (`docs/channel-tools.md`). Long form:
 `docs/channel-tools.md`.
 
 **How many agents may work at once in one project is a number you set, per
@@ -344,9 +344,10 @@ real columns and to what the prompt builders send.
   `check_same_thread=False` behind a `threading.Lock`, WAL capped at
   `WAL_SIZE_LIMIT_BYTES` (8 MiB, `journal_size_limit`, so the coalesce
   `VACUUM` leaves no 177 MB `-wal` behind), `busy_timeout=5000`, an idempotent `_SCHEMA`, `_ADDED_COLUMNS` and a
-  forward-only `SCHEMA_VERSION` (31; the retired `initiatives` columns
+  forward-only `SCHEMA_VERSION` (33; the retired `initiatives` columns
   are emptied, never dropped — **there is no folder concept on the board
-  now**). Four columns:
+  now**; v33 adds the action journal's three tables,
+  `docs/action-journal.md`). Four columns:
   `prep` / `backlog` / `in_progress` / `done` (the SQL column is
   `column_name`). **Forward compatibility is the standing rule**: reads are
   `SELECT *` into a dict that ignores unknown keys, writes never drop a

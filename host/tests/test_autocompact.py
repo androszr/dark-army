@@ -401,3 +401,32 @@ async def test_codex_navigation_proof_does_not_deliver_compact(tmp_path, monkeyp
     daemon._compact_queue = [(roots[0].session_id, 701, "codex")]
     await daemon._flush_auto_compacts()
     send.assert_not_called()
+
+
+# --- restore: a restarted process remembers the episode a dead one began ----
+
+def test_restore_seeds_an_episode_that_holds_and_never_sends():
+    policy = autocompact.AutoCompactPolicy()
+    policy.restore("s1", 100.0)
+    assert policy.pending("s1")
+    for now in (101.0, 150.0, 100.0 + autocompact.SETTLE_SECONDS - 1):
+        verdict = policy.consider("s1", [ctx_signal()], 91.0, True, now)
+        assert verdict == autocompact.HOLD
+    # Settled and still full: handed to alerts, never typed again.
+    assert policy.consider("s1", [ctx_signal()], 91.0, True,
+                           100.0 + autocompact.SETTLE_SECONDS + 1) == autocompact.PASS
+
+
+def test_restore_on_a_session_with_state_is_a_no_op():
+    policy = autocompact.AutoCompactPolicy()
+    policy.consider("s1", [ctx_signal()], 91.0, True, 0.0)
+    before = dict(policy._state["s1"])
+    policy.restore("s1", 500.0)
+    assert policy._state["s1"] == before
+
+
+def test_restore_reads_no_clock():
+    policy = autocompact.AutoCompactPolicy()
+    policy.restore("s1", 7.0)
+    assert policy._state["s1"] == {"sent_at": 7.0, "sent_pct": None,
+                                   "failed": False, "cleared_at": None}

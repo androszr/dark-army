@@ -78,9 +78,10 @@ SERVER_NAME = channel_server.CURRENT_NAME
 #: dual-name window beside `SERVER_NAME`.
 LEGACY_SERVER_NAME = channel_server.LEGACY_NAME
 #: Both registrations, current first. `install` removes every one of them
-#: before adding any, so no moment holds the new flagged `dark-army` beside
-#: the previous build's flagless `bob` (both would be active); the cost is a
-#: brief window, between the removes and the first add, with no board tools.
+#: before adding any, and checks each remove (see `install`), so no moment
+#: holds the new flagged `dark-army` beside the previous build's flagless
+#: `bob` (both would be active); the cost is a brief window, between the
+#: removes and the first add, with no board tools.
 SERVER_NAMES = (SERVER_NAME, LEGACY_SERVER_NAME)
 
 #: Dark Army owns exactly this Codex MCP name. It is deliberately different from the
@@ -128,6 +129,29 @@ def _claude(*args: str) -> tuple[bool, str]:
     if proc.returncode != 0:
         return False, (proc.stderr or proc.stdout or "").strip()
     return True, (proc.stdout or "").strip()
+
+
+def _remove_claude(name: str) -> bool:
+    """Remove one Claude Code registration; True when the name is now absent.
+
+    Three outcomes. The CLI succeeded: True. The CLI said the name was never
+    registered (exit 1, stderr exactly `No MCP server named "<name>" in user
+    scope`): also True, there is nothing to remove, as on a fresh machine.
+    Anything else, a timeout, a missing binary or any other refusal: False.
+    A timeout is not "probably removed": the CLI may have hung before it
+    removed anything, and an unverified removal followed by an add is exactly
+    the two-tool-lists shape the remove-first order exists to prevent.
+    """
+    ok, detail = _claude("mcp", "remove", "-s", "user", name)
+    if ok:
+        return True
+    if "no mcp server named" in detail.lower():
+        logger.debug("%s was not registered with Claude Code; nothing to "
+                     "remove", name)
+        return True
+    logger.error("Could not remove the %s channel registration from Claude "
+                 "Code; leaving the registrations as they are: %s", name, detail)
+    return False
 
 
 def _codex(*args: str) -> tuple[bool, str]:
@@ -331,6 +355,10 @@ def install(force: bool = False) -> bool:
     an unchanged script does not need any of it. `force=True` is the deliberate
     toggle's route and re-runs the CLI unconditionally — it is also the repair
     for a registration removed behind the marker's back.
+
+    A failed remove is a failed install: nothing is added and no marker is
+    recorded, so the next launch retries. Removes run legacy first, so a
+    failed one never leaves only the passive `bob` registration behind.
     """
     try:
         text = source_path().read_text(encoding="utf-8")
@@ -347,14 +375,21 @@ def install(force: bool = False) -> bool:
     # already registered, and re-registering is the ordinary case — the script's
     # interpreter path can change under an upgrade. **Every** name is removed
     # before any is added: the previous build's flagless `bob` is active in a
-    # plain session (`channel_server.is_active`), so adding `dark-army` while it
-    # is still registered would give a session opened in between two tool
-    # lists and a displaced attach — and a `bob` remove that timed out would
-    # leave that pair for good. What remains is a brief window, between the
-    # removes and the first add, in which a session starting has no board
-    # tools; current name first keeps it to one CLI call.
-    for name in SERVER_NAMES:
-        _claude("mcp", "remove", "-s", "user", name)
+    # plain session (`channel_server.is_active`), so `dark-army` must never be
+    # added beside it (two tool lists and a displaced attach). The order alone
+    # does not guarantee that, so a remove that fails for any reason other than
+    # the name not being registered stops the install here, before any add; the
+    # next launch (or the toggle) retries. The removes run legacy first: a
+    # failed `bob` remove then touches nothing, and a failed `dark-army` remove
+    # leaves only the `dark-army` copy, which is active in a plain session. (The
+    # other way round, a failed `bob` remove would leave only the passive
+    # `--name=bob` copy and those sessions would have no board tools.) What
+    # remains is a brief window, between the removes and the first add, in
+    # which a session starting has no board tools; current name added first
+    # keeps it to one CLI call.
+    for name in reversed(SERVER_NAMES):
+        if not _remove_claude(name):
+            return False
     for name in SERVER_NAMES:
         ok, detail = _claude("mcp", "add", "-s", "user", name, "--",
                              *_claude_command(name))
