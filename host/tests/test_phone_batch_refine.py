@@ -267,7 +267,7 @@ def test_the_batch_effect_is_every_cards_refining(rule_bin):
     out = _run(rule_bin, {"snapshot": gone, "landed": ["a", "b"]})
     assert out["LANDED"] == "false"
     both = _snapshot([_card(id="a", refine_state="dispatching"),
-                      _card(id="b", refine_session_id="s9")])
+                      _card(id="b", refine_state="live", refine_session_id="s9")])
     out = _run(rule_bin, {"snapshot": both, "landed": ["a", "b"]})
     assert out["LANDED"] == "true"
 

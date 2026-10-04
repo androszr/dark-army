@@ -899,8 +899,13 @@ final class ReceiptLedger: ObservableObject {
         case .cardRefining(let cardId):
             guard let card = snapshot.board.cards.first(where: { $0.id == cardId })
             else { return false }
-            return !card.refineState.isEmpty
-                || !card.refineSessionId.isEmpty
+            // A planner starting or at work, a plan attached, or the card
+            // out of Prep. Never `ended` or a leftover `refine_session_id`:
+            // those are an *earlier* planner that left without a plan, the
+            // very card Refine is offered again on, and reading them as
+            // landed dropped the press unsent (4 Oct 2026).
+            return card.refineState == "dispatching"
+                || card.refineState == "live"
                 || !card.planPath.isEmpty
                 || card.column != "prep"
         case .cardsRefining(let cardIds):

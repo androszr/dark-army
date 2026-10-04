@@ -979,16 +979,26 @@ final class OfflineCacheTests: XCTestCase {
         XCTAssertTrue(ReceiptLedger.landed(tool, in: snapshot(board: board([switched]))))
         XCTAssertTrue(ReceiptLedger.landed(model, in: snapshot(board: board([switched]))))
         XCTAssertFalse(ReceiptLedger.landed(refine, in: snapshot(board: board([switched]))))
-        // Refine lands on any sign of a planner: its state, its session,
-        // a plan already attached, or the card out of Prep.
+        // Refine lands on a planner starting or at work, a plan already
+        // attached, or the card out of Prep.
         for json in [
             #"{"id": "a", "column_name": "prep", "refine_state": "dispatching"}"#,
-            #"{"id": "a", "column_name": "prep", "refine_session_id": "s9"}"#,
+            #"{"id": "a", "column_name": "prep", "refine_state": "live", "refine_session_id": "s9"}"#,
             #"{"id": "a", "column_name": "prep", "plan_path": "plans/x.md"}"#,
             #"{"id": "a", "column_name": "backlog"}"#,
         ] {
             let card = try! JSONDecoder().decode(BoardCard.self, from: Data(json.utf8))
             XCTAssertTrue(ReceiptLedger.landed(refine, in: snapshot(board: board([card]))), json)
+        }
+        // An earlier planner that ended without a plan is the card Refine
+        // is offered again on: not landed, so the press is sent (4 Oct 2026).
+        for json in [
+            #"{"id": "a", "column_name": "prep", "refine_state": "ended", "refine_session_id": "s9"}"#,
+            #"{"id": "a", "column_name": "prep", "refine_session_id": "s9"}"#,
+        ] {
+            let card = try! JSONDecoder().decode(BoardCard.self, from: Data(json.utf8))
+            XCTAssertFalse(ReceiptLedger.landed(refine, in: snapshot(board: board([card]))), json)
+            XCTAssertFalse(ReceiptLedger.evidenceBeforeSending(refine, in: snapshot(board: board([card]))), json)
         }
         // All three are goal-achieved effects: evidence before sending.
         XCTAssertTrue(ReceiptLedger.evidenceBeforeSending(tool, in: snapshot(board: board([switched]))))
@@ -1015,7 +1025,7 @@ final class OfflineCacheTests: XCTestCase {
         let aIdle = card(#"{"id": "a", "column_name": "prep"}"#)
         let bIdle = card(#"{"id": "b", "column_name": "prep"}"#)
         let aLive = card(#"{"id": "a", "column_name": "prep", "refine_state": "dispatching"}"#)
-        let bLive = card(#"{"id": "b", "column_name": "prep", "refine_session_id": "s9"}"#)
+        let bLive = card(#"{"id": "b", "column_name": "prep", "refine_state": "live", "refine_session_id": "s9"}"#)
         XCTAssertFalse(ReceiptLedger.landed(batch, in: snapshot(board: board([aIdle, bIdle]))))
         XCTAssertFalse(ReceiptLedger.landed(batch, in: snapshot(board: board([aLive, bIdle]))))
         XCTAssertFalse(ReceiptLedger.landed(batch, in: snapshot(board: board([aLive]))))
