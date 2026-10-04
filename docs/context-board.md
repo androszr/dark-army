@@ -118,8 +118,8 @@ ends, a bind that expires, or a reset of the current card sends the
 unreached members back with `BATCH_LEFT_NOTE`. Only the batch's owning
 session (its lowest-ranked bound card, `_batch_owner`) can walk or release
 it, and a marked card outside Backlog is refused a single Start until Leave
-batch. Cost is session-wide until *Split a batch implementation's cost across its cards* lands; the trail and fix rounds are each member's own, inside its window from bind to close or leave (`docs/channel-tools.md`). Long form:
-`docs/channel-tools.md`.
+batch. Cost is session-wide; trail and fix rounds are each card's own.
+Long form: `docs/channel-tools.md`.
 
 **How many agents may work at once in one project is a number you set, per
 project.** The machine-wide `board_parallel` (default **1**) is the default;
@@ -346,8 +346,7 @@ real columns and to what the prompt builders send.
   `VACUUM` leaves no 177 MB `-wal` behind), `busy_timeout=5000`, an idempotent `_SCHEMA`, `_ADDED_COLUMNS` and a
   forward-only `SCHEMA_VERSION` (33; the retired `initiatives` columns
   are emptied, never dropped — **there is no folder concept on the board
-  now**; v33 adds the action journal's three tables,
-  `docs/action-journal.md`). Four columns:
+  now**; v33: `docs/action-journal.md`). Four columns:
   `prep` / `backlog` / `in_progress` / `done` (the SQL column is
   `column_name`). **Forward compatibility is the standing rule**: reads are
   `SELECT *` into a dict that ignores unknown keys, writes never drop a
