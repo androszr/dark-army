@@ -589,6 +589,15 @@ class _StatusClickHandler(NSObject):
             self._app._on_open_panel(None)
 
 
+def _battery_level(value) -> int:
+    """A stored or chosen low-battery level as an int in 0..100; anything
+    unparseable (a hand-written "twenty", a list) is 0, which is off."""
+    try:
+        return max(0, min(100, int(value or 0)))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 class BobCompanionApp(rumps.App, DaemonObserver):
     def __init__(self):
         super().__init__("Dark Army", quit_button=None)
@@ -805,6 +814,8 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             # the relay's push route. A mute on the buzzes alone — the away
             # path itself stays `remote_access`'s decision.
             "phone_push": bool(prefs.get("phone_push", True)),
+            # The level the phone is buzzed at on a low battery; 0 is off.
+            "battery_buzz_percent": _battery_level(prefs.get("battery_buzz_percent", 0)),
             # Empty dict means no shortcut recorded. A recorded triple is
             # {key_code, modifiers, label}; anything else is treated as none.
             "dictation_shortcut": (
@@ -975,6 +986,8 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         # to schedule, so this one is applied, not stashed.
         self._daemon.set_phone_push(
             bool(self._settings.get("phone_push", True)))
+        self._daemon.set_battery_buzz_percent(
+            self._settings.get("battery_buzz_percent", 0))
 
         thread = threading.Thread(target=self._serve_daemon, daemon=True)
         self._daemon_thread = thread
@@ -2297,6 +2310,18 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         if self._daemon:
             self._daemon.set_phone_push(bool(enabled))
 
+    def _set_battery_buzz_percent(self, percent: int) -> None:
+        """Buzz the phone once per discharge at this battery level, 0 for off.
+
+        `_set_phone_push`'s shape: save the preference, tell the daemon. The
+        daemon setter is a plain thread-safe int write read at decision time.
+        """
+        percent = _battery_level(percent)
+        self._settings["battery_buzz_percent"] = percent
+        save_preferences(updates={"battery_buzz_percent": percent})
+        if self._daemon:
+            self._daemon.set_battery_buzz_percent(percent)
+
     def _set_board_dispatch(self, enabled: bool) -> None:
         """Let Dark Army start a session from a board card, or stop it entirely.
 
@@ -3197,6 +3222,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         "set_remote_access":          lambda app, v: app._set_remote_access(bool(v)),
         "set_relay_ws":               lambda app, v: app._set_relay_ws(bool(v)),
         "set_phone_push":             lambda app, v: app._set_phone_push(bool(v)),
+        "set_battery_buzz_percent":   lambda app, v: app._set_battery_buzz_percent(int(v)),
         "set_dictation_shortcut":     lambda app, v: app._set_dictation_shortcut(v),
         "dictate":                    lambda app, _v: app._on_dictate(),
         "dictate_down":               lambda app, _v: app._on_dictate_down(),

@@ -208,7 +208,24 @@ final class SettingsMenuModelTests: XCTestCase {
             if case .pick(let action, _, _) = row.kind { return action }
             return nil
         })
-        XCTAssertEqual(pickActions, ["set_board_parallel", "set_panel_scale"])
+        XCTAssertEqual(pickActions, ["set_board_parallel", "set_panel_scale",
+                                      "set_battery_buzz_percent"])
+    }
+
+    /// Off is ticked by default; a chosen level ticks that one row alone.
+    func testLowBatteryBuzzTicksTheChosenLevel() {
+        func ticked(_ settings: DaemonClient.Settings) -> [String] {
+            SettingsMenuModel.flattened(rows(settings: settings)).compactMap { row in
+                if case .pick("set_battery_buzz_percent", _, true) = row.kind {
+                    return row.title
+                }
+                return nil
+            }
+        }
+        XCTAssertEqual(ticked(DaemonClient.Settings()), ["Off"])
+        var settings = DaemonClient.Settings()
+        settings.batteryBuzzPercent = 20
+        XCTAssertEqual(ticked(settings), ["20%"])
     }
 
     func testTickStatesMirrorSettingsFields() {

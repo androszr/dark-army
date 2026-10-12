@@ -27,6 +27,10 @@ The rules, in the order they matter:
 * **Never the same thing twice.** A (session, rule) that has already fired stays
   fired until it clears, so a flapping signal costs one interruption rather than
   one per flap.
+* **A low battery is its own alert.** The host Mac on battery at or below
+  the chosen level raises one `battery`-kind alert per discharge
+  (`battery_buzz`), re-armed by the Mac being on power or a 5-point rise.
+  It is about the machine, so it names no agent and reaches the phone alone.
 * **Muted agents say nothing at all**, and muting is per session because the
   agent you have decided to ignore is rarely the whole fleet.
 * **A review waiting on picks is its own alert.** A run in the `picks`
@@ -106,8 +110,9 @@ _GENERIC_CARD_HOOKS = {"Stop", "Notification"}
 # (`access_log.BurstDetector`) is the one interruption about the machine
 # itself rather than an agent, and a buzz collapsing it with an agent's
 # ask should play the more urgent cue.
-KINDS = ("security", "permission", "question", "picks", "attention",
-         "finished")
+# `battery` is second: a laptop about to die outranks any one agent's ask.
+KINDS = ("security", "battery", "permission", "question", "picks",
+         "attention", "finished")
 # The kinds that hang a portrait. A plain needs-you (`attention`) and a
 # machine warning (`security`) do not. The menu bar restates this tuple;
 # it does not import this module. `test_phone_buzz_kinds.py` pins them equal.
@@ -115,6 +120,10 @@ FACE_KINDS = ("question", "permission", "finished")
 KIND_ATTENTION = "attention"
 KIND_PICKS = "picks"
 KIND_SECURITY = "security"
+KIND_BATTERY = "battery"
+#: The kinds about the machine, never an agent: exempt from the unlisted
+#: rung, never on Needs you, no face, no subject.
+MACHINE_KINDS = (KIND_SECURITY, KIND_BATTERY)
 KIND_FINISHED = "finished"
 
 #: The rule a review run waiting on picks raises its one buzz under.
@@ -786,7 +795,76 @@ def clear_resolved(policy: AlertPolicy, snapshot: dict, cards: dict) -> None:
                 del policy._fired[key]
 
 
-__all__ = ["Alert", "AlertPolicy", "clear_resolved", "PER_SESSION_COOLDOWN",
+#: A battery reading this many points above the level the buzz fired at is
+#: evidence of a charge the daemon never saw (a lid-closed overnight charge):
+#: discharge cannot raise the level that far, so it re-arms like `ac` does.
+BATTERY_REARM_RISE = 5
+
+
+def battery_buzz(reading, threshold, armed, mac_idle, mac_present_seconds,
+                 fired_at=None):
+    """`(fire, armed, fired_at)` for one battery reading.
+
+    Once per discharge: fires while on battery at or below ``threshold``
+    percent and still armed, and re-arms when the reading says the Mac is on
+    power, or is on battery ``BATTERY_REARM_RISE`` points above ``fired_at``
+    (the percent the last buzz fired at) - a charge slept through. ``threshold``
+    of 0 is off. A reading that cannot be read changes nothing. When the
+    person is at the Mac (``mac_idle`` under ``mac_present_seconds``) the buzz
+    would be withheld and never retried, so the arm is kept and the next
+    reading tries again.
+    """
+    if not isinstance(threshold, int) or threshold <= 0:
+        return False, True, None
+    if not isinstance(reading, dict) or not reading.get("available") \
+            or not reading.get("present"):
+        return False, armed, fired_at
+    percent = reading.get("percent")
+    if isinstance(percent, bool) or not isinstance(percent, int):
+        return False, armed, fired_at
+    source = reading.get("source")
+    if source == "ac":
+        return False, True, None
+    if source != "battery":
+        return False, armed, fired_at
+    if not armed and fired_at is not None \
+            and percent >= fired_at + BATTERY_REARM_RISE:
+        armed, fired_at = True, None
+    if percent > threshold:
+        return False, armed, fired_at
+    if not armed:
+        return False, False, fired_at
+    if mac_idle is not None and mac_idle < mac_present_seconds:
+        return False, True, None
+    return True, False, percent
+
+
+def battery_alert(percent, now) -> dict:
+    """The alert row for a low battery: `_raise_access_alert`'s shape, with
+    no session, no actions and the `battery` kind."""
+    return {
+        "id": f"battery:{int(now)}",
+        "session_id": "",
+        "nickname": "",
+        "title": "The Mac's battery is running low",
+        "subtitle": "",
+        "body": f"{percent}% left on battery \u2014 plug the Mac in",
+        "severity": "crit",
+        "rule": "battery",
+        "created_at": now,
+        "actions": [],
+        "character": "",
+        "state": "",
+        "kind": KIND_BATTERY,
+        "request_id": "",
+        "answerable": False,
+        "need": f"{percent}% left on battery \u2014 plug the Mac in",
+        "tool": "",
+    }
+
+
+__all__ = ["Alert", "AlertPolicy", "battery_buzz", "battery_alert",
+           "KIND_BATTERY", "MACHINE_KINDS", "BATTERY_REARM_RISE", "clear_resolved", "PER_SESSION_COOLDOWN",
            "INTERRUPT_RULES", "INTERRUPT_SEVERITIES", "NEVER_INTERRUPT",
            "KINDS", "KIND_FINISHED", "KIND_PICKS", "REPORT_RULE",
            "REVIEW_PICKS_RULE", "marker_current",

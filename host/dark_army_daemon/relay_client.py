@@ -102,8 +102,8 @@ PUSH_MAX_PER_MINUTE = 10
 # The kind words a buzz may carry — `alerts.KINDS`, restated here so the wire
 # check reads as a closed set in the file that writes the wire. Anything else
 # is not sent: the mailbox then plays its default sound, exactly as before.
-PUSH_KINDS = ("security", "permission", "question", "picks", "attention",
-              "finished")
+PUSH_KINDS = ("security", "battery", "permission", "question", "picks",
+              "attention", "finished")
 #: Cast slugs a buzz may name as its portrait. `identity.NAMES` lowercased,
 #: every one ASCII (`test_identity.py` pins that). The live card's slug is
 #: checked against the same tuple (`push_activity`).

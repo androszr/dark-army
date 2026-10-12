@@ -1951,6 +1951,19 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         # switch silences the very next alert rather than the one after.
         # Rides on top of `remote_access` — no away consent, no push.
         self.phone_push_enabled: bool = True
+        # The battery level (percent) the phone is buzzed at, 0 = off. A plain
+        # int the executor reads at decision time; written on the AppKit
+        # thread by `set_battery_buzz_percent`.
+        self.battery_buzz_percent: int = 0
+        # Whether the next low reading may buzz. Executor-only; re-armed only
+        # by a reading that says the Mac is on power.
+        self._battery_armed: bool = True
+        # The percent the last buzz fired at (executor-only): a battery
+        # reading well above it is a charge the daemon slept through.
+        self._battery_fired_at: Optional[int] = None
+        # The decided battery row awaiting delivery: rebound whole on the
+        # executor, popped on the loop by `_deliver_battery_buzz`.
+        self._battery_buzz_pending: Optional[dict] = None
         # The connector that polls the mailbox. Built lazily on first enable,
         # started/stopped on the loop by `set_remote_access`.
         self._relay_connector: Optional[relay_client.RelayConnector] = None
@@ -10113,7 +10126,52 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         # `out` — the agents snapshot is the fleet, not the machine. Read
         # here so the one executor hop per push refreshes it.
         self._power_source_snapshot()
+        self._decide_battery_buzz()
         return out
+
+    def _decide_battery_buzz(self) -> None:
+        """Whether this pass's power reading earns the one low-battery buzz.
+
+        Executor-only, straight after `_power_source_snapshot`. The presence
+        probe is taken only when a fire is otherwise due, and a person at the
+        Mac keeps the buzz armed for the next reading: a withheld buzz is
+        never retried by the phone leg. Every read goes through `__dict__` so
+        a bare test daemon works; a failure changes nothing."""
+        try:
+            state = self.__dict__
+            threshold = state.get("battery_buzz_percent", 0)
+            reading = state.get("_power")
+            armed = state.get("_battery_armed", True)
+            fired_at = state.get("_battery_fired_at")
+            fire, armed_after, fired_after = alerting.battery_buzz(
+                reading, threshold, armed, None, MAC_PRESENT_SECONDS,
+                fired_at)
+            if fire:
+                fire, armed_after, fired_after = alerting.battery_buzz(
+                    reading, threshold, armed,
+                    buzz_ledger.mac_idle_seconds(), MAC_PRESENT_SECONDS,
+                    fired_at)
+            self._battery_armed = armed_after
+            self._battery_fired_at = fired_after
+            if not fire:
+                return
+            now = time.time()
+            row = alerting.battery_alert(reading["percent"], now)
+            self._battery_buzz_pending = row
+            self._alerts = (getattr(self, "_alerts", []) + [row])[-32:]
+        except Exception:
+            logger.debug("battery buzz decision failed", exc_info=True)
+
+    def _deliver_battery_buzz(self) -> None:
+        """Hand the decided low-battery row to the phone leg. On the loop.
+
+        Phone leg alone: no Mac banner (a person at the Mac can see its
+        battery), and not the batch drain that feeds the banner."""
+        row = self.__dict__.get("_battery_buzz_pending")
+        if row is None:
+            return
+        self._battery_buzz_pending = None
+        self._start_phone_leg([row], banner=False)
 
     def _decide_auto_compacts(self, snapshot: dict) -> None:
         """Which full sessions Dark Army will compact itself on this tick.
@@ -11824,6 +11882,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         # After the snapshot, not before: an alert names a session, and a surface
         # told to reveal one it has not been shown yet has nothing to reveal.
         self._deliver_alerts()
+        # A low battery is not an agent's alert: its own phone-only leg.
+        try:
+            self._deliver_battery_buzz()
+        except Exception:
+            logger.warning("battery buzz delivery failed", exc_info=True)
         # The phone's live card, right after the buzz: the standing reading
         # of who is at the top of Needs you, pushed only where it changed.
         # Its own try/except — the push leg never takes the snapshot down.
@@ -11938,8 +12001,9 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
                 if isinstance(alert, dict) else ""
             # `picks` is exempt by kind as well: its listing is the run's own
             # `picks` state (the phone's `r:<run id>` entry), not a session.
-            if isinstance(alert, dict) and alert.get("kind") in (
-                    alerting.KIND_SECURITY, alerting.KIND_PICKS):
+            if isinstance(alert, dict) and (
+                    alert.get("kind") in alerting.MACHINE_KINDS
+                    or alert.get("kind") == alerting.KIND_PICKS):
                 rest.append(alert)
             elif sid and sid in listed:
                 rest.append(alert)
@@ -12000,8 +12064,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
            dismissed, `live_activity.shown_sessions`) is written down
            `withheld:unlisted` and goes no further — the phone would sweep
            it away at its next check-in (`clearDeliveredIfQuiet`). A stall or
-           context warning on a busy agent stops here; a `security` row never
-           does.
+           context warning on a busy agent stops here; a `security` or
+           `battery` row never does.
         3. Every other alert that is not `rule == "card"` — a permission
            ask, a security row, a signal on a listed session — meets the
            presence gate at once, so a permission ask is never delayed by
@@ -12235,6 +12299,9 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
             # knocks. No address rides here — the payload transits Apple in
             # plaintext — the phone reads the alert off the sealed channel.
             return "Somebody is knocking at Dark Army's door"
+        if kind == alerting.KIND_BATTERY:
+            # About the machine, not an agent: a stock sentence.
+            return "The Mac's battery is running low"
         if kind == "permission":
             return f"{nickname} wants to run a tool"
         if kind == "question":
@@ -12818,6 +12885,16 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         a plain bool the drain reads at the moment of use — no loop hop,
         nothing to start or stop, exactly `notification_sound`'s shape."""
         self.phone_push_enabled = bool(enabled)
+
+    def set_battery_buzz_percent(self, value) -> None:
+        """Set the low-battery buzz level, 0 for off. Thread-safe: a plain int
+        the executor reads at decision time (`set_phone_push`'s shape).
+        Anything unparseable is 0; the rest is clamped into 0..100."""
+        try:
+            level = int(value)
+        except (TypeError, ValueError):
+            level = 0
+        self.battery_buzz_percent = max(0, min(100, level))
 
     def mute_session_alerts(self, session_id: str) -> None:
         """Silence one agent's interruptions for as long as it is around.

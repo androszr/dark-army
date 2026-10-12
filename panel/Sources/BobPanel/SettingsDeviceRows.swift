@@ -3,12 +3,19 @@ import Foundation
 // The Devices group: the two doors, one submenu per paired phone and the
 // remote-activity log. Split out of `SettingsMenuModel.swift` on 20 Sep 2026.
 extension SettingsMenuModel {
+    /// The levels the Low-battery buzz group offers; 0 is Off.
+    static let batteryBuzzOptions: [(label: String, value: Int)] = [
+        ("Off", 0), ("10%", 10), ("15%", 15), ("20%", 20), ("30%", 30),
+        ("50%", 50),
+    ]
+
     static func deviceRows(_ devices: Devices,
                                    lanAccess: Bool,
                                    remoteAccess: Bool,
                                    relayWS: Bool = false,
                                    unpairArmed: String?,
-                                   awayOffArmed: String? = nil) -> [SettingsRow] {
+                                   awayOffArmed: String? = nil,
+                                   batteryBuzzPercent: Int = 0) -> [SettingsRow] {
         var rows: [SettingsRow] = [
             toggle(
                 "Phone access",
@@ -78,6 +85,20 @@ extension SettingsMenuModel {
                     id: "info:away-needs-lan"))
             }
         }
+        // The level the paired phone is buzzed at on a low battery; Off is
+        // the default and an older menu bar omits the key.
+        rows.append(submenu(
+            "Low-battery buzz", id: "submenu:battery-buzz",
+            tooltip: "Buzz the paired phone once when this Mac is on battery "
+                + "at or below this level \u{2014} once per discharge, re-armed "
+                + "when it is plugged back in. Needs Away access and a paired "
+                + "phone; waits while you are using the Mac. Off on a "
+                + "desktop Mac does nothing either way.",
+            rows: batteryBuzzOptions.map { option in
+                pick(option.label, action: "set_battery_buzz_percent",
+                     value: .int(option.value),
+                     selected: batteryBuzzPercent == option.value)
+            }))
         if !devices.available {
             rows.append(info("This daemon does not report paired devices",
                              id: "info:devices"))

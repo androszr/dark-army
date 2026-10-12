@@ -547,7 +547,7 @@ def test_the_ranking_agrees_with_the_phones_kind_order():
 
 
 def test_the_activity_kinds_are_a_subset_of_the_buzz_kinds_at_every_end():
-    assert set(relay_client.ACTIVITY_KINDS) == set(alerts.KINDS) - {"security", "finished"}
+    assert set(relay_client.ACTIVITY_KINDS) == set(alerts.KINDS) - {"security", "battery", "finished"}
     assert relay_client.ACTIVITY_KINDS == live_activity.KINDS
     text = PUSH_JS.read_text()
     found = re.search(r'const ACTIVITY_KINDS = \[(.*?)\];', text)

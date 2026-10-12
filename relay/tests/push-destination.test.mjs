@@ -45,6 +45,10 @@ test('receipt survives sanitizer through actual Apple request; the shaped sessio
   assert.equal(h.sent[0].headers['apns-collapse-id'],receipt);
   assert(!JSON.stringify(h.sent[0]).includes('private'));
 });
+test('a battery kind plays the permission cue',async()=>{
+  const h=harness(); assert.equal((await h.run({kind:'battery'})).statusCode,200);
+  assert.equal(h.sent[0].body.aps.sound,'buzz-permission.wav');
+});
 test('unrelated receipts do not collapse, retries reuse same receipt',async()=>{
   const h=harness([403,200,200]); await h.run({destination_version:1,receipt_id:receipt});
   await h.run({destination_version:1,receipt_id:receipt.replace(/1$/,'2')});
