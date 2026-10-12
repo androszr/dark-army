@@ -121,7 +121,7 @@ suites are independent by design.
 **A red test is not automatically yours.** The tree is habitually dirty, the
 suite is large and another card's run is often building in the same tree.
 Every red id outside the files you touched goes through `bash
-.claude/skills/ship/gate.sh classify <ids…>` **once**, and the answer is one
+.claude/skills/ship/gate.sh classify <ids…>` **once** (each id **one quoted argument**, as `'t.py::t[ /clear]'`), and the answer is one
 of three words per id:
 
 - **YOURS** — the delta touches the test, the module it is named after, or a

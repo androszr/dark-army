@@ -108,6 +108,55 @@ with open(path, "a", encoding="utf-8") as fh:
 PY
 }
 
+# failing_ids <log>: the ids off pytest's `FAILED <id> - <msg>` / `ERROR <id>`
+# lines, one per line, whole. A bare word split cut `[ /clear]` at its space,
+# so the id never matched the pre-existing list. Rule: head = text to the first
+# space; no `[` in head -> head is the id; else walk bracket depth from that
+# `[` and, if it closes at depth 0 with an empty or ` - ` tail, the id runs
+# through the close; otherwise (never closes, closes early) cut at ` - `.
+failing_ids() {
+    python3 - "$1" <<'PY'
+import re, sys
+ids = set()
+with open(sys.argv[1], encoding="utf-8", errors="replace") as fh:
+    for line in fh:
+        m = re.match(r"(?:FAILED|ERROR) (.*?)\r?\n?$", line)
+        if not m:
+            continue
+        rest = m.group(1)
+        head = rest.split(" ", 1)[0]
+        if "[" not in head:
+            ident = head
+        else:
+            ident = None
+            depth = 0
+            for j in range(rest.index("["), len(rest)):
+                c = rest[j]
+                if c == "[":
+                    depth += 1
+                elif c == "]":
+                    depth -= 1
+                    if depth == 0:
+                        tail = rest[j + 1:]
+                        if tail == "" or tail.startswith(" - "):
+                            ident = rest[:j + 1]
+                        if tail == "":
+                            # Closing only at end of line: an unmatched `[` in
+                            # the id let the walk run into a message ending in
+                            # `]`; the earliest `] - ` is the real boundary.
+                            k = rest.find("] - ", rest.index("["))
+                            if k != -1:
+                                ident = rest[:k + 1]
+                        break
+            if ident is None:
+                ident = rest.split(" - ", 1)[0]
+        if ident:
+            ids.add(ident)
+if ids:
+    print("\n".join(sorted(ids)))
+PY
+}
+
 # excluded <id>: an id already classed PRE-EXISTING or IN-FLIGHT never lands
 # in `failing_ids`, so it cannot trip the same-failure stop.
 excluded() {
@@ -230,7 +279,7 @@ cmd_run() {
                 [ -n "$id" ] || continue
                 excluded "$id" && continue
                 ids="${ids}${id}"$'\n'
-            done < <(grep -E '^(FAILED|ERROR) ' "$log" | awk '{print $2}' | sort -u)
+            done < <(failing_ids "$log")
             ;;
         *)
             if [ "$code" != "0" ]; then
@@ -337,7 +386,7 @@ cmd_baseline() {
             echo "YOURS $id (green at baseline)"
         elif grep -qF -- "$id FAILED" "$log" || grep -qF -- "$id ERROR" "$log"; then
             echo "PRE-EXISTING $id (red at baseline too — never fix it in this run)"
-            grep -qxF -- "$id" "$PRE_EXISTING" 2>/dev/null || echo "$id" >> "$PRE_EXISTING"
+            grep -qxF -- "$id" "$PRE_EXISTING" 2>/dev/null || printf '%s\n' "$id" >> "$PRE_EXISTING"
         else
             echo "UNAVAILABLE $id (not collected at baseline: treat as yours)"
         fi
@@ -493,7 +542,7 @@ cmd_classify() {
                 flight="$(candidate_paths "$id" | first_flight "$status_now" "$status_then" "$delta_blob" || true)"
                 if [ -n "$flight" ]; then
                     echo "IN-FLIGHT $id ($flight changed by another run since this one's baseline — report it, never fix or count it)"
-                    grep -qxF -- "$id" "$IN_FLIGHT" 2>/dev/null || echo "$id" >> "$IN_FLIGHT"
+                    grep -qxF -- "$id" "$IN_FLIGHT" 2>/dev/null || printf '%s\n' "$id" >> "$IN_FLIGHT"
                     continue
                 fi
             fi
@@ -514,7 +563,7 @@ cmd_classify() {
         flight="$(candidate_paths "$id" | first_flight "$status_now" "$status_then" "$delta_blob" || true)"
         if [ -n "$flight" ]; then
             echo "IN-FLIGHT $id ($flight changed by another run since this one's baseline — report it, never fix or count it)"
-            grep -qxF -- "$id" "$IN_FLIGHT" 2>/dev/null || echo "$id" >> "$IN_FLIGHT"
+            grep -qxF -- "$id" "$IN_FLIGHT" 2>/dev/null || printf '%s\n' "$id" >> "$IN_FLIGHT"
         else
             echo "YOURS $id ${line#* $id }"
         fi
