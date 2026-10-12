@@ -210,6 +210,34 @@ TOOLS = ("", "claude", "codex", "grok")
 #: is doing.
 LINK_STATES = ("", "dispatching", "live", "ended")
 
+#: A card with work running on it: either pair (the build link or the Refine
+#: link) is `dispatching` or `live`. The one rule behind "a delete never
+#: reaches a live run" (`docs/card-worktrees.md`). A card whose folder is
+#: still being prepared is *not* live: Delete is the only way to cancel that.
+LIVE_RUN_STATES = ("dispatching", "live")
+
+#: What `BoardStore.delete` answers for a card with a live run. Both clients
+#: draw it verbatim.
+LIVE_RUN_DELETE_REFUSAL = (
+    "This card still has a live run — stop it first, then delete the card.")
+
+
+def has_live_run(card) -> bool:
+    """Whether `card` has an assistant on it, starting up or planning it."""
+    card = card or {}
+    return (str(card.get("link_state") or "") in LIVE_RUN_STATES
+            or str(card.get("refine_state") or "") in LIVE_RUN_STATES)
+
+
+def live_run_clear_refusal(n: int) -> str:
+    """Clear Done's refusal when `n` Done cards still have a live run."""
+    n = int(n)
+    if n == 1:
+        return ("1 card in Done still has a live run — stop it first; "
+                "nothing was cleared.")
+    return (f"{n} cards in Done still have a live run — stop them first; "
+            "nothing was cleared.")
+
 #: The per-project work queue, at v8. `queued` means a person made the Start
 #: gesture on this card and its declared files collide with work already
 #: running in the same project — so Dark Army is holding it rather than opening a
@@ -3682,9 +3710,16 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
 
     def delete(self, card_id: str) -> tuple:
         """Destroy a card. `(ok, detail)`. Nothing is archived — the board is the
-        list, and a deleted card was written by the person deleting it."""
+        list, and a deleted card was written by the person deleting it.
+
+        A card with a live run (:func:`has_live_run`) is refused, checked here
+        under the store lock and before any row goes, so a `mark_live` from
+        the reconcile cannot slip between a daemon-side look and the
+        `DELETE`."""
         with self._lock:
             card = self.get(card_id)
+            if card is not None and has_live_run(card):
+                return False, LIVE_RUN_DELETE_REFUSAL
             with self._conn:
                 if card is not None:
                     self._lifecycle_on_delete([card])
@@ -3717,6 +3752,12 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
                         "nothing was cleared")
                 gone = [self._row(row) for row in self._conn.execute(
                     "SELECT * FROM cards WHERE column_name = 'done'")]
+                live = sum(1 for row in gone if has_live_run(row))
+                if live:
+                    # Never halfway, and never a different set than the one
+                    # confirmed: one live card refuses the whole clear.
+                    self._conn.rollback()
+                    return False, 0, live_run_clear_refusal(live)
                 ids = [row["id"] for row in gone]
                 if ids:
                     self._lifecycle_on_delete(gone)
@@ -3776,8 +3817,8 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
         and moves a Backlog (or Prep) card to In progress in one call,
         because a bound card sitting unstarted is a state no surface has a
         way to draw. A card already in Done stays in Done — `session_id` +
-        `live` are still recorded so a later Delete can close the terminal
-        (2026-08-24).
+        `live` are still recorded, so the card refuses Delete while its
+        run is live (`has_live_run`).
 
         The lock spans the read *and* the write: the column decision is made
         from `current`, and this runs on the executor while a person's drag
@@ -3850,7 +3891,8 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
         One sub-state is skipped: an agent close no human has yet acknowledged
         (`closed_by` set, `reviewed_at` NULL). The banner's whole point is that
         only a person clears it, and the one automatic deletion must not be the
-        thing that removes it before anybody has looked. It has no daemon
+        thing that removes it before anybody has looked. A card with a live
+        run (:func:`has_live_run`) is skipped too. It has no daemon
         caller today, but the contract must stay true if one arrives.
         `clear_done` is deliberately untouched: its exact-membership
         confirmation *is* the human's word."""
@@ -3858,7 +3900,9 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
             gone = [self._row(row) for row in self._conn.execute(
                 "SELECT * FROM cards WHERE column_name = 'done'"
                 "  AND COALESCE(done_at, updated_at) < ?"
-                "  AND (closed_by = '' OR reviewed_at IS NOT NULL)",
+                "  AND (closed_by = '' OR reviewed_at IS NOT NULL)"
+                "  AND link_state NOT IN ('dispatching', 'live')"
+                "  AND refine_state NOT IN ('dispatching', 'live')",
                 (float(older_than),))]
             ids = [row["id"] for row in gone]
             with self._conn:
@@ -3873,6 +3917,8 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
                 cur = self._conn.execute(
                     "DELETE FROM cards WHERE column_name = 'done'"
                     "  AND COALESCE(done_at, updated_at) < ?"
-                    "  AND (closed_by = '' OR reviewed_at IS NOT NULL)",
+                    "  AND (closed_by = '' OR reviewed_at IS NOT NULL)"
+                    "  AND link_state NOT IN ('dispatching', 'live')"
+                    "  AND refine_state NOT IN ('dispatching', 'live')",
                     (float(older_than),))
         return int(cur.rowcount or 0)

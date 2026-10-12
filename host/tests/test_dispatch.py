@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from dark_army_daemon import daemon as daemon_mod
+from dark_army_daemon import board
 from dark_army_daemon import dispatch
 from dark_army_daemon import vscode_reveal
 from dark_army_daemon.board import BoardStore
@@ -1091,39 +1092,40 @@ async def test_close_helper_refuses_when_only_the_grok_leader_is_known(
     assert "grok-1" not in d._finished
 
 
-# --- delete closes the bound terminal ----------------------------------------
+# --- delete never reaches a live run ------------------------------------------
 #
-# Sibling of the Done-leg close, not a modification of it. Unconditional:
-# both preferences stay at their off defaults. A refused close is a log line
-# and the tab left alone — never a `/clear`, never a board write after the
-# card is gone.
+# A card with an assistant on it, starting up or planning it is refused
+# (`board.has_live_run`): nothing is closed, nothing is removed and the run's
+# bookkeeping survives. The rule is pinned end to end in
+# `test_board_delete_live_run.py`; these are the dispatch-side arms.
+
+
+def _assert_refused(ok, detail, store, card, closes, wraps=()):
+    assert ok is False
+    assert detail == board.LIVE_RUN_DELETE_REFUSAL
+    assert store.get(card["id"]) is not None
+    assert closes == []
+    assert list(wraps) == []
 
 
 @pytest.mark.asyncio
-async def test_deleting_a_live_card_closes_its_terminal_with_preferences_off(
+async def test_deleting_a_live_card_is_refused_and_closes_nothing(
         daemon, monkeypatch):
-    """Delete means cancelled: the bound terminal goes even though both
-    Done-leg switches default off."""
     d, store = daemon
-    assert d.board_close_terminal_enabled is False
     card = _live(store)
     closes = _close_spy(d, monkeypatch)
     wraps = _wrap_up_spy(d, monkeypatch)
     ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == ["sess-1"]
-    assert wraps == []
-    assert store.get(card["id"]) is None
+    _assert_refused(ok, detail, store, card, closes, wraps)
 
 
 @pytest.mark.asyncio
-async def test_a_failed_delete_close_still_removes_the_card_and_never_clears(
+async def test_a_deleted_ended_card_reads_twice_and_writes_only_the_delete(
         daemon, monkeypatch):
-    """No pid / no 0.1.9+ window: the card is gone, the tab stays, nothing
-    is typed, and there is no card left to write a `dispatch_error` onto."""
     d, store = daemon
     card = _live(store)
-    closes = _close_spy(d, monkeypatch, result=(False, "no pid"))
+    store.mark_ended(card["id"])
+    closes = _close_spy(d, monkeypatch)
     wraps = _wrap_up_spy(d, monkeypatch)
     orig = d._board_call
     methods = []
@@ -1135,12 +1137,12 @@ async def test_a_failed_delete_close_still_removes_the_card_and_never_clears(
     monkeypatch.setattr(d, "_board_call", tracked)
     ok, detail = await d.delete_card(card["id"])
     assert ok, detail
-    assert closes == ["sess-1"]
+    assert closes == []
     assert wraps == []
     assert store.get(card["id"]) is None
-    # Two reads — before the lock, and again under it for the batch
-    # judgement (`delete_card`) — and no write but the delete.
-    assert methods == ["get", "get", "delete"]
+    # One read under the lock, and no write but the delete.
+    assert methods[:2] == ["get", "delete"]
+    assert not [m for m in methods if m in ("update", "move")]
 
 
 @pytest.mark.asyncio
@@ -1155,206 +1157,93 @@ async def test_a_refused_delete_never_closes_a_terminal(daemon, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_delete_is_silent_when_the_link_is_not_live(daemon, monkeypatch):
-    """`""` / `dispatching` / `ended` — nothing is bound, or the session is
-    already gone. A session_id on the card is not enough."""
+    """`""` / `ended` — nothing is bound, or the session is already gone. A
+    session_id on the card is not enough to refuse. `dispatching` is a live
+    run and is refused."""
     d, store = daemon
-    for state in ("", "dispatching", "ended"):
+    for state in ("", "ended"):
         card = _make(store)
         store.update(card["id"], {"session_id": "sess-1", "link_state": state})
         closes = _close_spy(d, monkeypatch)
         ok, detail = await d.delete_card(card["id"])
         assert ok, detail
         assert closes == [], state
-
-
-@pytest.mark.asyncio
-async def test_deleting_a_live_codex_card_closes_nothing(daemon, monkeypatch):
-    d, store = daemon
-    card = _live(store, tool="codex")
+    card = _make(store)
+    store.update(card["id"], {"session_id": "sess-1",
+                              "link_state": "dispatching"})
     closes = _close_spy(d, monkeypatch)
     ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == []
-    assert store.get(card["id"]) is None
+    _assert_refused(ok, detail, store, card, closes)
 
 
 @pytest.mark.asyncio
-async def test_deleting_a_done_card_closes_its_terminal(
-        daemon, monkeypatch):
-    """Delete of a finished card is the same cancel as any other column
-    (2026-08-24). The declare_done-mid-report cost was shown and the
-    delete gesture outranks it. Wrap-up is never the path."""
+@pytest.mark.parametrize("tool", ("claude", "codex"))
+async def test_deleting_a_live_or_done_live_card_is_refused(
+        daemon, monkeypatch, tool):
     d, store = daemon
-    card = _live(store)
-    store.update(card["id"], {"column_name": "done"})
+    card = _live(store, tool=tool)
     closes = _close_spy(d, monkeypatch)
-    wraps = _wrap_up_spy(d, monkeypatch)
     ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == ["sess-1"]
-    assert wraps == []
-    assert store.get(card["id"]) is None
-
-
-@pytest.mark.asyncio
-async def test_deleting_a_done_codex_card_closes_nothing(daemon, monkeypatch):
-    d, store = daemon
-    card = _live(store, tool="codex")
+    _assert_refused(ok, detail, store, card, closes)
     store.update(card["id"], {"column_name": "done"})
-    closes = _close_spy(d, monkeypatch)
     pid_closes = _pid_close_spy(d, monkeypatch)
     ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == []
+    _assert_refused(ok, detail, store, card, closes)
     assert pid_closes == []
-    assert store.get(card["id"]) is None
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("column", ("backlog", "done"))
-async def test_deleting_a_dispatching_card_closes_by_spawn_receipt(
+async def test_deleting_a_dispatching_card_is_refused_and_keeps_its_receipt(
         daemon, monkeypatch, column):
-    """Dark Army opened this pid. Identity is the receipt, not a grok/claude
-    process, so the session-close helper is not the path."""
+    """The receipt, the baseline and the cooldown are what the bind needs;
+    a refused delete must leave all three, or the bind fails 120 s later."""
     d, store = daemon
     card = _make(store)
     store.update(card["id"], {"link_state": "dispatching",
                               "column_name": column})
-    d._spawn_shell_pids[str(card["id"])] = 4242
+    cid = str(card["id"])
+    d._spawn_shell_pids[cid] = 4242
+    d._dispatch_baseline[cid] = {"x"}
+    d._dispatch_attempts[cid] = 123.0
     closes = _close_spy(d, monkeypatch)
     pid_closes = _pid_close_spy(d, monkeypatch)
-    wraps = _wrap_up_spy(d, monkeypatch)
     ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert pid_closes == [4242], column
-    assert closes == [], column
-    assert wraps == [], column
-    assert store.get(card["id"]) is None
-    assert str(card["id"]) not in d._spawn_shell_pids
-    assert card["id"] not in d._spawn_shell_pids
-
-
-@pytest.mark.asyncio
-async def test_delete_of_a_dispatching_card_keeps_the_receipt_across_a_bind_race(
-        daemon, monkeypatch):
-    """Bind pops `_spawn_shell_pids` while delete awaits the store. The
-    handle is captured before that await, so the tab still closes."""
-    d, store = daemon
-    card = _make(store)
-    store.update(card["id"], {"link_state": "dispatching"})
-    d._spawn_shell_pids[str(card["id"])] = 4242
-    closes = _close_spy(d, monkeypatch)
-    pid_closes = _pid_close_spy(d, monkeypatch)
-    wraps = _wrap_up_spy(d, monkeypatch)
-    orig = d._board_call
-
-    async def steal(method, *a, **k):
-        if method in ("get", "delete"):
-            d._spawn_shell_pids.pop(str(card["id"]), None)
-            d._spawn_shell_pids.pop(card["id"], None)
-        return await orig(method, *a, **k)
-
-    monkeypatch.setattr(d, "_board_call", steal)
-    ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert pid_closes == [4242]
-    assert closes == []
-    assert wraps == []
-    assert store.get(card["id"]) is None
-
-
-@pytest.mark.asyncio
-async def test_deleting_a_dispatching_codex_card_closes_nothing_even_with_a_receipt(
-        daemon, monkeypatch):
-    d, store = daemon
-    card = _make(store, tool="codex")
-    store.update(card["id"], {"link_state": "dispatching"})
-    d._spawn_shell_pids[str(card["id"])] = 4242
-    closes = _close_spy(d, monkeypatch)
-    pid_closes = _pid_close_spy(d, monkeypatch)
-    wraps = _wrap_up_spy(d, monkeypatch)
-    ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == []
+    _assert_refused(ok, detail, store, card, closes)
     assert pid_closes == []
-    assert wraps == []
-    assert store.get(card["id"]) is None
+    assert d._spawn_shell_pids[cid] == 4242
+    assert d._dispatch_baseline[cid] == {"x"}
+    assert d._dispatch_attempts[cid] == 123.0
 
 
 @pytest.mark.asyncio
-async def test_deleting_a_dispatching_done_card_without_a_receipt_closes_nothing(
-        daemon, monkeypatch):
-    """No handle, no close — the old Done+dispatching pin, now scoped to
-    the missing receipt rather than the column."""
+@pytest.mark.parametrize("tool", ("claude", "codex"))
+async def test_deleting_a_refining_card_is_refused(daemon, monkeypatch, tool):
     d, store = daemon
-    card = _make(store)
-    store.update(card["id"], {"link_state": "dispatching",
-                              "column_name": "done"})
-    closes = _close_spy(d, monkeypatch)
-    pid_closes = _pid_close_spy(d, monkeypatch)
-    wraps = _wrap_up_spy(d, monkeypatch)
-    ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == []
-    assert pid_closes == []
-    assert wraps == []
-    assert store.get(card["id"]) is None
-
-
-@pytest.mark.asyncio
-async def test_deleting_a_refining_card_closes_the_interview_terminal(
-        daemon, monkeypatch):
-    d, store = daemon
-    card = _make(store, column_name="prep")
+    card = _make(store, column_name="prep", tool=tool)
     store.update(card["id"], {
         "refine_state": "live", "refine_session_id": "rsid"})
     closes = _close_spy(d, monkeypatch)
     wraps = _wrap_up_spy(d, monkeypatch)
     ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == ["rsid"]
-    assert wraps == []
-    assert store.get(card["id"]) is None
+    _assert_refused(ok, detail, store, card, closes, wraps)
 
 
 @pytest.mark.asyncio
-async def test_deleting_a_codex_card_skips_a_codex_refine_session(
+async def test_a_card_with_both_sessions_live_is_refused_once(
         daemon, monkeypatch):
-    """A Codex-chipped card's linked session is skipped, and a Codex
-    refine session is skipped for the same structural reason, not
-    because Refine is secretly Claude."""
-    d, store = daemon
-    card = _make(store, column_name="prep", tool="codex")
-    store.update(card["id"], {
-        "refine_state": "live", "refine_session_id": "rsid"})
-    d._codex_records["rsid"] = object()
-    closes = _close_spy(d, monkeypatch)
-    ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == []
-    assert store.get(card["id"]) is None
-
-
-@pytest.mark.asyncio
-async def test_deleting_a_card_with_both_sessions_live_closes_each(
-        daemon, monkeypatch):
-    """The loop, not a first-match: a live link and a live refine are two
-    terminals that exist only for this card."""
     d, store = daemon
     card = _live(store)
     store.update(card["id"], {
         "refine_state": "live", "refine_session_id": "rsid"})
     closes = _close_spy(d, monkeypatch)
     ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == ["sess-1", "rsid"]
+    _assert_refused(ok, detail, store, card, closes)
 
 
 @pytest.mark.asyncio
-async def test_an_open_permission_prompt_does_not_block_the_delete_close(
+async def test_an_open_permission_prompt_changes_nothing_about_the_refusal(
         daemon, monkeypatch):
-    """`dispose()` types nothing, so the wrap-up's prompt guard does not
-    apply: skipping would leave a terminal asking about cancelled work."""
     d, store = daemon
     card = _live(store)
     d._permission_requests = {
@@ -1365,22 +1254,26 @@ async def test_an_open_permission_prompt_does_not_block_the_delete_close(
     closes = _close_spy(d, monkeypatch)
     wraps = _wrap_up_spy(d, monkeypatch)
     ok, detail = await d.delete_card(card["id"])
-    assert ok, detail
-    assert closes == ["sess-1"]
-    assert wraps == []
+    _assert_refused(ok, detail, store, card, closes, wraps)
 
 
 @pytest.mark.asyncio
-async def test_clearing_done_closes_no_terminals(daemon, monkeypatch):
-    """Bulk clear is a different gesture from deleting one card: it
-    removes finished records and closes no terminals. Delete of a single
-    Done card is the opposite — that is the cancel."""
+async def test_clearing_done_closes_no_terminals_and_refuses_a_live_one(
+        daemon, monkeypatch):
+    """Bulk clear closes no terminals, and a Done card whose run is live
+    refuses the whole clear; once its link ends, the clear goes through."""
     d, store = daemon
     card = _live(store)
     store.update(card["id"], {"column_name": "done"})
     count, token = store.done_scope()
     closes = _close_spy(d, monkeypatch)
     wraps = _wrap_up_spy(d, monkeypatch)
+    ok, deleted, detail = await d.clear_done_cards(count, token)
+    assert ok is False and deleted == 0
+    assert detail == board.live_run_clear_refusal(1)
+    assert store.get(card["id"]) is not None
+    store.mark_ended(card["id"])
+    count, token = store.done_scope()
     ok, deleted, detail = await d.clear_done_cards(count, token)
     assert ok, detail
     assert deleted == 1

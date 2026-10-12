@@ -3519,15 +3519,7 @@ struct BoardCardSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
             HStack(spacing: 10) {
-                // `live`, not `card`: the sheet opens on a frozen copy, and a
-                // dispatching card can bind while Details is up. The armed
-                // label must follow the snapshot or it hides a close the
-                // confirmed press will still do.
-                Button(deleteArmed
-                       ? (live?.deleteClosesTerminal == true
-                          ? "Really delete? Its terminal closes too"
-                          : "Really delete this card?")
-                       : "Delete card") {
+                Button(deleteArmed ? "Really delete this card?" : "Delete card") {
                     if deleteArmed {
                         deleteCard()
                     } else {
@@ -3542,9 +3534,7 @@ struct BoardCardSheet: View {
                         .buttonStyle(.borderless)
                         .controlSize(.small)
                         .clickable()
-                    Text(live?.deleteClosesTerminal == true
-                         ? "The card and instructions go. Outcome evidence and measurements remain in history. The assistant's terminal closes with it."
-                         : "The card and instructions go. Outcome evidence and measurements remain in history.")
+                    Text("The card and instructions go. Outcome evidence and measurements remain in history.")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }

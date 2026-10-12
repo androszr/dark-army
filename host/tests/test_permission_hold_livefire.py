@@ -302,3 +302,25 @@ def test_read_token_refuses_without_the_desk_token(monkeypatch):
 def test_read_token_returns_the_desk_token_from_the_environment(monkeypatch):
     monkeypatch.setenv("DARK_ARMY_DESK_TOKEN", "  desk-value\n")
     assert lf.read_token() == "desk-value"
+
+
+def test_cleanup_waits_for_the_card_run_to_end_before_deleting(monkeypatch):
+    import importlib.util
+    import pathlib
+    path = pathlib.Path(__file__).resolve().parents[2] / "tools" / "permission_hold_livefire.py"
+    spec = importlib.util.spec_from_file_location("phl_cleanup", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    live = {"board": {"cards": [{"id": "c1", "link_state": "live"}]}}
+    ended = {"board": {"cards": [{"id": "c1", "link_state": "ended"}]}}
+    assert mod.card_run_is_live(live, "c1") is True
+    assert mod.card_run_is_live(ended, "c1") is False
+    assert mod.card_run_is_live({"board": {"cards": []}}, "c1") is False
+    states = [live, live, ended]
+    monkeypatch.setattr(mod, "get_state", lambda token: states.pop(0))
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    assert mod.wait_for_link_to_end("t", "c1", lambda m: None) is True
+    assert states == []
+    monkeypatch.setattr(mod, "get_state", lambda token: live)
+    assert mod.wait_for_link_to_end("t", "c1", lambda m: None,
+                                    max_seconds=0.0) is False

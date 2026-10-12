@@ -901,19 +901,6 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// Written by an assistant through Dark Army's channel rather than by hand.
     var isAgentAuthored: Bool { !author.isEmpty && author != "user" }
     var isDispatching: Bool { linkState == "dispatching" }
-    /// Panel approximation of whether Delete will close a terminal.
-    /// Done is not excluded (2026-08-24): deleting a finished card is the
-    /// same cancel as any other column. Dispatching over-warns because the
-    /// spawn receipt is not on the snapshot — a label promising more caution
-    /// than needed, never a close the label hid. The daemon's
-    /// `_session_provider` check is authoritative: a rare non-codex tool
-    /// bound to a codex-provider session over-warns here and the daemon
-    /// silently skips, same direction.
-    var deleteClosesTerminal: Bool {
-        (linkState == "live" && !sessionId.isEmpty && tool != "codex")
-        || (linkState == "dispatching" && tool != "codex")
-        || (refineState == "live" && !refineSessionId.isEmpty)
-    }
     /// Dark Army has a session on this card, or is about to. The set the pipeline
     /// band starts from before `runActive` splits it into working and over.
     var isInFlight: Bool { linkState == "live" || linkState == "dispatching" }

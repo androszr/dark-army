@@ -2317,92 +2317,6 @@ class BoardVerbsMixin:
             return
         logger.info("card %s: terminal close refused (%s)", cid[:8], detail)
 
-    async def _batch_session_still_needed(self, card: dict, rsid: str) -> bool:
-        """Whether another card is still being refined by this card's batch
-        planning session. `False` for a single refinement (no `batch_id`),
-        so its delete closes the terminal exactly as before.
-
-        One session plans every card of a batch; deleting one of them
-        cancels that card, not the others' interviews. "Still being
-        refined" is `refine_state` `live` or `dispatching` — a sibling whose
-        plan already landed keeps `refine_session_id` as a record
-        (`attach_plan`) but no longer needs the terminal.
-        """
-        if not str(card.get("batch_id") or ""):
-            return False
-        cid = str(card.get("id") or "")
-        others = await self._board_call("by_refine_session", rsid) or []
-        return any(str(c.get("id") or "") != cid
-                   and str(c.get("refine_state") or "") in ("live", "dispatching")
-                   for c in others)
-
-    async def _close_for_deleted_card(
-            self, card: dict, shell_pid: Optional[int] = None) -> bool:
-        """Close the terminal of a session whose card was just deleted.
-
-        Delete means the work is cancelled, so the terminal has no reason to
-        survive it — including a card in Done. Unconditional:
-        `board_close_terminal` is not consulted — the armed label
-        ("Delete & close terminal?") is the consent, standing in for the
-        preference. Done is not exempt as of 2026-08-24: the
-        declare_done-mid-report cost was shown and the delete gesture
-        outranks it; there is no quiet-session check, delay, or preference.
-        A refused close is a log line and the tab left alone; there is no
-        card to write a `dispatch_error` onto, and typing `/clear` would
-        destroy the transcript while failing to tidy the screen.
-
-        A still-dispatching card has no `session_id` yet; when Dark Army still
-        holds the spawn-shell receipt, the terminal is closed by that pid.
-
-        Returns whether every close it attempted landed (True with nothing
-        to close) — what the worktree release reads as "the shell is gone".
-        """
-        closed_all = True
-        candidates = []
-        if str(card.get("link_state") or "") == "live":
-            sid = str(card.get("session_id") or "")
-            if sid:
-                candidates.append(sid)
-        cid = str(card.get("id") or "")
-        if str(card.get("refine_state") or "") == "live":
-            rsid = str(card.get("refine_session_id") or "")
-            if rsid and not await self._batch_session_still_needed(card, rsid):
-                candidates.append(rsid)
-        linked = str(card.get("session_id") or "")
-        for sid in candidates:
-            # Codex is skipped here, not because `_close_session_terminal`
-            # cannot see a pid (the panel's close-terminal button now has a
-            # third, explicit_resume-only rung), but because this route does
-            # not close Codex tabs. `tool == "codex"` names the linked
-            # session's assistant — skip it only for that sid. A Codex
-            # refine session is skipped by `_session_provider(sid) ==
-            # "codex"` for the same structural reason (no pid Dark Army may
-            # control), not because Refine is secretly Claude. The
-            # provider check is uniform on both candidates.
-            if (sid == linked and str(card.get("tool") or "") == "codex") \
-                    or self._session_provider(sid) == "codex":
-                continue
-            ok, detail = await self._close_session_terminal(sid)
-            if ok:
-                logger.info("closed the terminal of %s for deleted card %s",
-                            sid[:12], cid[:8])
-            else:
-                closed_all = False
-                logger.info("deleted card %s: left %s alone (%s)",
-                            cid[:8], sid[:12], detail)
-        if (str(card.get("link_state") or "") == "dispatching"
-                and shell_pid
-                and str(card.get("tool") or "") != "codex"):
-            ok, detail = await self._close_terminal_by_pid(shell_pid)
-            if ok:
-                logger.info("closed the terminal of pid %s for deleted card %s",
-                            shell_pid, cid[:8])
-            else:
-                closed_all = False
-                logger.info("deleted card %s: left pid %s alone (%s)",
-                            cid[:8], shell_pid, detail)
-        return closed_all
-
     async def _finish_card_for_closed_session(self, session_id: str) -> None:
         """A person closed this session's terminal, so the card it was
         dispatched from is finished. Best-effort and silent.
@@ -2427,9 +2341,9 @@ class BoardVerbsMixin:
           the agent called `dark_army_close_card` during its own turn and the person
           then closed the tab — is a no-op reading "already done".
 
-        Codex is deliberately *not* excluded, unlike in `_wrap_up_for_done`
-        and `_close_for_deleted_card`. Those skip it because Dark Army cannot type
-        at Codex; this writes a board row and types nothing.
+        Codex is deliberately *not* excluded, unlike in `_wrap_up_for_done`.
+        That skips it because Dark Army cannot type at Codex; this writes a
+        board row and types nothing.
         """
         if self._board is None:
             return
@@ -2745,6 +2659,39 @@ class BoardVerbsMixin:
             await self._wake_surfaces()
         except Exception:  # pragma: no cover - a settle must never fail a press
             logger.debug("settle for card %s failed", card_id[:8], exc_info=True)
+
+    def _end_links_of_gone_session(self, session_id: str) -> None:
+        """A stop or close of this session just landed: let the next reconcile
+        end the link of every card it was working, instead of after
+        `BOARD_SESSION_GRACE`.
+
+        The refusal "stop it first, then delete the card"
+        (`board.LIVE_RUN_DELETE_REFUSAL`) would otherwise hold for up to the
+        grace after the person did exactly that. The missing-since stamps are
+        wound back by the grace, so the reconcile's own `ended` seam runs
+        with all its side effects (batch release, work record, run health,
+        worktree release); this writes no card and moves no column, and acts
+        on no session. Called only where the close or stop landed, never on a
+        refused or failed one. A session the snapshot still lists wins: the
+        reconcile pops the stamp and the grace starts over.
+        """
+        sid = str(session_id or "")
+        if not sid:
+            return
+        cards = (getattr(self, "_board_state", None) or {}).get("cards") or []
+        stamp = time.time() - self.BOARD_SESSION_GRACE - 1.0
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            cid = str(card.get("id") or "")
+            if not cid:
+                continue
+            if (str(card.get("session_id") or "") == sid
+                    and str(card.get("link_state") or "") == "live"):
+                self._board_missing_since[cid] = stamp
+            if (str(card.get("refine_session_id") or "") == sid
+                    and str(card.get("refine_state") or "") == "live"):
+                self._refine_missing_since[cid] = stamp
 
     async def _settle_closed_session(self, session_id: str) -> None:
         """Acknowledge & close by a person: every card the closed session
@@ -3498,24 +3445,28 @@ class BoardVerbsMixin:
                 and str(card.get("column_name") or "") != "done")
 
     async def delete_card(self, card_id: str) -> tuple:
+        """Delete a card, unless it has a live run.
+
+        A card with an assistant on it, starting up or planning it
+        (`board.has_live_run`) is refused with `board.LIVE_RUN_DELETE_REFUSAL`
+        and keeps every row and every bookkeeping entry the run needs. The
+        rule is decided inside `BoardStore.delete` under the store lock, so a
+        reconcile `mark_live` cannot slip between the look and the act; the
+        daemon locks here cover the start verbs. Stop the run first (or
+        Reset), then delete. A card whose folder is still being prepared is
+        not live: Delete is the only way to cancel that
+        (`docs/card-worktrees.md`, *A delete never reaches a live run*).
+        """
         if self._board is None:
             return False, "the board is not open"
-        # Capture before any await: bind on the snapshot thread can pop
-        # `_spawn_shell_pids` while we wait on the store, and a gone card
-        # cannot retry. The local is the handle even if that pop wins.
-        # A pty receipt closes the same way: `_close_terminal_by_pid` goes
-        # through `session_io`, which asks `ptyhost.owns` first.
-        shell_pid = (self._spawn_shell_pids.get(str(card_id))
-                     or self._spawn_pty_pids.get(str(card_id)))
-        before = await self._board_call("get", card_id)
-        doomed = attachments.folders_of(
-            (before or {}).get("attachments")) if before else set()
         async with self._dispatch_lock, self._board_write_lock:
             loop = asyncio.get_running_loop()
-            # Re-read under the lock: `before` was read outside it, and an
-            # advance or a reset may have moved the card while this waited.
-            # The batch judgement is made on the card as it is now.
+            # Read under the lock: an advance, a start or a reset may have
+            # moved the card while this waited. The batch judgement is made
+            # on the card as it is now.
             current = await self._board_call("get", card_id)
+            doomed = attachments.folders_of(
+                (current or {}).get("attachments")) if current else set()
             owns = await loop.run_in_executor(None, self._batch_owned_by,
                                               current)
             ok, detail = await self._board_call("delete", card_id)
@@ -3528,31 +3479,27 @@ class BoardVerbsMixin:
                 # on releases the members it never reached.
                 await self._board_call("release_batch_waiting", bid,
                                        BATCH_LEFT_NOTE)
-        self._dispatch_attempts.pop(str(card_id), None)
-        self._dispatch_baseline.pop(str(card_id), None)
-        self._spawn_shell_pids.pop(str(card_id), None)
-        self._spawn_pty_pids.pop(str(card_id), None)
-        getattr(self, "_own_terminal_dispatch", set()).discard(str(card_id))
-        self._board_missing_since.pop(str(card_id), None)
-        self._refine_baseline.pop(str(card_id), None)
-        self._refine_missing_since.pop(str(card_id), None)
-        self._consults.pop(str(card_id), None)
-        self._consult_attempts.pop(str(card_id), None)
         if ok:
+            # Only a delete that happened forgets the card: a refused one is
+            # a live run whose baseline, receipt and cooldown its bind needs.
+            self._dispatch_attempts.pop(str(card_id), None)
+            self._dispatch_baseline.pop(str(card_id), None)
+            self._spawn_shell_pids.pop(str(card_id), None)
+            self._spawn_pty_pids.pop(str(card_id), None)
+            getattr(self, "_own_terminal_dispatch", set()).discard(str(card_id))
+            self._board_missing_since.pop(str(card_id), None)
+            self._refine_baseline.pop(str(card_id), None)
+            self._refine_missing_since.pop(str(card_id), None)
+            self._consults.pop(str(card_id), None)
+            self._consult_attempts.pop(str(card_id), None)
             await self._publish_board()
-            if before:
-                closed = await self._close_for_deleted_card(
-                    before, shell_pid=shell_pid)
-                # The card's own worktree, after the close and on the same
-                # rules as Done: never under a live session, never with
-                # unsaved work in it. A close that landed means the shell
-                # is gone; one that did not leaves the release deferred and
-                # judged by the live-session test alone. The branch stays.
-                # Queued, never awaited here: the reply does not wait on git.
-                gone = await self._deleted_card_worktree(before)
+            if current:
+                # The card's own worktree, on the same rules as Done: never
+                # under a live session, never with unsaved work in it. The
+                # branch stays. Queued, never awaited here: the reply does
+                # not wait on git.
+                gone = await self._deleted_card_worktree(current)
                 if gone is not None:
-                    if closed:
-                        gone["link_state"] = "ended"
                     self._defer_worktree_release(gone, True)
                     await self._kick_worktree_releases()
             if doomed:
@@ -7779,8 +7726,10 @@ class BoardVerbsMixin:
                 # Done is kept by the store as of 2026-08-24.
                 bound, _detail = self._board.bind_session(cid, sid)
                 if bound is None:
-                    # Card gone (deleted mid-bind). Leave the receipt so
-                    # delete can still close the terminal Dark Army opened.
+                    # Card gone (deleted mid-bind: a card still being prepared
+                    # is the one a delete reaches). Leave the receipt; the
+                    # terminal Dark Army opened is left open, as nothing
+                    # closes it for a deleted card.
                     return False
                 self._record_outcome_binding(
                     bound, sid, "implementation", late=not bool(shell or pty_pid))

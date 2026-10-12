@@ -652,8 +652,12 @@ async def test_removing_the_finished_first_card_does_not_strand_the_batch(
     ok, _detail, bound = await d.advance_batch_by_session("s-A")
     assert ok and bound["id"] == cards[1]["id"]
     if tidy == "delete":
-        ok, _ = await d.delete_card(cards[0]["id"])
-        assert ok
+        # Done but still `live` while its session walks on: a live run, so
+        # the delete is refused and nothing is released.
+        ok, detail = await d.delete_card(cards[0]["id"])
+        assert ok is False
+        assert detail == board.LIVE_RUN_DELETE_REFUSAL
+        assert store.get(cards[0]["id"]) is not None
     else:
         card, _ = await d.reset_card(cards[0]["id"],
                                      {"column_name": "backlog"})
@@ -675,7 +679,9 @@ async def test_a_batch_left_with_no_owner_releases_its_waiting_cards(
     cards, _opened = await _started_batch(d, store, project, monkeypatch,
                                           sid="s-A")
     await d.close_card_by_session("s-A", "card 1 built")
-    # The Done first card is now the only card holding the session.
+    # The Done first card is now the only card holding the session. Its
+    # link ends first (a live run is never deleted), then it is removed.
+    store.mark_ended(cards[0]["id"])
     ok, _ = await d.delete_card(cards[0]["id"])
     assert ok
     for card in cards[1:]:
@@ -745,11 +751,12 @@ async def test_a_dragged_member_shows_it_left_and_the_batch_end_clears_it(
 
 
 @pytest.mark.asyncio
-async def test_delete_judges_the_batch_on_the_card_as_it_is_under_the_lock(
+async def test_a_delete_waiting_for_the_lock_is_refused_once_the_advance_binds_the_card(
         daemon, project, monkeypatch):
-    """A delete reads the card before it takes `_dispatch_lock`. If the
-    advance binds that card while the delete waits, the delete must judge
-    it as the card the session is now on, and release the rest."""
+    """A delete confirmed off a stale picture. It waits for `_dispatch_lock`;
+    the advance, holding the lock, binds that card meanwhile. The delete reads
+    the card as it is now, finds a live run and is refused: the card stays,
+    still in its batch, and nothing is released."""
     import asyncio
     d, store = daemon
     cards, _opened = await _started_batch(d, store, project, monkeypatch,
@@ -759,7 +766,7 @@ async def test_delete_judges_the_batch_on_the_card_as_it_is_under_the_lock(
     await d._dispatch_lock.acquire()
     try:
         task = asyncio.ensure_future(d.delete_card(cards[1]["id"]))
-        await asyncio.sleep(0.05)   # the delete has read the card, waits
+        await asyncio.sleep(0.05)   # the delete waits on the lock
         assert not task.done()
         # What the advance, holding the lock, does meanwhile.
         bound, why = store.bind_waiting_member(cards[1]["id"], "s-A", bid)
@@ -767,10 +774,12 @@ async def test_delete_judges_the_batch_on_the_card_as_it_is_under_the_lock(
     finally:
         d._dispatch_lock.release()
     ok, detail = await task
-    assert ok, detail
+    assert ok is False
+    assert detail == board.LIVE_RUN_DELETE_REFUSAL
+    assert store.get(cards[1]["id"]) is not None
     third = store.get(cards[2]["id"])
-    assert third["batch_id"] == ""
-    assert third["dispatch_error"] == daemon_board.BATCH_LEFT_NOTE
+    assert third["batch_id"] == bid
+    assert third["dispatch_error"] != daemon_board.BATCH_LEFT_NOTE
 
 
 @pytest.mark.asyncio

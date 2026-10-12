@@ -1242,7 +1242,7 @@ struct BoardCardView: View {
     /// and hence red rather than the neutral row of small buttons beside it.
     private var deleteButton: some View {
         Button(isDeleteArmed
-               ? (card.deleteClosesTerminal ? "Delete & close terminal?" : "Really delete?")
+               ? "Really delete?"
                : "Delete") {
             if isDeleteArmed {
                 state.disarm()

@@ -5148,13 +5148,12 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         `wrap_up_session`'s sibling, not a modification of it: same pid ladder,
         same act-first-bookkeep-second order, but the act is
         `session_io.close_terminal` — the tab and the process both go (VS
-        Code SIGHUPs the process group) instead of `/clear` being typed. Three
-        callers: `close_session_terminal` (the panel button); `_wrap_up_for_done`,
-        behind `board_close_terminal_enabled`, where every failure is a
-        *fallback* onto `wrap_up_session`; and `_close_for_deleted_card`, which
-        is unconditional — no preference, no fallback. The last two
-        short-circuit Codex above this function, so the third pid rung below
-        does not change their behaviour. The detail is for the log only and
+        Code SIGHUPs the process group) instead of `/clear` being typed. Two
+        callers: `close_session_terminal` (the panel button) and
+        `_wrap_up_for_done`, behind `board_close_terminal_enabled`, where
+        every failure is a *fallback* onto `wrap_up_session`. The latter
+        short-circuits Codex above this function, so the third pid rung below
+        does not change its behaviour. The detail is for the log only and
         is never minted into a card-visible string.
 
         The bookkeeping on success is the wrap-up's Grok third act, for **both**
@@ -5275,6 +5274,7 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
             self._agents_poller.poll_soon()
             self._persist_sessions()
             await self._wake_surfaces()
+        self._end_links_of_gone_session(session_id)
         return True, ""
 
     async def _close_terminal_by_pid(self, pid: int) -> tuple[bool, str]:
@@ -7766,6 +7766,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
                     record.pid if record is not None else None),
                 create_time=ident.create_time if ident is not None else None,
             )
+        # Every caller reaches here only once the process is gone, its
+        # identity is proved gone, the editor confirmed the close, or the
+        # record disappeared: never on a refusal. The cards it was working can
+        # end now rather than after the grace (a still-listed session wins).
+        self._end_links_of_gone_session(session_id)
         self._notify_activity()
         self._schedule_agents_push()
 
@@ -8901,6 +8906,7 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         rec = self._agent_records.get(session_id)
         grok = self._grok_records.get(session_id)
         self._forget_session(session_id, "stopped")
+        self._end_links_of_gone_session(session_id)
         # A reconciler-only session has no hook state for _forget_session to
         # tombstone, and popping the record below is what stops the poll diff from
         # noticing it left. Record it here or a stopped background agent vanishes.
