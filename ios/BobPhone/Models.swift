@@ -2653,6 +2653,11 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// only for those, and an absent or malformed one decodes to nil rather
     /// than blanking the board. The Mac's `BoardCard.batch`.
     var batch: BatchMark?
+    /// The daemon's `batch_rank`: a 1-based place, as a string, written
+    /// beside `refine_state` for a refinement batch and beside `link_state`
+    /// for an implement batch. `""` for no batch, for an older Mac, and once
+    /// the plan attaches or the planning session ends.
+    var batchRank = ""
     /// The one line the tile draws for `batch`: `BATCH 2/3 · working`, or
     /// `""` where there is no batch. Composed from the daemon's three
     /// fields; nothing is counted here. The panel's body, byte for byte.
@@ -2662,6 +2667,20 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         // carries its mark: said in words, because its Start is refused.
         let state = batch.state == "left" ? "left the line" : batch.state
         return "BATCH \(batch.rank)/\(batch.size) \u{00B7} \(state)"
+    }
+    /// The first clause of the daemon's `BATCH_UNPLANNED_NOTE` with this
+    /// card's rank, while this Prep card is being refined as one of several,
+    /// so the running card and the card the batch never reached use one
+    /// sentence (`test_phone_card_batch_rank.py`).
+    /// Rank only: the daemon publishes no size for a refinement batch.
+    /// `""` for a single refinement, a card not refining, a card outside
+    /// Prep, an unreadable rank, or an older Mac. Never drawn beside
+    /// `batchLine`: the daemon's `batch` mark is absent on a refining card.
+    var batchPlanningLine: String {
+        guard isRefining, column == "prep",
+              let rank = Int(batchRank.trimmingCharacters(in: .whitespaces)),
+              rank > 0 else { return "" }
+        return "card \(rank) of a batch planning session"
     }
     /// Waiting its turn in a batch: its own Start is refused by the daemon
     /// until it leaves the batch.
@@ -2808,6 +2827,7 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case runFigures = "run_figures"
         case runHealth = "run_health"
         case batch
+        case batchRank = "batch_rank"
         case revision
         case blockedBy = "blocked_by"
         case dependencies, dependents
@@ -2889,6 +2909,9 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         runHealth = c.maybe(.runHealth)
         // Absent is no batch, malformed is no batch.
         batch = c.maybe(.batch)
+        // A non-string rank falls back to "": a missing line, never a
+        // thrown frame.
+        batchRank = c.value(.batchRank, "")
         // The dependency five, tolerant with empty defaults: an older Mac
         // sends none, and a card with no links sends none of the four
         // derived ones.

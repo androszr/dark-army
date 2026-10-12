@@ -322,6 +322,15 @@ tab bar, not under the heading, which keeps SELECT and CANCEL (*A held card
 opens the batch bar*). Pinned by `host/tests/test_phone_batch_refine.py` and
 `ios/BobPhoneTests/RowSelectionTests.swift`.
 
+**A refining member says its place**: "card n of a batch planning session"
+off `batch_rank` (decoded `""`-tolerant; rank only, since the daemon
+publishes no size for a refinement batch), drawn only while `refine_state`
+is `dispatching` or `live` in Prep and gone once the plan attaches; the
+words are the start of `BATCH_UNPLANNED_NOTE`. A
+member the session never reached keeps that note verbatim as `dispatchError`
+in the status section, Refine offered beneath. The Mac's tile does not draw
+the running line. Pinned by `host/tests/test_phone_card_batch_rank.py`.
+
 ## Several planned cards are started from the phone at once
 
 The Backlog row carries the Mac's batch Start (25 Sep 2026) on the same

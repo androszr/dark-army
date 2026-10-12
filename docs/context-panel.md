@@ -393,10 +393,10 @@ phone's `BoardView.swift` (`test_board_rows.py`); a search overrides a
 fold, and a folded heading takes a drop. Prep has **Refine** (dispatches a planning session); the plan that session attaches moves the card to Backlog, and every newly written card lands there. **A card outlines one verb, chosen by its column** (`CardActionWeight`): Refine in Prep, START in Backlog, Done in In progress, none in Done; every other verb is dim words, HERE included, and an absent primary promotes nothing — with one kind-aware exception: a scout in Prep outlines START, because it has no plan to refine.
 
 **The phone's Prep row has a select mode too** (25 Sep 2026): SELECT, a
-tick on every card whose own screen offers Refine (`PhoneRowSelection`,
-one rule for both), one armed-then-confirmed press sending
+tick on every card whose own screen offers Refine (`PhoneRowSelection`),
+one armed-then-confirmed press sending
 `board_refine_batch` through the press queue, drawn only where the board
-says `refine_batch_supported`. In full in `docs/phone-contract.md`.
+says `refine_batch_supported`. In full, batch planning session too: `docs/phone-contract.md`.
 
 **The phone's Backlog row selects too** (25 Sep 2026): the same ticks,
 judged by the Start rule, and one armed-then-confirmed press sending

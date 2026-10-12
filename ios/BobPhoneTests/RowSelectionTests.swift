@@ -194,6 +194,27 @@ final class RowSelectionTests: XCTestCase {
         XCTAssertFalse(board.startBatchSupported)
     }
 
+    func testTheBatchPlanningLineIsDrawnOffBatchRankOnlyWhileRefining() {
+        let live = decoded(#"{"id": "a", "column_name": "prep", "refine_state": "live", "batch_rank": "2"}"#)
+        XCTAssertEqual(live.batchPlanningLine, "card 2 of a batch planning session")
+        let dispatching = decoded(#"{"id": "b", "column_name": "prep", "refine_state": "dispatching", "batch_rank": "1"}"#)
+        XCTAssertEqual(dispatching.batchPlanningLine, "card 1 of a batch planning session")
+        for json in [
+            #"{"id": "c", "column_name": "prep", "refine_state": "", "batch_rank": "2"}"#,
+            #"{"id": "d", "column_name": "prep", "refine_state": "live", "batch_rank": ""}"#,
+            #"{"id": "e", "column_name": "prep", "refine_state": "live", "batch_rank": "0"}"#,
+            #"{"id": "f", "column_name": "prep", "refine_state": "live", "batch_rank": "x"}"#,
+            #"{"id": "g", "column_name": "prep", "refine_state": "live"}"#,
+            #"{"id": "h", "column_name": "backlog", "refine_state": "live", "batch_rank": "2"}"#,
+            #"{"id": "i", "column_name": "prep", "refine_state": "live", "batch_rank": 2}"#,
+        ] {
+            XCTAssertEqual(decoded(json).batchPlanningLine, "", json)
+        }
+        let implement = decoded(#"{"id": "j", "column_name": "prep", "batch_rank": "2", "batch": {"rank": 2, "size": 3, "state": "left"}}"#)
+        XCTAssertEqual(implement.batchPlanningLine, "")
+        XCTAssertEqual(implement.batchLine, "BATCH 2/3 \u{00B7} left the line")
+    }
+
     func testTheAssistantRowNamesTheSharedToolAndWritesOnlyTheOthers() {
         let a = card(["id": "a", "tool": "claude"])
         let b = card(["id": "b", "tool": "codex"])
