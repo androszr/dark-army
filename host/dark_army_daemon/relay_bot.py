@@ -20,6 +20,9 @@ Run from ``host/`` with the project virtualenv:
 ``127.0.0.1``. A tunnel in front of that port is what a Grok account
 plugs in. The pair file holds the keys. It is mode 0600 under the state
 directory. Nothing in this file prints a key or the connector token.
+
+Every action carries a one-time mark (``command_token``), made once per press
+before any retry, so the Mac sees a resend as the same press and acts once.
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import paths, relay
+from . import command_receipts, paths, relay
 
 FILE_VERSION = 1
 #: These three leave the pair file. A Grok bot asks for them on its own
@@ -555,6 +558,19 @@ async def _one_request(kind: str, body: dict) -> dict:
         return await session.request(kind, body)
 
 
+def _marked(body: dict) -> dict:
+    """The press's one-time mark, minted once per press.
+
+    The Mac's receipt ledger and the rebuild stamp see a resend that carries
+    the same mark as the same press. A well-formed mark from the caller is
+    kept; anything else is replaced. The caller's dict is never mutated.
+    """
+    out = dict(body)
+    mark = command_receipts.CommandReceipts.usable(out.get("command_token"))
+    out["command_token"] = mark or secrets.token_hex(8)
+    return out
+
+
 def cmd_state() -> int:
     frame = asyncio.run(_one_request(
         "state", {"done": "review", "with_usage": True}))
@@ -571,7 +587,7 @@ def cmd_action(text: str) -> int:
     if not isinstance(body, dict) or not str(body.get("action") or ""):
         print("the action has to name an action")
         return 2
-    frame = asyncio.run(_one_request("action", body))
+    frame = asyncio.run(_one_request("action", _marked(body)))
     _print_answer(frame)
     payload = frame.get("body") if isinstance(frame.get("body"), dict) else {}
     return 0 if payload.get("status") == 200 else 1
@@ -730,6 +746,15 @@ _MCP_TOOLS = (
                     "type": "string",
                     "description": "The action name.",
                 },
+                "command_token": {
+                    "type": "string",
+                    "description": (
+                        "Optional one-time mark for this press. Leave it "
+                        "out and one is made. Send the same mark again "
+                        "only when resending a press whose answer never "
+                        "arrived."
+                    ),
+                },
             },
             "required": ["action"],
         },
@@ -833,7 +858,7 @@ async def _call_tool(line: _Line, name: str, arguments) -> dict:
             return {"content": [{"type": "text", "text":
                                  "the action has to name an action"}],
                     "isError": True}
-        frame = await line.request("action", args)
+        frame = await line.request("action", _marked(args))
         text, failed = _tool_text(frame)
         return {"content": [{"type": "text", "text": text}], "isError": failed}
     return {"content": [{"type": "text", "text": "that tool is not on this connector"}],
