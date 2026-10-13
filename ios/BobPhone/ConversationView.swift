@@ -78,7 +78,7 @@ struct ConversationScreen<Header: View>: View {
     }
 
     private var following: Bool {
-        ConversationLive.follows(running: running, echoes: echoes.count)
+        ConversationLive.follows(running: running, echoes: ConversationLive.waiting(echoes))
     }
 
     private var nowLine: String {
@@ -401,8 +401,10 @@ extension ConversationScreen where Header == EmptyView {
 }
 
 /// A message the person just sent, drawn as their turn is (`> words`) but
-/// dimmer and marked `sending` or `delivered`, until the journal records
-/// it and the real turn takes its place (`ConversationLive.echoes`).
+/// dimmer and marked `sending`, then sent but not yet seen, until the
+/// journal records it and the real turn takes its place; still unrecorded
+/// after three minutes it says, in orange, that it was not received
+/// (`ConversationLive.echoes`).
 struct ConversationEchoRow: View {
     let echo: ConversationLive.Echo
 
@@ -410,7 +412,8 @@ struct ConversationEchoRow: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(ConversationLive.mark(echo))
                 .font(Theme.mono(10))
-                .foregroundStyle(echo.delivered ? Theme.phosphor : Theme.dim)
+                .foregroundStyle(echo.unseen ? Color.orange : Theme.dim)
+                .fixedSize(horizontal: false, vertical: true)
             Text("> \(echo.text)")
                 .font(Theme.mono(13))
                 .foregroundStyle(Theme.phosphorBright)

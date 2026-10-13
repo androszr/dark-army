@@ -11,8 +11,15 @@ enum ConversationLive {
         var id: String
         var text: String
         /// The Mac took it (`.accepted` or later); before that it is still
-        /// on its way.
+        /// on its way. **Taken is not received**: the Mac's 200 means the
+        /// line was written to the session's channel or terminal, and
+        /// nothing acknowledges it further (13 Oct 2026 — a message pushed
+        /// mid-turn was marked "delivered" and never reached the agent).
+        /// Only the journal's own person turn proves the agent has it.
         var delivered: Bool
+        /// Taken by the Mac, yet still not in the journal after
+        /// `echoLifetime`: the agent never recorded it.
+        var unseen: Bool = false
         var createdAt: Double
     }
 
@@ -20,6 +27,13 @@ enum ConversationLive {
     /// channel message the agent never records must not sit under the
     /// conversation for ever; three minutes outlasts any real delay.
     static let echoLifetime: TimeInterval = 180
+    /// How long a message the Mac took but the agent never recorded stays
+    /// drawn, marked `notReceivedMark`, instead of vanishing as if it had
+    /// arrived.
+    static let unseenKept: TimeInterval = 1800
+    static let sendingMark = "sending"
+    static let takenMark = "sent · not seen by the agent yet"
+    static let notReceivedMark = "not received — the agent never recorded it; send it again or type it in the terminal"
     /// A sent message is matched only to a person's turn written after the
     /// press, less this much for the Mac's and the phone's clocks to differ.
     static let clockSlack: TimeInterval = 30
@@ -63,7 +77,7 @@ enum ConversationLive {
                 r.action == PhoneActions.reply
                     && (r.fields["session_id"] ?? "") == sessionId
                     && live.contains(r.state)
-                    && now - r.createdAt < echoLifetime
+                    && now - r.createdAt < (taken(r.state) ? unseenKept : echoLifetime)
             }
             .sorted { $0.createdAt < $1.createdAt }
             .compactMap { r in
@@ -72,10 +86,23 @@ enum ConversationLive {
                 guard !text.isEmpty,
                       !landed(text: text, createdAt: r.createdAt, turns: turns)
                 else { return nil }
+                let delivered = taken(r.state)
                 return Echo(id: r.id, text: text,
-                            delivered: r.state == .accepted || r.state == .done,
+                            delivered: delivered,
+                            unseen: delivered && now - r.createdAt >= echoLifetime,
                             createdAt: r.createdAt)
             }
+    }
+
+    /// The Mac answered 200 for it.
+    static func taken(_ state: Receipt.State) -> Bool {
+        state == .accepted || state == .done
+    }
+
+    /// The echoes still worth following quickly for: an unseen one has
+    /// stopped waiting, so it no longer holds the fast pace.
+    static func waiting(_ echoes: [Echo]) -> Int {
+        echoes.filter { !$0.unseen }.count
     }
 
     /// Follow quickly while the agent is working or a sent message has not
@@ -93,7 +120,8 @@ enum ConversationLive {
 
     /// The echo's mark, drawn and spoken.
     static func mark(_ echo: Echo) -> String {
-        echo.delivered ? "delivered" : "sending"
+        if echo.unseen { return notReceivedMark }
+        return echo.delivered ? takenMark : sendingMark
     }
 
     /// The one line under the turns while the agent works — the fleet

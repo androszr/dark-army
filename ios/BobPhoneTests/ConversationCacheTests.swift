@@ -331,14 +331,45 @@ final class ConversationLiveTests: XCTestCase {
         XCTAssertEqual(ConversationLive.mark(echoes[0]), "sending")
     }
 
-    func testTheMacTakingItMarksItDelivered() {
+    /// The Mac's 200 is not the agent receiving it (13 Oct 2026): taken
+    /// reads "not seen yet", never "delivered".
+    func testTheMacTakingItIsNotCalledDelivered() {
         for state in [Receipt.State.accepted, .done] {
             let echoes = ConversationLive.echoes(
                 receipts: [reply("a", "hi", state: state)],
                 sessionId: "s", turns: [], now: 1001)
             XCTAssertEqual(echoes.map(\.delivered), [true])
-            XCTAssertEqual(ConversationLive.mark(echoes[0]), "delivered")
+            XCTAssertEqual(echoes.map(\.unseen), [false])
+            XCTAssertEqual(ConversationLive.mark(echoes[0]), ConversationLive.takenMark)
+            XCTAssertEqual(ConversationLive.takenMark, "sent · not seen by the agent yet")
+            XCTAssertFalse(ConversationLive.mark(echoes[0]).contains("delivered"))
         }
+        XCTAssertEqual(ConversationLive.sendingMark, "sending")
+    }
+
+    /// Taken but never in the journal: it stays, says so, and stops holding
+    /// the fast follow — it no longer vanishes as if it had arrived.
+    func testATakenMessageTheAgentNeverRecordedSaysSo() {
+        let old = 1000 - ConversationLive.echoLifetime - 1
+        let echoes = ConversationLive.echoes(
+            receipts: [reply("a", "look at main", state: .accepted, at: old)],
+            sessionId: "s", turns: [], now: 1000)
+        XCTAssertEqual(echoes.map(\.unseen), [true])
+        XCTAssertEqual(ConversationLive.mark(echoes[0]), ConversationLive.notReceivedMark)
+        XCTAssertTrue(ConversationLive.notReceivedMark.hasPrefix("not received"))
+        XCTAssertEqual(ConversationLive.waiting(echoes), 0)
+        // Recorded late: the real turn still replaces it.
+        XCTAssertTrue(ConversationLive.echoes(
+            receipts: [reply("a", "look at main", state: .accepted, at: old)],
+            sessionId: "s", turns: [user(9, "look at main", ts: old + 300)],
+            now: 1000).isEmpty)
+        // Past `unseenKept` it goes.
+        XCTAssertTrue(ConversationLive.echoes(
+            receipts: [reply("a", "x", state: .done,
+                             at: 1000 - ConversationLive.unseenKept - 1)],
+            sessionId: "s", turns: [], now: 1000).isEmpty)
+        XCTAssertTrue(ConversationLive.taken(.accepted))
+        XCTAssertFalse(ConversationLive.taken(.sent))
     }
 
     func testTheRealTurnReplacesTheEcho() {

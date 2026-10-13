@@ -627,11 +627,16 @@ never the bytes). Follows new turns only at the bottom; scrolled up, a
 `↓ n new` row above the composer goes to the foot, and never paints over
 the page. **The tab is live while it is watched (26 Sep 2026,
 `ConversationLive`):** a message sent from it is drawn at once under the
-turns as an echo marked `sending`, then `delivered` once the Mac took it,
-read from the press's own receipt; the journal's person turn with the same
-words, written after the press, replaces it, and an echo still waiting
-after three minutes, refused or stuck is dropped (the refusal is the answer
-box's note). While the agent is `running` or an echo waits, the page is
+turns as an echo marked `sending`, then "sent · not seen by the agent yet"
+once the Mac took it, read from the press's own receipt — **never
+"delivered"**: the Mac's 200 is a line written to a channel or terminal
+with no acknowledgement behind it, and a message pushed mid-turn was once
+marked delivered and never reached the agent (13 Oct 2026). The journal's
+person turn with the same words, written after the press, replaces it. A
+taken echo still unrecorded after three minutes stays for half an hour,
+orange, saying it was not received (and no longer holds the fast follow);
+one never taken is dropped then, and a refused or stuck one at once (the
+refusal is the answer box's note). While the agent is `running` or an echo waits, the page is
 followed quickly — at home one small conversation page about every second
 (`PhoneClient.followConversationOnce`, one ask at a time, `fetchConversation`
 unchanged); away, the Mac's own socket push asks for the page
