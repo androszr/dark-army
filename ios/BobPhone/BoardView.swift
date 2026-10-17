@@ -295,10 +295,11 @@ struct BoardView: View {
         BoardProjects.openColumns.flatMap { board.cards(in: $0).map(\.project) }
     }
 
-    /// The cards' own project names plus the projects the Mac says are open.
+    /// Only the projects the Mac says have an open VS Code window — a
+    /// project whose window closed leaves the strip (its cards stay under
+    /// ALL), and the write-back below forgets it as a choice.
     private var projects: [String] {
-        BoardProjects.names(cards: allCards.map(\.project),
-                            open: board.projects.map(\.name))
+        BoardProjects.names(open: board.projects.map(\.name))
     }
 
     /// The stored choice resolved against the names on screen, on read as
@@ -332,9 +333,9 @@ struct BoardView: View {
     /// The project filter first, then the search.
     ///
     /// `activeProject` is read **once**, before the filter, and that hoist
-    /// is load-bearing: it is a computed property over every card on the
-    /// board (`projects` → `allCards`), so reading it inside the closure
-    /// made one call O(cards²). The body calls this a dozen times, and the
+    /// is load-bearing: it is a computed property (it once walked every
+    /// card on the board through `projects`), so reading it inside the
+    /// closure made one call O(cards²). The body calls this a dozen times, and the
     /// body re-runs on every publish of the client — about half a second of
     /// main thread per poll on a 180-card board (measured in a debug build
     /// on the live board: 457 ms before, 3 ms after), which is what froze
@@ -1758,10 +1759,10 @@ enum BoardProjects {
     /// chip counts live agents and not finished ones.
     static let openColumns = ["prep", "backlog", "in_progress"]
 
-    /// Chip names: the cards' projects and the Mac's open projects, through
-    /// `FleetProjects.names` (unique, non-empty, sorted).
-    static func names(cards: [String], open: [String]) -> [String] {
-        FleetProjects.names(cards + open)
+    /// Chip names: the Mac's open projects only (a VS Code window open right
+    /// now), through `FleetProjects.names` (unique, non-empty, sorted).
+    static func names(open: [String]) -> [String] {
+        FleetProjects.names(open)
     }
 
     /// `""` is `ALL` and matches every card, an unnamed one included.

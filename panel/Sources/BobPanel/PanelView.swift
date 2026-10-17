@@ -626,7 +626,7 @@ struct PanelView: View {
                     .accessibilityLabel("Keyboard shortcuts: " + TriageLegend.line)
             }
             if snapshot.board.available {
-                ProjectSwitchStrip(board: board, names: snapshot.board.projectNames)
+                ProjectSwitchStrip(board: board, names: snapshot.board.openProjectNames)
             }
             HStack(spacing: 0) {
                 // The wide pane is the board, or the selected agent drawn

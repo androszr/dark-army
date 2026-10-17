@@ -102,7 +102,8 @@ def test_the_board_resolves_through_fleet_s_step():
     assert "if !projects.isEmpty || !activeProject.isEmpty {" in board
     names = _block(board, "private var projects")
     assert "board.projects.map(\\.name)" in names
-    assert "allCards.map(\\.project)" in names
+    # Only open windows name a chip — a card's project alone never does.
+    assert "allCards" not in names
 
 
 def test_the_filter_narrows_every_row_before_the_search():
@@ -157,7 +158,7 @@ def _enum(text: str, name: str) -> str:
 HARNESS = r'''
 import Foundation
 var out: [String: Any] = [:]
-out["names"] = BoardProjects.names(cards: ["b", "", "a", "b"], open: ["c", "a"])
+out["names"] = BoardProjects.names(open: ["c", "", "a", "c"])
 out["allMatches"] = BoardProjects.matches(project: "", active: "")
 out["otherMatches"] = BoardProjects.matches(project: "a", active: "b")
 out["sameMatches"] = BoardProjects.matches(project: "a", active: "a")
@@ -194,8 +195,8 @@ def probe(tmp_path_factory):
     return json.loads(ran.stdout)
 
 
-def test_names_merge_cards_and_open_projects_like_fleet(probe):
-    assert probe["names"] == ["a", "b", "c"]
+def test_names_are_the_open_projects_only_like_fleet(probe):
+    assert probe["names"] == ["a", "c"]
 
 
 def test_all_matches_everything_and_a_name_only_itself(probe):

@@ -1520,6 +1520,22 @@ struct Board: Decodable, Equatable {
         }
     }
 
+    /// The project switches' names: only the projects with an open VS Code
+    /// window right now (the daemon's `projects`), unique, non-empty, sorted.
+    /// A project whose window closed drops off the strip even while its cards
+    /// stay on the board under ALL; a stale tick is still drawn by
+    /// `projectFilterItems`, so it can be cleared.
+    var openProjectNames: [String] {
+        var seen: [String] = []
+        for project in projects where !project.name.isEmpty
+            && !seen.contains(project.name) {
+            seen.append(project.name)
+        }
+        return seen.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case cards, counts, available, tools, installed, models, efforts, projects
         case doneClearToken = "done_clear_token"

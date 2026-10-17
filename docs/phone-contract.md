@@ -267,6 +267,14 @@ reads `“…” is not in a title, a summary or a project.` The filter runs on
 the snapshot the phone already holds and sends no request. Pinned by
 `host/tests/test_phone_board_search.py` and `ios/BobPhoneTests/BoardSearchTests.swift`.
 
+**The project strip names only open VS Code windows** (17 Oct 2026), on the
+phone and the Mac alike: a chip is one of the board's `projects` (the daemon's
+`workspace.windows()`), never a project known only from its cards. A project
+whose window closes leaves the strip, its cards stay under ALL, and the
+phone's write-back forgets it as a choice; the Mac still draws a stale tick
+so it can be cleared (`BoardProjects.names(open:)`, `Board.openProjectNames`;
+`test_phone_board_project_filter.py`, `ProjectSwitchTests`).
+
 ## Several Prep cards are refined from the phone at once
 
 The Prep row carries the Mac's batch Refine (25 Sep 2026). Under its
