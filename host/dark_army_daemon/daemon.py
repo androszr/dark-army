@@ -426,8 +426,15 @@ TERMINAL_CONTROL_REFUSAL = ("Control characters are not typed from the phone —
 #: own sentence and never `TERMINAL_EXITED_REFUSAL`: Darwin's pty input
 #: queue is ~1 KB, so a long line to a CLI mid-redraw is a wait, not a death.
 TERMINAL_BUSY_REFUSAL = ("The terminal is not taking input right now — part of "
-                         "that line may have landed; check the screen before "
-                         "typing it again.")
+                         "that line may have landed, unsent; check the screen "
+                         "before typing it again.")
+#: The words went in but their Enter was held back — a permission prompt
+#: came up in the pause before it (`_terminal_line_input`). The words sit
+#: in the input box unsent, so a blind retry would submit them twice.
+TERMINAL_TYPED_NOT_SENT_REFUSAL = ("A permission prompt came up while typing — "
+                                   "the words are in the terminal's input box "
+                                   "but were not sent. Answer the prompt, then "
+                                   "press Enter there or clear the line.")
 #: How long `terminal_input` waits for a queued remainder to land.
 TERMINAL_DRAIN_SECONDS = 3.0
 #: Raw desk input per frame or per request. A paste, not a line: the
@@ -11051,14 +11058,35 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
             # history. `message_card`'s test, for its reason.
             if any(ord(c) < 32 or ord(c) == 127 for c in text):
                 return False, TERMINAL_CONTROL_REFUSAL
-        if not self._pty.write(handle, text + "\r"):
-            return False, TERMINAL_EXITED_REFUSAL
-        # A long line lands in halves on Darwin's ~1 KB pty queue; the
-        # remainder is drained on the loop and waited for here, with a
-        # bound. A wait that runs out is its own sentence — the process is
-        # alive and simply not reading — never "has ended".
-        if not await self._pty.drain(handle, TERMINAL_DRAIN_SECONDS):
-            return False, TERMINAL_BUSY_REFUSAL
+        # The words, drained, a pause, then Enter as its own write — under
+        # the handle's lock, so a second line cannot land in the pause. One
+        # write of `text + "\r"` reaches Claude Code as a single burst, which
+        # it reads as a paste: from about 140 characters the Enter becomes a
+        # line break in the input box and nothing is submitted, while the
+        # phone is told ok (18 Oct 2026, a Comm message to Mission Control;
+        # `session_io._type_into_pty` fixed the same burst on 3 Oct).
+        async with session_io._pty_lock(handle):
+            if not self._pty.write(handle, text):
+                return False, TERMINAL_EXITED_REFUSAL
+            # A long line lands in halves on Darwin's ~1 KB pty queue; the
+            # remainder is drained on the loop and waited for here, with a
+            # bound. A wait that runs out is its own sentence — the process
+            # is alive and simply not reading — never "has ended".
+            if not await self._pty.drain(handle, TERMINAL_DRAIN_SECONDS):
+                return False, TERMINAL_BUSY_REFUSAL
+            await asyncio.sleep(session_io.PTY_ENTER_GAP_SECONDS)
+            # A permission dialog that appeared during the drain or the pause
+            # would read this Enter as "confirm the highlighted choice":
+            # asked again here, it fails closed. The words are already in the
+            # input box, typed but not submitted, and the refusal says so.
+            if session_id and session_id in self._prompts_by_session():
+                return False, TERMINAL_TYPED_NOT_SENT_REFUSAL
+            # The Enter's own answer, never the words': a pty gone in the
+            # gap left the line unsubmitted.
+            if not self._pty.write(handle, "\r"):
+                return False, TERMINAL_EXITED_REFUSAL
+            if not await self._pty.drain(handle, TERMINAL_DRAIN_SECONDS):
+                return False, TERMINAL_BUSY_REFUSAL
         logger.info("typed %d chars into the terminal of %s%s",
                     len(text), (session_id or handle)[:12],
                     " (phone)" if from_phone else "")

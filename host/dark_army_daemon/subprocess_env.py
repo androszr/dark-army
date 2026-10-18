@@ -25,6 +25,7 @@ is that list; a deliberate stamp is put back by the caller *after* the strip
 from __future__ import annotations
 
 import os
+import pwd
 from typing import Mapping, Optional
 
 
@@ -146,6 +147,57 @@ def adopt_login_path(environ=None) -> str:
     env = os.environ if environ is None else environ
     env["PATH"] = with_login_path(env.get("PATH", ""), login_path_entries())
     return env["PATH"]
+
+
+#: Whether an agent on Dark Army's terminal starts through the person's own
+#: shell (`shell_argv`). The suite turns it off (`conftest.py`), so no test
+#: ever runs the machine's `~/.zshrc`.
+USER_SHELL_ENV = True
+
+#: The shells `shell_argv` knows the `-lic 'exec "$@"'` form of. Anything
+#: else (fish, nu) keeps the bare argv rather than a guessed syntax.
+USER_SHELLS = ("zsh", "bash")
+
+
+def user_shell() -> str:
+    """The person's login shell from the account database, or "" when it
+    is not one of `USER_SHELLS` or cannot be read. Never `$SHELL`: Dark Army
+    is started by launchd, whose environment may not carry it."""
+    try:
+        shell = pwd.getpwuid(os.getuid()).pw_shell or ""
+    except (KeyError, OSError):
+        return ""
+    if os.path.basename(shell) not in USER_SHELLS or not os.path.isabs(shell):
+        return ""
+    return shell if os.access(shell, os.X_OK) else ""
+
+
+def shell_argv(argv, shell: Optional[str] = None) -> list:
+    """``argv`` run through the person's login, interactive shell, which
+    then ``exec``s it: ``zsh -lic 'exec "$@"' zsh <argv…>``.
+
+    **Why.** Dark Army, its pty broker and every terminal they open start
+    under launchd, so nothing a person exports in ``~/.zprofile`` or
+    ``~/.zshrc`` reaches an agent on Dark Army's terminal — a key read from
+    the Keychain there (``export MESHY_API_KEY="$(security
+    find-generic-password …)"``) was missing in every card's session while
+    the same agent in a VS Code terminal had it (18 Oct 2026). The broker's
+    ``env`` allow-list takes one origin key on purpose, and a secret in the
+    argv would show in ``ps``; the shell computes the exports inside the
+    child, so neither moves. ``exec`` keeps the pid: the pid the broker
+    reports is still the agent's own once the profile has run, exactly as
+    ``/usr/bin/env PATH=…`` already relies on. The session identity
+    `clean_env` strips is gone before the shell starts, and a profile does
+    not set it. Unchanged when `USER_SHELL_ENV` is off, the argv is empty
+    or the shell is not one `shell_argv` knows."""
+    argv = [str(a) for a in argv]
+    if not USER_SHELL_ENV or not argv:
+        return argv
+    shell = user_shell() if shell is None else shell
+    if not shell:
+        return argv
+    return [shell, "-l", "-i", "-c", 'exec "$@"',
+            os.path.basename(shell), *argv]
 
 
 def clean_env(base: Optional[Mapping] = None) -> dict:

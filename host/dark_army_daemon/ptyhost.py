@@ -901,8 +901,11 @@ class PtyHost:
             if isinstance(k, str) and isinstance(v, str)
             and origin.ENV_KEY_RE.match(k)
         }
+        # The person's shell first, so their profile's exports (a Keychain
+        # key among them) reach the agent; the PATH lead wraps the whole.
         reply = await self._rpc("start", root=root,
-                                argv=self._login_path_argv(argv),
+                                argv=self._login_path_argv(
+                                    subprocess_env.shell_argv(argv)),
                                 name=name, env=env_payload or None,
                                 cols=cols, rows=rows)
         if not reply.get("ok"):

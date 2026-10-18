@@ -349,8 +349,10 @@ async def test_the_whole_loop_from_start_to_done(daemon, project):
     picks = json.loads((review_run.folder_for(run_id) / review_run.PICKS_NAME)
                        .read_text())
     assert picks["fix"] == [2, 3] and picks["skip"] == [1, 4]
-    handle, line = daemon._pty.written[-1]
-    assert handle == "h-1" and line.endswith("\r")
+    # The words, then Enter as its own write (`test_terminal_line_enter`).
+    handle, line = daemon._pty.written[-2]
+    assert daemon._pty.written[-1] == ("h-1", "\r")
+    assert handle == "h-1" and not line.endswith("\r")
     assert "picks.json" in line and "no others" in line
     assert _run(daemon, run_id)["state"] == "fixing"
 

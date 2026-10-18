@@ -295,7 +295,10 @@ async def test_a_partial_write_is_busy_never_ended(tmp_path, monkeypatch):
         ok, detail = await d.terminal_input("pp", "hello", from_phone=True)
         assert (ok, detail) == (False, dm.TERMINAL_BUSY_REFUSAL)
         assert detail != dm.TERMINAL_EXITED_REFUSAL
-        # The line was queued, not dropped: once somebody reads, it lands.
+        # The words were queued, not dropped: once somebody reads, they land.
+        # The Enter is never sent after a busy refusal — it is its own write
+        # after the words drain (`test_terminal_line_enter`), so the person
+        # is told busy and nothing submits behind their back.
         os.set_blocking(r, False)
         got = bytearray()
         for _ in range(400):
@@ -312,7 +315,7 @@ async def test_a_partial_write_is_busy_never_ended(tmp_path, monkeypatch):
                 got += os.read(r, 65536)
             except BlockingIOError:
                 break
-        assert got.endswith(b"hello\r")
+        assert got.endswith(b"hello")
     finally:
         host._detach(term)
         host._terms.pop(term.handle, None)
@@ -511,7 +514,7 @@ async def test_the_write_on_the_home_door_lands_a_slash_and_replays_a_receipt(
         assert status == 200 and json.loads(body)["ok"] is True
         status, body2 = await _home_post(lan_port, paired["key"], "action", press, 2)
         assert status == 200 and body2 == body
-        assert writes == ["/low-priority\r"]
+        assert writes == ["/low-priority", "\r"]
     finally:
         await daemon._pty.close(handle)
 

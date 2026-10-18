@@ -182,3 +182,32 @@ opened reported `node` missing. Its `env` allow-list takes no PATH, so
 `hook_sock` key, the mark of a broker that adopts the PATH itself. `env`
 execs in place, so the pid the broker reports is the agent's own. Pinned by
 `test_pty_persist.py`.
+
+**The person's profile, through their own shell.** Nothing a person exports
+in `~/.zprofile` or `~/.zshrc` reached an agent on Dark Army's terminal: a key
+read from the Keychain there (`MESHY_API_KEY`) was missing in every card's
+session on 18 Oct 2026. `_broker_start` sends
+`subprocess_env.shell_argv(argv)` — `<login shell> -l -i -c 'exec "$@"'
+<name> <argv…>` — and `_login_path_argv` wraps the whole. The shell computes
+the exports inside the child, so no secret rides the broker's `env` (one
+origin key, on purpose) or the argv (`ps`); `exec` keeps the pid the agent's
+own. The shell is the account database's (`pwd`), used only when it is an
+absolute `zsh` or `bash`; anything else keeps the bare argv. The suite sets
+`USER_SHELL_ENV` off (`conftest.py`), so no test runs the machine's profile.
+Pinned by `test_subprocess_env_user_shell.py`.
+
+**A typed line is the words, then Enter as its own write.** One write of
+`text + "\r"` reaches Claude Code as one burst, which it reads as a paste:
+from about 140 characters the Enter lands as a line break in the input box
+and nothing is submitted, while the sender is told ok (a phone Comm message
+to Mission Control, 18 Oct 2026; measured on a real 2.1.302 pty, where the
+same 402 characters with the Enter 0.05 s later submitted). Both typing
+routes — `session_io._type_into_pty` and the daemon's `_terminal_line_input`
+(Comm, the phone, a review run's Continue) — write the words, drain, wait
+`session_io.PTY_ENTER_GAP_SECONDS` and write `\r`, under the handle's lock
+(typed lines only: raw desk keys never wait). The permission-prompt check runs
+again just before the Enter, so a dialog that came up in the pause is never
+confirmed by it (`TERMINAL_TYPED_NOT_SENT_REFUSAL`). After either that or a
+drain that runs out (the busy refusal) the words sit in the input box unsent
+and the Enter is never sent; both refusals say so, since a blind retry would
+submit the words twice. Pinned by `test_terminal_line_enter.py`.

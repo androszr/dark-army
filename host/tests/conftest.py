@@ -59,6 +59,8 @@ def _no_machine_login_path(monkeypatch, tmp_path_factory):
     nowhere = tmp_path_factory.getbasetemp() / "no-login-path"
     monkeypatch.setattr(subprocess_env, "PATHS_FILE", str(nowhere / "paths"))
     monkeypatch.setattr(subprocess_env, "PATHS_DIR", str(nowhere / "paths.d"))
+    # Nor does a hosted terminal run this machine's `~/.zshrc`.
+    monkeypatch.setattr(subprocess_env, "USER_SHELL_ENV", False)
 
 
 @pytest.fixture(autouse=True)
