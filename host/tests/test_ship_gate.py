@@ -102,6 +102,90 @@ def test_run_logs_counts_and_stops_on_the_same_failure_twice(run):
     assert len(_ledger(scratch)) == 3, "a refused run writes no row"
 
 
+def _say(*lines: str) -> list[str]:
+    """A fake gate command printing each line byte-for-byte (lines travel as
+    positional arguments, never interpolated into the -c string)."""
+    return ["sh", "-c", 'for l in "$@"; do printf "%s\\n" "$l"; done; exit 1', "sh", *lines]
+
+
+def test_an_id_with_a_space_is_read_whole_and_counted_once(run):
+    repo, scratch = run
+    a = "tests/test_x.py::test_y[ /clear]"
+    b = "tests/test_x.py::test_y[# comment]"
+    c = "tests/test_x.py::test_z[a - b]"
+    d = "tests/test_x.py::test_plain"
+    done = _gate(repo, scratch, "run", "pytest-targeted", "1", "--", *_say(
+        f"FAILED {a} - AssertionError: boom [with] - dash",
+        f"FAILED {a} - AssertionError: boom [with] - dash",
+        f"FAILED {b} - AssertionError",
+        f"ERROR {c} - RuntimeError: setup - [fail]",
+        f"FAILED {d} - RuntimeError: no - msg]"))
+    assert done.returncode == 1
+    assert "4 failing id(s) counted" in done.stdout
+    assert _ledger(scratch)[-1]["failing_ids"] == sorted([a, b, c, d])
+
+
+@pytest.mark.parametrize("line, expected", [
+    ("FAILED tests/t.py::test_y[x]y] - E", "tests/t.py::test_y[x]y]"),
+    ("FAILED tests/t.py::test_y[p[q] - E: a - b", "tests/t.py::test_y[p[q]"),
+    ("FAILED tests/t.py::test_y[this is not [toml] - E", "tests/t.py::test_y[this is not [toml]"),
+    ("FAILED tests/t.py::test_y[whole-\x1b[31;42m-1-2] - E", "tests/t.py::test_y[whole-\x1b[31;42m-1-2]"),
+    ("FAILED tests/t.py::test_y[Nothing - every check above ran.] - AssertionErr...",
+     "tests/t.py::test_y[Nothing - every check above ran.]"),
+    ("FAILED tests/t.py::test_y[" + "x" * 300 + "]", "tests/t.py::test_y[" + "x" * 300 + "]"),
+    ("FAILED tests/t.py::test_plain - RuntimeError: no - msg]", "tests/t.py::test_plain"),
+    ("FAILED tests/t.py::test_a - boom [with] - dash", "tests/t.py::test_a"),
+    ("FAILED tests/t.py::test_y[whole-\x1b[31;42m-1-2] - KeyError: ends]", "tests/t.py::test_y[whole-\x1b[31;42m-1-2]"),
+    ("FAILED tests/t.py::test_y[this is not [toml] - E: bad [x]", "tests/t.py::test_y[this is not [toml]"),
+    ("FAILED tests/t.py::test_y[p[q] - E: ends]", "tests/t.py::test_y[p[q]"),
+], ids=["closes-early", "never-closes", "toml", "sgr", "dash-in-param", "long-no-msg",
+        "plain-msg-bracket", "plain-msg-dash", "sgr-msg-ends-bracket", "toml-msg-ends-bracket",
+        "never-closes-msg-ends-bracket"])
+def test_the_extraction_rule_keeps_every_id_shape(run, line, expected):
+    repo, scratch = run
+    _gate(repo, scratch, "run", "pytest-targeted", "1", "--", *_say(line))
+    assert _ledger(scratch)[-1]["failing_ids"] == [expected]
+
+
+def test_a_space_id_on_the_pre_existing_list_stays_out_of_the_row(run):
+    """The success criterion: old failures with a space count as zero."""
+    repo, scratch = run
+    base = "tests/test_vscode_extension.py::test_native_reply_rejects_non_plain_input_before_any_probe"
+    (scratch / "pre-existing.txt").write_text(f"{base}[ /clear]\n{base}[# comment]\n", encoding="utf-8")
+    done = _gate(repo, scratch, "run", "pytest-full", "1", "--", *_say(
+        f"FAILED {base}[ /clear] - AssertionError: boom",
+        f"FAILED {base}[# comment] - AssertionError: boom"))
+    assert done.returncode == 1
+    assert "0 failing id(s) counted" in done.stdout
+    assert _ledger(scratch)[-1]["failing_ids"] == []
+
+
+def test_the_same_space_id_twice_stops_the_run(run):
+    repo, scratch = run
+    line = "FAILED tests/test_x.py::test_y[ /clear] - boom"
+    first = _gate(repo, scratch, "run", "pytest-targeted", "1", "--", *_say(line))
+    second = _gate(repo, scratch, "run", "pytest-targeted", "1", "--", *_say(line))
+    assert first.returncode == 1
+    assert second.returncode == 4 and "SAME FAILURE TWICE" in second.stdout
+    assert all(r["failing_ids"] == ["tests/test_x.py::test_y[ /clear]"] for r in _ledger(scratch))
+
+
+def test_classify_takes_a_space_id_as_one_argument(run):
+    repo, scratch = run
+    (repo / "host/tests/test_param.py").write_text(
+        "import pytest\n\n\n@pytest.mark.parametrize('text', [' /clear', '# comment'])\n"
+        "def test_p(text):\n    assert False\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "param")
+    (scratch / "pre-ship-head.txt").write_text(_git(repo, "rev-parse", "HEAD"), encoding="utf-8")
+    ident = "tests/test_param.py::test_p[ /clear]"
+    done = _gate(repo, scratch, "classify", ident)
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert done.stdout.startswith(f"PRE-EXISTING {ident}"), done.stdout
+    assert (scratch / "pre-existing.txt").read_text(encoding="utf-8") == ident + "\n"
+    assert (scratch / "baseline-0.log").read_text(encoding="utf-8").count(f"=== {ident}") == 1
+
+
 def test_the_full_suite_has_a_budget_of_two(run):
     repo, scratch = run
     green = ["sh", "-c", "echo ok"]
@@ -555,6 +639,7 @@ def test_the_briefs_name_the_helper_and_the_three_classes():
     assert "gate.sh run" in implementer and "Never write a ledger row by hand" in implementer
     assert "IN-FLIGHT: <ids or \"none\">" in implementer
     assert "when that file exists" in implementer
+    assert "one quoted argument" in implementer and "one quoted argument" in _flat(VERIFIER)
     assert "printf" not in implementer, "the inline ledger row is retired"
     verifier = _flat(VERIFIER)
     assert "A `YOURS` id is a FAIL" in verifier

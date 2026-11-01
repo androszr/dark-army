@@ -722,6 +722,9 @@ What changed, and what it measured:
   Phase 0 patch (binaries excluded so a dirty `.vsix` cannot poison
   `git apply`), the baseline replay **by id** in a worktree under `$SCRATCH`
   (never the whole suite, never this tree), and the review floors.
+  Failing ids are read whole off pytest's summary line (through the
+  parameter's closing bracket, else up to the ` - ` that opens the message),
+  **never word-split**, so `[ /clear]` matches the pre-existing list.
   `host/tests/test_ship_gate.py` runs it on a throwaway repository.
 - **Three failure classes.** `YOURS` (the delta touches the test, its
   module, or a tree the test greps, or the id is green at the baseline),
