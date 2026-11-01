@@ -18,6 +18,7 @@ import pytest
 
 from dark_army_daemon import (daemon_board, dispatch, trust_marks, work_record,
                                worktrees)
+from dark_army_daemon import board
 from dark_army_daemon.board import BoardStore
 from dark_army_daemon.daemon import BobDaemon
 
@@ -554,21 +555,14 @@ async def test_a_done_arrival_after_the_session_ended_releases_at_once(
 
 
 @pytest.mark.asyncio
-async def test_deleting_a_card_releases_its_folder_after_the_close(
+async def test_deleting_a_card_with_no_live_run_releases_its_folder(
         daemon, repo, monkeypatch):
     d, store = daemon
     card = await _prepared(d, store, repo, monkeypatch)
-    order: list = []
-
-    async def close(before, shell_pid=None):
-        order.append("close")
-
-    monkeypatch.setattr(d, "_close_for_deleted_card", close)
     store.update(card["id"], {"link_state": "ended"}, bump=False)
     ok, detail = await d.delete_card(card["id"])
     await _released(d)
     assert ok, detail
-    assert order == ["close"]
     assert not os.path.exists(card["worktree_path"])
 
 
@@ -689,22 +683,18 @@ def _inside_row(path, sid="s-inside"):
 
 
 @pytest.mark.asyncio
-async def test_deleting_a_live_card_whose_close_landed_releases_its_folder(
+async def test_deleting_a_live_card_is_refused_and_its_folder_stays(
         daemon, repo, monkeypatch):
     d, store = daemon
     card = await _prepared(d, store, repo, monkeypatch)
     store.update(card["id"], {"session_id": "s1", "link_state": "live"},
                  bump=False)
-
-    async def closed(before, shell_pid=None):
-        return True
-
-    monkeypatch.setattr(d, "_close_for_deleted_card", closed)
     ok, detail = await d.delete_card(card["id"])
     await _released(d)
-    assert ok, detail
-    assert not os.path.exists(card["worktree_path"])
-    assert card["worktree_branch"] in _git(repo, "branch", "--list", "card/*")
+    assert ok is False
+    assert detail == board.LIVE_RUN_DELETE_REFUSAL
+    assert store.get(card["id"]) is not None
+    assert os.path.isdir(card["worktree_path"])
 
 
 @pytest.mark.asyncio
@@ -712,13 +702,8 @@ async def test_a_deleted_cards_folder_waits_for_a_session_still_inside_it(
         daemon, repo, monkeypatch):
     d, store = daemon
     card = await _prepared(d, store, repo, monkeypatch)
-    store.update(card["id"], {"session_id": "s1", "link_state": "live"},
+    store.update(card["id"], {"session_id": "s1", "link_state": "ended"},
                  bump=False)
-
-    async def refused(before, shell_pid=None):
-        return False
-
-    monkeypatch.setattr(d, "_close_for_deleted_card", refused)
     d._agents_snapshot_cache = _inside_row(card["worktree_path"], "s1")
     ok, _ = await d.delete_card(card["id"])
     await _released(d)

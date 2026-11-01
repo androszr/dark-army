@@ -123,6 +123,7 @@ async def test_removed_card_detail(server, tmp_path):
     try:
         cards = _seed(store, 1)
         cid = cards[0]["id"]
+        store.mark_ended(cid)   # a live run is never deleted
         store.delete(cid)
         now = time.time()
         status, _, body = await api._lifecycle_report_for(

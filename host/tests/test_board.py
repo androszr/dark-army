@@ -129,6 +129,9 @@ def test_clear_done_deletes_every_done_row_in_one_statement_and_only_done(store)
     closed, detail = store.declare_done(
         agent_done["id"], "sess-1", "verified")
     assert closed is not None, detail
+    # A closed card whose session is still live refuses Clear Done; this one
+    # is about the statement, so its session has ended.
+    store.mark_ended(agent_done["id"])
     backlog = _card(store, title="keep backlog", summary="unchanged",
                     prompt="keep this", column_name="backlog")
     active = _card(store, title="keep active", tool="codex",
@@ -1011,6 +1014,8 @@ def test_a_card_deleted_under_the_close_reports_that_nothing_happened(store):
         row = real_get(card_id)
         if not fired:
             fired.append(True)
+            # Ended first: a card with a live run is never deleted.
+            store.mark_ended(card_id)
             store.delete(card_id)
         return row
 
@@ -2214,11 +2219,13 @@ def test_prune_done_skips_an_unreviewed_close(store):
     pending = _card(store, title="pending", column_name="in_progress")
     store.bind_session(pending["id"], "sess-1")
     store.declare_done(pending["id"], "sess-1", "done")
+    store.mark_ended(pending["id"])
     acknowledged = _card(store, title="acknowledged",
                          column_name="in_progress")
     store.bind_session(acknowledged["id"], "sess-2")
     store.declare_done(acknowledged["id"], "sess-2", "done")
     store.mark_reviewed(acknowledged["id"])
+    store.mark_ended(acknowledged["id"])
     dragged = _card(store, title="dragged")
     store.move(dragged["id"], "done")
     for cid in (pending["id"], acknowledged["id"], dragged["id"]):

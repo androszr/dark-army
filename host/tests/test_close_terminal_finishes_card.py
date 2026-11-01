@@ -226,9 +226,9 @@ async def test_a_permission_prompt_refuses_above_everything(daemon, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_a_codex_card_is_moved_too(daemon):
-    """Deliberately *not* excluded, unlike in `_wrap_up_for_done` and
-    `_close_for_deleted_card`. Those skip Codex because Dark Army cannot type at
-    it; this writes a board row and types nothing."""
+    """Deliberately *not* excluded, unlike in `_wrap_up_for_done`. That
+    skips Codex because Dark Army cannot type at it; this writes a board row
+    and types nothing."""
     d, store, _ = daemon
     card = _live(store, tool="codex")
     ok, detail = await d.close_session_terminal("sess-1", by_person=True)

@@ -350,16 +350,44 @@ executor; the task is started from `_flush_work_records`); the reconcile's once-
 at any Done card still naming a folder with its link not live
 (`_consider_standing_worktree` — after a restart, or with the folder removed
 by hand, which simply clears the pair); a Done arrival through
-`_after_board_write` whose link is already not live; `delete_card` after the
-terminal close; and Clear Done, for every cleared card. A deleted or
+`_after_board_write` whose link is already not live; `delete_card`, which
+only reaches a card with no live run; and Clear Done, for every cleared card. A deleted or
 cleared card with no folder recorded (its setup script failed and no second
 press came) releases the folder its id names under `.worktrees/`, when that
 is a directory — unless the card is still being prepared: then the prepare
 task, finding the card gone, discards the folder itself (whether the
 preparation succeeded or failed), never `--force`. A deleted card's
-release reads a close that landed as the shell gone; if it is deferred (a
-session still inside, or a close that did not land) the card is remembered
-whole (`_worktree_orphans`) and retried by the live-session test alone.
+release, if deferred (a session still inside the folder), remembers the card
+whole (`_worktree_orphans`) and is retried by the live-session test alone.
+
+**A delete never reaches a live run.** A card with an assistant on it,
+starting up or planning it — `link_state` or `refine_state` in
+`board.LIVE_RUN_STATES` (`dispatching`, `live`), `board.has_live_run` — is
+never deleted: `BoardStore.delete` answers `(False,
+board.LIVE_RUN_DELETE_REFUSAL)` ("This card still has a live run — stop it
+first, then delete the card.") and `clear_done` refuses the whole set with
+`board.live_run_clear_refusal(n)`; both clients draw the sentence verbatim
+through the refusal slot they already have (a 409, final on the phone's
+receipts), so no client changed. **The check lives in the store, under
+`BoardStore._lock` and before any row goes**, because `mark_live` and
+`bind_session` run from the reconcile on the snapshot thread holding only
+that lock: the daemon's `_dispatch_lock` covers a card going from idle to
+live through the start verbs, and only the store lock covers the rest. The
+refusal loses no message, run or lifecycle row, and `delete_card` forgets
+nothing of the card's bookkeeping (`_dispatch_baseline`, `_spawn_shell_pids`,
+`_dispatch_attempts`, …) unless the delete happened: a refused delete of a
+`dispatching` card must leave the receipt its bind needs. Delete closes no
+terminal any more; the person stops the run (Stop, Close terminal) or presses
+Reset, then deletes. Three SQL deletions exist and each is decided: `delete`
+refuses; `clear_done` refuses the whole confirmed set (skipping live cards
+would break its exact count-and-membership confirmation; a Done card whose
+terminal was left open, or a closed batch member whose session walks on,
+holds it until the run ends); `prune_done` (no daemon caller) skips live
+cards in its `SELECT` and its `DELETE`. **A card being prepared is not
+live**: `_worktree_preparing` is the window before any assistant exists, and
+Delete is the only way to cancel it, so it still goes through. Reset is the
+escape hatch for a stale `live` link and is never refused. Pinned by
+`host/tests/test_board_delete_live_run.py`.
 
 `git worktree remove <folder>` runs **without `--force`**, ever. Git refuses a
 tree with modified tracked files or untracked files (ignored ones — `.venv`,

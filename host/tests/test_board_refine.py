@@ -1790,38 +1790,37 @@ def _record_closes(d, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_deleting_one_batch_card_keeps_the_shared_planning_terminal(
+async def test_deleting_a_batch_card_still_being_planned_is_refused(
         daemon, tmp_path, monkeypatch):
-    """One session plans every card of a batch: deleting one card cancels
-    that card, not the others' interviews. The terminal closes only when the
-    last card still being refined goes — and a single refinement's delete
-    still closes it at once."""
+    """One session plans every card of a batch, and a card being interviewed
+    has a live run: Delete refuses it and closes nothing. Stop the planning
+    (or Reset the card) first."""
     d, store = daemon
     closed = _record_closes(d, monkeypatch)
     root = tmp_path / "proj"
     root.mkdir()
     cards = _bound_batch(store, root)
-    for card in (cards[2], cards[1]):
+    for card in cards:
         ok, detail = await d.delete_card(card["id"])
-        assert ok, detail
-        assert closed == []
-    ok, detail = await d.delete_card(cards[0]["id"])
-    assert ok, detail
-    assert closed == ["planner-1"]
+        assert ok is False
+        assert detail == board_mod.LIVE_RUN_DELETE_REFUSAL
+        assert store.get(card["id"]) is not None
+    assert closed == []
 
     single = _make(store, title="alone")
     store.update(single["id"], {"refine_session_id": "planner-2",
                                 "refine_state": "live"})
     ok, detail = await d.delete_card(single["id"])
-    assert ok, detail
-    assert closed == ["planner-1", "planner-2"]
+    assert ok is False and detail == board_mod.LIVE_RUN_DELETE_REFUSAL
+    assert closed == []
 
 
 @pytest.mark.asyncio
-async def test_a_batch_whose_siblings_are_planned_closes_on_the_last_delete(
+async def test_a_batch_sibling_whose_plan_attached_deletes_and_closes_nothing(
         daemon, tmp_path, monkeypatch):
-    """An attached sibling keeps `refine_session_id` as a record but no
-    longer needs the terminal, so it does not hold it open."""
+    """An attached sibling keeps `refine_session_id` as a record but its
+    `refine_state` is cleared: no live run, so Delete goes through, and the
+    delete closes no terminal (the planning session is not its to close)."""
     d, store = daemon
     closed = _record_closes(d, monkeypatch)
     root = tmp_path / "proj"
@@ -1831,9 +1830,12 @@ async def test_a_batch_whose_siblings_are_planned_closes_on_the_last_delete(
     for k in (0, 1):
         got, detail = await d.attach_plan_by_session("planner-1", str(plans[k]))
         assert got is not None, detail
-    ok, detail = await d.delete_card(cards[2]["id"])
+    ok, detail = await d.delete_card(cards[0]["id"])
     assert ok, detail
-    assert closed == ["planner-1"]
+    assert store.get(cards[0]["id"]) is None
+    assert closed == []
+    ok, detail = await d.delete_card(cards[2]["id"])
+    assert ok is False and detail == board_mod.LIVE_RUN_DELETE_REFUSAL
 
 
 @pytest.mark.asyncio

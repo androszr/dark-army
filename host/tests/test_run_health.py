@@ -864,6 +864,7 @@ def test_a_card_gone_from_the_board_leaves_the_memo(daemon, store, ledger_path,
     _dispatch(store, c["id"], "s1", 1_000.0)
     assert daemon._run_health_drifted(store.cards(), _turns(20)) is True
     assert c["id"] in daemon._run_health_seen
+    store.mark_ended(c["id"])   # a live run is never deleted
     store.delete(c["id"])
     assert daemon._run_health_drifted(store.cards(), _turns(20)) is False
     assert daemon._run_health_seen == {}

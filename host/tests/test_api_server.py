@@ -2347,6 +2347,9 @@ async def test_board_clear_done_is_atomic_and_preserves_non_done_rows(
         "title": "agent", "tool": "claude", "column_name": "in_progress"})
     store.bind_session(agent_done["id"], "sess-api")
     store.declare_done(agent_done["id"], "sess-api", "verified")
+    # A closed card whose session is still live refuses Clear Done; this test
+    # is about atomicity, so the session has ended.
+    store.mark_ended(agent_done["id"])
     backlog, _ = store.create({
         "title": "backlog", "summary": "keep", "prompt": "byte for byte",
         "project": "bob", "root": "/tmp/bob", "tool": "codex",

@@ -1126,6 +1126,39 @@ def leg_c(token: str, session_id: str, log: Log, max_seconds: float,
 # Teardown, self-test, main.
 # ---------------------------------------------------------------------------
 
+CLEANUP_LINK_WAIT_SECONDS = 120.0
+
+
+def card_run_is_live(state: dict, card_id: str) -> bool:
+    """Whether the board snapshot still lists this card with a live run
+    (`link_state` or `refine_state` dispatching or live). A card absent from
+    the snapshot is not live: there is nothing left to refuse."""
+    cards = ((state or {}).get("board") or {}).get("cards") or []
+    for card in cards:
+        if isinstance(card, dict) and card.get("id") == card_id:
+            return any(str(card.get(key) or "") in ("dispatching", "live")
+                       for key in ("link_state", "refine_state"))
+    return False
+
+
+def wait_for_link_to_end(token: str, card_id: str, log: Log,
+                         max_seconds: float = CLEANUP_LINK_WAIT_SECONDS) -> bool:
+    """Poll until the card's run is no longer live, bounded. `board_delete`
+    refuses a card with a live run, so deleting straight after the close
+    would 409 and strand the throwaway card. True when the link ended."""
+    began = time.time()
+    while True:
+        try:
+            if not card_run_is_live(get_state(token), card_id):
+                return True
+        except (OSError, urllib.error.URLError, ValueError) as exc:
+            log("cleanup: could not read the card's link (%s)" % exc)
+            return False
+        if time.time() - began >= max_seconds:
+            return False
+        time.sleep(3.0)
+
+
 def clean_up(token: str, card_id: str, session_id: str, log: Log) -> None:
     """Delete the card and close the terminal, and say what it could not
     clean up rather than leaving it to be discovered."""
@@ -1165,6 +1198,20 @@ def clean_up(token: str, card_id: str, session_id: str, log: Log) -> None:
             log("cleanup: COULD NOT close the terminal for %s (%s)"
                 % (session_id[:12], exc))
     if card_id:
+        if not wait_for_link_to_end(token, card_id, log):
+            # Nothing ever bound (a still-dispatching card), or the session
+            # outlived the close. Unlink the card so the delete can go; the
+            # terminal Dark Army opened for it, if any, is left open.
+            try:
+                status, body = action(token, {"action": "board_reset",
+                                              "card_id": card_id})
+                log("cleanup: the card's run was still live after %.0fs; "
+                    "board_reset answered %d %s - its terminal, if any, is "
+                    "LEFT OPEN, close it by hand"
+                    % (CLEANUP_LINK_WAIT_SECONDS, status, body))
+            except (OSError, urllib.error.URLError, ValueError) as exc:
+                log("cleanup: the card's run was still live and board_reset "
+                    "failed (%s)" % exc)
         try:
             status, body = action(token, {"action": "board_delete",
                                           "card_id": card_id})

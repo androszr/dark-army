@@ -381,6 +381,8 @@ real columns and to what the prompt builders send.
   leaves Done. `by_session()` and `by_refine_session()` return `[]` for an
   empty id — both fields default to `''`.
 
+  **A card with a live run is never deleted**: `delete` and `clear_done` refuse it under the store lock (`LIVE_RUN_DELETE_REFUSAL` / `live_run_clear_refusal`), `prune_done` skips it (`docs/card-worktrees.md`, *A delete never reaches a live run*).
+
   **Two splits are deliberate and both say declared-vs-observed.**
   `workflow` is what a card *expects* and only it may draw a hollow "still
   to come" marker; `agent_trail` is what Dark Army *saw*, written off the
