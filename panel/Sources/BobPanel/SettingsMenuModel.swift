@@ -297,7 +297,8 @@ enum SettingsMenuModel {
                                             remoteAccess: s.remoteAccess,
                                             relayWS: s.relayWS,
                                             unpairArmed: unpairArmed,
-                                            awayOffArmed: awayOffArmed)))
+                                            awayOffArmed: awayOffArmed,
+                                            batteryBuzzPercent: s.batteryBuzzPercent)))
 
         out.append(submenu("Security", id: "submenu:security",
                            rows: securityRows(security)))

@@ -212,11 +212,12 @@ def test_the_sound_is_chosen_here_from_a_closed_set():
     """The kind word picks a sound through a table in this file — five keys,
     every value a bundled `.wav` — and an absent or unknown kind falls
     through to Apple's default. No caller can name a sound. `security`
-    reuses the permission cue: no new file."""
+    and `battery` reuse the permission cue: no new file."""
     text = _read(PUSH)
     sounds = _sounds(text)
-    assert set(sounds) == {"security", "permission", "question", "picks", "attention", "finished"}
+    assert set(sounds) == {"security", "battery", "permission", "question", "picks", "attention", "finished"}
     assert sounds["security"] == sounds["permission"]
+    assert sounds["battery"] == sounds["permission"]
     assert all(v.startswith("buzz-") and v.endswith(".wav")
                for v in sounds.values())
     assert 'const kind = String(body.kind || "")' in text

@@ -389,8 +389,8 @@ def test_the_kinds_are_ordered_most_urgent_first():
     # `security` leads: a burst of refused knocks at the phone doors
     # (`access_log.py`) is about the machine, not an agent, and a buzz
     # collapsing it with an agent's ask plays the more urgent cue.
-    assert KINDS == ("security", "permission", "question", "picks", "attention",
-                     "finished")
+    assert KINDS == ("security", "battery", "permission", "question", "picks",
+                     "attention", "finished")
 
 
 def test_a_standing_question_under_the_idle_reminder_is_a_question():

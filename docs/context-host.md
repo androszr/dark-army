@@ -741,12 +741,12 @@ A row kept after its tab vanished publishes `tab_gone` (*A Grok turn outlives it
 - **The daemon acts on a session in exactly three places**, each decided on the
   executor and performed on the loop: `autocompact.py` types `/compact` on the input
   line (never the channel, Codex excluded, one attempt per episode),
-  `alerts.py` decides a banner `dark_army_menubar/notifier.py` delivers
+  `alerts.py` decides a banner `notifier.py` delivers
   (transitions only, `_undelivered` drained once after the push,
   each drained alert logged to `buzz-ledger.jsonl` by `buzz_ledger.py` —
-  `docs/transport-contract.md`, *The buzz is written down*; the phone leg
+  `docs/transport-contract.md`, *The buzz is written down*, *And one kind is about the Mac*; the phone leg
   is filtered (`live_activity.shown_sessions`), gated on Mac presence,
-  held — *The phone leg is filtered, gated and held*),
+  held, *The phone leg is filtered, gated and held*),
   and `_type_answer_burst` answers an `AskUserQuestion` dialog with a keystroke
   burst that **follows the installed CLI's widgets** — a CLI bump re-reads the
   dialog before any of the tuples are trusted. Withholding a card

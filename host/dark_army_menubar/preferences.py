@@ -220,6 +220,10 @@ DEFAULTS = {
     # is a deliberate act; this key exists so the buzzes can be switched off
     # *without* tearing any of that down. A new key, never a rename.
     "phone_push": True,
+    # The battery level (percent) at or below which the paired phone is
+    # buzzed once per discharge while the Mac is on battery. `0` is off. A new
+    # key, never renamed; an older build ignores it.
+    "battery_buzz_percent": 0,
     # The dictation hotkey MacWhisper is bound to, recorded once. Empty means
     # none has been recorded, which is also what an older build writes back.
     # Stored as {key_code, modifiers, label} when a shortcut is recorded; an

@@ -69,6 +69,10 @@ extension DaemonClient {
         /// outside 1...4 simply fails to match any row rather than drawing a
         /// tick beside a number Dark Army is not obeying.
         var boardParallel = 1
+        /// The battery level the paired phone is buzzed at, once per
+        /// discharge. 0 is off; an older menu bar omits the key and the row
+        /// draws Off.
+        var batteryBuzzPercent = 0
         /// The panel's size as a percent of the design (100/125/150/175).
         /// Stored raw and resolved at every read, for `boardParallel`'s
         /// stated reason (one bound, not two that can drift). An unknown
@@ -147,6 +151,7 @@ extension DaemonClient {
             if let v = raw["board_dispatch"] as? Bool { boardDispatch = v }
             if let v = raw["board_autostart"] as? Bool { boardAutostart = v }
             if let v = raw["board_parallel"] as? Int { boardParallel = v }
+            if let v = raw["battery_buzz_percent"] as? Int { batteryBuzzPercent = v }
             if let v = raw["panel_scale"] as? Int { panelScale = v }
             if let v = raw["cyber_cursor"] as? Bool { cyberCursor = v }
             if let v = raw["board_close_terminal"] as? Bool { boardCloseTerminal = v }

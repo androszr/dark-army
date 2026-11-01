@@ -652,6 +652,7 @@ EXPECTED_PREFERENCE_KEYS = {
     "remote_access",
     "relay_ws",
     "phone_push",
+    "battery_buzz_percent",
     "dictation_shortcut",
 }
 

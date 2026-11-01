@@ -63,6 +63,8 @@ const SOUNDS = {
   // A burst of refused knocks at the phone doors plays the permission cue:
   // the most urgent sound bundled, and a new file is a pbxproj entry.
   security: "buzz-permission.wav",
+  // The Mac's low battery, the machine's other interruption: same cue, no new file.
+  battery: "buzz-permission.wav",
   permission: "buzz-permission.wav",
   question: "buzz-question.wav",
   // A review waiting on picks plays the question cue: no new file.
