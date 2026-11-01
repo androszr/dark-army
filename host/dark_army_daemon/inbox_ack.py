@@ -34,7 +34,10 @@ logger = logging.getLogger("dark-army")
 ACK_KINDS = frozenset({"question", "waiting", "ended_work", "manual_check",
                        "start_asked", "review_picks"})
 NEVER_KINDS = frozenset({"permission"})
-MAX_INBOX_ACKS = 64
+# Above `BobDaemon.BOARD_MANUAL_CHECK_LIMIT` with room for sessions: a
+# dismissed manual check stays a live subject until its steps are cleared,
+# so a cap below that would evict a hide and bring the check back.
+MAX_INBOX_ACKS = 512
 
 INBOX_ACK_STALE_REFUSAL = "that item has changed or is already gone"
 INBOX_ACK_KIND_REFUSAL = "that item cannot be acknowledged"

@@ -2440,3 +2440,33 @@ async def test_prune_waits_while_a_card_is_being_prepared_in_the_root(
     await _pruned(d)
     assert len(_worktree_calls(calls, "prune")) == 1
     assert not d._worktree_prune_queue
+
+
+@pytest.mark.asyncio
+async def test_a_project_with_no_commit_yet_is_told_so_on_the_card(
+        daemon, tmp_path):
+    """An unborn `HEAD` makes `git worktree add` refuse; the card names that
+    cause instead of the generic words (a store-sim project, 17 Oct 2026)."""
+    d, store = daemon
+    root = tmp_path / "empty"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    (root / "a.txt").write_text("never committed\n")
+    root = os.path.realpath(root)
+    _p, _b, error = await d._prepare_worktree(_make(store, root), root)
+    assert error == worktrees.NO_COMMIT_REFUSAL
+
+
+@pytest.mark.asyncio
+async def test_any_other_refused_add_keeps_the_generic_words(
+        daemon, repo):
+    """A born project whose add still fails — the card's folder is a file —
+    keeps `ADD_FAILED_REFUSAL`."""
+    d, store = daemon
+    card = _make(store, repo)
+    path = worktrees.worktree_dir(repo, card["id"])
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as handle:
+        handle.write("in the way\n")
+    _p, _b, error = await d._prepare_worktree(card, repo)
+    assert error == worktrees.ADD_FAILED_REFUSAL

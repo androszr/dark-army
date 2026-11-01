@@ -83,6 +83,13 @@ SETUP_FAILED_REFUSAL = ("the project's worktree setup script failed ({0}) — "
 ADD_FAILED_REFUSAL = ("Dark Army could not create this card's own branch and "
                       "folder — check the project's git state, or switch card "
                       "isolation off for this project and press Start again")
+#: The add was refused and the project has no commit at all (an unborn
+#: `HEAD`): there is nothing for the card's branch to start from, and the
+#: generic words above sent the person looking for a problem that is not there.
+NO_COMMIT_REFUSAL = ("this project has no commit yet, so there is nothing for "
+                     "this card's own branch to start from — make a first "
+                     "commit in the project, or switch card isolation off for "
+                     "this project, then press Start again")
 #: The setup script is there but the project has no trust decision for the
 #: assistant being started (`trust_marks.root_trusted`). Dark Army runs a
 #: project's script only for a folder its person has already trusted.

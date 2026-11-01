@@ -86,3 +86,32 @@ def test_its_needs_you_entry_can_be_dismissed_and_stays_dismissed(daemon):
     # The pruner keeps it, because the card is still a live subject.
     acks = d.inbox_snapshot()["acks"]
     assert {"key": key, "kind": "manual_check", "fp": fp} in acks
+
+
+def test_more_open_checks_than_the_done_preview_all_ride_and_dismiss(daemon):
+    """24 Oct 2026: 55 open checks against a leg capped at the Done preview's
+    50. The five oldest fell off the frame, the Mac spliced them back from
+    its Done archive, and their Dismiss was refused on every client."""
+    d, store = daemon
+    count = d.BOARD_DONE_LIMIT + 5
+    cards = [_old_reviewed_done(store, f"check-{i}", f"1. Look at {i}.")
+             for i in range(count)]
+    d._board_state = d._build_board_state()
+    d._agents_snapshot_cache = {}
+    live = {c["id"] for c in d._board_state["cards"]}
+    assert {c["id"] for c in cards} <= live
+
+    async def wake():
+        return None
+    d._wake_surfaces = wake
+    for i, card in enumerate(cards):
+        fp = inbox_ack.fingerprint("manual_check", f"1. Look at {i}.")
+        ok, detail = asyncio.run(d.ack_inbox("c:" + card["id"],
+                                             "manual_check", fp))
+        assert ok, detail
+    acked = {a["key"] for a in d.inbox_snapshot()["acks"]}
+    assert {"c:" + c["id"] for c in cards} <= acked
+
+
+def test_every_check_the_frame_carries_can_hold_a_dismiss():
+    assert BobDaemon.BOARD_MANUAL_CHECK_LIMIT < inbox_ack.MAX_INBOX_ACKS

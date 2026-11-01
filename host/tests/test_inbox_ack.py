@@ -149,7 +149,7 @@ def test_cap_drops_oldest(tmp_path):
         store.ack(f"s:{i}", "waiting", "waiting")
     keys = [row["key"] for row in store.records()]
     assert keys == ["s:2", "s:3", "s:4"]
-    assert MAX_INBOX_ACKS == 64
+    assert MAX_INBOX_ACKS == 512
 
 
 def test_prune_drops_gone_keys(tmp_path):

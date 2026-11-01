@@ -1387,11 +1387,31 @@ async def reveal(pid: int) -> tuple:
 
 # ---- the reverse direction: a terminal, back to a session ----
 
+async def _proc_field(field: str, pid: int) -> str:
+    """`_ps_field`'s two fields the matcher reads, answered in-process.
+
+    The matcher walks up to 12 parents for every live session, and a `ps`
+    fork per hop — awaited one after another on the daemon loop — added up to
+    several seconds on a busy machine: past the extension's 4s wait, so the
+    press read as a stuck or very laggy button. psutil answers the same
+    question with one syscall, in microseconds.
+    """
+    try:
+        proc = psutil.Process(pid)
+        if field == "ppid":
+            return str(proc.ppid())
+        if field == "tty":
+            return proc.terminal() or ""
+    except (psutil.Error, OSError):
+        return ""
+    return await _ps_field(field, pid)
+
+
 async def session_for_terminal(
     shell_pid: int,
     tty: str,
     candidates,
-    ps_field=_ps_field,
+    ps_field=_proc_field,
 ) -> Optional[str]:
     """Which live session is running in the terminal `shell_pid`/`tty` owns.
 

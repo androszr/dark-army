@@ -8785,7 +8785,9 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
 
         matched = None
         try:
-            async with asyncio.timeout(5.0):
+            # Under the extension's 4s request timeout: a matcher that runs
+            # past it turns a slow match into "Dark Army is not running".
+            async with asyncio.timeout(3.0):
                 # Candidate construction shares the matcher's deadline.
                 loop = asyncio.get_running_loop()
                 legacy = await loop.run_in_executor(None, legacy_candidates)

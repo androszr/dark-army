@@ -78,7 +78,10 @@ The task, on the loop:
   branch never follows `origin/main`), or `git worktree add <folder>
   <branch>` when the branch already exists, bounded by
   `WORKTREE_ADD_TIMEOUT_SECONDS` (60 s). A refusal writes
-  `ADD_FAILED_REFUSAL` on the card's `dispatch_error` and stops.
+  `ADD_FAILED_REFUSAL` on the card's `dispatch_error` and stops — or
+  `NO_COMMIT_REFUSAL` when `git rev-parse HEAD`, asked only after the
+  refusal, finds no commit at all (an unborn `HEAD` has nothing to branch
+  from; `test_dispatch_worktree.py`).
 - On the executor: `/.worktrees/` appended once to the repository's own
   `info/exclude` (`git rev-parse --git-path info/exclude`, correct when
   `.git` is a file); the trust copies (below); the setup script (below).

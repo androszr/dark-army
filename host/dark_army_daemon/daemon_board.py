@@ -489,6 +489,13 @@ class BoardVerbsMixin:
     #: board used for a year must not grow every frame.
     BOARD_DONE_WINDOW = 24 * 3600.0
     BOARD_DONE_LIMIT = 50
+    #: How many finished cards with an open manual check ride the snapshot.
+    #: Its own bound, not `BOARD_DONE_LIMIT`: a dismissed check keeps its
+    #: steps, so this leg only shrinks when checks are cleared, and the card
+    #: that falls off it is one no dismiss can land on (24 Oct 2026: 55 open
+    #: checks, the five oldest stuck on the Mac's Inbox). Kept under
+    #: `inbox_ack.MAX_INBOX_ACKS`, so every one of them can hold a dismiss.
+    BOARD_MANUAL_CHECK_LIMIT = 400
     #: How much of a card's prompt rides in the snapshot.
     #:
     #: `board.py` measured the problem and named this as the fix: every card's
@@ -616,7 +623,7 @@ class BoardVerbsMixin:
             # too, however old it is: it rides every frame, so the Needs you
             # entry every client draws is one the daemon can acknowledge.
             for row in self._board.done_manual_check_pending(
-                    self.BOARD_DONE_LIMIT):
+                    self.BOARD_MANUAL_CHECK_LIMIT):
                 if (row.get("id") and row["id"] not in seen_ids
                         and str(row.get("manual_steps") or "").strip()):
                     seen_ids.add(row["id"])
@@ -10046,6 +10053,12 @@ class BoardVerbsMixin:
             if not added:
                 logger.info("card %s: git worktree add refused in %s (%s)",
                             cid[:8], root, why)
+                # Asked only after the refusal: a project with no commit yet
+                # is the one cause the person can act on from the words alone.
+                born, _o, _w = await self._run_git(
+                    work_record.argv_baseline(root), root)
+                if not born:
+                    return path, branch, worktrees.NO_COMMIT_REFUSAL
                 return path, branch, worktrees.ADD_FAILED_REFUSAL
         got, out, _w = await self._run_git(
             worktrees.argv_exclude_path(root), root)

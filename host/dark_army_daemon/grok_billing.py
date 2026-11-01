@@ -241,6 +241,13 @@ def get_snapshot(*, now: Optional[float] = None, force: bool = False,
     age = now - float(_cache.get("at") or 0.0)
     if not force and _cache.get("data") and age < TTL_SECONDS:
         return _held_snapshot(now)
+    # A failing fetch (a 401 from an expired login) waits out the TTL too.
+    # Without this every agents snapshot retried it — a blocking HTTPS round
+    # trip and a logged traceback roughly twice a second.
+    tried = float(_cache.get("tried") or 0.0)
+    if not force and tried and now - tried < TTL_SECONDS:
+        return _held_snapshot(now)
+    _cache["tried"] = now
     loader = fetch if fetch is not None else fetch_billing
     try:
         fresh = loader()
@@ -258,4 +265,5 @@ def get_snapshot(*, now: Optional[float] = None, force: bool = False,
 def reset_cache() -> None:
     """Tests only."""
     _cache["at"] = 0.0
+    _cache["tried"] = 0.0
     _cache["data"] = {}

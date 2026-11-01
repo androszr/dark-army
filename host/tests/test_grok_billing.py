@@ -154,3 +154,20 @@ def test_get_snapshot_keeps_the_last_reading_when_a_refresh_fails():
     held = grok_billing.get_snapshot(now=1.0 + grok_billing.TTL_SECONDS + 1,
                                      fetch=lambda: {})
     assert held["percent"] == 36.0
+
+
+def test_a_failing_fetch_waits_out_the_ttl_before_retrying():
+    """An expired login 401s. Retrying that on every agents snapshot was an
+    HTTPS round trip and a traceback twice a second."""
+    grok_billing.reset_cache()
+    calls = {"n": 0}
+
+    def failing():
+        calls["n"] += 1
+        return {}
+
+    grok_billing.get_snapshot(now=100.0, fetch=failing)
+    grok_billing.get_snapshot(now=110.0, fetch=failing)
+    assert calls["n"] == 1
+    grok_billing.get_snapshot(now=100.0 + grok_billing.TTL_SECONDS + 1, fetch=failing)
+    assert calls["n"] == 2

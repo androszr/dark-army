@@ -35,6 +35,21 @@ def _match(shell_pid, tty, candidates, ppids=None, ttys=None):
         shell_pid, tty, candidates, ps_field=_ps_fake(ppids or {}, ttys or {})))
 
 
+def test_default_matcher_reads_the_process_table_without_forking_ps(monkeypatch):
+    """One `ps` fork per parent hop, awaited in series, is what made the press
+    take seconds. The default lookup answers in-process: this test's own
+    process is found under its real parent with `ps` made unusable."""
+    import os
+
+    async def no_ps(*_args):
+        raise AssertionError("session_for_terminal forked ps")
+
+    monkeypatch.setattr(vscode_reveal, "_ps", no_ps)
+    found = asyncio.run(vscode_reveal.session_for_terminal(
+        os.getppid(), "", [("me", os.getpid(), 0.0)]))
+    assert found == "me"
+
+
 def test_ancestry_reaches_the_shell_through_a_chain():
     """The session is a grandchild of the terminal's shell — the ordinary case
     for an agent started inside a `zsh` VS Code opened."""
