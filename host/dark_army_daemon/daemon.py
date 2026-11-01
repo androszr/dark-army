@@ -10150,7 +10150,9 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         Executor-only, straight after `_power_source_snapshot`. The presence
         probe is taken only when a fire is otherwise due, and a person at the
         Mac keeps the buzz armed for the next reading: a withheld buzz is
-        never retried by the phone leg. Every read goes through `__dict__` so
+        never retried by the phone leg. So does a phone leg that could not
+        send (`_phone_leg_open`): Away access turned on at 15% still buzzes
+        once. Every read goes through `__dict__` so
         a bare test daemon works; a failure changes nothing."""
         try:
             state = self.__dict__
@@ -10161,6 +10163,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
             fire, armed_after, fired_after = alerting.battery_buzz(
                 reading, threshold, armed, None, MAC_PRESENT_SECONDS,
                 fired_at)
+            if fire and not self._phone_leg_open():
+                return
             if fire:
                 fire, armed_after, fired_after = alerting.battery_buzz(
                     reading, threshold, armed,
@@ -10176,6 +10180,19 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
             self._alerts = (getattr(self, "_alerts", []) + [row])[-32:]
         except Exception:
             logger.debug("battery buzz decision failed", exc_info=True)
+
+    def _phone_leg_open(self) -> bool:
+        """Whether `_push_phone_alerts` would reach a phone right now: its
+        three gates and one paired phone holding a push token."""
+        state = self.__dict__
+        if not state.get("phone_push_enabled", True):
+            return False
+        if not state.get("remote_access_enabled", False):
+            return False
+        if state.get("_relay_connector") is None:
+            return False
+        return any(relay.push_token(device_id) is not None
+                   for device_id in relay.channel_ids())
 
     def _deliver_battery_buzz(self) -> None:
         """Hand the decided low-battery row to the phone leg. On the loop.

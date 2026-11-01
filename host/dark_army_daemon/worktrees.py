@@ -252,6 +252,11 @@ def argv_branch_exists(root: str, branch: str) -> list:
         "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]
 
 
+def argv_any_commit(root: str) -> list:
+    """One commit id from any ref, or nothing in a project never committed."""
+    return work_record._git(root) + ["rev-list", "-n", "1", "--all"]
+
+
 def argv_worktree_add(root: str, path: str, branch: str,
                       base: str = "", *, existing: bool = False) -> list:
     """Check the card's branch out in its own folder. A new branch is created

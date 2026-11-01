@@ -2443,6 +2443,28 @@ async def test_a_project_with_no_commit_yet_is_told_so_on_the_card(
 
 
 @pytest.mark.asyncio
+async def test_a_git_that_cannot_answer_is_not_called_no_commit(
+        daemon, tmp_path, monkeypatch):
+    """The probe after a refused add timing out (a lock, a busy disk) is no
+    evidence the project is unborn: the card keeps the generic words."""
+    d, store = daemon
+    root = tmp_path / "empty"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    root = os.path.realpath(root)
+    real = d._run_git
+
+    async def run_git(argv, where, **kw):
+        if "rev-list" in argv:
+            return False, b"", "git did not answer in time"
+        return await real(argv, where, **kw)
+
+    monkeypatch.setattr(d, "_run_git", run_git)
+    _p, _b, error = await d._prepare_worktree(_make(store, root), root)
+    assert error == worktrees.ADD_FAILED_REFUSAL
+
+
+@pytest.mark.asyncio
 async def test_any_other_refused_add_keeps_the_generic_words(
         daemon, repo):
     """A born project whose add still fails — the card's folder is a file —

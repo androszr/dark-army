@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from dark_army_daemon import alerts, buzz_ledger, relay_client
+from dark_army_daemon import alerts, buzz_ledger, relay, relay_client
 from dark_army_daemon import daemon as daemon_module
 from dark_army_daemon.daemon import BobDaemon
 
@@ -166,6 +166,10 @@ def _bare(monkeypatch, idle=None, percent=20, source="battery", level=20):
     d = BobDaemon.__new__(BobDaemon)
     d.battery_buzz_percent = level
     d._power = _r(percent, source)
+    d.remote_access_enabled = True
+    d._relay_connector = _Connector()
+    monkeypatch.setattr(relay, "channel_ids", lambda: ["phone-1"])
+    monkeypatch.setattr(relay, "push_token", lambda device_id: "token")
     return d
 
 
@@ -188,6 +192,26 @@ def test_the_decision_waits_while_the_person_is_at_the_mac(monkeypatch):
     monkeypatch.setattr(buzz_ledger, "mac_idle_seconds", lambda: 120.0)
     d._decide_battery_buzz()
     assert d._battery_buzz_pending is not None
+
+
+def test_the_decision_stays_armed_while_no_phone_can_hear_it(monkeypatch):
+    """Away access off at 20%, on at 15%: the buzz is spent on the reading
+    the phone can receive, not on the one the leg would have dropped."""
+    d = _bare(monkeypatch)
+    for closed in ("remote_access_enabled", "_relay_connector", "token"):
+        if closed == "token":
+            monkeypatch.setattr(relay, "push_token", lambda device_id: None)
+        else:
+            saved = d.__dict__.pop(closed)
+        d._decide_battery_buzz()
+        assert d.__dict__.get("_battery_buzz_pending") is None
+        assert d.__dict__.get("_battery_armed", True) is True
+        if closed != "token":
+            d.__dict__[closed] = saved
+    monkeypatch.setattr(relay, "push_token", lambda device_id: "token")
+    d._power = _r(15)
+    d._decide_battery_buzz()
+    assert d._battery_buzz_pending is not None and d._battery_armed is False
 
 
 def test_the_decision_ignores_a_missing_reading_and_off(monkeypatch):

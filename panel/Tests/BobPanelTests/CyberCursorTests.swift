@@ -153,6 +153,16 @@ final class CyberCursorTests: XCTestCase {
         XCTAssertEqual(interval(idle: 29), 1.0 / 15.0)
     }
 
+    func testSchedulerSleepsWhileTheCaretIsHidden() {
+        func interval(bursting: Bool) -> TimeInterval? {
+            CyberScheduler.interval(now: t0, lastActivity: t0, bursting: bursting,
+                                    visible: true, scrolledBack: false, reduced: false,
+                                    caretShown: false)
+        }
+        XCTAssertNil(interval(bursting: false), "a spinner under a hidden caret draws nothing")
+        XCTAssertEqual(interval(bursting: true), 1.0 / 60.0, "an episode still plays")
+    }
+
     func testSchedulerWakesOnActivity() {
         let quiet = CyberScheduler.interval(now: t0, lastActivity: t0.addingTimeInterval(-60),
                                             bursting: false, visible: true,

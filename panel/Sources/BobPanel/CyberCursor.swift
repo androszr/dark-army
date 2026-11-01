@@ -259,10 +259,15 @@ enum CyberScheduler {
     static let burstInterval: TimeInterval = 1.0 / 60.0
     static let liveInterval: TimeInterval = 1.0 / 15.0
 
+    /// `caretShown` false (an agent mid-turn hides it with `?25l` while its
+    /// spinner keeps printing) leaves the live glow nothing to draw, so only
+    /// an episode or a decode keeps the timer.
     static func interval(now: Date, lastActivity: Date, bursting: Bool, visible: Bool,
-                         scrolledBack: Bool, reduced: Bool) -> TimeInterval? {
+                         scrolledBack: Bool, reduced: Bool,
+                         caretShown: Bool = true) -> TimeInterval? {
         guard visible, !scrolledBack, !reduced else { return nil }
         if bursting { return burstInterval }
+        guard caretShown else { return nil }
         if now.timeIntervalSince(lastActivity) < liveSeconds { return liveInterval }
         return nil
     }
@@ -632,7 +637,8 @@ final class CyberCursorOverlay: NSView {
         guard !stopped, enabled,
               let dt = CyberScheduler.interval(now: now, lastActivity: lastActivity,
                                                bursting: bursting, visible: visible,
-                                               scrolledBack: scrolledBack, reduced: reduced)
+                                               scrolledBack: scrolledBack, reduced: reduced,
+                                               caretShown: caretPresentProvider())
         else {
             timer?.invalidate()
             timer = nil

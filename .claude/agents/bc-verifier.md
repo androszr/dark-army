@@ -156,7 +156,7 @@ Notes on the standing checks, learned the hard way:
   expected green. There is no expected-failure list, and you must never invent
   one — an exemption is a licence for the next regression to land inside it.
   The one thing that stands beside a red id is the helper's own word for it:
-  `bash .claude/skills/ship/gate.sh classify <ids…>` (ids: one quoted argument) replays each id at the
+  `bash .claude/skills/ship/gate.sh classify <ids…>` (each id one quoted argument) replays each id at the
   pre-ship baseline in a worktree under `$SCRATCH` (never in this tree) and
   answers `PRE-EXISTING` (red there too), `IN-FLIGHT` (green there, but its
   file was changed by another run since this one's baseline and the delta does

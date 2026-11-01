@@ -10004,9 +10004,11 @@ class BoardVerbsMixin:
                             cid[:8], root, why)
                 # Asked only after the refusal: a project with no commit yet
                 # is the one cause the person can act on from the words alone.
-                born, _o, _w = await self._run_git(
-                    work_record.argv_baseline(root), root)
-                if not born:
+                # Only an answered, empty listing says so; a git that timed
+                # out or hit a lock keeps the generic words.
+                listed, out, _w = await self._run_git(
+                    worktrees.argv_any_commit(root), root)
+                if listed and not out.strip():
                     return path, branch, worktrees.NO_COMMIT_REFUSAL
                 return path, branch, worktrees.ADD_FAILED_REFUSAL
         got, out, _w = await self._run_git(

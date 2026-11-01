@@ -121,7 +121,7 @@ suites are independent by design.
 **A red test is not automatically yours.** The tree is habitually dirty, the
 suite is large and another card's run is often building in the same tree.
 Every red id outside the files you touched goes through `bash
-.claude/skills/ship/gate.sh classify <ids…>` **once** (each id **one quoted argument**, as `'t.py::t[ /clear]'`), and the answer is one
+.claude/skills/ship/gate.sh classify <ids…>` **once**, each id one quoted argument, and the answer is one
 of three words per id:
 
 - **YOURS** — the delta touches the test, the module it is named after, or a
@@ -134,11 +134,9 @@ of three words per id:
   `PRE-EXISTING:` report line and **never fix it** in this run; the helper
   keeps it out of `failing_ids` so it cannot trip the same-failure stop.
 - **IN-FLIGHT** — another run's half-built work: a candidate dirty now, clean
-  at this run's baseline, and absent from the delta. For phone source-grep
-  tests that includes `ios/BobPhone/`; for inventory tests, `docs/`; for agent
-  readers, the agent trees `.claude/agents/`, `.codex/agents/`, `.grok/agents/`
-  (`gate.sh` holds the list), even when this card touched one file of that
-  tree. List it under `IN-FLIGHT:`, never fix it, never count it; the last
+  at this run's baseline, and absent from the delta — a grepped tree too
+  (`gate.sh` holds the list), even when this card touched one file of it.
+  List it under `IN-FLIGHT:`, never fix it, never count it; the last
   run to finish is the one that must be green on the whole tree.
 
 Only an id the baseline collected and executed can be PRE-EXISTING. A patch
