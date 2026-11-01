@@ -737,3 +737,94 @@ def test_connect_coalesces_the_rows_an_older_build_left(tmp_path, clock):
         "SELECT value FROM lifecycle_meta WHERE key='spans_coalesced'"
     ).fetchone()["value"] == "1"
     s2.close()
+
+
+def _gap_rows(store, cid):
+    return store._conn.execute(
+        "SELECT episode_id, cause FROM lifecycle_spans WHERE card_id=? "
+        "AND coverage='gap'", (cid,)).fetchall()
+
+
+def test_a_sleep_on_an_idle_card_writes_no_gap_row(store, clock):
+    """The Mac's monotonic clock stops in sleep, so every wake disagrees
+    with the wall clock. On a card holding nothing that opens an episode no
+    reader could count the row, and a board of idle cards wrote one each per
+    wake — 725k rows on a real Mac."""
+    c = card(store)
+    observe(store, c["id"], clock)
+    clock.utc += 1_000  # asleep: the wall clock moves, monotonic does not
+    observe(store, c["id"], clock)
+    clock.mono -= 5
+    observe(store, c["id"], clock)
+    assert _gap_rows(store, c["id"]) == []
+
+
+def test_a_sleep_during_review_still_marks_the_episode(store, clock):
+    c = card(store)
+    store.update(c["id"], {"column_name": "done"})
+    store.mark_ended(c["id"], when=clock.utc)
+    observe(store, c["id"], clock, review=True)
+    clock.utc += 1_000
+    observe(store, c["id"], clock, review=True)
+    rows = _gap_rows(store, c["id"])
+    assert [r["cause"] for r in rows] == ["utc_disagreement"]
+    assert rows[0]["episode_id"] is not None
+    ep = store._conn.execute(
+        "SELECT coverage FROM lifecycle_episodes WHERE card_id=? AND kind='review'",
+        (c["id"],)).fetchone()
+    assert ep["coverage"] == "partial"
+
+
+def test_connect_drops_only_the_gap_rows_no_episode_reads(tmp_path, clock):
+    """The one-time cleanup keeps every gap a report can count — linked to
+    an episode, or card-level inside an episode's window — and deletes the
+    card-level rows outside every window, once, under its mark."""
+    s = BoardStore(tmp_path / "board.db")
+    s._clock_utc = clock.now
+    s._clock_mono = clock.monotonic
+    s.connect()
+    c = card(s)
+    s.update(c["id"], {"column_name": "done"})
+    s.mark_ended(c["id"], when=clock.utc)
+    observe(s, c["id"], clock, review=True)
+    clock.advance(10)
+    observe(s, c["id"], clock, review=True)
+    ep = s._conn.execute(
+        "SELECT id, started_at FROM lifecycle_episodes WHERE card_id=? "
+        "AND kind='review'", (c["id"],)).fetchone()
+    inside = float(ep["started_at"]) + 5
+    with s._conn:
+        s._conn.execute("DELETE FROM lifecycle_meta WHERE key='idle_gaps_dropped'")
+        for eid, at, cause in ((None, 500.0, "before"), (None, inside, "inside"),
+                               (ep["id"], 500.0, "linked")):
+            s._conn.execute(
+                "INSERT INTO lifecycle_spans(card_id,episode_id,utc_start,utc_end,"
+                "category,cause,attempt_id,coverage,process_generation) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (c["id"], eid, at, at, "gap", cause, None, "gap", "p"))
+    s.close()
+    s2 = BoardStore(tmp_path / "board.db")
+    s2._clock_utc = clock.now
+    s2._clock_mono = clock.monotonic
+    s2.connect()
+    assert sorted(r["cause"] for r in _gap_rows(s2, c["id"])) == ["inside", "linked"]
+    assert s2._conn.execute(
+        "SELECT value FROM lifecycle_meta WHERE key='idle_gaps_dropped'"
+    ).fetchone()["value"] == "1"
+    s2.close()
+
+
+def test_the_join_and_the_execution_total_use_their_partial_indexes(store):
+    def plan(sql, *args):
+        return " ".join(r[3] for r in store._conn.execute(
+            "EXPLAIN QUERY PLAN " + sql, args))
+    assert "lifecycle_span_join" in plan(
+        "SELECT id, utc_end FROM lifecycle_spans WHERE card_id=? AND category=? "
+        "AND cause=? AND coverage='complete' "
+        "AND IFNULL(attempt_id,-1)=IFNULL(?, -1) "
+        "AND IFNULL(episode_id,-1)=IFNULL(?, -1) "
+        "AND utc_end BETWEEN ? AND ? ORDER BY utc_end DESC LIMIT 1",
+        "c", "review", "review", None, None, 0.0, 1.0)
+    assert "lifecycle_span_execution" in plan(
+        "SELECT card_id, SUM(utc_end-utc_start) FROM lifecycle_spans "
+        "WHERE category='execution' AND coverage='complete' GROUP BY card_id")

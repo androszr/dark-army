@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS lifecycle_spans (
 );
 CREATE INDEX IF NOT EXISTS lifecycle_span_card ON lifecycle_spans(card_id, category, utc_start);
 CREATE INDEX IF NOT EXISTS lifecycle_span_episode ON lifecycle_spans(episode_id, utc_start);
+-- `_confirm_spans`' join and `run_figures`' execution total, each its own
+-- partial index: through `lifecycle_span_card` alone the join walked every
+-- span of the card's category and the total scanned the table, on every
+-- pass (`docs/lifecycle-timing.md`, *An idle card's clock gap is not kept*).
+CREATE INDEX IF NOT EXISTS lifecycle_span_join ON lifecycle_spans(card_id, category, cause, utc_end) WHERE coverage='complete';
+CREATE INDEX IF NOT EXISTS lifecycle_span_execution ON lifecycle_spans(card_id, utc_start, utc_end) WHERE category='execution' AND coverage='complete';
 CREATE TABLE IF NOT EXISTS lifecycle_checkpoints (
  card_id TEXT PRIMARY KEY, utc REAL NOT NULL, memberships TEXT NOT NULL,
  span_ids TEXT NOT NULL DEFAULT '[]', sequence INTEGER NOT NULL DEFAULT 0,
@@ -87,6 +93,10 @@ TITLE_CHARS = 200
 #: one row per checkpoint on a real Mac — 960k rows, a 27s report read under
 #: the store lock and a phone's card write queued behind it.
 SPAN_JOIN_TOLERANCE = 2.0
+#: The facts that open an episode in `_observe_locked`. A card holding none
+#: of them, with no episode open, is idle: a clock gap on it lands in no
+#: episode's window, so no reader can ever see the row it would write.
+_OPENS_EPISODE = ("queued", "executing", "review", "manual_check", "rework")
 
 
 def _root_of(card):
@@ -136,6 +146,7 @@ class LifecycleStoreMixin:
         self._lifecycle_written = {}
         self._lifecycle_pending_written = {}
         self._coalesce_spans_once()
+        self._drop_idle_gaps_once()
         with self._conn:
             found = self._conn.execute(
                 "SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
@@ -480,12 +491,15 @@ class LifecycleStoreMixin:
         if previous is not None:
             delta = monotonic - previous[0]
             wall = utc - previous[1]
+            # Every Mac sleep stops the monotonic clock, so each wake would
+            # otherwise write a row for every card on the board.
+            idle = not (facts and any(facts.get(k) for k in _OPENS_EPISODE))
             if delta < 0:
-                self._mark_gap(card_id, current_attempt, "negative_delta")
+                self._mark_gap(card_id, current_attempt, "negative_delta", idle=idle)
             elif wall < 0 or abs(wall - delta) > 2:
-                self._mark_gap(card_id, current_attempt, "utc_disagreement")
+                self._mark_gap(card_id, current_attempt, "utc_disagreement", idle=idle)
             elif delta > metrics.MAX_GAP:
-                self._mark_gap(card_id, current_attempt, "clock_gap")
+                self._mark_gap(card_id, current_attempt, "clock_gap", idle=idle)
         if gap and previous is not None:
             pass  # reason already recorded above when we can name it
         elif seconds and confirmed:
@@ -607,6 +621,44 @@ class LifecycleStoreMixin:
         except sqlite3.Error:
             logger.warning("board.db: VACUUM after coalescing failed", exc_info=True)
 
+    def _drop_idle_gaps_once(self):
+        """Delete, once per file (`lifecycle_meta` `idle_gaps_dropped`), the
+        card-level gap rows an older build wrote on idle cards at every wake
+        from sleep: 725k of a real Mac's 919k span rows. A card-level gap is
+        read only when it starts inside one of its card's episodes
+        (`board_lifecycle.coverage_at_cutoff`), so a row outside every window
+        changes no figure; those inside one stay. VACUUM afterwards, outside
+        the transaction, as `_coalesce_spans_once` does; every failure is a
+        log line and leaves the mark unset for the next open."""
+        try:
+            with self._conn:
+                done = self._conn.execute(
+                    "SELECT value FROM lifecycle_meta WHERE key='idle_gaps_dropped'"
+                ).fetchone()
+                if done and done["value"] == "1":
+                    return
+                dropped = self._conn.execute(
+                    "DELETE FROM lifecycle_spans WHERE episode_id IS NULL "
+                    "AND coverage='gap' AND NOT EXISTS (SELECT 1 FROM "
+                    "lifecycle_episodes e WHERE e.card_id=lifecycle_spans.card_id "
+                    "AND e.started_at IS NOT NULL "
+                    "AND e.started_at <= lifecycle_spans.utc_start "
+                    "AND (e.ended_at IS NULL OR lifecycle_spans.utc_start < e.ended_at))"
+                ).rowcount
+                self._conn.execute(
+                    "INSERT INTO lifecycle_meta(key,value) VALUES('idle_gaps_dropped','1') "
+                    "ON CONFLICT(key) DO UPDATE SET value='1'")
+        except sqlite3.Error:
+            logger.warning("board.db: idle gap rows not dropped", exc_info=True)
+            return
+        if dropped <= 0:
+            return
+        logger.info("board.db: dropped %d gap rows no episode reads", dropped)
+        try:
+            self._conn.execute("VACUUM")
+        except sqlite3.Error:
+            logger.warning("board.db: VACUUM after dropping gaps failed", exc_info=True)
+
     def _confirm_spans(self, card_id, utc_start, utc_end, memberships, attempt):
         attempt_id = None if attempt is None else attempt["id"]
         for category, cause, att in memberships:
@@ -640,7 +692,12 @@ class LifecycleStoreMixin:
                     (card_id, eid, utc_start, utc_end, category, cause, use_attempt,
                      "complete", self._lifecycle_process))
 
-    def _mark_gap(self, card_id, attempt, reason):
+    def _mark_gap(self, card_id, attempt, reason, *, idle=False):
+        """Record a hole in the evidence: every open episode turns partial
+        and gets a zero-length gap row. With none open, the row is card-level
+        (`episode_id` NULL) — unless the card is `idle`, holding nothing that
+        would open an episode, when no reader could ever count it and nothing
+        is written."""
         attempt_id = None if attempt is None else attempt["id"]
         self._conn.execute(
             "UPDATE lifecycle_episodes SET coverage='partial',"
@@ -653,6 +710,8 @@ class LifecycleStoreMixin:
         open_eps = list(self._conn.execute(
             "SELECT id FROM lifecycle_episodes WHERE card_id=? AND disposition='open'",
             (card_id,)))
+        if idle and not open_eps:
+            return
         targets = [row["id"] for row in open_eps] or [None]
         for eid in targets:
             self._conn.execute(

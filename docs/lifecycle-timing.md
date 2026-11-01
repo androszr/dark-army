@@ -17,6 +17,12 @@ lock, a phone's card write queued behind it — and `_coalesce_spans_once`
 folds such a file on its next open (`lifecycle_meta` `spans_coalesced`),
 gap rows untouched, then VACUUMs.
 
+**An idle card's clock gap is not kept.** Sleep stops the monotonic clock,
+so each wake is a gap on every card; with no episode open and no fact that
+opens one, `_mark_gap(idle=True)` writes no row, since no reader counts it.
+`_drop_idle_gaps_once` deleted the older rows (`idle_gaps_dropped`).
+`lifecycle_span_join` and `lifecycle_span_execution` serve the per-pass reads.
+
 ## What is measured
 
 - **Queue wait.** From `queue_state='queued'` until the dispatching update
