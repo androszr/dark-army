@@ -921,6 +921,15 @@ struct PhoneCardDetailView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         liveState
+        // A refinement batch's member says its place in the set, rank only
+        // (the daemon publishes no size), off `batch_rank` and only while
+        // refining in Prep. The Mac's own words; see `batchPlanningLine`.
+        if !card.batchPlanningLine.isEmpty {
+            Text(card.batchPlanningLine)
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
         // How the run is going — `RunHealthLine.text`, byte-equal with the
         // panel's, the Mac's own reading drawn verbatim with the size word
         // first. Drawn only where this Mac says it publishes the reading
