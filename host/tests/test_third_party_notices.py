@@ -162,3 +162,21 @@ def test_build_copies_both_files_before_the_manifest_and_the_signing():
         at = _copy_line(text, name)
         assert at < first_codesign.start(), name
         assert at < manifest, name
+
+
+def test_the_ported_shader_is_credited():
+    """The cyber cursor is a port of ghostty-cursor-fx (MIT): the page names
+    it, carries its copyright line and the MIT grant, and the page equals
+    what the generator's own `## Ported source` renderer emits, so a
+    regeneration keeps the section."""
+    raw = NOTICES.read_text(encoding="utf-8")
+    assert len(re.findall(r"^## Ported source$", raw, re.M)) == 1
+    assert "ghostty-cursor-fx" in raw
+    assert "Copyright (c) 2026 AONIR" in raw
+    assert "Permission is hereby granted, free of charge" in raw
+    spec = importlib.util.spec_from_file_location("frozen_components", GENERATOR)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    assert "ghostty-cursor-fx" in generator.PORTED
+    assert "Copyright (c) 2026 AONIR" in generator.PORTED["ghostty-cursor-fx"]
+    assert raw.endswith("\n".join(generator.ported_section()) + "\n")

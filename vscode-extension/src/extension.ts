@@ -29,7 +29,7 @@ import * as path from 'path';
 import { execFile } from 'child_process';
 import { randomUUID } from 'crypto';
 
-const EXT_VERSION = '0.1.22';
+const EXT_VERSION = '0.1.23';
 const EXTENSION_ID = 'dark-army.dark-army-ide';
 
 // Workspace Trust. The manifest declares `untrustedWorkspaces: limited`, so
@@ -153,8 +153,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidGrantWorkspaceTrust(() => {
       out.appendLine('workspace trusted: starting agents and typing into terminals are allowed here now');
+      void reconcileMatrixLook(context.workspaceState);
     }),
   );
+
+  startMatrixLook(context);
 
   context.subscriptions.push({ dispose: cleanup });
 }
@@ -208,6 +211,269 @@ function writeLock(port: number, authToken: string) {
     fs.writeFileSync(lockPath, body, { mode: 0o600 });
   } catch (err) {
     out.appendLine(`writeLock failed: ${err}`);
+  }
+}
+
+// ---- The Matrix look ----
+//
+// The VS Code half of Dark Army's "cyber cursor" (Settings > General > Hosted
+// terminal). A window open on a folder enrolled in Dark Army, and trusted by
+// the person, gets a steady green block cursor and green terminal colours,
+// written into that project's own settings (workspace scope) and nowhere
+// else. The colours are the still half of the hosted terminal's look, which
+// is a port of the MIT-licensed ghostty-cursor-fx "cyber" effect (see
+// THIRD_PARTY_NOTICES.md, "Ported source").
+//
+// Rules, all load-bearing:
+//  * Only the closed set `MATRIX_LOOK_KEYS` is ever written. A key the person
+//    already set in the workspace is left alone and not recorded as ours.
+//  * What was written is recorded in `workspaceState`; removal strips only a
+//    recorded key whose current value is still the recorded one.
+//  * The user-scope settings are never read into the workspace file:
+//    `inspect().workspaceValue` is the workspace's own object, and VS Code
+//    merges object settings across scopes when it draws them.
+//  * The switch is `cyber_cursor` in `<state dir>/preferences.json`. Absent or
+//    unreadable means on, as the app's own default; only a literal `false`
+//    turns the look off.
+//  * Untrusted folders, folders that are not enrolled and windows mixing
+//    enrolled and un-enrolled folders get nothing written.
+
+const MATRIX_APPLIED_KEY = 'darkArmy.matrixLook.applied';
+const COLOUR_SETTING = 'workbench.colorCustomizations';
+
+export const MATRIX_LOOK_KEYS: {
+  colors: Record<string, string>;
+  settings: Record<string, string | boolean>;
+} = {
+  colors: {
+    'terminalCursor.foreground': '#50e080',
+    'terminalCursor.background': '#0b1a10',
+    'terminal.foreground': '#b8f0c8',
+    'terminal.ansiGreen': '#50e080',
+    'terminal.ansiBrightGreen': '#7dffa6',
+    'terminal.selectionBackground': '#1f5a3a80',
+  },
+  settings: {
+    'terminal.integrated.cursorStyle': 'block',
+    'terminal.integrated.cursorBlinking': false,
+  },
+};
+
+export type MatrixDecision = 'apply' | 'remove' | 'none';
+
+export interface MatrixLookInput {
+  folders: string[];
+  trusted: boolean;
+  /** `cyber_cursor` from preferences.json; undefined when absent. */
+  preference: boolean | undefined;
+  enrolled: (folder: string) => boolean;
+  /** Whether this window has recorded entries of ours in its settings. */
+  applied?: boolean;
+}
+
+export function matrixLookDecision(input: MatrixLookInput): MatrixDecision {
+  if (!input.trusted) { return 'none'; }
+  if (input.folders.length === 0) { return 'none'; }
+  const all = input.folders.every((f) => input.enrolled(f));
+  if (!all) { return input.applied ? 'remove' : 'none'; }
+  return input.preference === false ? 'remove' : 'apply';
+}
+
+/** The switch: only a literal `false` is off. */
+export function readCyberCursorPreference(): boolean | undefined {
+  try {
+    const raw = fs.readFileSync(path.join(stateHome(), 'preferences.json'), 'utf8');
+    const value = JSON.parse(raw);
+    if (value && typeof value === 'object' && typeof value.cyber_cursor === 'boolean') {
+      return value.cyber_cursor;
+    }
+  } catch { /* absent or unreadable means on */ }
+  return undefined;
+}
+
+/**
+ * A folder is enrolled when it, or a folder above it (never the home folder),
+ * holds `.dark-army/key` (or the older `.bob-companion/key`).
+ */
+function folderEnrolled(folder: string): boolean {
+  const home = path.resolve(os.homedir());
+  let dir = path.resolve(folder);
+  for (let i = 0; i < 64; i++) {
+    if (dir === home) { return false; }
+    for (const name of ['.dark-army', '.bob-companion']) {
+      try {
+        if (fs.statSync(path.join(dir, name, 'key')).isFile()) { return true; }
+      } catch { /* not here */ }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) { return false; }
+    dir = parent;
+  }
+  return false;
+}
+
+interface MatrixApplied {
+  colors: Record<string, string>;
+  settings: Record<string, string | boolean>;
+}
+
+function recordedLook(store: vscode.Memento): MatrixApplied | undefined {
+  const raw = store.get<MatrixApplied>(MATRIX_APPLIED_KEY);
+  if (!raw || typeof raw !== 'object') { return undefined; }
+  return { colors: raw.colors ?? {}, settings: raw.settings ?? {} };
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return a === b;
+}
+
+/** Writes the look; returns what it wrote. Never overwrites a key already set. */
+export async function applyMatrixLook(store: vscode.Memento): Promise<MatrixApplied> {
+  const cfg = vscode.workspace.getConfiguration();
+  const target = vscode.ConfigurationTarget.Workspace;
+  const before = recordedLook(store) ?? { colors: {}, settings: {} };
+  const written: MatrixApplied = { colors: {}, settings: {} };
+
+  // Colours: the workspace's own object, plus ours where the key is free (or
+  // is already ours from an earlier run).
+  const own = (cfg.inspect<Record<string, string>>(COLOUR_SETTING)?.workspaceValue ?? {}) as Record<string, string>;
+  const nextColours: Record<string, string> = { ...own };
+  let coloursChanged = false;
+  for (const [key, value] of Object.entries(MATRIX_LOOK_KEYS.colors)) {
+    if (!(key in own)) {
+      nextColours[key] = value;
+      written.colors[key] = value;
+      coloursChanged = true;
+    } else if (own[key] === value && key in before.colors) {
+      written.colors[key] = value;
+    }
+  }
+  if (coloursChanged) { await cfg.update(COLOUR_SETTING, nextColours, target); }
+
+  for (const [key, value] of Object.entries(MATRIX_LOOK_KEYS.settings)) {
+    const current = cfg.inspect<string | boolean>(key)?.workspaceValue;
+    if (current === undefined) {
+      await cfg.update(key, value, target);
+      written.settings[key] = value;
+    } else if (sameValue(current, value) && key in before.settings) {
+      written.settings[key] = value;
+    }
+  }
+  await store.update(MATRIX_APPLIED_KEY, written);
+  return written;
+}
+
+/** Removes exactly what was written and is still as written. */
+export async function removeMatrixLook(store: vscode.Memento): Promise<void> {
+  const recorded = recordedLook(store);
+  if (!recorded) { return; }
+  const cfg = vscode.workspace.getConfiguration();
+  const target = vscode.ConfigurationTarget.Workspace;
+
+  const own = cfg.inspect<Record<string, string>>(COLOUR_SETTING)?.workspaceValue;
+  if (own && typeof own === 'object') {
+    const rest: Record<string, string> = { ...own };
+    let changed = false;
+    for (const [key, value] of Object.entries(recorded.colors)) {
+      if (key in rest && sameValue(rest[key], value)) { delete rest[key]; changed = true; }
+    }
+    if (changed) {
+      await cfg.update(COLOUR_SETTING, Object.keys(rest).length ? rest : undefined, target);
+    }
+  }
+  for (const [key, value] of Object.entries(recorded.settings)) {
+    const current = cfg.inspect<string | boolean>(key)?.workspaceValue;
+    if (current !== undefined && sameValue(current, value)) {
+      await cfg.update(key, undefined, target);
+    }
+  }
+  await store.update(MATRIX_APPLIED_KEY, undefined);
+}
+
+let matrixBusy: Promise<void> = Promise.resolve();
+
+/** Decide and act; serialised so two triggers never interleave their writes. */
+export function reconcileMatrixLook(store: vscode.Memento): Promise<void> {
+  matrixBusy = matrixBusy.then(async () => {
+    try {
+      const recorded = recordedLook(store);
+      const decision = matrixLookDecision({
+        folders: (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath),
+        trusted: trusted(),
+        preference: readCyberCursorPreference(),
+        enrolled: folderEnrolled,
+        applied: !!recorded && (Object.keys(recorded.colors).length > 0
+          || Object.keys(recorded.settings).length > 0),
+      });
+      if (decision === 'apply') { await applyMatrixLook(store); }
+      else if (decision === 'remove') { await removeMatrixLook(store); }
+    } catch (err) {
+      out?.appendLine(`matrix look not updated: ${err}`);
+    }
+  });
+  return matrixBusy;
+}
+
+/** The enrolment folders that exist under each workspace folder: where a key appears or goes. */
+export function matrixWatchTargets(folders: string[]): string[] {
+  const found: string[] = [];
+  for (const folder of folders) {
+    for (const name of ['.dark-army', '.bob-companion']) {
+      const dir = path.join(folder, name);
+      if (isDir(dir)) { found.push(dir); }
+    }
+  }
+  return found;
+}
+
+function startMatrixLook(context: vscode.ExtensionContext) {
+  const store = context.workspaceState;
+  void reconcileMatrixLook(store);
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => { void reconcileMatrixLook(store); }),
+  );
+  // The app writes preferences.json by atomic rename, so the directory is the
+  // thing to watch; a save can fire twice, hence the debounce.
+  try {
+    let timer: NodeJS.Timeout | undefined;
+    const watcher = fs.watch(stateHome(), { persistent: false }, (_event, name) => {
+      if (name && name !== 'preferences.json') { return; }
+      if (timer) { clearTimeout(timer); }
+      timer = setTimeout(() => { void reconcileMatrixLook(store); }, 300);
+    });
+    watcher.on('error', (err) => out.appendLine(`preferences watch stopped: ${err}`));
+    context.subscriptions.push({
+      dispose: () => { if (timer) { clearTimeout(timer); } watcher.close(); },
+    });
+  } catch (err) {
+    out.appendLine(`preferences not watched: ${err}`);
+  }
+  // Un-enrolling removes `<root>/.dark-army/key`: watch those folders too
+  // (same debounce), and recheck whenever the window regains focus, which
+  // also covers a key that appears in a parent folder.
+  try {
+    let timer: NodeJS.Timeout | undefined;
+    const watchers: fs.FSWatcher[] = [];
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    for (const dir of matrixWatchTargets(folders)) {
+      try {
+        const w = fs.watch(dir, { persistent: false }, (_event, name) => {
+          if (name && name !== 'key') { return; }
+          if (timer) { clearTimeout(timer); }
+          timer = setTimeout(() => { void reconcileMatrixLook(store); }, 300);
+        });
+        w.on('error', () => { /* folder removed; the focus recheck still covers it */ });
+        watchers.push(w);
+      } catch { /* not watchable */ }
+    }
+    context.subscriptions.push(
+      vscode.window.onDidChangeWindowState((state) => {
+        if (state.focused) { void reconcileMatrixLook(store); }
+      }),
+      { dispose: () => { if (timer) { clearTimeout(timer); } watchers.forEach((w) => w.close()); } },
+    );
+  } catch (err) {
+    out.appendLine(`enrolment not watched: ${err}`);
   }
 }
 

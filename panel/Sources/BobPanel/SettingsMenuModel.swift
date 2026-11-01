@@ -124,6 +124,7 @@ enum SettingsMenuModel {
         "set_board_autostart",
         "set_board_own_terminal",
         "set_board_close_terminal",
+        "set_cyber_cursor",
         "set_lan_access",
         "set_remote_access",
         "set_relay_ws",
@@ -266,6 +267,18 @@ enum SettingsMenuModel {
                      value: .int(step.percent),
                      selected: PanelScale.resolved(s.panelScale) == step.percent)
             }))
+
+        // The cyber cursor's one switch (31 Oct 2026). The key is never
+        // renamed; the action rides the stdin/stdout channel, no daemon table.
+        out.append(submenu(
+            "Hosted terminal", id: "submenu:terminal",
+            rows: [
+                toggle("Cyber cursor", action: "set_cyber_cursor", isOn: s.cyberCursor,
+                       tooltip: "The Matrix-style cursor in Dark Army's own terminal: "
+                           + "glyph rain on Enter, a sweep when the answer lands. "
+                           + "Off is the plain cursor. Also drives the green terminal "
+                           + "look in VS Code for enrolled projects."),
+            ]))
 
         out.append(submenu("Dictation", id: "submenu:dictation",
                            rows: dictationRows(s, recordingShortcut: recordingShortcut)))

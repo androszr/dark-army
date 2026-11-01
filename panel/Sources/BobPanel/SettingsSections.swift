@@ -73,7 +73,7 @@ enum SettingsSections {
     /// before the design system's; Board lists the loose board switches before
     /// Pipeline, whose rows the page splices under the master switch.
     static let members: [(SettingsSectionID, [String])] = [
-        (.general, ["submenu:notifications", "submenu:panel-size", "submenu:dictation"]),
+        (.general, ["submenu:notifications", "submenu:panel-size", "submenu:terminal", "submenu:dictation"]),
         (.sessions, ["loose:Sessions"]),
         (.board, ["loose:Board", "submenu:pipeline"]),
         (.models, [SettingsMenuModel.agentModelsRowId]),

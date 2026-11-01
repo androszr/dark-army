@@ -125,6 +125,7 @@ final class SettingsMenuModelTests: XCTestCase {
             "Agent models",
             "Close the terminal when a card is done",
             "Panel size",
+            "Hosted terminal",
             "Dictation",
             "—",
             "Projects",
@@ -144,7 +145,7 @@ final class SettingsMenuModelTests: XCTestCase {
             return nil
         }
         XCTAssertEqual(submenus, [
-            "Notifications", "Pipeline", "Agent models", "Panel size", "Dictation",
+            "Notifications", "Pipeline", "Agent models", "Panel size", "Hosted terminal", "Dictation",
             "Projects", "Devices", "Security", "Design system", "Advanced",
         ])
         let removed = [

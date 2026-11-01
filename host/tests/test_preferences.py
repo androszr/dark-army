@@ -259,3 +259,13 @@ def test_the_card_isolation_map_defaults_empty_and_an_older_file_loads(prefs_fil
     assert stored["board_parallel"] == 2
     assert load_preferences(prefs_file)["board_isolation_by_root"] == {
         "/a/proj": False}
+
+
+def test_cyber_cursor_defaults_on(prefs_file):
+    assert DEFAULTS["cyber_cursor"] is True
+    assert load_preferences(prefs_file)["cyber_cursor"] is True
+
+
+def test_a_stored_false_cyber_cursor_survives_a_load(prefs_file):
+    prefs_file.write_text(json.dumps({"cyber_cursor": False}), encoding="utf-8")
+    assert load_preferences(prefs_file)["cyber_cursor"] is False

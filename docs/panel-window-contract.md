@@ -78,7 +78,7 @@ lives in `preferences.DEFAULTS`.
 **`SettingsSections.placement` is the second heading table**, beside
 `looseSection` (`SettingsSections.swift`, Foundation only): it places every
 *group* on one of eight sidebar sections — **General** (Notifications, Panel
-size, Dictation), **Sessions**, **Board** (the loose board switches, then
+size, Hosted terminal, Dictation), **Sessions**, **Board** (the loose board switches, then
 Pipeline), **Models**, **Projects**, **Devices**, **Security**, **Advanced**
 (Advanced, then Design system) — or in the sidebar's **foot** (the kill
 switch, Restart, Quit, on every section). It names groups, never rows, and a
@@ -259,8 +259,29 @@ of the session. ESC CR is the sequence the assistants already accept.
 `Coordinator.attach(session:)`, matching VS Code's
 `terminal.integrated.macOptionIsMeta` default and Terminal.app, so a Polish or
 German layout types its own characters. There is deliberately **no preference
-and no settings row**: `SettingsMenuModel.rows` is the settings window's only
+and no settings row** for it (the cyber cursor's switch, below, is the pane's
+one preference): `SettingsMenuModel.rows` is the settings window's only
 inventory and a key can never be renamed.
+
+**The hosted terminal wears the cyber cursor.** A port of the MIT
+ghostty-cursor-fx "cyber" effect (credited in `CyberCursor.swift` and
+`THIRD_PARTY_NOTICES.md`). `CyberCursorOverlay` is a transparent `NSView`
+above `PaneTerminalView`: `hitTest` nil, rect-scoped invalidation only. It
+paints the green block, a decrypt over a typed letter's cell and two
+episodes, **Enter** (rain through the input box, found on the character grid
+once per episode; `CyberGeometry` replicates SwiftTerm's internal cell maths)
+and **done** (two sweeps that meet). **Triggers:** the local Enter
+(`noteInput`, the whole frame before a paste is chunked; CR, never ESC CR) and
+the snapshot's bucket hop (`Agents.row(session:)`: into `running` is Enter,
+out of it to `waiting`/`sleeping` is done); a local Enter mutes the hop for
+3 s. **`CyberScheduler`:** 1/60 s in an episode, 1/15 s within 30 s of
+activity, no timer when hidden or covered (`GraceCover`), scrolled back
+(normal buffer; the alternate screen reports 0), quiet or under Reduce
+Motion, which leaves a still block. Hidden output never wakes it. **Switch:**
+`cyber_cursor` (on, never renamed, panel-only, off `PHONE_PREFERENCES`), one
+row under General, **Hosted terminal**; off restores the pale caret via
+`TerminalLook.applyCaret`, apart from `apply(to:)` so its pins hold. The VS
+Code extension reads the same key (`docs/context-host.md`).
 
 **A click claims the caret.** AppKit does not promote a plain `NSView` on
 click and SwiftTerm's `mouseDown` never asks, so once the caret left the pane

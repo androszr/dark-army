@@ -788,6 +788,9 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             # steps live in the panel's PanelScale; the key is never renamed;
             # an out-of-range stored value is drawn at 100 rather than refused.
             "panel_scale": int(prefs.get("panel_scale", 100) or 100),
+            # The cyber cursor in the hosted terminal (and the extension's
+            # matching VS Code look). On by default; the daemon never reads it.
+            "cyber_cursor": bool(prefs.get("cyber_cursor", True)),
             # Whether the phone listener is up. Off by default — see
             # preferences.DEFAULTS: this is the first time Dark Army's data leaves
             # loopback.
@@ -2393,6 +2396,17 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         self._settings["panel_scale"] = int(n)
         save_preferences(updates={"panel_scale": int(n)})
 
+    def _set_cyber_cursor(self, enabled: bool) -> None:
+        """The hosted terminal's cyber cursor, and the extension's VS Code look.
+
+        `_set_panel_scale`'s shape: a panel-only look with no daemon attribute
+        and no snapshot to republish; the dispatcher's context push redraws
+        the pane and the settings window. The extension reads the key off
+        `preferences.json`.
+        """
+        self._settings["cyber_cursor"] = bool(enabled)
+        save_preferences(updates={"cyber_cursor": bool(enabled)})
+
     def _set_board_parallel_root(self, value) -> None:
         """One project's own dial, set from the pipeline heading.
 
@@ -3192,6 +3206,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         "set_agent_model":            lambda app, v: app._set_agent_model(v),
         "set_agent_effort":           lambda app, v: app._set_agent_effort(v),
         "set_panel_scale":            lambda app, v: app._set_panel_scale(int(v)),
+        "set_cyber_cursor":           lambda app, v: app._set_cyber_cursor(bool(v)),
         "set_board_close_terminal":   lambda app, v: app._set_board_close_terminal(bool(v)),
         "set_lan_access":             lambda app, v: app._set_lan_access(bool(v)),
         "set_remote_access":          lambda app, v: app._set_remote_access(bool(v)),

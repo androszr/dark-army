@@ -28,6 +28,8 @@ struct TerminalPane: View {
     @State private var note = ""
     @State private var exited = false
     @State private var ptySize: PtySize
+    /// Reduce Motion: the cyber cursor is a still green block with a glow.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The panel is covered and the stream's grace is running: the pane
     /// stops naming its session while `client.visible` still says true.
     @ObservedObject private var cover = GraceCover.shared
@@ -56,6 +58,10 @@ struct TerminalPane: View {
             NativeTerminalHost(
                 session: agent.sessionId,
                 client: client,
+                cyberEnabled: client.context.settings.cyberCursor,
+                reduceMotion: reduceMotion,
+                bucket: client.snapshot.agents.row(session: agent.sessionId)?.1,
+                covered: cover.inGrace,
                 onSize: { c, r in
                     ptySize.cols = c
                     ptySize.rows = r
@@ -196,6 +202,13 @@ enum TerminalLook {
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     }
 
+    /// The caret: the cyber cursor's green when the switch is on, the
+    /// foreground's pale block as before when it is off. Kept apart from
+    /// `apply(to:)` so that call, and the pins on it, stay as they are.
+    static func applyCaret(to view: TerminalView, cyber: Bool) {
+        view.caretColor = cyber ? CyberLook.cursor : foregroundNS
+    }
+
     static func apply(to view: TerminalView) {
         view.nativeForegroundColor = foregroundNS
         view.nativeBackgroundColor = backgroundNS
@@ -250,6 +263,14 @@ enum TerminalLook {
 /// `keyDown` is `public`, not `open`, and is deliberately **not** overridden:
 /// the panel's local `NSEvent` monitor is the seam we own.
 final class PaneTerminalView: TerminalView {
+    /// The cyber cursor's layer; kept above every subview SwiftTerm adds.
+    weak var cyberOverlay: CyberCursorOverlay?
+
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        if subview !== cyberOverlay { cyberOverlay?.raise() }
+    }
+
     override func mouseDown(with event: NSEvent) {
         // Before `super`: with mouse reporting on, a click inside an
         // application that tracks the mouse is forwarded as a report and
@@ -388,6 +409,10 @@ struct HiddenTerminalBuffer: Equatable {
 struct NativeTerminalHost: NSViewRepresentable {
     var session: String
     var client: DaemonClient
+    var cyberEnabled = true
+    var reduceMotion = false
+    var bucket: String?
+    var covered = false
     var onSize: (Int, Int) -> Void
     var onTitle: (String) -> Void
     var onNote: (String) -> Void
@@ -404,6 +429,14 @@ struct NativeTerminalHost: NSViewRepresentable {
         view.terminalDelegate = context.coordinator
         TerminalLook.apply(to: view)
         context.coordinator.view = view
+        let overlay = CyberCursorOverlay(frame: view.bounds)
+        overlay.attach(to: view)
+        view.cyberOverlay = overlay
+        context.coordinator.overlay = overlay
+        context.coordinator.cyberEnabled = cyberEnabled
+        overlay.setEnabled(cyberEnabled)
+        overlay.setReduced(reduceMotion)
+        overlay.setVisible(MainActor.assumeIsolated({ client.visible }) && !covered)
         context.coordinator.attach(session: session)
         context.coordinator.startFocusWatch()
         // The caret is claimed by `PaneTerminalView.viewDidMoveToWindow`,
@@ -423,6 +456,8 @@ struct NativeTerminalHost: NSViewRepresentable {
             context.coordinator.attach(session: session)
             DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
         }
+        context.coordinator.updateCyber(enabled: cyberEnabled, reduced: reduceMotion,
+                                        bucket: bucket, covered: covered)
     }
 
     static func dismantleNSView(_ view: TerminalView, coordinator: Coordinator) {
@@ -459,6 +494,11 @@ struct NativeTerminalHost: NSViewRepresentable {
         /// The visible-edge watch on `client.$visible`, installed with the
         /// focus watch and cancelled in `shutdown()`.
         private var visibleWatch: AnyCancellable?
+        /// The cyber cursor's layer above the terminal; main-thread only.
+        var overlay: CyberCursorOverlay?
+        var cyberEnabled = true
+        private var covered = false
+        private var lastScrollPosition = 1.0
 
         /// How long a closed stream waits before it is opened again, and
         /// how long a refusal (the session not hosted *yet*) waits.
@@ -507,8 +547,11 @@ struct NativeTerminalHost: NSViewRepresentable {
                 // `optionAsMetaKey` in particular must not be able to survive
                 // a session change in whatever state something left it.
                 TerminalLook.apply(to: view)
+                TerminalLook.applyCaret(to: view, cyber: cyberEnabled)
                 view.getTerminal().setup(isReset: true)
             }
+            lastScrollPosition = 1
+            overlay?.reset()
             open()
         }
 
@@ -523,10 +566,37 @@ struct NativeTerminalHost: NSViewRepresentable {
             visibleWatch?.cancel()
             visibleWatch = nil
             hidden = HiddenTerminalBuffer()
+            overlay?.stop()
             if let keyWindowObserver {
                 NotificationCenter.default.removeObserver(keyWindowObserver)
                 self.keyWindowObserver = nil
             }
+        }
+
+        /// What the SwiftUI side states on every update: the switch, Reduce
+        /// Motion, the session's bucket and the cover. All four are cheap
+        /// no-ops when unchanged.
+        func updateCyber(enabled: Bool, reduced: Bool, bucket: String?, covered: Bool) {
+            if enabled != cyberEnabled {
+                cyberEnabled = enabled
+                if let view { TerminalLook.applyCaret(to: view, cyber: enabled) }
+            }
+            self.covered = covered
+            guard let overlay else { return }
+            overlay.setEnabled(enabled)
+            overlay.setReduced(reduced)
+            overlay.setVisible(MainActor.assumeIsolated({ client.visible }) && !covered)
+            overlay.noteBucket(bucket)
+        }
+
+        /// SwiftTerm reports position 0 for the alternate screen, which has
+        /// no scrollback to be scrolled back through; only the normal buffer
+        /// at less than 1 is "scrolled back".
+        private func refreshScrolledBack() {
+            guard let view else { return }
+            let back = CyberScheduler.isScrolledBack(canScroll: view.canScroll,
+                                                     position: lastScrollPosition)
+            overlay?.setScrolledBack(back)
         }
 
         private func open() {
@@ -559,6 +629,8 @@ struct NativeTerminalHost: NSViewRepresentable {
                     if MainActor.assumeIsolated({ self.client.visible }) {
                         if let cleared = self.note.received() { self.onNote(cleared) }
                         view.feed(byteArray: [UInt8](data)[...])
+                        self.refreshScrolledBack()
+                        self.overlay?.noteOutput()
                     } else {
                         self.hidden.hold(data)
                     }
@@ -645,8 +717,10 @@ struct NativeTerminalHost: NSViewRepresentable {
             visibleWatch = MainActor.assumeIsolated { client.$visible }
                 .removeDuplicates()
                 .sink { [weak self] now in
+                    guard let self else { return }
+                    self.overlay?.setVisible(now && !self.covered)
                     guard now else { return }
-                    self?.releaseHidden()
+                    self.releaseHidden()
                 }
         }
 
@@ -664,6 +738,8 @@ struct NativeTerminalHost: NSViewRepresentable {
                 guard let view else { return }
                 if let cleared = note.received() { onNote(cleared) }
                 view.feed(byteArray: [UInt8](data)[...])
+                refreshScrolledBack()
+                overlay?.noteOutput()
             case .repaint:
                 Trace.log("terminal held bytes overflowed; repainting")
                 open()
@@ -705,6 +781,9 @@ struct NativeTerminalHost: NSViewRepresentable {
 
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
             guard !exited else { return }
+            // The whole frame, before a paste is chunked: ESC CR must be seen
+            // as ESC CR, not as the CR it ends in.
+            overlay?.noteInput([UInt8](data))
             guard let stream else {
                 onNote("The terminal is reconnecting; that key was not sent.")
                 return
@@ -720,7 +799,10 @@ struct NativeTerminalHost: NSViewRepresentable {
             }
         }
 
-        func scrolled(source: TerminalView, position: Double) {}
+        func scrolled(source: TerminalView, position: Double) {
+            lastScrollPosition = position
+            refreshScrolledBack()
+        }
 
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
