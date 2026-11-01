@@ -116,13 +116,12 @@ failing for anything but a hang-up logs and sends
 `STREAM_SEND_FAILED_REFUSAL`, held by `TerminalNoteHold`. Keys go up in
 order with no drain wait and **no permission-prompt refusal** (the dialog
 is on this screen; the phone's line route keeps every refusal). SwiftTerm
-is fed straight from the socket, never through `@State` (hidden, it holds
-them in `HiddenTerminalBuffer` until the visible edge), and is the one owner of the pty size (`sizeChanged`, debounced; a repeated size is not a
-line to the broker). `allowMouseReporting` is **off**; the look is VS
-Code's Dark Modern (`TerminalLook`). The emulator parses on *read*
+is fed straight from the socket, never through `@State` (hidden, it buffers
+in `HiddenTerminalBuffer`), and owns the pty size (`sizeChanged`, debounced; a repeated size is not sent). The look is VS
+Code's Dark Modern (`TerminalLook`; *The hosted terminal wears the cyber cursor*,
+`docs/panel-window-contract.md`). The emulator parses on *read*
 (`Screen.defer`, `LAG_SYNC_BYTES`) — the loop's pty reader parses nothing
-— and the broker carries bytes as `b64`, so the two counters agree across a
-split character. **The phone draws the same emulator** (SwiftTerm in
+— and the broker carries bytes as `b64`, so the two counters agree across a split. **The phone draws the same emulator** (SwiftTerm in
 `ios/BobPhone/TerminalPane.swift`): at home on the same stream, sealed
 per frame on the phone door (`POST /api/terminal/stream`, `SealedCodec`,
 a kind on `_home_open` and never an action); away fed by the sealed

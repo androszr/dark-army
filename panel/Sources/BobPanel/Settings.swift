@@ -74,6 +74,10 @@ extension DaemonClient {
         /// stated reason (one bound, not two that can drift). An unknown
         /// value draws at 100%.
         var panelScale = PanelScale.defaultPercent
+        /// The Matrix-style cyber cursor in the hosted terminal. On by
+        /// default and when the key is absent (an older menu bar never sends
+        /// it); the key is never renamed.
+        var cyberCursor = true
         /// Whether a card arriving in Done disposes the assistant's terminal
         /// tab. False by default — a pre-upgrade daemon omits the key
         /// entirely, and the toggle must render off rather than blank the
@@ -144,6 +148,7 @@ extension DaemonClient {
             if let v = raw["board_autostart"] as? Bool { boardAutostart = v }
             if let v = raw["board_parallel"] as? Int { boardParallel = v }
             if let v = raw["panel_scale"] as? Int { panelScale = v }
+            if let v = raw["cyber_cursor"] as? Bool { cyberCursor = v }
             if let v = raw["board_close_terminal"] as? Bool { boardCloseTerminal = v }
             if let v = raw["board_own_terminal"] as? Bool { boardOwnTerminal = v }
             if let shortcut = raw["dictation_shortcut"] as? [String: Any] {

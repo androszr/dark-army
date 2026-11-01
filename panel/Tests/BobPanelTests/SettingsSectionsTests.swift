@@ -136,7 +136,7 @@ final class SettingsSectionsTests: XCTestCase {
         XCTAssertEqual(advanced.groups.map(\.id), ["submenu:advanced", "submenu:design-system"])
         let general = pages.first { $0.id == .general }!
         XCTAssertEqual(general.groups.map(\.id),
-                       ["submenu:notifications", "submenu:panel-size", "submenu:dictation"])
+                       ["submenu:notifications", "submenu:panel-size", "submenu:terminal", "submenu:dictation"])
         let sessions = pages.first { $0.id == .sessions }!
         XCTAssertEqual(sessions.groups.first?.entries.map(\.id),
                        ["toggle:set_channel", "toggle:set_auto_compact"])

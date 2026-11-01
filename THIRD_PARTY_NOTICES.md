@@ -1689,3 +1689,42 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 `vscode-extension/package.json` declares no runtime dependencies; the
 extension ships only its own code.
+
+## Ported source
+
+Code in Dark Army that is a port of another project's work, credited here
+with that project's licence. Nothing below is linked or bundled.
+
+### ghostty-cursor-fx
+
+- Licence: MIT
+- Upstream: https://github.com/Avarce/ghostty-cursor-fx
+- Why it is here: the cyber cursor's look and timing constants (`shaders/cyber-cursor.glsl`, `cursor-effects/cyber.conf`), ported into `panel/Sources/BobPanel/CyberCursor.swift`
+
+<details><summary>LICENSE</summary>
+
+```text
+MIT License
+
+Copyright (c) 2026 AONIR
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+</details>

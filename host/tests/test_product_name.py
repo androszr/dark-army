@@ -628,6 +628,7 @@ def test_display_names() -> None:
 
 # --- (k) no preference key carries the product name -------------------------
 EXPECTED_PREFERENCE_KEYS = {
+    "cyber_cursor",
     "session_timeout",
     "session_title",
     "notification_sound",

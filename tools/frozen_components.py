@@ -75,6 +75,56 @@ SWIFT = {
                               "the app. Listed so the resolved set is complete"),
 }
 
+#: Source Dark Army ported into its own code rather than linked or bundled.
+#: Each row: name, licence id, upstream URL, why it is here, copyright line.
+#: Rendered as `## Ported source` after the extension section, so a
+#: regeneration keeps it.
+PORTED = {
+    "ghostty-cursor-fx": (
+        "MIT", "https://github.com/Avarce/ghostty-cursor-fx",
+        "the cyber cursor's look and timing constants (`shaders/cyber-cursor.glsl`, "
+        "`cursor-effects/cyber.conf`), ported into "
+        "`panel/Sources/BobPanel/CyberCursor.swift`",
+        "Copyright (c) 2026 AONIR"),
+}
+
+#: The MIT grant, the same words for every ported row; the first line is the
+#: row's own copyright.
+MIT_TEXT = """MIT License
+
+{copyright}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE."""
+
+
+def ported_section() -> list[str]:
+    """The `## Ported source` section, as lines for the page."""
+    out = ["\n## Ported source\n",
+           "Code in Dark Army that is a port of another project's work, credited here",
+           "with that project's licence. Nothing below is linked or bundled.\n"]
+    for name, (licence, url, why, copyright_line) in PORTED.items():
+        out += [f"### {name}\n", f"- Licence: {licence}", f"- Upstream: {url}",
+                f"- Why it is here: {why}\n"]
+        _details(out, "LICENSE", MIT_TEXT.format(copyright=copyright_line))
+    # `_details` ends on a blank line; the page's last line is the closing tag.
+    return out[:-1] + [out[-1].rstrip("\n")]
+
 
 def _requirements() -> set[str]:
     names = set()
@@ -287,6 +337,7 @@ def write_notices(bundle: Path) -> int:
     out += ["## The VS Code extension\n",
             "`vscode-extension/package.json` declares no runtime dependencies; the",
             "extension ships only its own code."]
+    out += ported_section()
     NOTICES.write_text("\n".join(out) + "\n", encoding="utf-8")
     print(f"wrote {NOTICES.relative_to(REPO)}")
     return 0

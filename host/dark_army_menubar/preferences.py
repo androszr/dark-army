@@ -181,6 +181,13 @@ DEFAULTS = {
     # is never renamed. An out-of-range stored value is drawn at 100 rather
     # than refused — one resolution seam, in the panel.
     "panel_scale": 100,
+    # The Matrix-style "cyber" cursor in the panel's hosted terminal, and the
+    # matching green look the VS Code extension writes into an enrolled,
+    # trusted project. **On** by default. A panel-only look: the pane reads it
+    # off the context push, the extension reads it off this file, the daemon
+    # never reads it. The key is never renamed: a rename reads as absent and
+    # resets the switch.
+    "cyber_cursor": True,
     # Whether a card arriving in Done disposes the session's terminal tab.
     # Only the toggle ever writes this key, so every stored value is a
     # deliberate press and sticks.
