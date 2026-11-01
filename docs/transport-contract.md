@@ -1000,3 +1000,11 @@ an absent or malformed token is no dedupe and today's behaviour exactly.
 A restart forgets every receipt, and what covers that window is the
 phone's own effect test, `OutboxStore.alreadyLanded`'s argument one rung
 on: never resend what you can check.
+
+**The helper bot carries one too.** `relay_bot._marked` mints a
+`secrets.token_hex(8)` mark per action, keeps a well-formed caller mark and
+replaces a malformed one. It is applied once, before `_Line.request`'s retry
+and `BotSession.request`'s stale-counter refire, so both resend the same
+mark and the ledger (and, after a restart, the rebuild stamp) answers the
+second copy. The bot is its own device, so its receipts never meet a phone's; the rebuild stamp is keyed on the mark alone.
+Reads carry none.
