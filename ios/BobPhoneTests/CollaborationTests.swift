@@ -195,7 +195,9 @@ extension CollaborationTests {
         client.start(record: PairingRecord(token: "collaboration-fixture", host: "127.0.0.1", port: 19874,
             deviceId: "collaboration-fixture", homeKey: Data(repeating: 42, count: 32).base64EncodedString()))
         defer { client.stop() }
-        for _ in 0..<100 where client.status == .connecting {
+        // A deadline, not a count: a loaded CI runner can take seconds over the first poll.
+        let deadline = ContinuousClock.now + .seconds(10)
+        while client.status == .connecting && ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(CollaborationRequestSpy.seen.isEmpty, "The paired client must exercise the request spy")
