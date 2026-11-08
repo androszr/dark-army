@@ -797,8 +797,8 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             # steps live in the panel's PanelScale; the key is never renamed;
             # an out-of-range stored value is drawn at 100 rather than refused.
             "panel_scale": int(prefs.get("panel_scale", 100) or 100),
-            # The cyber cursor in the hosted terminal (and the extension's
-            # matching VS Code look). On by default; the daemon never reads it.
+            # The cyber cursor in the hosted terminal. On by default; the
+            # daemon never reads it.
             "cyber_cursor": bool(prefs.get("cyber_cursor", True)),
             # Whether the phone listener is up. Off by default — see
             # preferences.DEFAULTS: this is the first time Dark Army's data leaves
@@ -2422,12 +2422,11 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         save_preferences(updates={"panel_scale": int(n)})
 
     def _set_cyber_cursor(self, enabled: bool) -> None:
-        """The hosted terminal's cyber cursor, and the extension's VS Code look.
+        """The hosted terminal's cyber cursor.
 
         `_set_panel_scale`'s shape: a panel-only look with no daemon attribute
         and no snapshot to republish; the dispatcher's context push redraws
-        the pane and the settings window. The extension reads the key off
-        `preferences.json`.
+        the pane and the settings window.
         """
         self._settings["cyber_cursor"] = bool(enabled)
         save_preferences(updates={"cyber_cursor": bool(enabled)})

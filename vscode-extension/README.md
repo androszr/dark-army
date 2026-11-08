@@ -2,18 +2,12 @@
 
 Lets the Dark Army daemon focus the integrated terminal tab of a Claude Code session in this window.
 
-## The Matrix look
+## No terminal colours
 
-When Dark Army's **Cyber cursor** switch is on (Settings, General, Hosted
-terminal; on by default), a window open on a folder enrolled in Dark Army and
-trusted in VS Code gets a steady green block cursor and green terminal colours.
-They are written into that project's own settings (`.vscode/settings.json`)
-as a small closed set: six `workbench.colorCustomizations` entries
-(`terminalCursor.*`, `terminal.foreground`, `terminal.ansiGreen`,
-`terminal.ansiBrightGreen`, `terminal.selectionBackground`) and
-`terminal.integrated.cursorStyle` / `cursorBlinking`. Nothing you set yourself
-is overwritten. Switching the Cyber cursor off, or un-enrolling the folder,
-removes exactly the entries Dark Army wrote and nothing else. Untrusted
-folders, folders that are not enrolled and windows that mix enrolled and
-un-enrolled folders are left alone. The colours are the still half of the
-hosted terminal's look, ported from the MIT-licensed ghostty-cursor-fx project.
+Version 0.1.23 gave a window open on an enrolled, trusted folder a green block
+cursor and green terminal colours, written into that project's workspace
+settings. From 0.1.24 the extension writes no colours or cursor settings. On
+its first start in such a window it takes back exactly the entries 0.1.23
+wrote, and only where each still holds the value written; anything you set
+yourself, or changed since, stays. Dark Army's own hosted terminal keeps its
+cyber cursor (Settings, General, Hosted terminal).

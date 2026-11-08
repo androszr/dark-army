@@ -280,8 +280,7 @@ activity, no timer when hidden or covered (`GraceCover`), scrolled back
 Motion, which leaves a still block. Hidden output never wakes it. **Switch:**
 `cyber_cursor` (on, never renamed, panel-only, off `PHONE_PREFERENCES`), one
 row under General, **Hosted terminal**; off restores the pale caret via
-`TerminalLook.applyCaret`, apart from `apply(to:)` so its pins hold. The VS
-Code extension reads the same key (`docs/context-host.md`).
+`TerminalLook.applyCaret`, apart from `apply(to:)` so its pins hold.
 
 **A click claims the caret.** AppKit does not promote a plain `NSView` on
 click and SwiftTerm's `mouseDown` never asks, so once the caret left the pane

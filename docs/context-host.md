@@ -531,7 +531,7 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `finished` rows are skipped. **One writer per tty**, most-recently-active
     wins; `_written` memoises what each tab says. The pen is taken on every
     launch and never given back. **The Claude env flag also gates Claude
-    Code's AI title generation**, which is why `session_title.py` exists. `cyber_cursor` themes the extension.
+    Code's AI title generation**, which is why `session_title.py` exists.
 
   - **`session_title.py`** — the name a row wears when Claude Code writes
     none. `ai_title.py` prefers the transcript's `ai-title`, which the env

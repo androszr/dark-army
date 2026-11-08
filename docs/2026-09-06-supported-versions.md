@@ -87,15 +87,16 @@ the row is re-derivable rather than transcribed.
 | Mac app | the release being built | `build_check.release_versions()["app"]` |
 | Panel | same as the Mac app | `build_check.release_versions()["panel_embedded"]` |
 | Phone | `1.0` — this is R; the phone has no published predecessor yet, so its floor equals its current version until release 2 | `build_check.ios_marketing_versions()`, which reads every `MARKETING_VERSION` site in `ios/BobPhone.xcodeproj` (four sites, one distinct value) |
-| VS Code extension | `0.1.22` — one release below the current 0.1.23; the highest baseline gate today is REFINEMENT_CLOSE_MIN_VERSION at 0.1.12, below the floor | `build_check.package_version(vscode-extension/package.json)` minus one patch; the gates are `vscode_reveal.SEND_TEXT_MIN_VERSION`, `SPAWN_MIN_VERSION`, `CLOSE_TERMINAL_MIN_VERSION`, `REFINEMENT_CLOSE_MIN_VERSION` in `host/dark_army_daemon/vscode_reveal.py` |
+| VS Code extension | `0.1.23` — one release below the current 0.1.24; the highest baseline gate today is REFINEMENT_CLOSE_MIN_VERSION at 0.1.12, below the floor | `build_check.package_version(vscode-extension/package.json)` minus one patch; the gates are `vscode_reveal.SEND_TEXT_MIN_VERSION`, `SPAWN_MIN_VERSION`, `CLOSE_TERMINAL_MIN_VERSION`, `REFINEMENT_CLOSE_MIN_VERSION` in `host/dark_army_daemon/vscode_reveal.py` |
 
-The extension floor is `0.1.22` *because* `0.1.23` is current
+The extension floor is `0.1.23` *because* `0.1.24` is current
 (`vscode-extension/package.json`, the only package in that folder is
-`dark-army-ide-0.1.23.vsix` — the release that adds the Matrix look for an
-enrolled, trusted folder, `docs/context-host.md`) and `0.1.22`, the release
-whose `spawnAgent` accepts a cwd inside a workspace folder, so a started
-card's terminal opens in the card's own worktree (`docs/card-worktrees.md`),
-was the release published before it. `0.1.21` declared limited support for
+`dark-army-ide-0.1.24.vsix` — the release that stops writing the green Matrix
+look into VS Code and takes back what `0.1.23` wrote)
+and `0.1.23`, the release that added that look, was the release published
+before it. `0.1.22`'s `spawnAgent` accepts a cwd inside a workspace folder, so
+a started card's terminal opens in the card's own worktree
+(`docs/card-worktrees.md`). `0.1.21` declared limited support for
 untrusted workspaces and refuses to start an agent or type into a terminal
 until the folder is trusted. The floor moves when `package.json` moves, and
 `test_the_extension_floor_is_one_release_below_the_current_package` fails the
@@ -106,7 +107,7 @@ and the test's expectation second.
 
 **Baseline controls stay available across the supported window.** The four
 existing gates sit at or below `0.1.19`. The only optional capability gate is
-`NATIVE_REPLY_MIN_VERSION` at `(0, 1, 22)`, pinned to the current extension by
+`NATIVE_REPLY_MIN_VERSION` at `(0, 1, 24)`, pinned to the current extension by
 `host/tests/test_supported_versions.py`: a supported older window retains its
 existing controls but must reload the extension before native reply is available.
 One more capability gate may sit above the floor: `SUBFOLDER_SPAWN_MIN_VERSION`

@@ -1188,7 +1188,7 @@ REFINEMENT_CLOSE_MIN_VERSION = (0, 1, 12)
 NATIVE_TERMINAL_POST_TIMEOUT = 6.0
 # Pinned to the current extension (`docs/2026-09-06-supported-versions.md`,
 # `test_supported_versions.py`): it moves with every `package.json` bump.
-NATIVE_REPLY_MIN_VERSION = (0, 1, 23)
+NATIVE_REPLY_MIN_VERSION = (0, 1, 24)
 
 
 def native_reply_text(text) -> Optional[str]:

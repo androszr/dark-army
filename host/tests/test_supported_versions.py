@@ -185,7 +185,7 @@ def test_a_bumped_manifest_fails_the_floor_check(tmp_path):
     """The negative case: pretend the extension moved ahead. The document
     still names today's floor, so the check must refuse rather than pass."""
     manifest = tmp_path / "package.json"
-    manifest.write_text(json.dumps({"name": "dark-army-ide", "version": "0.1.24"}),
+    manifest.write_text(json.dumps({"name": "dark-army-ide", "version": "0.1.25"}),
                         encoding="utf-8")
     with pytest.raises(AssertionError, match="edit the document first"):
         check_extension_floor(manifest, _document())
