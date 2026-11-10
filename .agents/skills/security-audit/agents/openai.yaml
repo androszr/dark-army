@@ -1,0 +1,4 @@
+interface:
+  display_name: "Security Audit"
+  short_description: "Security audit of a codebase by Cloudflare's method, with Dark Army's rules."
+  default_prompt: "Use $security-audit for this task."

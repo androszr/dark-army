@@ -97,6 +97,8 @@ host/dark_army_menubar/_version_info.py
 /scout/
 # Leftover hand-checks an implement run writes (manual-check/<date>-<slug>/check.md): same reasoning.
 /manual-check/
+# A full security audit's run folders (security-audit/run-<N>/): same reasoning as scout/.
+/security-audit/
 docs/superpowers/
 docs/pr-analysis/
 

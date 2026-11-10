@@ -152,11 +152,12 @@ def test_fresh_repo_gets_the_block(tmp_path, monkeypatch):
     assert text.count(HEADER) == 1
     lines = text.splitlines()
     for wanted in (".env", "!.env.example", "plans/", "docs/research/",
-                   "/scout/", "/manual-check/", "user-data/", "node_modules/",
+                   "/scout/", "/manual-check/", "/security-audit/", "user-data/", "node_modules/",
                    ".DS_Store"):
         assert wanted in lines
     assert lines.index("docs/research/") < lines.index("/scout/")
     assert lines.index("/scout/") < lines.index("/manual-check/")
+    assert lines.index("/manual-check/") < lines.index("/security-audit/")
     assert lines.index(".env.*") < lines.index("!.env.example")
     offered = pack_render.gitignore_lines("web")
     assert _offered_row(folder) == sorted({pack_gitignore.canonical(x) for x in offered})
@@ -180,6 +181,7 @@ def test_existing_file_lines_kept_and_not_doubled(tmp_path, monkeypatch):
     assert "docs/research/" in tail.splitlines()
     assert "/scout/" in tail.splitlines()
     assert "/manual-check/" in tail.splitlines()
+    assert "/security-audit/" in tail.splitlines()
 
 
 def test_second_install_and_resync_change_nothing(tmp_path, monkeypatch):

@@ -88,6 +88,19 @@ PORTED = {
         "Copyright (c) 2026 AONIR"),
 }
 
+#: Third-party work vendored byte for byte into a folder Dark Army ships.
+#: Same row shape as PORTED; rendered as `## Vendored skills` after the
+#: ported section.
+VENDORED = {
+    "security-audit-skill": (
+        "MIT", "https://github.com/cloudflare/security-audit-skill",
+        "Cloudflare's security-audit skill, vendored byte for byte under "
+        "`host/dark_army_menubar/agent_pack/template/.claude/skills/security-audit/upstream/` "
+        "and shipped to every enrolled project by the agent pack; the commit is in "
+        "`upstream-pin.json` beside it",
+        "Copyright (c) 2025-2026 Cloudflare, Inc."),
+}
+
 #: The MIT grant, the same words for every ported row; the first line is the
 #: row's own copyright.
 MIT_TEXT = """MIT License
@@ -123,6 +136,18 @@ def ported_section() -> list[str]:
                 f"- Why it is here: {why}\n"]
         _details(out, "LICENSE", MIT_TEXT.format(copyright=copyright_line))
     # `_details` ends on a blank line; the page's last line is the closing tag.
+    return out[:-1] + [out[-1].rstrip("\n")]
+
+
+def vendored_section() -> list[str]:
+    """The `## Vendored skills` section, as lines for the page."""
+    out = ["\n## Vendored skills\n",
+           "Skills Dark Army ships unedited, credited here with their licence.",
+           "Nothing below is linked or bundled as a library.\n"]
+    for name, (licence, url, why, copyright_line) in VENDORED.items():
+        out += [f"### {name}\n", f"- Licence: {licence}", f"- Upstream: {url}",
+                f"- Why it is here: {why}\n"]
+        _details(out, "LICENSE", MIT_TEXT.format(copyright=copyright_line))
     return out[:-1] + [out[-1].rstrip("\n")]
 
 
@@ -338,6 +363,7 @@ def write_notices(bundle: Path) -> int:
             "`vscode-extension/package.json` declares no runtime dependencies; the",
             "extension ships only its own code."]
     out += ported_section()
+    out += vendored_section()
     NOTICES.write_text("\n".join(out) + "\n", encoding="utf-8")
     print(f"wrote {NOTICES.relative_to(REPO)}")
     return 0

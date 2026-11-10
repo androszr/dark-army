@@ -41,5 +41,6 @@ plans/
 docs/research/
 /scout/
 /manual-check/
+/security-audit/
 user-data/
 /.worktrees/

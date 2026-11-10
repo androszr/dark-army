@@ -1,0 +1,4 @@
+interface:
+  display_name: "Security Audit Update"
+  short_description: "Check Cloudflare's security-audit-skill repository for commits newer than Dark Army's pinned copy, summarise what change"
+  default_prompt: "Use $security-audit-update for this task."
