@@ -275,6 +275,10 @@ _ARGV = {
 #: prints `grok-4.7 (default)`, `grok-4.7-build-fast`, `grok-4.6`, `grok-4.5`.
 #: The menu takes `grok-4.7` and keeps the two earlier pins; a `-build` id
 #: stays off it, the same way `grok-4.6-build` never was a card choice.
+#: Measured 2026-10-17 against claude 2.1.302: `claude-haiku-5-5` is on the
+#: build's known-model list, the `haiku` alias resolves to it on the
+#: first-party route (changelog 2.1.293), and its catalogue entry is
+#: `native_1m`, so there is no `[1m]` pin beside it.
 #: Keeping up with a renamed provider
 #: model is a one-line edit here, which is the whole maintenance story of this
 #: constant — until then that entry launch-fails and Default still works.
@@ -299,7 +303,7 @@ MODELS = {
                "claude-sonnet-5", "claude-sonnet-5[1m]",
                "claude-sonnet-4-6",
                "fable", "claude-fable-5-1", "claude-fable-5",
-               "haiku"),
+               "haiku", "claude-haiku-5-5"),
     "codex": ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol",
               "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"),
     "grok": ("grok-4.7", "grok-4.6", "grok-4.5"),

@@ -70,6 +70,13 @@ def test_grok_4_7_is_offered_on_every_grok_settings_slot():
         assert m.validate("grok", slot, "grok-4.7")
 
 
+def test_haiku_5_5_is_offered_on_every_claude_settings_slot():
+    for slot in m.SLOTS:
+        assert "claude-haiku-5-5" in m.allowed("claude", slot)
+        assert m.validate("claude", slot, "claude-haiku-5-5")
+        assert "haiku" in m.allowed("claude", slot)
+
+
 def test_the_shipped_helper_models_need_no_widening():
     # Every shipped helper model is already on the dispatch list: no duplicate.
     for provider in ("codex", "grok"):

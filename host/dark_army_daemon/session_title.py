@@ -65,7 +65,10 @@ logger = logging.getLogger("dark-army")
 ASK, PASS = "ask", "pass"
 
 #: Cheapest model that can name a paragraph. Spelled as an alias rather than a
-#: dated id so a Haiku release does not strand this on an old one.
+#: dated id so a Haiku release does not strand this on an old one;
+#: measured 2026-10-17 on claude 2.1.302: `haiku` resolves to
+#: `claude-haiku-5-5` on the first-party route (CLI 2.1.293+); the pin is on
+#: `dispatch.MODELS` for a role that names it.
 MODEL = "haiku"
 
 #: How much of the opening request the namer is shown. A title is decided by the

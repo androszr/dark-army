@@ -1868,6 +1868,19 @@ def test_the_sonnet_5_5_pins_are_on_the_menu():
         "claude", "--model", "claude-sonnet-5-5", "do it"]
 
 
+def test_the_haiku_5_5_pin_is_on_the_menu():
+    """Haiku 5.5 is pinnable by exact id, right after the "haiku" alias, with
+    no `[1m]` twin (its catalogue entry is native 1M); "opus" stays first."""
+    t = dispatch.MODELS["claude"]
+    assert "claude-haiku-5-5" in t
+    assert t.index("haiku") < t.index("claude-haiku-5-5")
+    assert t[0] == "opus"
+    assert dispatch.argv_for("claude", "claude", "do it",
+                             model="claude-haiku-5-5") == [
+        "claude", "--model", "claude-haiku-5-5", "do it"]
+    assert "claude-haiku-5-5[1m]" not in t
+
+
 def test_a_fable_pin_rides_the_argv_verbatim():
     """A card pinned to Fable 5.1 starts on exactly that id, not the family's
     latest — pinned byte for byte like the other model-flag tests."""

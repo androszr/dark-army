@@ -1036,7 +1036,7 @@ loop's own verdict. `PhonePreparer.prepare` builds **the Mac's prompt**
 (`PreparerBrief.text` / `modeHeadIdea`, byte-pinned to
 `card_preparer_brief.BRIEF` and `card_prepare.MODE_HEAD_IDEA`, through
 `CardPrepareRules.promptForIdea`), sends one `POST` to
-`api.anthropic.com/v1/messages` on `claude-haiku-4-5-20251001`, and reads
+`api.anthropic.com/v1/messages` on `claude-haiku-5-5`, and reads
 the answer with **the Mac's readers** — `CardPrepareRules` is a
 Foundation-only port of `card_prepare.py`'s parsers and refusals, sliced
 and run under `swiftc` against the Python functions by

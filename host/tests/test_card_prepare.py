@@ -65,6 +65,16 @@ def test_the_helper_runs_the_cheap_model_and_the_given_binary():
 # --- The helper is the card's own assistant, on that assistant's cheap model
 
 
+def test_the_claude_helpers_share_one_cheap_model_on_the_menu():
+    from dark_army_daemon import card_priority, session_title
+    from dark_army_menubar import pack_render
+    names = {session_title.MODEL, card_priority.MODEL, card_prepare.MODEL,
+             card_prepare.WORKER_MODELS["claude"],
+             pack_render.SHIPPED_WORKERS["claude"]}
+    assert len(names) == 1
+    assert names.pop() in dispatch.MODELS["claude"]
+
+
 def test_every_dispatchable_tool_has_a_cheap_helper_model():
     assert set(card_prepare.HELPER_MODELS) == set(dispatch._EXECUTABLES)
     assert card_prepare.HELPER_MODELS["claude"] == card_prepare.MODEL

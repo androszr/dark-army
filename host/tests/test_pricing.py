@@ -302,6 +302,23 @@ def test_sonnet_5_5_has_its_own_row_above_sonnet_5():
     assert cost_usd("claude-sonnet-5-5", cache_read=1_000_000) == pytest.approx(0.20)
 
 
+def test_haiku_5_5_has_its_own_row_above_haiku_4_5():
+    keys = list(pricing.RATES)
+    assert keys.index("claude-haiku-5-5") < keys.index("claude-haiku-4-5")
+    rate = pricing.RATES["claude-haiku-5-5"]
+    assert resolve_rate("claude-haiku-5-5-20261001") is rate
+    assert resolve_rate("claude-haiku-4-5-20251001") is pricing.RATES["claude-haiku-4-5"]
+    assert rate.provider == "claude"
+    assert rate.long_from is None
+    assert cost_usd("claude-haiku-5-5", input_tokens=1_000_000,
+                    output_tokens=1_000_000) == pytest.approx(rate.input + rate.output)
+
+
+def test_haiku_family_alias_means_the_latest_release():
+    assert pricing.FAMILY_RATES["haiku"] is pricing.RATES["claude-haiku-5-5"]
+    assert resolve_rate("claude-haiku-9-9") is pricing.RATES["claude-haiku-5-5"]
+
+
 # --- Grok and Codex rows ------------------------------------------------------
 #
 # Published short-tier input and output per million, standard tier: xAI's

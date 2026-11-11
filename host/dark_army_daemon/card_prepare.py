@@ -93,7 +93,10 @@ from . import dispatch
 logger = logging.getLogger("dark-army")
 
 #: Cheapest model that can turn a sentence into instructions. Spelled as an
-#: alias rather than a dated id so a Haiku release does not strand this.
+#: alias rather than a dated id so a Haiku release does not strand this;
+#: measured 2026-10-17 on claude 2.1.302: `haiku` resolves to
+#: `claude-haiku-5-5` on the first-party route (CLI 2.1.293+); the pin is on
+#: `dispatch.MODELS` for a role that names it.
 MODEL = "haiku"
 
 #: The cheap model per assistant, keyed by the card's `tool`. Read off each

@@ -32,7 +32,8 @@ data-residency uplift). What those pages said that day, and did not say:
 * Anthropic: Sonnet 5 is $2/$10 with no end date printed, so the old
   "$3/$15 after 2026-08-31" row was corrected. Fable 5 and Mythos 5 read cache
   at $1/MTok (0.10x), not $0.25; Fable 5.1 and Mythos 5.1 do read at $0.25
-  (0.025x); Opus 5.5 reads at $0.20 on $4 (0.05x).
+  (0.025x); Opus 5.5 reads at $0.20 on $4 (0.05x). Haiku 5.5 is $0.10/$0.50
+  (checked 2026-11-11; its over-100K tier is not stored).
 * xAI: a request whose prompt reaches 200,000 tokens is billed at the long
   tier on every token. No cache-write price is published.
 * OpenAI: `gpt-5.6-sol` states its cutoff (short context is up to 272K input
@@ -138,6 +139,11 @@ RATES: dict[str, Rate] = {
     # launch notes said $3/$15 from 2026-09-01; the page no longer does.
     "claude-sonnet-5": Rate(2.00, 10.00),
     "claude-sonnet-4-6": Rate(3.00, 15.00),
+    # Haiku 5.5 is newest-first (a future "claude-haiku-5" row goes BELOW); its
+    # over-100K-prompt tier is not stored: Claude rows carry none and the
+    # per-(model, day) sums have no prompt size. Default cache multipliers.
+    # $0.10/$0.50: docs.anthropic.com/en/docs/about-claude/pricing, 2026-11-11.
+    "claude-haiku-5-5": Rate(0.10, 0.50),
     "claude-haiku-4-5": Rate(1.00, 5.00),
     # --- Grok (xAI), standard us-east-1 / us-west-2 prices ---------------
     # Cache reads are $0.50 on $2 (0.25x) short and $1.00 on $4 long for
@@ -192,7 +198,7 @@ FAMILY_RATES: dict[str, Rate] = {
     "mythos": RATES["claude-mythos-5"],
     "opus": RATES["claude-opus-4-8"],
     "sonnet": RATES["claude-sonnet-4-6"],
-    "haiku": RATES["claude-haiku-4-5"],
+    "haiku": RATES["claude-haiku-5-5"],
 }
 
 _overrides_loaded = False

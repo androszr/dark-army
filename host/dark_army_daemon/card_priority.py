@@ -51,7 +51,10 @@ logger = logging.getLogger("dark-army")
 ASK, PASS = "ask", "pass"
 
 #: Cheapest model that can read two lines and produce one number. An alias
-#: rather than a dated id so a Haiku release does not strand this on an old one.
+#: rather than a dated id so a Haiku release does not strand this on an old one;
+#: measured 2026-10-17 on claude 2.1.302: `haiku` resolves to
+#: `claude-haiku-5-5` on the first-party route (CLI 2.1.293+); the pin is on
+#: `dispatch.MODELS` for a role that names it.
 MODEL = "haiku"
 
 #: How long the helper gets. Startup dominates; a one-number answer that takes
