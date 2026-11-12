@@ -548,26 +548,16 @@ struct BoardView: View {
     }
 
     /// Group under project headings only when the column spans more than one
-    /// named project. 0–1 projects keep the flat snapshot order.
+    /// named project. 0–1 projects keep the flat snapshot order. The decision
+    /// lives in `CardSheetSwipe.drawnGroups`, shared with the card sheet's swipe.
     @ViewBuilder
     private func cardsStack(_ cards: [BoardCard]) -> some View {
-        let names = Set(cards.map(\.project).filter { !$0.isEmpty })
-        let ungrouped = cards.filter { $0.project.isEmpty }
-        if names.count > 1 {
-            ForEach(names.sorted(), id: \.self) { name in
-                BoardProjectHeader(title: name)
-                ForEach(cards.filter { $0.project == name }) { card in
-                    cardLink(card)
-                }
+        let groups = CardSheetSwipe.drawnGroups(cards, project: \.project)
+        ForEach(groups, id: \.name) { group in
+            if groups.count > 1 {
+                BoardProjectHeader(title: group.name)
             }
-            if !ungrouped.isEmpty {
-                BoardProjectHeader(title: "—")
-                ForEach(ungrouped) { card in
-                    cardLink(card)
-                }
-            }
-        } else {
-            ForEach(cards) { card in
+            ForEach(group.cards) { card in
                 cardLink(card)
             }
         }

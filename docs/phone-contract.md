@@ -160,6 +160,23 @@ a short name counts); VoiceOver has
 exists. The rules are Foundation-only in `AgentSheetSwipe.swift`, run by
 `host/tests/test_phone_sheet_swipe.py` and `AgentSheetSwipeTests.swift`.
 
+**The card sheet swipes to the next In progress card.** The same header
+swipe on a card in In progress (the seed's column, the fact the detent reads)
+replaces the top rung, through `PhoneSheetRouter.replaceTop`, with the next
+In progress card in the order the Board tab draws that row at that moment:
+the snapshot's cards narrowed by the Board tab's stored project choice
+(`BoardProjects.matches` under `FleetProjects.resolve`) and grouped by
+`CardSheetSwipe.drawnGroups`, the rule `cardsStack` draws from; the search
+line is not an input. A fresh entry state, so the card is fetched afresh, the
+caption plays, the sheet re-aims to half height and the arm is let go; Back
+still returns to where the card was opened from; typed text is parked as a
+reply is and returns on the next open; the ends stop; a card in Prep, Backlog
+or Done takes no swipe (`swipeLane`, one lane for both kinds, so the mark
+below stays the agent lane's); VoiceOver has "Next In progress card" /
+"Previous In progress card" on the title where a neighbour exists. Rules in
+`CardSheetSwipe.swift`, run by `test_phone_card_sheet_swipe.py` and
+`CardSheetSwipeTests.swift`.
+
 **The sheet's header says where you are in Needs you.** While the swipe is
 available — the sheet's agent is in the flattened Needs you order and that
 order holds two or more — the title carries a small dim `2 of 5` as a trailing
