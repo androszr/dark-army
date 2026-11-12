@@ -24,6 +24,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -184,9 +185,17 @@ func runScript(_ steps: [[String: String]], snapshot: Snapshot?) {
         case "gaveUp": ledger.gaveUp(id(step), why: step["why"] ?? ReceiptLedger.gaveUpLine)
         case "faceNeeded": ledger.gaveUp(id(step), why: ReceiptLedger.faceNeededLine)
         case "retry":
-            ledger.retry(id(step))
+            ledger.retry(id(step),
+                         now: step["now"].flatMap(Double.init) ?? Date().timeIntervalSince1970)
             if let fresh = ledger.receipts.first(where: { !known.contains($0.id) }) {
                 bind(step, fresh.id)
+            }
+        case "staleStop":
+            // `STALE:<ref> <sentence or ->` — the sweep's clock stop on the
+            // named receipt at `now`.
+            if let r = ledger.receipts.first(where: { $0.id == id(step) }) {
+                let why = ReceiptLedger.staleStop(for: r, now: step["now"].flatMap(Double.init) ?? 0)
+                print("STALE:\(step["ref"] ?? "") \(why ?? "-")")
             }
         case "read": ledger.read(id(step))
         case "releaseHolds": ledger.releaseHolds()
@@ -197,7 +206,7 @@ func runScript(_ steps: [[String: String]], snapshot: Snapshot?) {
             let name = names.first(where: { $0.value == r.id })?.key ?? r.id
             return ["name": name, "state": r.state.rawValue, "authorised": r.authorised,
                     "heldUntil": r.heldUntil, "attempts": r.attempts,
-                    "lastError": r.lastError, "statusWord": r.statusWord]
+                    "createdAt": r.createdAt, "lastError": r.lastError, "statusWord": r.statusWord]
         }
         let data = try! JSONSerialization.data(withJSONObject: rows)
         print("LEDGER " + String(decoding: data, as: UTF8.self))
@@ -602,8 +611,12 @@ def test_the_sender_is_one_ordered_task_that_passes_the_face_check_through():
     assert "holding.insert(receipt.scope)" in body
     assert "senderKicked = true" not in body[body.index("var holding"):], (
         "a held scope is taken on the next onLive, never a spin on the lock")
-    # The answer verbs keep the replay-window give-up with their hold.
-    assert "ReceiptLedger.heldWhileLanding.contains(receipt.action)" in body
+    # The answer verbs keep the replay-window give-up with their hold —
+    # inside the one clock rule the sender asks.
+    assert "ReceiptLedger.staleStop(for: receipt" in body
+    rule = _text("Receipts.swift")
+    assert "heldWhileLanding.contains(receipt.action)" in \
+        rule[rule.index("func staleStop("):][:1200]
     # A dial press the Mac refused ends its held value at once (after the
     # post, so past the pinned span above).
     assert "endSettlingPreference(receipt.scope)" in \
@@ -670,13 +683,38 @@ def test_the_face_pass_covers_one_press_for_the_replay_window_and_retry_asks_aga
     assert rows["again"]["heldUntil"] == 0
     client = _text("Client.swift")
     body = _block(client, "    func flushReceipts() async", 4800)
-    stale = body[body.index("if receipt.authorised, past {"):body.index("receipts.markSending(receipt.id)")]
-    assert "receipts.gaveUp(receipt.id, why: ReceiptLedger.faceNeededLine)" in stale
-    assert "continue" in stale
-    # `past` is the one clock read both window checks share.
-    window = body[body.index("let past = "):body.index("if receipt.authorised, past {")]
-    assert "> ReceiptLedger.replayWindow" in window
+    assert body.index("ReceiptLedger.staleStop(for: receipt") \
+        < body.index("receipts.markSending(receipt.id)")
+    # The clock stop is one rule on the ledger: window, then the
+    # un-checkable stop, then the face pass.
+    rule = _text("Receipts.swift")
+    rule = rule[rule.index("func staleStop("):][:1200]
+    assert "> replayWindow" in rule
+    assert rule.index("return tooOldLine") < rule.index("return faceNeededLine")
+    assert "receipt.authorised" in rule
     assert "RemoteAuth" not in body, "the sender never raises the sheet itself"
+
+
+def test_a_retry_after_the_replay_window_is_sent_as_a_new_press(queue_bin):
+    """A RETRY is a new press made now: a rebuild press whose first tap is
+    past `replayWindow` would close on `tooOldLine`, but once retried the
+    sender's own rule says send."""
+    now = time.time()
+    late = str(now + 1000)
+    out = _run(queue_bin, {"script": [
+        {"op": "open", "as": "a", "scope": "s1", "action": "rebuild_app"},
+        {"op": "staleStop", "ref": "a", "now": late},
+        {"op": "gaveUp", "ref": "a", "why": "Not sent again, so the Mac is not rebuilt twice. Look at the Mac, then RETRY if it did not start."},
+        {"op": "retry", "ref": "a", "as": "again", "now": late},
+        {"op": "staleStop", "ref": "again", "now": late},
+    ], "snapshot": ""})
+    assert out["STALE:a"].startswith("Too long ago to send safely")
+    assert out["STALE:again"] == "-"
+    rows = {r["name"]: r for r in json.loads(out["LEDGER"])}
+    assert "a" not in rows
+    assert rows["again"]["state"] == "sent"
+    assert rows["again"]["attempts"] == 0
+    assert rows["again"]["createdAt"] == pytest.approx(now + 1000)
 
 
 def test_the_agent_screens_two_note_readers_split_by_verb():
@@ -1108,7 +1146,7 @@ def test_the_profile_screen_draws_the_queue_oldest_first():
            "                                  receipt.state != .sending else { return }" in profile
     assert "|| receipt.state == .sending)" in profile
     receipts = _text("Receipts.swift")
-    ledger_retry = _block(receipts, "    func retry(_ id: String)", 700)
+    ledger_retry = _block(receipts, "    func retry(_ id: String", 700)
     assert "receipts[index].state != .sending" in ledger_retry
 
 

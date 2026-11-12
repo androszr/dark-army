@@ -3102,25 +3102,11 @@ final class PhoneClient: ObservableObject {
                     receipts.remove(receipt.id)
                     continue
                 }
-                // And what cannot be checked is bounded by the clock instead: a
-                // `.none` press past the Mac's own replay window would not be
-                // deduped there, so re-sending it is a second message pushed
-                // into a session. A `.queued` press is stamped at the tap, so a
-                // queue that sat fifteen minutes drops its un-checkable presses
-                // the same way a relaunch does. The answer verbs keep the rule
-                // with their hold: a dialog that moved on proves nothing.
-                let past = Date().timeIntervalSince1970 - receipt.createdAt
-                    > ReceiptLedger.replayWindow
-                if past, receipt.effect == .none
-                    || ReceiptLedger.heldWhileLanding.contains(receipt.action) {
-                    receipts.gaveUp(receipt.id, why: ReceiptLedger.tooOldLine)
-                    continue
-                }
-                // A face pass covers its press for the same window: past it
-                // the record closes STUCK on `faceNeededLine` (fails closed,
-                // no sheet here) and RETRY, which drops the pass, asks.
-                if receipt.authorised, past {
-                    receipts.gaveUp(receipt.id, why: ReceiptLedger.faceNeededLine)
+                // What cannot be checked is bounded by the clock instead:
+                // one rule, `ReceiptLedger.staleStop`.
+                if let why = ReceiptLedger.staleStop(for: receipt,
+                                                     now: Date().timeIntervalSince1970) {
+                    receipts.gaveUp(receipt.id, why: why)
                     continue
                 }
                 // Counts the attempt; `post` closes the record — `accept`,

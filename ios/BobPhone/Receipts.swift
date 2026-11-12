@@ -121,6 +121,8 @@ struct Receipt: Identifiable, Codable, Equatable {
     /// Everything needed to send this press again, exactly as it went.
     var fields: [String: String] = [:]
     var state: State = .sent
+    /// When this token was minted — the press, or the RETRY that re-minted
+    /// it; what the sender's clock stop (`staleStop`) and the QUEUE order read.
     var createdAt: Double = 0
     var acceptedAt: Double = 0
     var attempts: Int = 0
@@ -373,7 +375,7 @@ final class ReceiptLedger: ObservableObject {
     /// `answer_question(s)`) is given up rather than re-sent once the window
     /// has closed. A person can still press RETRY, which is a deliberate
     /// second press and says so.
-    static let replayWindow: TimeInterval = 900
+    nonisolated static let replayWindow: TimeInterval = 900
     /// How long an accepted **reply** stays held on a row that keeps
     /// waiting on the same question. About the away poll cadence: long
     /// enough that a double-tap on SEND is a duplicate rather than a second
@@ -449,6 +451,24 @@ final class ReceiptLedger: ObservableObject {
     }
     nonisolated static let notReplayedLine =
         "Not sent again, so the Mac is not rebuilt twice. Look at the Mac, then RETRY if it did not start."
+    /// The sender's clock stop, as one rule: the sentence a press past
+    /// `replayWindow` closes on, or nil when it may go. The Mac's own ledger
+    /// is memory-only and TTL'd, so a `.none` press past that window would
+    /// not be deduped there and re-sending it is a second message pushed into
+    /// a session. A `.queued` press is stamped at the tap, so a queue that sat
+    /// fifteen minutes drops its un-checkable presses the same way a relaunch
+    /// does. The answer verbs keep the rule with their hold: a dialog that
+    /// moved on proves nothing. A face pass covers its press for the same
+    /// window: past it the record closes STUCK on `faceNeededLine` (fails
+    /// closed, no sheet) and RETRY, which drops the pass, asks.
+    nonisolated static func staleStop(for receipt: Receipt, now: Double) -> String? {
+        guard now - receipt.createdAt > replayWindow else { return nil }
+        if receipt.effect == .none || heldWhileLanding.contains(receipt.action) {
+            return tooOldLine
+        }
+        if receipt.authorised { return faceNeededLine }
+        return nil
+    }
     /// The verbs whose press stays held while it lands: an answer or a
     /// reply the Mac accepted is typed into a dialog that the snapshot
     /// still lists for a poll cadence, so `.accepted` counts as a
@@ -690,7 +710,7 @@ final class ReceiptLedger: ObservableObject {
     /// A person's RETRY: a **fresh token**, the backoff reset, the record
     /// back to `sent`. A fresh token is what stops the Mac replaying the old
     /// refusal at us.
-    func retry(_ id: String) {
+    func retry(_ id: String, now: Double = Date().timeIntervalSince1970) {
         guard let index = receipts.firstIndex(where: { $0.id == id }) else { return }
         // A press still going out keeps its token: re-minting it mid-transmit
         // would make the in-flight answer a no-op on the old id and send the
@@ -712,6 +732,10 @@ final class ReceiptLedger: ObservableObject {
         // gate for good. The relay rung asks at the sheet, as a first
         // press is asked.
         again.authorised = false
+        // A RETRY is a new press under a new token, and the Mac's window is
+        // per token: measured from the first tap, a RETRY of a STUCK press
+        // older than `replayWindow` closed on `tooOldLine` again, 4 Oct 2026.
+        again.createdAt = now
         receipts[index] = again
         persist()
     }

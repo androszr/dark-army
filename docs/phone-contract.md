@@ -1441,7 +1441,16 @@ sent on a stale check (fails closed; the sender itself never raises the
 sheet), and `ReceiptLedger.retry` drops the pass with the token, so a
 re-send made from away goes back to the sheet as a first press does — a
 pass carried across RETRY would let one Face ID cover a press re-made
-hours later. The note a screen draws (`queueNote(for:)`) is bounded the
+hours later. **And RETRY re-stamps `createdAt`** (4 Oct 2026): the sender's
+clock stop is one pure rule, `ReceiptLedger.staleStop` — a press nothing can
+check (`.none`, or an answer verb held while landing) past `replayWindow`
+closes on `tooOldLine`, a stale pass on `faceNeededLine` — and it reads the
+record's `createdAt`, which is when its **token** was minted. Left at the
+first tap, a RETRY of a STUCK rebuild older than fifteen minutes closed on
+`tooOldLine` again without sending, while that sentence told the person to
+RETRY. A retried record is its scope's newest, so it goes to the back of the
+QUEUE list and behind any newer press on its scope. The note a screen draws
+(`queueNote(for:)`) is bounded the
 same way: a refusal older than `refusedShown` is not the note, and a
 `.stuck` record wearing a `phoneAuthored` sentence never is — the QUEUE
 list is where those live with their RETRY — so a Start refused hours ago

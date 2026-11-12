@@ -4011,8 +4011,10 @@ class ApiServer:
             return (200 if ok else 409), "application/json", json.dumps(
                 {"ok": ok, "detail": detail or ""}).encode()
         if action == "rebuild_app":
-            # No payload field is read and no path crosses the door: the
-            # menu-bar app builds what it was launched from.
+            # `command_token` is the one payload field read (the press's
+            # one-time mark, handed to `request_rebuild` so the stamp can
+            # refuse a replay after the restart) and no path crosses the
+            # door: the menu-bar app builds what it was launched from.
             ok, detail = self._daemon.request_rebuild(
                 self._receipts.usable(payload.get("command_token")) or "")
             return (200 if ok else 409), "application/json", json.dumps(
