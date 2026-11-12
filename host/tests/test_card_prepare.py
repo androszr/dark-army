@@ -1749,6 +1749,9 @@ async def test_a_preparer_effort_the_real_model_rejects_is_absent(
     daemon, fake_exec = _prepare_daemon(
         tmp_path, monkeypatch,
         b"INSTRUCTIONS:\nDo it.\nSPECIALISTS:\nNONE\n")
+    # No Codex on a CI runner: the argv is the subject, not the install.
+    monkeypatch.setattr(dispatch, "resolve_executable",
+                        lambda tool: f"/opt/{tool}")
     daemon.set_agent_models({"codex": {"card-preparer": "gpt-5.5"}})
     daemon.set_agent_efforts({"codex": {"card-preparer": "max"}})
     result, detail = await daemon._prepare_card_text_locked(
