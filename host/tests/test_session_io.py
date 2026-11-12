@@ -202,9 +202,12 @@ def test_the_typing_sites_name_the_router():
     pin elsewhere) and says it through `session_io`."""
     import inspect
     from dark_army_daemon.daemon import BobDaemon
-    for fn in (BobDaemon.wrap_up_session, BobDaemon.low_priority_session,
-               BobDaemon._type_answer_burst, BobDaemon._flush_auto_compacts,
-               BobDaemon.message_card):
+    # The verbs' bodies run in the session's steering lane (`_steer`), so the
+    # typing call sits in each `_now` body (`docs/steering-queue.md`).
+    for fn in (BobDaemon._wrap_up_session_now,
+               BobDaemon._low_priority_session_now,
+               BobDaemon._type_answer_burst, BobDaemon._auto_compact_now,
+               BobDaemon._message_card_now):
         src = inspect.getsource(fn)
         assert "session_io.send_text(" in src, fn.__name__
     for fn in (BobDaemon._close_session_terminal, BobDaemon._close_terminal_by_pid):

@@ -38,6 +38,7 @@ def test_every_kind_has_a_sentence_case_here():
         "card_manual_outcome", "card_dispatch_failed", "card_plan_attached", "card_plan_approved",
         "card_work_recorded", "access_burst", "card_merged",
         "card_merge_blocked", "card_review_verdict", "action_interrupted",
+        "steer_not_delivered", "steer_replayed",
     }
     assert covered == set(KINDS)
     for kind in KINDS:
@@ -54,6 +55,29 @@ def test_action_interrupted():
         == "Asking a session to compact was interrupted by a Dark Army restart"
     assert sentence("action_interrupted", detail={"kind": "nope"}) \
         == "An action was interrupted by a Dark Army restart"
+
+
+def test_steer_not_delivered():
+    assert sentence("steer_not_delivered", nickname="Vex",
+                    detail={"kind": "reply", "source": "phone", "age_s": "180",
+                            "why": ""}) \
+        == ("Vex: a message from the phone was not delivered \u2014 Dark Army "
+            "restarted before typing it")
+    assert sentence("steer_not_delivered",
+                    detail={"kind": "card_message", "source": "mac",
+                            "why": "That session is no longer listening."}) \
+        == ("a session: a card message from the Mac was not delivered "
+            "\u2014 Dark Army restarted before typing it (That session is "
+            "no longer listening.)")
+
+
+def test_steer_replayed():
+    assert sentence("steer_replayed", nickname="Vex",
+                    detail={"kind": "wrap_up", "source": "mac"}) \
+        == "Vex: Wrap up's clear from the Mac was typed after Dark Army restarted"
+    assert sentence("steer_replayed",
+                    detail={"kind": "nope", "source": "phone"}) \
+        == "a session: a message from the phone was typed after Dark Army restarted"
 
 
 def test_session_start():

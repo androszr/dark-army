@@ -104,6 +104,7 @@ from .session_store import save_sessions, load_sessions, load_pending_questions
 from .paths import PID_PATH, LOCK_PATH, STATE_DIR, ensure_state_dir
 from .daemon_board import BoardVerbsMixin
 from .daemon_recovery import RecoveryMixin
+from .daemon_steering import SteeringMixin
 from .daemon_review import ReviewVerbsMixin
 
 @dataclass(frozen=True)
@@ -1623,7 +1624,8 @@ class _HookStep(NamedTuple):
     now_mono: float
 
 
-class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
+class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
+                SteeringMixin):
     def __init__(
         self,
         observer: Optional["DaemonObserver"] = None,
@@ -4141,6 +4143,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         without a word, and a reply box that silently does nothing is worse than
         no reply box.
         """
+        return await self._steer("reply", session_id, {"text": text})
+
+    async def _reply_to_session_now(self, session_id: str,
+                                    text: str) -> tuple[bool, str]:
+        """The body of `reply_to_session`, run in the session's steering lane at its turn."""
         if self._session_provider(session_id) == "codex" or session_id.startswith("codex:"):
             ok, detail = await self._reply_native_codex(session_id, text)
             capture = getattr(self, "_decisions", None)
@@ -4485,6 +4492,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         Retire carry. The board's Done leg no longer clears, it closes
         (`_wrap_up_for_done`).
         """
+        return await self._steer("wrap_up", session_id, {})
+
+    async def _wrap_up_session_now(self, session_id: str) -> tuple[bool, str]:
+        """The body of `wrap_up_session`, run in the session's steering lane at its turn."""
         if (self._session_provider(session_id) == "grok"
                 or session_id in self._grok_records):
             return False, GROK_WRAP_UP_REFUSAL
@@ -5093,6 +5104,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         next hook event overrides it as normal. Never `thinking` — that is
         `UserPromptSubmit`'s word.
         """
+        return await self._steer("low_priority", session_id, {})
+
+    async def _low_priority_session_now(self, session_id: str) -> tuple[bool, str]:
+        """The body of `low_priority_session`, run in the session's steering lane at its turn."""
         if session_id in self._prompts_by_session():
             return False, PROMPT_BLOCKED_REFUSAL
         if self._session_provider(session_id) != "claude":
@@ -5333,6 +5348,13 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         moment the transcript carries its `tool_result` — which is the only
         proof the choice actually landed.
         """
+        return await self._steer(
+            "answer", session_id,
+            {"question_id": question_id, "option_index": option_index})
+
+    async def _answer_question_now(self, session_id: str, question_id: str,
+                                   option_index: int) -> tuple[bool, str]:
+        """The body of `answer_question`, run in the session's steering lane at its turn."""
         # One burst per session at a time — the batch verb's own rule, and it
         # has to hold across both verbs or it holds for neither: a singular
         # press landing while `answer_questions`' ~1s of keystrokes is still
@@ -5464,6 +5486,13 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         loud, never silent. No retries — a retried digit lands on whatever
         dialog is up next.
         """
+        return await self._steer(
+            "answer", session_id,
+            {"question_id": question_id, "option_indexes": option_indexes})
+
+    async def _answer_questions_now(self, session_id: str, question_id: str,
+                                    option_indexes: list) -> tuple[bool, str]:
+        """The body of `answer_questions`, run in the session's steering lane at its turn."""
         # One burst per session at a time. The guards below are re-checks of
         # *the session's* state; this one is a re-check of *ours* — a second
         # press while ~1s of keystrokes is still in flight would interleave
@@ -5831,6 +5860,73 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
             return {"verdict": verdict}
         return {"verdict": None}
 
+    async def _grok_permission_key_now(self, request_id: str, request: dict,
+                                       behavior: str, sid: str,
+                                       handle: str,
+                                       confirm: Optional[dict] = None
+                                       ) -> tuple[bool, str]:
+        """`answer_permission`'s Grok leg, run in the terminal's steering lane
+        at its turn: the digit that answers the dialog on the screen. The
+        confirmation poll is `_grok_permission_confirm`, a task started once
+        the key is down; `confirm["task"]` hands it to the caller."""
+        if self._permission_requests.get(request_id) is not request:
+            return False, "That prompt has already been answered."
+        if self._pty_exited(handle):
+            return False, TERMINAL_EXITED_REFUSAL
+        path = str(request.get("events_path") or "")
+        if grok_events.permission_pending(path) is not True:
+            return False, "That prompt has already been answered."
+        if sid in self._answering:
+            return False, "That terminal is already being answered."
+        screen = self._pty.screen(handle)
+        digit = prompt_dialogs.grok_choice(screen.text() if screen else [],
+                                           behavior)
+        if digit is None:
+            return False, ("The terminal is not showing the dialog Dark Army "
+                           "expected — answer it there.")
+        self._answering.add(sid)
+        handed_on = False
+        try:
+            if not self._pty.write(handle, digit):
+                return False, TERMINAL_EXITED_REFUSAL
+            if not await self._pty.drain(handle, TERMINAL_DRAIN_SECONDS):
+                return False, TERMINAL_BUSY_REFUSAL
+            # The key is down: the lane is released here, so raw keys for
+            # this terminal are not held behind the confirmation poll, and
+            # the poll runs as its own task that owns `_answering`.
+            task = asyncio.get_running_loop().create_task(
+                self._grok_permission_confirm(
+                    request_id, request, behavior, sid, path))
+            if confirm is not None:
+                confirm["task"] = task
+            handed_on = True
+            return True, ""
+        finally:
+            if not handed_on:
+                self._answering.discard(sid)
+
+    async def _grok_permission_confirm(self, request_id: str, request: dict,
+                                       behavior: str, sid: str,
+                                       path: str) -> tuple[bool, str]:
+        """The wait for Grok to record the answer, outside the terminal's
+        lane. Holds `self._answering` until it ends."""
+        try:
+            deadline = time.monotonic() + GROK_ANSWER_CONFIRM_SECONDS
+            while time.monotonic() < deadline:
+                if grok_events.permission_pending(path) is False:
+                    self._permission_requests.pop(request_id, None)
+                    self._log_permission(request, "permission_resolved",
+                                         outcome=behavior)
+                    if behavior == "deny":
+                        self._count_on_session(sid, "permission_denied")
+                    self._schedule_display_push()
+                    return True, ""
+                await asyncio.sleep(0.5)
+            return False, ("The key was pressed but Grok has not recorded "
+                           "an answer — check the terminal.")
+        finally:
+            self._answering.discard(sid)
+
     async def answer_permission(self, request_id: str,
                                 behavior: str) -> tuple[bool, str]:
         """Allow or deny a tool call from anywhere in Dark Army.
@@ -5862,40 +5958,20 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
             handle = self._pty_handle_for(sid)
             if handle is None:
                 return False, PROMPT_NOT_HOSTED_NOTE
-            if self._pty_exited(handle):
-                return False, TERMINAL_EXITED_REFUSAL
-            path = str(request.get("events_path") or "")
-            if grok_events.permission_pending(path) is not True:
-                return False, "That prompt has already been answered."
-            if sid in self._answering:
-                return False, "That terminal is already being answered."
-            screen = self._pty.screen(handle)
-            digit = prompt_dialogs.grok_choice(screen.text() if screen else [],
-                                               behavior)
-            if digit is None:
-                return False, ("The terminal is not showing the dialog Dark Army "
-                               "expected — answer it there.")
-            self._answering.add(sid)
-            try:
-                if not self._pty.write(handle, digit):
-                    return False, TERMINAL_EXITED_REFUSAL
-                if not await self._pty.drain(handle, TERMINAL_DRAIN_SECONDS):
-                    return False, TERMINAL_BUSY_REFUSAL
-                deadline = time.monotonic() + GROK_ANSWER_CONFIRM_SECONDS
-                while time.monotonic() < deadline:
-                    if grok_events.permission_pending(path) is False:
-                        self._permission_requests.pop(request_id, None)
-                        self._log_permission(request, "permission_resolved",
-                                             outcome=behavior)
-                        if behavior == "deny":
-                            self._count_on_session(sid, "permission_denied")
-                        self._schedule_display_push()
-                        return True, ""
-                    await asyncio.sleep(0.5)
-                return False, ("The key was pressed but Grok has not recorded "
-                               "an answer — check the terminal.")
-            finally:
-                self._answering.discard(sid)
+            # The digit goes down the terminal's lane, after anything already
+            # waiting for it, and every check below is made at its turn
+            # (`docs/steering-queue.md`).
+            confirm: dict = {}
+            ok, detail = await self._steer(
+                "permission_key", sid, {},
+                work=lambda: self._grok_permission_key_now(
+                    request_id, request, behavior, sid, handle, confirm))
+            task = confirm.get("task")
+            if ok and task is not None:
+                # The caller still gets the verb's own answer; the lane has
+                # long been free.
+                return await asyncio.shield(task)
+            return ok, detail
         if request.get("via") == "hook":
             # No channel to push down: the broker is polling, so the verdict
             # is *staged* and collected on its next poll, at most a couple of
@@ -10392,7 +10468,6 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         """
         if not self._compact_queue:
             return
-        from . import autocompact
 
         pending, self._compact_queue = self._compact_queue, []
         policy = self.__dict__.get("_autocompact")
@@ -10415,50 +10490,85 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
                 self._schedule_agents_push()
                 continue
             provider = current_provider or provider
-            # Re-checked here, not where the episode was decided: the queue is
-            # drained a tick later and a prompt can arrive in between. A relayed
-            # tool-approval dialog owns the input line, and `sendText` ends in a
-            # newline — which the dialog reads as "confirm the highlighted
-            # choice". Dark Army would be approving a tool call nobody read, from a
-            # feature the user enabled to save context. Hand it back to alerts
-            # and try again on a later episode.
-            if sid in self._prompts_by_session():
-                logger.info("Auto-compact of %s deferred: a permission prompt "
-                            "owns the input line", sid[:12])
+            # Typed in the session's steering lane after anything already
+            # waiting for it, and not awaited: the flush must not hold the
+            # agents-push path behind a person's message. The done-callback
+            # hands a refusal back to the policy (`docs/steering-queue.md`).
+            future = self._steer_nowait(
+                "autocompact", sid,
+                lambda sid=sid, pid=pid, provider=provider:
+                    self._auto_compact_now(sid, pid, provider))
+            if future is None:
                 if policy is not None:
                     policy.note_failed(sid)
                 continue
-            if pid is None:
-                st = self._session_states.get(sid) or {}
-                pid = self._ensure_session_pid(sid, st) or self._roster_pid(sid)
-            text = autocompact.command_for(provider or "claude")
-            result = None
-            compact_intent = ""
-            if pid:
-                # Written, and committed, before the keys are typed: a restart
-                # after this line never types them a second time
-                # (`docs/action-journal.md`).
-                compact_intent = await self._journal_intent(
-                    await self._journal_begin("autocompact", sid),
-                    "autocompact", sid, "type",
-                    {"session_id": sid, "provider": provider or "claude"})
-                # Clear the input line first. We cannot see what is on it, and
-                # appending to a half-typed draft sends *and submits* something
-                # the user never wrote (`please rewri/compact`). Ctrl-U is the
-                # kill-line both harnesses honour, so the worst case becomes a
-                # discarded draft rather than a submitted mangled one.
-                result = await session_io.send_text(pid, "", INPUT_LINE_CLEAR + text)
-            ok = bool(result and result.get("sent"))
-            await self._journal_result(compact_intent,
-                                       "sent" if ok else "not_landed")
-            if ok:
-                where = result.get("terminalName") or result.get("matchedBy") or "terminal"
-                logger.info("Auto-compacting %s via %s", sid[:12], where)
-            else:
-                logger.info("Auto-compact of %s did not land; "
-                            "handing it back to alerts", sid[:12])
-                if policy is not None:
-                    policy.note_failed(sid)
+            if policy is not None:
+                future.add_done_callback(
+                    lambda fut, sid=sid: self._auto_compact_done(policy, sid, fut))
+
+    def _auto_compact_done(self, policy, sid: str, future) -> None:
+        """A lane entry for `/compact` finished: a refusal, a failure or a
+        cancellation re-arms the banner, a landed send does not."""
+        try:
+            landed = (not future.cancelled() and future.exception() is None
+                      and bool(future.result()[0]))
+        except Exception:
+            landed = False
+        if not landed:
+            policy.note_failed(sid)
+
+    async def _auto_compact_now(self, sid: str, pid, provider) -> tuple:
+        """One session's auto-compact, run in its steering lane at its turn.
+        `(sent, detail)`; a falsy answer is handed back to alerts by the
+        flush's done-callback."""
+        from . import autocompact
+        # Codex is excluded at delivery as well as at the flush: the lane is
+        # reached later and the identity can have moved.
+        if (self._session_provider(sid) == "codex" or provider == "codex"
+                or sid in self._codex_records or sid.startswith("codex:")):
+            self._schedule_agents_push()
+            return False, "Dark Army does not compact a Codex session"
+        # Re-checked here, not where the episode was decided: the lane is
+        # reached a tick later and a prompt can arrive in between. A relayed
+        # tool-approval dialog owns the input line, and `sendText` ends in a
+        # newline — which the dialog reads as "confirm the highlighted
+        # choice". Dark Army would be approving a tool call nobody read, from a
+        # feature the user enabled to save context. Hand it back to alerts
+        # and try again on a later episode.
+        if sid in self._prompts_by_session():
+            logger.info("Auto-compact of %s deferred: a permission prompt "
+                        "owns the input line", sid[:12])
+            return False, "a permission prompt owns the input line"
+        if pid is None:
+            st = self._session_states.get(sid) or {}
+            pid = self._ensure_session_pid(sid, st) or self._roster_pid(sid)
+        text = autocompact.command_for(provider or "claude")
+        result = None
+        compact_intent = ""
+        if pid:
+            # Written, and committed, before the keys are typed: a restart
+            # after this line never types them a second time
+            # (`docs/action-journal.md`).
+            compact_intent = await self._journal_intent(
+                await self._journal_begin("autocompact", sid),
+                "autocompact", sid, "type",
+                {"session_id": sid, "provider": provider or "claude"})
+            # Clear the input line first. We cannot see what is on it, and
+            # appending to a half-typed draft sends *and submits* something
+            # the user never wrote (`please rewri/compact`). Ctrl-U is the
+            # kill-line both harnesses honour, so the worst case becomes a
+            # discarded draft rather than a submitted mangled one.
+            result = await session_io.send_text(pid, "", INPUT_LINE_CLEAR + text)
+        ok = bool(result and result.get("sent"))
+        await self._journal_result(compact_intent,
+                                   "sent" if ok else "not_landed")
+        if ok:
+            where = result.get("terminalName") or result.get("matchedBy") or "terminal"
+            logger.info("Auto-compacting %s via %s", sid[:12], where)
+            return True, ""
+        logger.info("Auto-compact of %s did not land; "
+                    "handing it back to alerts", sid[:12])
+        return False, "did not land"
 
     def live_statusline_metrics(self) -> list[dict]:
         """Every session's most recent statusline payload, newest data included.
@@ -11033,8 +11143,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         return handle, paint, bool(term.exited), ""
 
     def terminal_stream_input(self, handle: str, blob: bytes) -> tuple[bool, str]:
-        """An `I` frame. Desk rules: see `_terminal_raw_input`."""
-        return self._terminal_raw_input(handle, blob)
+        """An `I` frame. Desk rules: see `_terminal_raw_input`. Written at
+        once on an idle terminal; behind a queued line it waits its turn in
+        the terminal's lane (`docs/steering-queue.md`)."""
+        return self._steer_raw(
+            "pty:" + handle, lambda: self._terminal_raw_input(handle, blob))
 
     def terminal_stream_resize(self, handle: str, cols: int, rows: int) -> None:
         """The panel pane's `S` frame: the pane is the one owner of the pty's
@@ -11111,7 +11224,23 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
             # queued in order (`PtyHost.write`), and a key that waited three
             # seconds for the CLI to read the previous one was the stall.
             blob = data if data is not None else (text or "").encode("utf-8", "replace")
-            return self._terminal_raw_input(handle, blob, session_id)
+            return self._steer_raw(
+                "pty:" + handle,
+                lambda: self._terminal_raw_input(handle, blob, session_id))
+        return await self._steer(
+            "terminal_line", session_id,
+            {"text": text, "from_phone": bool(from_phone)})
+
+    async def _terminal_line_now(self, session_id: str, text: str,
+                                 from_phone: bool = False) -> tuple[bool, str]:
+        """`terminal_input`'s line leg, run in the terminal's steering lane at
+        its turn: the handle is looked up again, because the terminal can
+        have gone while the line waited."""
+        handle = self._pty_handle_for(session_id)
+        if handle is None:
+            return False, TERMINAL_NOT_OWNED_REFUSAL
+        if self._pty_exited(handle):
+            return False, TERMINAL_EXITED_REFUSAL
         return await self._terminal_line_input(
             handle, text, session_id, from_phone=from_phone)
 
@@ -13946,6 +14075,9 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         # closed ledger or read `_active_notifications` mid-teardown. A
         # cancelled leg writes nothing.
         await self._cancel_phone_legs()
+        # The steering lanes, before any store closes: the entry typing now
+        # gets a moment to finish, a queued one stays on disk.
+        await self._stop_steering()
 
         if self._leader is not None:
             await self._leader.close()
@@ -14100,6 +14232,14 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
                 await self.recover_actions()
             except Exception:
                 logger.warning("action journal recovery failed; continuing",
+                               exc_info=True)
+            # Then the steering queue's own rows: what never started is typed
+            # again only while fresh, and said in the diary when it is not
+            # (`docs/steering-queue.md`).
+            try:
+                await self.recover_steering()
+            except Exception:
+                logger.warning("steering recovery failed; continuing",
                                exc_info=True)
             filled = await loop.run_in_executor(
                 None, self._backfill_board_workflows)

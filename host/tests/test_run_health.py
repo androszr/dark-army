@@ -518,6 +518,10 @@ def test_the_deny_count_sits_before_each_landed_return_only():
     start = src.index("    async def answer_permission(")
     end = src.index("\n    def ", start + 10)
     body = src[start:end]
+    # The Grok key press moved into its terminal's steering lane
+    # (`_grok_permission_key_now`); its site is still counted here.
+    grok = src.index("    async def _grok_permission_key_now(")
+    body += src[grok:src.index("    async def answer_permission(", grok)]
     sites = [m.start() for m in re.finditer(
         r'self\._count_on_session\(sid, "permission_denied"\)', body)]
     assert len(sites) == 3

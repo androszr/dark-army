@@ -1001,7 +1001,7 @@ home replay from a lapsed away window. 200 and 409 are both recorded
 an absent or malformed token is no dedupe and today's behaviour exactly.
 A restart forgets every receipt, and what covers that window is the
 phone's own effect test, `OutboxStore.alreadyLanded`'s argument one rung
-on: never resend what you can check.
+on: never resend what you can check. Steering verbs: `docs/steering-queue.md`.
 
 **The helper bot carries one too.** `relay_bot._marked` mints a
 `secrets.token_hex(8)` mark per action, keeps a well-formed caller mark and

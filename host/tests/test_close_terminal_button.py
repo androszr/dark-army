@@ -295,7 +295,7 @@ def test_a_codex_child_row_is_refused(monkeypatch):
 
 
 def test_wrap_up_session_still_types_clear_and_does_not_close():
-    src = inspect.getsource(BobDaemon.wrap_up_session)
+    src = inspect.getsource(BobDaemon._wrap_up_session_now)
     assert "send_text" in src
     assert "close_terminal" not in src
 

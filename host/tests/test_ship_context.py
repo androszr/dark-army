@@ -431,7 +431,7 @@ def test_the_compact_root_is_under_its_ceiling(inventory):
     assert inventory["documents"]["CLAUDE.md"]["bytes"] <= se.ROOT_CEILING
 
 
-# The floor is `se.LOAD_REDUCTION` (0.28 since 21 Sep 2026; `docs/ship-efficiency.md`).
+# The floor is `se.LOAD_REDUCTION` (0.27 since 12 Nov 2026, 0.28 from 21 Sep 2026; `docs/ship-efficiency.md`).
 def test_scenario_loads_shrink_by_at_least_the_floor(inventory, baseline_inventory):
     before = baseline_inventory["aggregate_bytes"]
     after = inventory["aggregate_bytes"]

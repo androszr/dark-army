@@ -89,6 +89,11 @@ KINDS = (
     # A step Dark Army was in the middle of when it was restarted and will
     # not repeat (`docs/action-journal.md`). Words only.
     "action_interrupted",
+    # The steering queue (`docs/steering-queue.md`): a message that waited
+    # through a restart and was not typed, and one that was typed after it.
+    # Words are never in the entry.
+    "steer_not_delivered",
+    "steer_replayed",
 )
 
 #: Every key an entry may carry. The phone's `LogEntry` decodes exactly these
@@ -262,6 +267,19 @@ def sentence(kind: str, **fields) -> str:
         if not who:
             return f"{words[:1].upper()}{words[1:]} was interrupted by a Dark Army restart"
         return f"{who}: {words} interrupted by a Dark Army restart"
+    if kind in ("steer_not_delivered", "steer_replayed"):
+        from .steering import WORDS
+        what = WORDS.get(str(merged.get("kind") or ""), "a message")
+        source = "the phone" if str(merged.get("source") or "") == "phone" \
+            else "the Mac"
+        who = str(merged.get("nickname") or "").strip() or "a session"
+        if kind == "steer_replayed":
+            return (f"{who}: {what} from {source} was typed after Dark Army "
+                    "restarted")
+        text = (f"{who}: {what} from {source} was not delivered \u2014 Dark "
+                "Army restarted before typing it")
+        why = str(merged.get("why") or "").strip()
+        return f"{text} ({why})" if why else text
     if kind == "access_burst":
         # `door` is the label (`access_log.door_label`, "Wi-Fi") and the
         # sentence supplies the noun; `peer` is an address or a paired

@@ -179,7 +179,8 @@ def test_forgetting_the_session_clears_the_memory(monkeypatch):
 
 
 def test_the_verb_types_and_does_not_reach_for_the_channel_or_the_close():
-    src = inspect.getsource(BobDaemon.low_priority_session)
+    # The body moved behind the steering lane (`docs/steering-queue.md`).
+    src = inspect.getsource(BobDaemon._low_priority_session_now)
     assert "send_text" in src
     assert "push_channel_event" not in src
     assert "close_terminal" not in src

@@ -232,9 +232,12 @@ async def test_canceled_journal_worker_cannot_send_later(shared, monkeypatch):
             await task
     finally:
         release.set()
-    await asyncio.sleep(0.05)
-    assert not d._codex_reply_attempts and not d._answering
-    assert not [m for m in ws.sent if m["method"].startswith("turn/")]
+    # The caller hung up, but the entry is the session lane's now and is
+    # never cut short (`docs/steering-queue.md`): it finishes once, in order.
+    await d._steering_lanes().drained()
+    assert not d._answering
+    assert len(d._codex_reply_attempts) == 1
+    assert [m["method"] for m in ws.sent].count("turn/start") == 1
 
 
 @pytest.mark.asyncio

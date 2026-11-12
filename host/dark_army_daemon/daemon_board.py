@@ -5600,24 +5600,48 @@ class BoardVerbsMixin:
                    if card.get("link_state") == "live" and sid
                    and provider == "claude" else None)
         if channel is not None:
-            # The tail names the tool this session was born with: the
-            # channel's registered name, kept on its registry entry.
-            content = text + "\n\n" + ask_direct_tail(channel.get("name"))
-            pushed = await self.push_channel_event(
-                sid, content, {"kind": "user"})
-            if not pushed:
-                return False, "That session is no longer listening."
-            msg, detail = await self._board_call(
-                "add_message", card["id"], "user", text, "question", "")
-            if msg is None:
-                return False, detail
-            await self._publish_board()
-            return True, "asked"
+            # In the session's steering lane, after anything already waiting
+            # for it; the push and the record are `_ask_card_push_now`'s, run
+            # at the entry's turn (`docs/steering-queue.md`).
+            return await self._steer(
+                "card_ask", sid, {"card_id": card_id, "text": text})
 
         if not self.board_dispatch_enabled:
             return False, "Dark Army is not allowed to start sessions (see the ⋯ menu)"
         async with self._dispatch_lock:
             return await self._ask_card_consult_locked(card, text)
+
+    async def _ask_card_push_now(self, card_id: str, text: str) -> tuple:
+        """`ask_card`'s direct branch, run in the session's steering lane at
+        its turn: the card is read again and the live Claude channel is
+        re-checked, and a replay after a restart that finds it gone refuses
+        here. **Never** `_ask_card_consult_locked`, which would start a
+        session: Dark Army never selects work."""
+        if self._board is None:
+            return False, "the board is not open"
+        card = await self._board_call("get", card_id)
+        if card is None:
+            return False, "no such card"
+        sid = str(card.get("session_id") or "")
+        provider = self._session_provider(sid) or "claude"
+        channel = (self._channel_for_session(sid)
+                   if card.get("link_state") == "live" and sid
+                   and provider == "claude" else None)
+        if channel is None:
+            return False, "That session is no longer listening."
+        # The tail names the tool this session was born with: the
+        # channel's registered name, kept on its registry entry.
+        content = text + "\n\n" + ask_direct_tail(channel.get("name"))
+        pushed = await self.push_channel_event(
+            sid, content, {"kind": "user"})
+        if not pushed:
+            return False, "That session is no longer listening."
+        msg, detail = await self._board_call(
+            "add_message", card["id"], "user", text, "question", "")
+        if msg is None:
+            return False, detail
+        await self._publish_board()
+        return True, "asked"
 
     async def _ask_card_consult_locked(self, card: dict, text: str) -> tuple:
         """The consultant half of `ask_card`, under `_dispatch_lock`."""
@@ -5724,6 +5748,45 @@ class BoardVerbsMixin:
         `_questions` beside it), because the broker deliberately never holds a
         question and so the first can never cover the second.
         """
+        if self._board is None:
+            return False, "the board is not open"
+        text, refusal = self._message_card_text(text)
+        if refusal:
+            return False, refusal
+        card = await self._board_call("get", card_id)
+        if card is None:
+            return False, "no such card"
+        sid = str(card.get("session_id") or "")
+        if not sid or card.get("link_state") != "live":
+            # Nothing is queued for a card with nobody to type at.
+            return False, _D.CARD_MESSAGE_NO_SESSION_REFUSAL
+        # In the session's steering lane, after anything already waiting for it.
+        # Every refusal below the text checks, and the record after the typing,
+        # are re-run at the entry's turn by `_message_card_now`.
+        return await self._steer(
+            "card_message", sid, {"card_id": card_id, "text": text})
+
+    def _message_card_text(self, text) -> tuple:
+        """`message_card`'s four text refusals, in their order: `(text, "")` for
+        words fit to type, `(text, refusal)` otherwise."""
+        text = str(text or "").strip()
+        if not text:
+            return text, _D.CARD_MESSAGE_EMPTY_REFUSAL
+        if text.startswith("/"):
+            return text, _D.CARD_MESSAGE_SLASH_REFUSAL
+        # One test for every control character, not just `\n`: `\r` submits on
+        # some clients and a `\t` moves the focus off the input line, and the
+        # tail of either lands somewhere nobody chose. `0x7f` (DEL) is in the
+        # test too — it sits *above* the C0 block but the client reads it as a
+        # backspace, so it edits the line rather than being read on it.
+        if any(ord(c) < 32 or ord(c) == 127 for c in text):
+            return text, _D.CARD_MESSAGE_ONE_LINE_REFUSAL
+        if len(text) > self.MAX_REPLY_CHARS:
+            return text, self.CARD_MESSAGE_TOO_LONG_REFUSAL
+        return text, ""
+
+    async def _message_card_now(self, card_id: str, text: str) -> tuple:
+        """The body of `message_card`, run in the session's steering lane at its turn."""
         if self._board is None:
             return False, "the board is not open"
         text = str(text or "").strip()

@@ -306,7 +306,9 @@ def test_the_eight_refusals_are_eight_distinct_sentences():
 # --- the route can never quietly become the channel ---------------------------
 
 def test_the_verb_types_and_never_reaches_for_the_channel():
-    src = inspect.getsource(BobDaemon.message_card)
+    # The typing body moved behind the steering lane (`docs/steering-queue.md`).
+    src = (inspect.getsource(BobDaemon.message_card)
+           + inspect.getsource(BobDaemon._message_card_now))
     assert "send_text" in src
     assert "push_channel_event" not in src
     assert "INPUT_LINE_CLEAR" in src

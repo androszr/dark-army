@@ -345,7 +345,7 @@ session and a Codex identity mismatch are refused in
 `wrap_up_session`'s sibling for one failure: a Claude session whose current
 card is a `StopFailure` with `error_kind == "rate_limit"`. It types
 `LOW_PRIORITY_COMMAND` (`/low-priority`) onto the input line through
-`vscode_reveal.send_text` — a slash command, so never the channel — and only
+`session_io.send_text` — a slash command, so never the channel — and only
 once that has landed writes `state = "idle"` (re-stamping both event clocks)
 and drops the card; `dismiss_notification` alone would leave `error`, which
 `categorize` banks under `waiting`, so the row would stay in Needs you. Four

@@ -187,7 +187,14 @@ async def _stop_session(w: World, variant: str):
 async def _autocompact(w: World, variant: str):
     w.d._session_provider = lambda sid: "claude"
     w.d._compact_queue = [("sess-1", 4242, "claude")]
+    # The flush submits to the session's lane and does not wait; the scenario
+    # waits on the entry so a simulated crash inside it surfaces here.
+    lanes = w.d._steering_lanes()
+    futures, real = [], lanes.submit
+    lanes.submit = lambda *a, **k: futures.append(real(*a, **k)) or futures[-1]
     await w.d._flush_auto_compacts()
+    for future in futures:
+        await future
 
 
 async def _answer_burst(w: World, variant: str):
@@ -197,12 +204,25 @@ async def _answer_burst(w: World, variant: str):
     await w.d._type_answer_burst("sess-1", 4242, questions, groups)
 
 
+async def _steer(w: World, variant: str):
+    """A typed reply through the session's lane: enqueue, intent, the
+    keystrokes, result, resolve (`docs/steering-queue.md`)."""
+    w.d._reply_to_session_now = _reply_body
+    await w.d._steer("reply", "sess-1", {"text": "hello there"})
+
+
+async def _reply_body(session_id, text):
+    result = await session_io.send_text(4242, "", "\x15" + text, newline=True)
+    return bool(result and result.get("sent")), ""
+
+
 SCENARIOS = {
     "card_start": _card_start,
     "worktree_prepare": _worktree_prepare,
     "stop_session": _stop_session,
     "autocompact": _autocompact,
     "answer_burst": _answer_burst,
+    "steer": _steer,
 }
 
 #: (kind, variant) -> how many commits the scenario makes. A step added to an
@@ -218,6 +238,7 @@ POINTS = {
     ("autocompact", "once"): 2,
     ("answer_burst", "single"): 2,
     ("answer_burst", "multi"): 2,
+    ("steer", "reply"): 4,
 }
 
 CASES = [(kind, variant, point)
@@ -469,3 +490,51 @@ async def test_a_preparation_raising_in_process_is_closed_not_recovered(
         assert w.store.journal_open() == []
     finally:
         w.store.close()
+
+
+# --- the steering queue: replay after the crash ----------------------------------
+
+@pytest.mark.parametrize("aged", [False, True])
+@pytest.mark.parametrize("point", [1, 2, 3, 4])
+@pytest.mark.asyncio
+async def test_a_steer_crash_types_at_most_once_after_the_relaunch(
+        tmp_path, monkeypatch, point, aged):
+    from dark_army_daemon import steering
+    monkeypatch.setattr(steering, "STEER_REPLAY_SETTLE_SECONDS", 0)
+    w, crashed = await _drive(tmp_path, monkeypatch, "steer", "reply", point)
+    assert crashed
+    before_typed = w.typed
+    fresh = _relaunch(w, monkeypatch)
+    fresh.d._reply_to_session_now = _reply_body
+    try:
+        if aged:
+            fresh.store._conn.execute(
+                "UPDATE steer_queue SET created_at = created_at - 200")
+            fresh.store._conn.commit()
+        await fresh.d.recover_actions()
+        first = await fresh.d.recover_steering()
+        await fresh.d._steering_lanes().drained()
+        after_first = (fresh.store.steer_counts(), w.typed)
+        second = await fresh.d.recover_steering()
+        await fresh.d._steering_lanes().drained()
+        assert second == {"replayed": 0, "dropped": 0, "interrupted": 0,
+                          "finished": 0}
+        assert (fresh.store.steer_counts(), w.typed) == after_first
+        assert w.typed <= 1, "typed more than once overall"
+        assert fresh.store.journal_open() == []
+        assert fresh.store.steer_queued() == []
+        if point == 1:
+            assert w.typed == (0 if aged else 1)
+            assert first["replayed"] == (0 if aged else 1)
+        else:
+            assert w.typed == before_typed, "a started entry was typed again"
+        if point == 2:
+            assert first["interrupted"] == 1
+        if point == 3:
+            assert first["finished"] == 1
+        # The words are gone from the record in every case.
+        assert fresh.store._conn.execute(
+            "SELECT COUNT(*) FROM steer_queue WHERE payload != ''"
+        ).fetchone()[0] == 0
+    finally:
+        fresh.store.close()

@@ -70,7 +70,7 @@ denominator used here, and the difference between the two is the
 prerequisite's own growth, not an efficiency effect.
 
 The "Now" column is the tree on 21 Sep 2026 after the wall-time cuts
-(462 bytes under the 28% ceiling); the subject documents and the briefs grow with the
+(462 bytes under the then 28% ceiling; the floor is 27% since 12 Nov 2026); the subject documents and the briefs grow with the
 contract (the shunt delegation section alone added roughly 1.5 KB to every
 brief between the two passes), so the figure moves and `inventory --check` is
 what holds the floor.
@@ -90,8 +90,8 @@ what holds the floor.
 
 Three mandatory scenarios, each the sum of every role's load set (the parent
 in its mode plus the roles the scenario spawns), measured by
-`inventory --root . --check`, which fails unless the aggregate is at least 28%
-below the baseline (30% until 21 Sep 2026; the paragraph below says why):
+`inventory --root . --check`, which fails unless the aggregate is at least 27%
+below the baseline (30% until 21 Sep 2026, 28% until 12 Nov 2026; the paragraphs below say why):
 
 | Scenario | Surfaces | Baseline bytes | Now | Smaller by | References selected |
 |---|---|---:|---:|---:|---|
@@ -116,7 +116,7 @@ and reviewer briefs and `references/implement.md` by about 11 KB weighted —
 that stops fix rounds growing saves more runtime input than it costs in
 prompt bytes, and the person chose to move the floor rather than cut contract
 text: `LOAD_REDUCTION = 0.28` in `tools/ship_efficiency.py`, the 28% ceiling
-being 1,423,725 bytes. The baseline itself is untouched. The headroom is what the next
+being 1,423,725 bytes. (Superseded 12 Nov 2026, below.) The baseline itself is untouched. The headroom is what the next
 person editing a subject document spends: a scenario reads every selected
 subject document once per role, so a byte added to `docs/context-host.md`
 counts once per load set that selects it — three in the python-only
@@ -125,6 +125,14 @@ host document moved the aggregate by 40 while this pass was open) — so about
 4,700 bytes of new host or panel contract flips the floor.
 A byte added to a brief or to `AGENTS.md` counts in every scenario it is read
 in, so those are dearer still.
+
+**12 Nov 2026 — the floor moved from 28% to 27%.** The headroom had been
+spent again, and two plans each need a pointer line in a subject document
+every role reads: the steering queue's in `docs/context-host.md` and the
+message-queue list's in `docs/context-panel.md`. The person chose to move
+the floor rather than cut contract text: `LOAD_REDUCTION = 0.27` in
+`tools/ship_efficiency.py`, the 27% ceiling being 1,443,499 bytes. The
+baseline itself is untouched, and the 28% entry above stays as history.
 
 **25 Sep 2026 — the host document gave bytes back.** Other sessions'
 uncommitted edits had spent the headroom and more: on the live tree
@@ -378,6 +386,7 @@ against the tree on that date; the digests are the bound, the counts a reading.
 | `390f28c44216` | Refine (a Prep card) → `refine_card` | `docs/context-board.md` (the channel's tools renamed `dark_army_*`, 23 Sep 2026) | 63 → 63 |
 | `88620543ce52` | Refinement is `dispatch_card`'s sibling | `docs/context-board.md` (the channel's tools renamed `dark_army_*`, 23 Sep 2026) | 180 → 180 |
 | `a0cda1a78752` | A card reaches Done only because somebody | `docs/context-board.md` (the channel's tools renamed `dark_army_*`, 23 Sep 2026) | 219 → 219 |
+| `81e740756c3a` | And a way to carry on past a usage limit | `docs/context-panel.md` (the typing router named correctly, 3 Oct 2026) | 214 → 214 |
 | `ad0d0a6af80e` | How important a card is, is the third | `docs/context-board.md` (the channel's tools renamed `dark_army_*`, 23 Sep 2026) | 183 → 183 |
 | `d46331c22687` | A card can name its area (`Areas.swift`) | `docs/context-panel.md` (the channel's tools renamed `dark_army_*`, 23 Sep 2026) | 177 → 177 |
 | `38c4fb148689` | dark_army_menubar/ — macOS status bar app | `docs/context-host.md` (the installed paths moved to Dark Army, 22 Sep 2026) | 991 → 991 |
@@ -753,7 +762,7 @@ contract; inventory is a standing convention; a load-set REQ-minor does
 not `ITERATE` when the floor is already over.
 
 Not changed: the role loads. `CLAUDE.md`'s rule that a selected document is
-read whole stands, and `inventory --check`'s margin (28% floor) is the bound
+read whole stands, and `inventory --check`'s margin (27% floor) is the bound
 on any brief growing.
 
 ## Limitations
