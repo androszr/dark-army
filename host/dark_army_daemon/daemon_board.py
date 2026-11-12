@@ -5785,7 +5785,11 @@ class BoardVerbsMixin:
             return False, _D.CARD_MESSAGE_NO_PID_REFUSAL
 
         result = await session_io.send_text(
-            pid, "", _D.INPUT_LINE_CLEAR + text)
+            pid, "", _D.INPUT_LINE_CLEAR + text,
+            still_clear=lambda: not (
+                sid in self._prompts_by_session()
+                or self._questions.get(sid)
+                or self._pending_questions.get(sid)))
         if not (result and result.get("sent")):
             return False, (_D._typed_nothing_refusal(result) or _D.NO_TYPING_WINDOW_REFUSAL)
 

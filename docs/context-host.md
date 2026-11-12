@@ -180,7 +180,7 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
   channel's alone.
   `wrap_up_session` and `low_priority_session` do **not** ride
   it: a slash command is expanded by the client on the input line, so both go
-  through `vscode_reveal.send_text`. Permission prompts are in `/api/state`
+  through `session_io.send_text`. Permission prompts are in `/api/state`
   as `permissions`, answered through `answer_permission` / the
   `permission_verdict` action, never as notification cards. The preference
   keys stay `channel_enabled` and `typed_reply`; every rename in that menu is

@@ -457,3 +457,66 @@ def test_carded_live_sessions_is_the_one_walk(monkeypatch):
     # No board published yet is not an error, it is nobody.
     d._board_state = {}
     assert d._carded_live_sessions() == set()
+
+
+# --- a hosted terminal waits for its words before the Enter ---------------------
+
+def _hosted(monkeypatch, drain_ok):
+    """pid 4242 owned by a pty; writes and the drain land in one ordered list."""
+    from dark_army_daemon import ptyhost, session_io
+    events = []
+    monkeypatch.setattr(ptyhost, "owns", lambda pid: "pty-1" if pid == 4242 else None)
+    monkeypatch.setattr(ptyhost, "send",
+                        lambda handle, text, newline=True: events.append(text)
+                        or {"matched": True, "sent": True})
+
+    class Host:
+        async def drain(self, handle, timeout):
+            events.append("<drain>")
+            return drain_ok
+    monkeypatch.setattr(ptyhost, "current", lambda: Host())
+    monkeypatch.setattr(session_io, "PTY_ENTER_GAP_SECONDS", 0.0)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_a_card_message_to_a_busy_hosted_terminal_says_check_the_screen(
+        daemon, monkeypatch):
+    d, store = daemon
+    card = _live(d, store)
+    writes = _hosted(monkeypatch, drain_ok=False)
+    assert (await d.message_card(card["id"], "also update the readme")
+            ) == (False, dm.TERMINAL_BUSY_REFUSAL)
+    assert store.messages(card["id"]) == []
+    assert writes == ["\x15also update the readme", "<drain>"]
+    assert "\r" not in writes
+
+
+@pytest.mark.asyncio
+async def test_a_card_message_to_a_hosted_terminal_waits_for_its_words(
+        daemon, monkeypatch):
+    d, store = daemon
+    card = _live(d, store)
+    writes = _hosted(monkeypatch, drain_ok=True)
+    assert (await d.message_card(card["id"], "also update the readme")
+            ) == (True, "sent")
+    assert writes == ["\x15also update the readme", "<drain>", "\r"]
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_opened_before_the_enter_holds_the_enter_and_records_nothing(
+        daemon, monkeypatch):
+    from dark_army_daemon import session_io
+    d, store = daemon
+    card = _live(d, store)
+    writes = _hosted(monkeypatch, drain_ok=True)
+    prompts = {}
+    monkeypatch.setattr(d, "_prompts_by_session", lambda: prompts)
+
+    async def gap(seconds):
+        prompts["sess-live"] = {"tool": "Bash"}
+    monkeypatch.setattr(session_io.asyncio, "sleep", gap)
+    assert (await d.message_card(card["id"], "also update the readme")
+            ) == (False, dm.TERMINAL_TYPED_NOT_SENT_REFUSAL)
+    assert "\r" not in writes
+    assert store.messages(card["id"]) == []

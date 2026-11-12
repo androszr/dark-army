@@ -86,7 +86,7 @@ def typing_daemon(monkeypatch):
 ])
 def test_a_typed_reply_refused_by_the_editor_says_why(typing_daemon, monkeypatch,
                                                       reply, words):
-    async def send(pid, tty, text, newline=True):
+    async def send(pid, tty, text, newline=True, **_):
         return reply
     monkeypatch.setattr(session_io, "send_text", send)
     assert asyncio.run(typing_daemon._reply_by_typing("s1", "Continue")) == (False, words)
@@ -100,7 +100,7 @@ def test_a_wrap_up_refused_by_the_editor_says_why(typing_daemon, monkeypatch,
                                                   reply, words):
     dismissed = []
 
-    async def send(pid, tty, text, newline=True):
+    async def send(pid, tty, text, newline=True, **_):
         return reply
 
     async def dismiss(sid):
@@ -109,6 +109,29 @@ def test_a_wrap_up_refused_by_the_editor_says_why(typing_daemon, monkeypatch,
     monkeypatch.setattr(typing_daemon, "dismiss_notification", dismiss)
     assert asyncio.run(typing_daemon.wrap_up_session("s1")) == (False, words)
     assert dismissed == []
+
+
+@pytest.mark.parametrize("verb", ["wrap_up_session", "low_priority_session"])
+def test_a_busy_hosted_terminal_says_check_the_screen_from_wrap_up_and_low_priority(
+        typing_daemon, monkeypatch, verb):
+    busy = {"matched": True, "sent": False, "settled": False,
+            "error": session_io.PTY_BUSY_REFUSAL}
+
+    async def send(pid, tty, text, newline=True, **_):
+        return busy
+
+    async def dismiss(sid):
+        pass
+    monkeypatch.setattr(session_io, "send_text", send)
+    monkeypatch.setattr(typing_daemon, "dismiss_notification", dismiss)
+    # Low priority only answers a rate-limited session.
+    typing_daemon._session_states["s1"] = {"pid": 4242, "last_event": 0,
+                                           "state": "error", "provider": "claude"}
+    typing_daemon._active_notifications["s1"] = {
+        "session_id": "s1", "hook": "StopFailure", "error_kind": "rate_limit",
+        "message": "You've hit your limit"}
+    assert asyncio.run(getattr(typing_daemon, verb)("s1")) == (
+        False, dmod.TERMINAL_BUSY_REFUSAL)
 
 
 # ── the other three typing verbs say the editor's words ───────────────────────
