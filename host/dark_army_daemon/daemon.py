@@ -387,14 +387,15 @@ _NO_WINDOW_PREFIX = ("No VS Code window owns this session's terminal, "
                      "so Dark Army cannot ")
 #: What `wrap_up_session`, `low_priority_session`, `answer_questions` and
 #: `message_card` all end on when `send_text` did not land — unless the
-#: editor said why (`_typed_nothing_refusal`).
+#: editor or a busy hosted pty said why (`_typed_nothing_refusal`).
 NO_TYPING_WINDOW_REFUSAL = _NO_WINDOW_PREFIX + "type into it."
 
 
 def _typed_nothing_refusal(result) -> str:
     """The editor's own words for a keystroke it refused before typing
     anything, or "". Only a reply that says `sent: false` explicitly and
-    carries an `error` — the bridge's Workspace Trust refusal, which the
+    carries an `error` — the bridge's Workspace Trust refusal or a hosted
+    pty's busy refusal (`session_io.PTY_BUSY_REFUSAL`), which the
     router (`session_io.send_text`) hands up from the owning window — so an old
     window's `unknown op`, a timeout or a silent miss keep the caller's own
     refusal."""
@@ -422,21 +423,16 @@ TERMINAL_TOO_LONG_REFUSAL = "That is too long for one line of terminal input."
 TERMINAL_CONTROL_REFUSAL = ("Control characters are not typed from the phone — "
                             "Ctrl-C, Escape and the arrow keys belong in front "
                             "of the machine.")
-#: The pty took only part of the line within `TERMINAL_DRAIN_SECONDS`. Its
-#: own sentence and never `TERMINAL_EXITED_REFUSAL`: Darwin's pty input
-#: queue is ~1 KB, so a long line to a CLI mid-redraw is a wait, not a death.
-TERMINAL_BUSY_REFUSAL = ("The terminal is not taking input right now — part of "
-                         "that line may have landed, unsent; check the screen "
-                         "before typing it again.")
+#: The pty took only part of the line within `TERMINAL_DRAIN_SECONDS`. The
+#: sentence lives in `session_io.PTY_BUSY_REFUSAL`, shared with `send_text`.
+TERMINAL_BUSY_REFUSAL = session_io.PTY_BUSY_REFUSAL
 #: The words went in but their Enter was held back — a permission prompt
 #: came up in the pause before it (`_terminal_line_input`). The words sit
 #: in the input box unsent, so a blind retry would submit them twice.
-TERMINAL_TYPED_NOT_SENT_REFUSAL = ("A permission prompt came up while typing — "
-                                   "the words are in the terminal's input box "
-                                   "but were not sent. Answer the prompt, then "
-                                   "press Enter there or clear the line.")
-#: How long `terminal_input` waits for a queued remainder to land.
-TERMINAL_DRAIN_SECONDS = 3.0
+TERMINAL_TYPED_NOT_SENT_REFUSAL = session_io.PTY_TYPED_NOT_SENT_REFUSAL
+#: How long `terminal_input` waits for a queued remainder to land; the bound
+#: lives in `session_io.PTY_DRAIN_SECONDS`, shared with `send_text`.
+TERMINAL_DRAIN_SECONDS = session_io.PTY_DRAIN_SECONDS
 #: Raw desk input per frame or per request. A paste, not a line: the
 #: extension path never had a cap this low and the pty queues what it
 #: cannot take at once (`PtyHost.write`).
@@ -4187,6 +4183,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
                 if capture and episode:
                     capture.submit("finish", "question:" + session_id, "delivered_unconfirmed", text, "reply typed into terminal", episode_id=episode)
                 return True, ""
+            if detail in (TERMINAL_BUSY_REFUSAL, TERMINAL_TYPED_NOT_SENT_REFUSAL):
+                # The words may already sit on the input line; a channel push
+                # would deliver the reply twice.
+                return False, detail
             if self._channel_for_session(session_id) is None:
                 return False, detail
             logger.info("Typed reply to %s refused (%s); falling back to the channel",
@@ -4383,6 +4383,12 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
 
         self._codex_input_task = asyncio.create_task(observe())
 
+    def _input_line_still_clear(self, session_id: str) -> bool:
+        """The prompt and question checks `_reply_by_typing` makes before
+        typing, asked again right before its Enter."""
+        return (session_id not in self._prompts_by_session()
+                and not self._questions.get(session_id))
+
     async def _reply_by_typing(self, session_id: str,
                                text: str) -> tuple[bool, str]:
         """Put `text` on the session's own input line and press Enter for it.
@@ -4395,7 +4401,9 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         that was never started with the channel command.
 
         Every check runs before the first keystroke and a refusal never
-        types, because the trailing Enter lands on whatever the TUI is
+        types — except the one busy refusal (`TERMINAL_BUSY_REFUSAL`), which
+        comes after the words went in and before an Enter that is withheld —
+        because the trailing Enter lands on whatever the TUI is
         showing: a permission dialog would read it as "confirm", a question
         dialog as "pick the highlighted option", a second line as a second
         message. Order and wording are the plan's
@@ -4443,7 +4451,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         self._answering.add(session_id)
         try:
             result = await session_io.send_text(
-                pid, "", INPUT_LINE_CLEAR + text, newline=True)
+                pid, "", INPUT_LINE_CLEAR + text, newline=True,
+                still_clear=lambda: self._input_line_still_clear(session_id))
         finally:
             self._answering.discard(session_id)
         if not (result and result.get("sent")):
@@ -4505,7 +4514,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
             return False, "No PID on record for this session."
 
         result = await session_io.send_text(
-            pid, "", INPUT_LINE_CLEAR + WRAP_UP_COMMAND)
+            pid, "", INPUT_LINE_CLEAR + WRAP_UP_COMMAND,
+            still_clear=lambda: session_id not in self._prompts_by_session())
         if not (result and result.get("sent")):
             return False, _typed_nothing_refusal(result) or NO_TYPING_WINDOW_REFUSAL
 

@@ -21,6 +21,43 @@ from dark_army_daemon import ptyhost, session_io, vscode_reveal
 DAEMON_DIR = pathlib.Path(__file__).resolve().parents[1] / "dark_army_daemon"
 
 
+@pytest.fixture(autouse=True)
+def _no_host_installed(monkeypatch):
+    """`ptyhost.current()` is whichever daemon another test built last; pin it
+    so these cases never depend on that. Cases that want a host set their own."""
+    monkeypatch.setattr(ptyhost, "current", lambda: None)
+
+
+class _FakeHost:
+    """Records its drains into the shared `events` list; answers `ok`."""
+
+    def __init__(self, events, ok=True):
+        self.events, self.ok, self.calls = events, ok, []
+
+    async def drain(self, handle, timeout):
+        self.calls.append((handle, timeout))
+        self.events.append(("drain", handle, timeout))
+        return self.ok
+
+
+def _pty_events(monkeypatch, host_ok=True):
+    """Own pid 42 as "pty-1"; record words, drain, sleep and enter in order."""
+    events = []
+    monkeypatch.setattr(ptyhost, "owns", lambda pid: "pty-1" if pid == 42 else None)
+
+    def send(handle, text, newline=True):
+        events.append(("enter",) if text == "\r" else ("words", text))
+        return {"matched": True, "sent": True, "matchedBy": "pty"}
+    monkeypatch.setattr(ptyhost, "send", send)
+    host = _FakeHost(events, host_ok)
+    monkeypatch.setattr(ptyhost, "current", lambda: host)
+
+    async def nap(seconds):
+        events.append(("sleep", seconds))
+    monkeypatch.setattr(session_io.asyncio, "sleep", nap)
+    return events, host
+
+
 # --- the fork -----------------------------------------------------------------
 
 
@@ -278,3 +315,150 @@ async def test_the_answer_burst_lands_on_a_pty(monkeypatch):
     ok, detail = await daemon.answer_question("s1", held["id"], 1)
     assert ok, detail
     assert typed[0] == "2"
+
+
+# --- every pty line waits for its words before its Enter -----------------------
+
+def test_send_text_drains_the_words_before_the_enter(monkeypatch):
+    events, _ = _pty_events(monkeypatch)
+    result = asyncio.run(session_io.send_text(42, "", "hello"))
+    assert events == [("words", "hello"),
+                      ("drain", "pty-1", session_io.PTY_DRAIN_SECONDS),
+                      ("sleep", session_io.PTY_ENTER_GAP_SECONDS),
+                      ("enter",)]
+    assert result["sent"] is True
+
+
+def test_send_text_sends_no_enter_after_words_that_did_not_drain(monkeypatch):
+    events, _ = _pty_events(monkeypatch, host_ok=False)
+    result = asyncio.run(session_io.send_text(42, "", "hello"))
+    assert result["sent"] is False and result["settled"] is False
+    assert result["error"] == session_io.PTY_BUSY_REFUSAL
+    assert [e for e in events if e[0] == "words"] == [("words", "hello")]
+    assert ("enter",) not in events and not [e for e in events if e[0] == "sleep"]
+
+
+def test_a_single_keystroke_is_never_drained(monkeypatch):
+    events, host = _pty_events(monkeypatch)
+    asyncio.run(session_io.send_text(42, "", "1", newline=False))
+    assert host.calls == [] and events == [("words", "1")]
+
+
+def test_the_editor_route_is_never_drained(monkeypatch):
+    events, host = _pty_events(monkeypatch)
+    monkeypatch.setattr(ptyhost, "owns", lambda pid: None)
+    reply = {"matched": True, "sent": True, "terminalName": "zsh"}
+
+    async def editor(pid, tty, text, newline=True):
+        return reply
+    monkeypatch.setattr(vscode_reveal, "send_text", editor)
+    assert asyncio.run(session_io.send_text(42, "", "hello")) is reply
+    assert host.calls == []
+
+
+def test_with_no_host_installed_the_words_count_as_drained(monkeypatch):
+    events, _ = _pty_events(monkeypatch)
+    monkeypatch.setattr(ptyhost, "current", lambda: None)
+    assert asyncio.run(session_io.send_text(42, "", "hello"))["sent"] is True
+    assert events[-1] == ("enter",)
+
+
+def test_the_drain_bound_is_read_at_call_time(monkeypatch):
+    _, host = _pty_events(monkeypatch)
+    monkeypatch.setattr(session_io, "PTY_DRAIN_SECONDS", 0.5)
+    asyncio.run(session_io.send_text(42, "", "hello"))
+    assert host.calls == [("pty-1", 0.5)]
+
+
+@pytest.mark.asyncio
+async def test_a_long_message_to_a_full_pty_gets_no_enter(tmp_path, monkeypatch):
+    """Real pipe nobody reads: the pty cannot take the words, so the drain runs
+    out and no carriage return is ever queued behind them."""
+    import os
+    from dark_army_daemon import daemon as dm
+    from dark_army_daemon.ptyhost import PtyTerminal
+    from dark_army_daemon.vtgrid import Screen
+    d = dm.BobDaemon(headless=True)
+    r, w = os.pipe()
+    os.set_blocking(w, False)
+    host = d._pty
+    host._loop = asyncio.get_running_loop()
+    term = PtyTerminal(handle="pty-pipe", name="pipe", root=str(tmp_path), pid=0,
+                       master=w, proc=None, screen=Screen(80, 24), cols=80, rows=24)
+    host._terms[term.handle] = term
+    monkeypatch.setattr(ptyhost, "current", lambda: host)
+    monkeypatch.setattr(ptyhost, "owns", lambda pid: term.handle)
+    monkeypatch.setattr(session_io, "PTY_DRAIN_SECONDS", 0.1)
+    try:
+        assert host.write(term.handle, "y" * 300_000)
+        assert host.pending(term.handle) > 0
+        result = await session_io.send_text(42, "", "x" * 1500)
+        assert result["sent"] is False
+        assert result["error"] == session_io.PTY_BUSY_REFUSAL
+        os.set_blocking(r, False)
+        got = bytearray()
+        for _ in range(600):
+            try:
+                got += os.read(r, 65536)
+            except BlockingIOError:
+                pass
+            await asyncio.sleep(0.005)
+            if host.pending(term.handle) == 0:
+                break
+        try:
+            got += os.read(r, 65536)
+        except BlockingIOError:
+            pass
+        assert bytes(got).endswith(b"x" * 1500)
+        assert b"\r" not in got
+    finally:
+        os.close(r)
+        host._terms.pop(term.handle, None)
+        os.close(w)
+
+
+def test_the_bound_and_the_sentence_are_one_definition():
+    from dark_army_daemon import daemon as dm
+    assert dm.TERMINAL_DRAIN_SECONDS == session_io.PTY_DRAIN_SECONDS
+    assert dm.TERMINAL_BUSY_REFUSAL is session_io.PTY_BUSY_REFUSAL
+
+
+# --- the caller's "still clear" check, right before the Enter ------------------
+
+def test_a_failed_still_clear_sends_no_enter(monkeypatch):
+    events, _ = _pty_events(monkeypatch)
+    result = asyncio.run(session_io.send_text(
+        42, "", "hello", still_clear=lambda: events.append(("asked",)) or False))
+    assert result["sent"] is False
+    assert result["error"] == session_io.PTY_TYPED_NOT_SENT_REFUSAL
+    # asked after the drain and the gap, never before
+    assert events == [("words", "hello"),
+                      ("drain", "pty-1", session_io.PTY_DRAIN_SECONDS),
+                      ("sleep", session_io.PTY_ENTER_GAP_SECONDS),
+                      ("asked",)]
+
+
+def test_a_passing_still_clear_lets_the_enter_go(monkeypatch):
+    events, _ = _pty_events(monkeypatch)
+    assert asyncio.run(session_io.send_text(
+        42, "", "hello", still_clear=lambda: True))["sent"] is True
+    assert events[-1] == ("enter",)
+
+
+def test_still_clear_is_not_asked_on_the_editor_route_or_for_a_keystroke(monkeypatch):
+    events, host = _pty_events(monkeypatch)
+
+    def boom():
+        raise AssertionError("asked")
+    asyncio.run(session_io.send_text(42, "", "1", newline=False, still_clear=boom))
+    monkeypatch.setattr(ptyhost, "owns", lambda pid: None)
+
+    async def editor(pid, tty, text, newline=True):
+        return {"matched": True, "sent": True}
+    monkeypatch.setattr(vscode_reveal, "send_text", editor)
+    assert asyncio.run(session_io.send_text(42, "", "hi", still_clear=boom))["sent"]
+
+
+def test_the_typed_not_sent_sentence_is_one_definition():
+    from dark_army_daemon import daemon as dm
+    assert dm.TERMINAL_TYPED_NOT_SENT_REFUSAL is session_io.PTY_TYPED_NOT_SENT_REFUSAL

@@ -202,6 +202,36 @@ def test_an_unreachable_window_falls_back_to_the_channel(monkeypatch, kw):
     assert pushed == [("s1", "accept", {"kind": "user"})]
 
 
+def test_a_busy_hosted_terminal_does_not_fall_back_to_the_channel(monkeypatch):
+    """The words may already sit on the input line; a channel push would
+    deliver them twice."""
+    from dark_army_daemon import daemon as dm
+    pushed = []
+    busy = {"matched": True, "sent": False, "settled": False,
+            "error": dm.TERMINAL_BUSY_REFUSAL}
+    daemon = _daemon(monkeypatch, channel=True, pushed=pushed, result=busy)
+    assert _reply(daemon) == (False, dm.TERMINAL_BUSY_REFUSAL)
+    assert pushed == []
+
+
+def test_a_prompt_opened_before_the_enter_holds_it_and_skips_the_channel(monkeypatch):
+    from dark_army_daemon import daemon as dm, ptyhost, session_io
+    writes, pushed = [], []
+    prompts = {"other": 1}
+    monkeypatch.setattr(ptyhost, "owns", lambda pid: "pty-1")
+    monkeypatch.setattr(ptyhost, "send",
+                        lambda h, t, newline=True: writes.append(t)
+                        or {"matched": True, "sent": True})
+    monkeypatch.setattr(ptyhost, "current", lambda: None)
+
+    async def gap(seconds):
+        prompts["s1"] = 1
+    monkeypatch.setattr(session_io.asyncio, "sleep", gap)
+    daemon = _daemon(monkeypatch, channel=True, pushed=pushed, prompts=prompts)
+    assert _reply(daemon) == (False, dm.TERMINAL_TYPED_NOT_SENT_REFUSAL)
+    assert "\r" not in writes and pushed == []
+
+
 def test_codex_is_never_typed_at(monkeypatch):
     sent = []
     daemon = _daemon(monkeypatch, sent, provider="codex")
