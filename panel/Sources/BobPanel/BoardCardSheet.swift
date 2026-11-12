@@ -701,6 +701,34 @@ struct BoardCardSheet: View {
                     .font(.system(size: 12))
                     .foregroundStyle(bucket == "waiting" ? Color.red : Color.secondary)
             }
+            // The tile's refining line, from the one rule on the model: the card
+            // stays in Prep for the whole refinement and "Not planned yet" above
+            // says nothing about it. Snapshot only — the window has no
+            // optimistic press to draw. The caret is the tile's; `.id` pins the
+            // wait to the card (`test_agent_chatter.py`).
+            if !live.refiningLine.isEmpty {
+                HStack(spacing: 5) {
+                    AgentChatterView(.caret, wait: .refining, seed: live.id,
+                                     spoken: "Refining this card")
+                        .id(live.id)
+                    Text(live.refiningLine)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.faint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            // Which card of a refinement batch this is — the tile's own
+            // `batchPlanningLine`, gated on refining in Prep by the rule itself.
+            // Never beside `batchLine`: the daemon's `batch` mark is absent on a
+            // refining card. The unplanned note is `dispatchError`, drawn once in
+            // the footer, where it already is.
+            if !live.batchPlanningLine.isEmpty {
+                Text(live.batchPlanningLine)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(live.batchPlanningLine)
+            }
             // What the last MERGE press came to and the review's verdict —
             // the daemon's words, verbatim, as the card face draws them.
             if !live.mergeLine.isEmpty {

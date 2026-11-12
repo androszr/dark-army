@@ -373,3 +373,11 @@ card-window guard (`owns()` narrow, `isKey` total, below the sheet test).
 `.cursorUpdate` **tracking area** — not `onHover` + `NSCursor.push()/pop()`,
 which leaks here. The overlay's `hitTest` returns nil. Only drawn controls get
 it.
+
+## A refining card's window says what its tile says
+
+`BoardCardSheet.statusSection` draws `BoardCard.refiningLine` (the tile's
+words, one rule, off the daemon's `refine_state` alone, no optimistic press)
+with the refining caret, then `batchPlanningLine`; the unplanned note stays
+the footer's `dispatchError`, once. Pinned by
+`host/tests/test_card_window_refining_status.py`.

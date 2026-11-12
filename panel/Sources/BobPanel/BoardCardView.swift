@@ -864,9 +864,7 @@ struct BoardCardView: View {
                 AgentChatterView(.caret, wait: .refining, seed: card.id,
                                  spoken: "Refining this card")
                     .id(card.id)
-                Text(card.refineState == "live"
-                     ? "refining — answer the interview in the terminal"
-                     : "refining — waiting for the session to appear")
+                Text(BoardCard.refiningLine(state: card.refineState))
                     .font(Theme.mono(10))
                     .foregroundStyle(Theme.faint)
                 // Keyed off the *resolved* refiner, never off `isRefining`:
