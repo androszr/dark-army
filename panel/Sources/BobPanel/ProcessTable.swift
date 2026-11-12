@@ -295,9 +295,13 @@ struct ProcessRow: View {
         return "\(Int(pct.rounded()))%"
     }
 
-    private var ctxColor: Color {
-        guard let pct = agent.metrics.ctxUsedPct else { return Theme.faint }
-        if agent.metrics.exceeds200k || pct >= 85 { return .red }
+    private var ctxColor: Color { Self.ctxColor(agent.metrics) }
+
+    /// The CTX thresholds, one function: the row's figure and the fleet map's
+    /// ring both read it (red from 85% or past 200k, amber from 75%).
+    static func ctxColor(_ metrics: Metrics) -> Color {
+        guard let pct = metrics.ctxUsedPct else { return Theme.faint }
+        if metrics.exceeds200k || pct >= 85 { return .red }
         if pct >= 75 { return .orange }
         return Theme.dim
     }

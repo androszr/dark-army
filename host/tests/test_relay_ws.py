@@ -500,7 +500,8 @@ async def test_one_push_builds_the_picture_once_for_every_armed_phone(connector,
     assert builds == [{"done_review": True}], "one picture per push"
     assert sorted(runs) == [("dev-1", True), ("dev-2", True)]
     assert sorted(d for d, _, _ in sent) == ["dev-1", "dev-2"]
-    whole, sections = api_server._state_digests(real_state(done_review=True))
+    whole, sections = api_server._state_digests(
+        api_server.phone_picture(real_state(done_review=True)))
     for _device, kind, body in sent:
         assert kind == "push"
         assert body["state_digest"] == whole

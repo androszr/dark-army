@@ -118,13 +118,12 @@ clients draw them verbatim and never age them. In full:
 `docs/context-board.md`, under `board.py` and *Cost and time on the card*.
 
 **Where each subject's contract lives.** The table is the map; the documents
-are the territory, relocated verbatim from this file on 20 Sep 2026 and kept
-current there.
+are the territory, kept current there.
 
 | Subject | Document | Long-form contracts it points at |
 |---|---|---|
 | The board: two write paths, `start_when_planned`, the parallel limit and the queue, claims, Done, `board.py`'s writer rings, `dispatch.py`'s six properties, `workspace.py` | `docs/context-board.md` | `docs/card-crew.md`, `docs/delivery-leads.md`, `docs/lifecycle-timing.md`, `docs/card-dependencies.md`, `docs/card-worktrees.md` |
-| The Mac panel: workspace pane and rail, the process table, detail tabs and the hosted terminal, the inbox, the window, the board's drawing, the card window, drafts, markdown, areas, chatter, the API layer's three rules | `docs/context-panel.md` | `docs/panel-window-contract.md`, `docs/phone-contract.md`, `docs/agent-chatter.md` |
+| The Mac panel: workspace pane and rail, the process table, detail tabs and the hosted terminal, the inbox, the window, the board's drawing, the card window, drafts, markdown, areas, chatter, the API layer's three rules | `docs/context-panel.md` | `docs/panel-window-contract.md`, `docs/phone-contract.md`, `docs/agent-chatter.md`, `docs/fleet-map-contract.md` |
 | The Python half: Codex observation, the hook handler, the daemon and its modules, the loopback API and the two sealed doors, enrolment, `paths.py`, titles, the menu-bar app, the session state model | `docs/context-host.md` | `docs/session-state-contract.md`, `docs/transport-contract.md`, `docs/codex-contract.md`, `docs/channel-tools.md`, `docs/knowledge-notes.md`, `docs/pty-broker-contract.md`, `docs/menubar-strip-contract.md`, `docs/kill-switch.md`, `docs/agent-pack.md`, `docs/first-run-checklist.md`, `docs/review-runs.md`, `docs/action-journal.md` |
 | Building, testing, the asset pipelines, `/review` | `docs/context-development.md` | `docs/agents.md`, `docs/ship-efficiency.md`, `docs/codex-ship.md` |
 

@@ -96,6 +96,25 @@ enum PanelPlacement {
         writeBody(body)
     }
 
+    /// The rail's Table | Map choice, or nil when never saved. Only `"map"`
+    /// is ever stored; the table is the default and needs no record, and any
+    /// other value reads as absent (`FleetRailView.fromStored`).
+    static func fleetRailView() -> String? {
+        readBody()["fleet_rail_view"] as? String
+    }
+
+    /// Merge the rail choice in, removing the key for the default table,
+    /// `saveBoardRowFlips`' rule. Every other key survives.
+    static func saveFleetRailView(_ view: String) {
+        var body = readBody()
+        if view == "map" {
+            body["fleet_rail_view"] = "map"
+        } else {
+            body.removeValue(forKey: "fleet_rail_view")
+        }
+        writeBody(body)
+    }
+
     /// The project root the last successfully filed composer card used, or
     /// nil when none has been saved (or the stored value is garbage).
     static func composerRoot() -> String? {

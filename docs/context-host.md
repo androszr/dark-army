@@ -204,6 +204,8 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `load_or_create_token` uses `os.open(..., O_CREAT|O_EXCL, 0o600)`, never
     write-then-chmod.
 
+    The map section: `docs/fleet-map-contract.md`.
+
     **The loopback door has a desk token and a session token.** The desk
     token is memory only and reaches the panel over its stdin pipe; the file
     is the session token, which only closes terminals, pops the panel and

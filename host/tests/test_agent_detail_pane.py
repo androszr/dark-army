@@ -321,7 +321,8 @@ def test_card_reveal_holds_the_board_through_the_open_aim():
     deselect = _block(view, "private func deselect()")
     assert "revealedForCard = false" in deselect
     assert "aimPendingSinceShown = false" in deselect
-    click = _block(view, "onSelect: {")
+    # The row press is hoisted into `tapRow`, shared with the fleet map.
+    click = _block(view, "private func tapRow(_ row: SectionRow)")
     assert "revealedForCard = false" in click
     assert "aimPendingSinceShown = false" in click
 

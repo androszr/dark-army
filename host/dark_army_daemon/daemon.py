@@ -6,6 +6,7 @@ import base64
 import functools
 import hashlib
 import hmac
+import itertools
 import json
 import logging
 import os
@@ -53,6 +54,7 @@ from . import devices
 from . import dispatch
 from . import enrollment
 from . import event_log
+from . import fleet_map
 from . import grok_events
 from . import prompt_dialogs
 from . import grok_leader
@@ -1688,6 +1690,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         # Restored in `_restore_pending_questions` under two conditions, since
         # a question is only news while its dialog is up.
         self._pending_questions: dict[str, dict] = {}
+        # The fleet activity map's per-session call rings: memory only, loop
+        # only, never in sessions.json (`fleet_map.py`, `docs/fleet-map-contract.md`).
+        self._fleet_calls: dict[str, deque] = {}
+        self._fleet_seq = itertools.count(1)
         # session_id -> (transcript mtime, derived session title); mtime-invalidated
         self._ai_title_cache: dict[str, tuple[float, str]] = {}
         # Stable nicknames. Loaded once here rather than per snapshot: the file is
@@ -3387,6 +3393,7 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
                 self._drop_waiting_card(session_id, f"the session resumed ({event})")
 
         self._track_pending_question(event, session_id, msg)
+        self._note_fleet_call(event, hook, session_id, msg.get("tool_name", ""))
 
         # A SessionStart on a pid that a fresh session already holds is that
         # process's `/clear`, and the earlier session is over.
@@ -6300,6 +6307,28 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
                 len(self._pending_questions),
                 ", ".join(sid[:12] for sid in self._pending_questions),
             )
+
+    def _note_fleet_call(self, event: str, hook: str, session_id: str,
+                         tool_name: str) -> None:
+        """Step the session's fleet-map ring by this hook event (loop only).
+
+        Kept beside `_track_pending_question` and out of the state machine for
+        the same reason: it is one more dict keyed on the same events. No
+        wake of its own — `_wake_surfaces()` already follows every event."""
+        if not session_id or not isinstance(session_id, str):
+            return
+        ring = self._fleet_calls.get(session_id)
+        if ring is None:
+            if event not in ("tool_use", "permission"):
+                return
+            ring = self._fleet_calls[session_id] = fleet_map.CallRing()
+        fleet_map.advance(ring, event, hook, tool_name, next(self._fleet_seq))
+
+    def fleet_activity_snapshot(self) -> dict:
+        """The `fleet_activity` section: loopback-only, loop-side, I/O-free.
+        Reads the rebound agents cache for each row's `stats.tool_counts`."""
+        rows = getattr(self, "_agents_snapshot_cache", None) or {}
+        return fleet_map.compose(self._fleet_calls, rows)
 
     def _track_pending_question(self, event: str, session_id: str,
                                 msg: dict) -> None:
@@ -13250,6 +13279,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin):
         self._ai_title_cache.pop(sid, None)
         self._last_metric_sample.pop(sid, None)
         self._pending_questions.pop(sid, None)
+        # `getattr`, like `_decisions` below: half-built daemons in tests.
+        getattr(self, "_fleet_calls", {}).pop(sid, None)
         # A Dark Army-owned terminal outlives the session id it was named for:
         # `/clear` ends this id and starts the next one in the same process.
         # Unnaming it here lets the next enrich pass name the successor

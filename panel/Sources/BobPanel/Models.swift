@@ -96,6 +96,10 @@ struct Snapshot: Decodable {
     /// Absent from an older daemon, which decodes `available == false` and
     /// draws the section's one sentence.
     var review = ReviewSection()
+    /// The fleet activity map's calls and stations (loopback-only on the
+    /// daemon). Absent from an older daemon, which decodes
+    /// `available == false` and leaves the map with nothing to draw.
+    var fleetActivity = FleetActivitySection()
 
     /// The top-level sections a slim frame may omit — `_OMITTABLE_SECTIONS`
     /// in `api_server.py`, in the same order, minus `mesh`: the daemon still
@@ -111,12 +115,14 @@ struct Snapshot: Decodable {
         case security
         case mission
         case review
+        case fleetActivity
     }
 
     enum CodingKeys: String, CodingKey {
         case generatedAt = "generated_at"
         case counts, agents, notifications, signals, collaboration, permissions, board
         case enrollment, devices, inbox, security, mission, review
+        case fleetActivity = "fleet_activity"
         case reconcilerAvailable = "reconciler_available"
         case reconcilerError = "reconciler_error"
     }
@@ -180,6 +186,10 @@ struct Snapshot: Decodable {
         if c.contains(.review) {
             review = try c.decode(ReviewSection.self, forKey: .review)
         } else { carried.insert(.review) }
+        if c.contains(.fleetActivity) {
+            fleetActivity = try c.decode(FleetActivitySection.self,
+                                         forKey: .fleetActivity)
+        } else { carried.insert(.fleetActivity) }
     }
 
     init() {}
