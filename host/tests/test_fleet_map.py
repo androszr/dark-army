@@ -110,6 +110,25 @@ def test_permission_parks_a_running_call_on_you_once():
     assert len(ring) == 2
 
 
+def test_a_failure_after_an_approval_is_charged_to_the_tool_not_to_you():
+    ring = _ring(("tool_use", "", "Bash"), ("permission", "", "Bash"),
+                 ("tool_failed", "", "Bash"))
+    assert ring.errors_by_station == {"shell": 1}
+    assert ring.parked == ""
+    # An ask that fails outright is still You's: nothing was parked there.
+    ring = _ring(("permission", "", "Bash"), ("tool_failed", "", "Bash"))
+    assert ring.errors_by_station == {"you": 1}
+
+
+def test_a_ring_without_session_state_leaves_the_section():
+    daemon = BobDaemon.__new__(BobDaemon)
+    daemon._fleet_calls = {"gone": fleet_map.CallRing(), "live": fleet_map.CallRing()}
+    daemon._session_states = {"live": {}}
+    daemon._agents_snapshot_cache = {}
+    assert set(daemon.fleet_activity_snapshot()["sessions"]) == {"live"}
+    assert set(daemon._fleet_calls) == {"live"}
+
+
 def test_ask_tool_use_is_at_you_and_permission_does_not_double_it():
     ring = _ring(("tool_use", "", "AskUserQuestion"), ("permission", "", ""))
     assert _ends(ring) == [("you", "running")]

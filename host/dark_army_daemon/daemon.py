@@ -4401,7 +4401,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
         """The prompt and question checks `_reply_by_typing` makes before
         typing, asked again right before its Enter."""
         return (session_id not in self._prompts_by_session()
-                and not self._questions.get(session_id))
+                and not self._questions.get(session_id)
+                # The hook's own record: `_questions` trails it by a snapshot
+                # refresh, and a dialog can open during the drain.
+                and not self._pending_questions.get(session_id))
 
     async def _reply_by_typing(self, session_id: str,
                                text: str) -> tuple[bool, str]:
@@ -4437,7 +4440,8 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
                            "run as a command rather than send as words.")
         if session_id in self._prompts_by_session():
             return False, PROMPT_BLOCKED_REFUSAL
-        if self._questions.get(session_id):
+        if (self._questions.get(session_id)
+                or self._pending_questions.get(session_id)):
             return False, ("That session is waiting on a question — "
                            "use the option buttons.")
         if session_id in self._answering:
@@ -6414,6 +6418,12 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
         """The `fleet_activity` section: loopback-only, loop-side, I/O-free.
         Reads the rebound agents cache for each row's `stats.tool_counts`."""
         rows = getattr(self, "_agents_snapshot_cache", None) or {}
+        # A stray hook for a session that never got state (an ended session's
+        # late `permission`) made a ring `_forget_session` will never reach.
+        states = getattr(self, "_session_states", None)
+        if isinstance(states, dict):
+            for sid in [s for s in self._fleet_calls if s not in states]:
+                self._fleet_calls.pop(sid, None)
         return fleet_map.compose(self._fleet_calls, rows)
 
     def _track_pending_question(self, event: str, session_id: str,

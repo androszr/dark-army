@@ -64,13 +64,15 @@ final class SnapshotStreamTests: XCTestCase {
         (.security, "security", #"{"available": true, "alerts": []}"#),
         (.mission, "mission", #"{"available": true, "alive": false}"#),
         (.review, "review", #"{"available": true, "runs": []}"#),
+        (.fleetActivity, "fleet_activity",
+         #"{"version": 1, "available": true, "stations": [], "sessions": {}}"#),
     ]
 
     func testEverySectionIsCoveredByTheCarryRule() {
         // The set the decoder marks and the set the client copies are the
-        // same thirteen — the daemon's `_OMITTABLE_SECTIONS` minus `mesh` and `power`,
+        // same fourteen — the daemon's `_OMITTABLE_SECTIONS` minus `mesh` and `power`,
         // which the panel does not decode.
-        XCTAssertEqual(Snapshot.Section.allCases.count, 13)
+        XCTAssertEqual(Snapshot.Section.allCases.count, 14)
         XCTAssertEqual(Set(Self.sectionSamples.map(\.0)),
                        Set(Snapshot.Section.allCases))
     }
@@ -82,8 +84,8 @@ final class SnapshotStreamTests: XCTestCase {
             """.utf8))
             XCTAssertFalse(snap.carried.contains(section),
                            "\(key) was present and must not be carried")
-            // The other twelve were absent, so they are.
-            XCTAssertEqual(snap.carried.count, 12, key)
+            // The other thirteen were absent, so they are.
+            XCTAssertEqual(snap.carried.count, 13, key)
         }
     }
 
@@ -208,7 +210,7 @@ final class SnapshotStreamTests: XCTestCase {
         {"generated_at": 42, "counts": {}, "notifications": [],
          "agents": {"running":[]}, "signals": [], "mesh": [], "collaboration": {"version":1,"available":false},
          "permissions": [], "board": {}, "enrollment": {}, "devices": {}, "inbox": {},
-         "security": {}, "mission": {}, "review": {}}
+         "security": {}, "mission": {}, "review": {}, "fleet_activity": {}}
         """.utf8))
         let applied = fill(frame, store: &store, stamps: &stamps)
         XCTAssertTrue(applied.carried.isEmpty)

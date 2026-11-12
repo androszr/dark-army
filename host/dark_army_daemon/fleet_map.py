@@ -75,6 +75,9 @@ class CallRing(deque):
         # Failed calls per station, outliving the eight-call window: kept until
         # the agent's next prompt zeroes it with `errors`.
         self.errors_by_station: dict = {}
+        # The station a call was working at when it parked on `you` for a
+        # permission: a failure after the approval belongs there, not to You.
+        self.parked = ""
 
 
 def _close(ring, end: str) -> bool:
@@ -100,23 +103,28 @@ def advance(ring, event: str, hook: str, tool_name: str, seq: int) -> bool:
     `errors`. Anything else (`session_start`, `compact`, …) is a no-op."""
     tool = tool_name if isinstance(tool_name, str) else ""
     if event == "tool_use":
+        ring.parked = ""
         _close(ring, "done")
         _append(ring, station_for(tool), tool, seq)
         return True
     if event == "permission":
         if ring and ring[-1]["end"] == "running" and ring[-1]["station"] == "you":
             return False
+        ring.parked = (ring[-1]["station"]
+                       if ring and ring[-1]["end"] == "running" else "")
         _close(ring, "done")
         _append(ring, "you", tool or "permission", seq)
         return True
     if event == "tool_failed":
         if ring and ring[-1]["end"] == "running":
-            station = ring[-1]["station"]
+            station = ring.parked or ring[-1]["station"]
             ring.errors_by_station[station] = ring.errors_by_station.get(station, 0) + 1
+        ring.parked = ""
         _close(ring, "failed")
         ring.errors += 1
         return True
     if event in ("tool_done", "add", "dismiss"):
+        ring.parked = ""
         changed = _close(ring, "done")
         if event == "dismiss" and hook == "UserPromptSubmit" and ring.errors:
             ring.errors = 0

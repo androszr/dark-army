@@ -53,7 +53,10 @@ def _tree(base: Path) -> dict[str, bytes]:
 def test_the_template_carries_exactly_the_adapter_the_pin_and_21_files():
     top = sorted(p.name for p in TEMPLATE.iterdir())
     assert top == ["SKILL.md", "upstream", "upstream-pin.json"]
-    assert len([p for p in UPSTREAM.iterdir() if p.is_file()]) == 21
+    # Counted against the pin, not a literal: an upstream commit that adds
+    # or drops a file must not fail the update by construction.
+    pinned = json.loads(PIN.read_text(encoding="utf-8"))["files"]
+    assert len([p for p in UPSTREAM.iterdir() if p.is_file()]) == len(pinned)
     assert not [p for p in UPSTREAM.rglob("*") if p.is_dir()]
 
 
@@ -67,7 +70,7 @@ def test_the_pin_names_cloudflare_and_a_full_commit():
     assert re.fullmatch(r"[0-9a-f]{40}", pin["commit"])
     assert pin["repository"] == "https://github.com/cloudflare/security-audit-skill"
     assert pin["licence"] == "MIT"
-    assert len(pin["files"]) == 21
+    assert len(pin["files"]) >= 1
     assert PIN.read_text(encoding="utf-8").endswith("}\n")
 
 

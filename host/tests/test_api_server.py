@@ -4449,6 +4449,10 @@ async def test_fleet_activity_is_loopback_only(server):
     """The map's section rides `/api/state` and never a sealed door."""
     srv, daemon = server
     daemon._note_fleet_call("tool_use", "PreToolUse", "s1", "Read")
+    # A ring rides only while its session has state (a stray hook's does not).
+    states = dict(daemon._session_states)
+    states.setdefault("s1", {})
+    daemon._session_states = states
     status, raw = await fetch("/api/state")
     assert status == 200
     assert json.loads(raw)["fleet_activity"]["sessions"]["s1"]["calls"][0]["station"] == "files"

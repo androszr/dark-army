@@ -526,3 +526,9 @@ def test_an_override_for_a_new_grok_or_codex_id_is_filed_under_its_provider():
     assert resolve_rate("gpt-6.1", "codex").input == 1.0
     assert resolve_rate("claude-next", "claude").output == 15.0
     assert resolve_rate("odd-model", "codex") is not None
+
+
+def test_a_dated_fable_5_id_is_not_priced_as_fable_5_2():
+    assert pricing.resolve_rate("claude-fable-5-20260601") is pricing.RATES["claude-fable-5"]
+    assert pricing.resolve_rate("claude-fable-5-2-20261101") is pricing.RATES["claude-fable-5-2"]
+    assert pricing.resolve_rate("claude-fable-5-2[1m]") is pricing.RATES["claude-fable-5-2"]

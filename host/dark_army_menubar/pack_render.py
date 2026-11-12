@@ -122,9 +122,15 @@ PROJECT_FILLED_KEYS = frozenset({
 #: way (24 Sep 2026) and its gate went red on files nobody in it had touched.
 #: The cost: a later fix to a shipped script does not reach a project that
 #: edited its copy; deleting the file lets the next resync seed it again.
+#:
+#: The security-audit skill sits under upstream's own folder name, so a
+#: project may already hold Cloudflare's copy, or its own, at that path:
+#: the same rule keeps it. Dark Army's other skills stay pack-owned.
 PROJECT_ADAPTED_PREFIXES = (
     "scripts/",
     ".github/workflows/",
+    ".claude/skills/security-audit/",
+    ".agents/skills/security-audit/",
 )
 
 

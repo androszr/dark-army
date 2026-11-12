@@ -707,7 +707,9 @@ def test_the_scout_checker_renders_mirrors_and_is_allowed(profile):
 def test_the_security_audit_skill_renders_mirrors_and_is_allowed(profile):
     mapping = _mapping(profile)
     claude = [k for k in mapping if k.startswith(".claude/skills/security-audit/")]
-    assert len(claude) == 23
+    pin = json.loads(mapping[".claude/skills/security-audit/upstream-pin.json"])
+    # The pinned files, plus the adapter and the pin itself.
+    assert len(claude) == len(pin["files"]) + 2
     executable = pack_render.executable_keys(mapping)
     for key in claude:
         twin = ".agents" + key[len(".claude"):]

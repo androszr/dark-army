@@ -136,3 +136,21 @@ def test_a_deleted_script_is_seeded_again(tmp_path, monkeypatch):
 def test_crlf_checkout_reads_as_unedited():
     assert pack_render.file_digest(b"a\nb\n") == pack_render.file_digest(
         b"a\r\nb\r\n")
+
+
+def test_a_projects_own_security_audit_skill_is_never_overwritten(tmp_path, monkeypatch):
+    """Upstream's folder name is `security-audit`: a project that already
+    holds Cloudflare's copy, or its own, keeps it on install and on resync."""
+    key = ".claude/skills/security-audit/SKILL.md"
+    assert pack_render.project_adapted(key)
+    assert pack_render.project_adapted(".agents/skills/security-audit/SKILL.md")
+    own = b"# the project's own security audit\n"
+    root, folder = _project(tmp_path, monkeypatch, before={key: own})
+    assert (root / key).read_bytes() == own
+    _resync(folder)
+    assert (root / key).read_bytes() == own
+
+
+def test_a_fresh_project_gets_the_security_audit_skill(tmp_path, monkeypatch):
+    root, _folder = _project(tmp_path, monkeypatch)
+    assert (root / ".claude/skills/security-audit/SKILL.md").is_file()

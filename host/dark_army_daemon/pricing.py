@@ -311,7 +311,11 @@ def resolve_rate(model: Optional[str],
     rate = RATES.get(name)
     if rate is None:
         for known, candidate in RATES.items():
-            if candidate.provider == "claude" and name.startswith(known):
+            # A remainder that opens on a digit is another version, not a
+            # suffix: `claude-fable-5-20260601` is Fable 5 with a date, and
+            # must not land on the `claude-fable-5-2` row above it.
+            if (candidate.provider == "claude" and name.startswith(known)
+                    and not name[len(known):len(known) + 1].isdigit()):
                 rate = candidate
                 break
     if rate is None and not name.startswith(_FOREIGN_PREFIXES):

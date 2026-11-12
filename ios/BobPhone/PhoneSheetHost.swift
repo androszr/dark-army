@@ -448,11 +448,26 @@ struct PhoneSheetFrame: View {
     /// under its project choice. The search line is not an input. Read at the
     /// moment of use, never cached.
     private var inProgressOrder: [String] {
-        let active = boardProject
-        return CardSheetSwipe.order(
+        inProgressOrder(active: boardProject)
+    }
+
+    private func inProgressOrder(active: String) -> [String] {
+        CardSheetSwipe.order(
             client.snapshot.board.cards(in: PhoneSheetKind.answeringColumn)
                 .filter { BoardProjects.matches(project: $0.project, active: active) },
             project: \.project, id: \.id)
+    }
+
+    /// The order an open card swipes through: the Board tab's own when the
+    /// card is in it, every project's when it was opened from elsewhere (a
+    /// Needs you row for a project the Board is not showing), and nil when
+    /// the card has left the column — a swipe then goes nowhere, never to a
+    /// stranger's first card.
+    private func cardLane(_ id: String) -> [String]? {
+        let drawn = inProgressOrder
+        if drawn.contains(id) { return drawn }
+        let all = inProgressOrder(active: "")
+        return all.contains(id) ? all : nil
     }
 
     /// What the open sheet can swipe through: a waiting agent, or a card in
@@ -463,7 +478,8 @@ struct PhoneSheetFrame: View {
         case .agent(let agent, _):
             return (.agent, agent.sessionId, waitingOrder)
         case .card(let card) where PhoneSheetKind.answers(.card, column: card.column):
-            return (.card, card.id, inProgressOrder)
+            guard let order = cardLane(card.id) else { return nil }
+            return (.card, card.id, order)
         default:
             return nil
         }

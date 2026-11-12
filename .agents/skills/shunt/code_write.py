@@ -111,13 +111,19 @@ def worker_model(provider, env):
     return SHIPPED_WORKERS[provider]
 
 
+def _known_effort(value):
+    """`value` when it is a level a worker takes, else `""`: a typo or a stale
+    level adds no flag, where passing it on would fail every call."""
+    return value if value in ("minimal", "low", "medium", "high", "xhigh", "max") else ""
+
+
 def worker_effort(provider, env):
     """The effort level for the worker, `""` for none. `workers.json` carries an
     `efforts` object (one level per assistant) beside the model cells; a
     malformed one adds no flag. `BOB_SHUNT_WORKER_EFFORT` wins for one call."""
     override = str(env.get("BOB_SHUNT_WORKER_EFFORT") or "").strip()
     if override:
-        return override
+        return _known_effort(override)
     try:
         with open(WORKERS_PATH, "r", encoding="utf-8") as fh:
             table = json.load(fh)
@@ -131,7 +137,7 @@ def worker_effort(provider, env):
     value = levels.get(provider)
     if not isinstance(value, str):
         return ""
-    return value.strip()
+    return _known_effort(value.strip())
 
 
 def worker_env(env):

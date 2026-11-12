@@ -133,8 +133,10 @@ struct FleetMapPane: View {
                 if !settling && visible { changed = true }
             }
         }
-        if arrivals.count > 200 {
-            let live = Set(activity.sessions.values.flatMap { $0.calls.map(\.seq) })
+        // Every pass, not only past a size: the daemon's seq restarts at 1
+        // with the daemon, and a stale stamp would swallow a new call's pulse.
+        let live = Set(activity.sessions.values.flatMap { $0.calls.map(\.seq) })
+        if arrivals.count != live.count {
             arrivals = arrivals.filter { live.contains($0.key) }
         }
         if changed { scheduleSettle() }
@@ -170,6 +172,11 @@ struct FleetMapPane: View {
         // re-read and the clock pauses) without replacing a single view.
         _ = settle
         let paused = !visible || reduceMotion || !anyInFlight
+        // Folded once per body, not once per frame: the canvas redraws at
+        // 30fps while anything is in flight and none of these move with time.
+        let counts = FleetMap.stationCounts(calls: callsBySession, in: ids)
+        let failed = FleetMap.failedCounts(sessions: activity.sessions, in: ids)
+        let ties = FleetMap.ties(rows: agents.map(\.agent), board: board)
         return ZStack {
             // `AnimationTimelineSchedule` is the type behind `.animation(...)`; spelled
             // out so the reduced-motion sweep sees no bare modifier.
@@ -177,6 +184,7 @@ struct FleetMapPane: View {
                                                    paused: paused)) { context in
                 Canvas { gc, _ in
                     draw(&gc, centers: centers, size: size,
+                         counts: counts, failed: failed, ties: ties,
                          t: context.date.timeIntervalSince1970)
                 }
             }
@@ -201,10 +209,9 @@ struct FleetMapPane: View {
     }
 
     private func draw(_ gc: inout GraphicsContext, centers: [CGPoint],
-                      size: Double, t: Double) {
+                      size: Double, counts: [String: Int], failed: [String: Int],
+                      ties: [[String]], t: Double) {
         let mid = CGPoint(x: side / 2, y: side / 2)
-        let counts = FleetMap.stationCounts(calls: callsBySession, in: ids)
-        let failed = FleetMap.failedCounts(sessions: activity.sessions, in: ids)
 
         // Spokes.
         for station in stations {
@@ -215,7 +222,7 @@ struct FleetMapPane: View {
         }
 
         // Ties between sessions bound to one card.
-        for group in FleetMap.ties(rows: agents.map(\.agent), board: board) {
+        for group in ties {
             let points = group.compactMap { sid in
                 ids.firstIndex(of: sid).flatMap { $0 < centers.count ? centers[$0] : nil }
             }

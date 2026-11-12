@@ -37,7 +37,7 @@ class World:
                             lambda pid, tty="": True)
         world = self
 
-        async def send(pid, tty, text, newline=True):
+        async def send(pid, tty, text, newline=True, **_kw):
             world.events.append(("begin", text))
             await asyncio.sleep(world.delay)
             world.events.append(("end", text))
