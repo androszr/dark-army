@@ -564,6 +564,8 @@ Settings → Projects), where Mark checked is hidden.
 **Done-card review and merge**: `CardMerge.swift` (pinned with the phone's),
 `docs/card-worktrees.md`.
 
+`refiningLine`: the card window's refining line.
+
 The composer is the same view with `card == nil`, plus three things a card
 could never show. **The documents the card points at**: `BoardDocuments` pulls
 path-shaped tokens out of the prompt and resolves each **inside the card's

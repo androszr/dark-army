@@ -146,8 +146,11 @@ def test_the_frame_survives_a_non_string_rank(rank_bin):
 def test_the_line_is_the_first_clause_of_the_macs_unplanned_note():
     assert BATCH_UNPLANNED_NOTE.startswith("card {rank} " + LINE)
     assert _read(MODELS).count('"card \\(rank) ' + LINE + '"') == 1
-    for name in ("BoardCardView.swift", "BoardModels.swift"):
-        assert LINE not in _read(PANEL / name), name
+    # The panel's `BoardCard.batchPlanningLine` now holds the rule, once
+    # (`plans/2026-09-29-board-tiles-batch-planning-line.md`); the tile
+    # draws that property, never the literal.
+    assert _read(PANEL / "BoardModels.swift").count(LINE) == 1
+    assert LINE not in _read(PANEL / "BoardCardView.swift")
 
 
 def test_the_unplanned_note_reaches_the_card_screen_in_the_macs_words(rank_bin):

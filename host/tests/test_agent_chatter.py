@@ -42,7 +42,7 @@ PBXPROJ = ROOT / "ios" / "BobPhone.xcodeproj" / "project.pbxproj"
 
 MARKER = "enum AgentChatter {"
 
-PANEL_CALL_SITES = 7
+PANEL_CALL_SITES = 8  # + the card window's refining caret (3 Oct 2026)
 #: 4 non-action waits (BoardView `.clearingDone`, BrandBar `.connecting`,
 #: CatchUpView `.readingHistory` — the same call speaks `.refreshing` during
 #: a pull — and `.opening`), 6 pull-to-refresh lines (BoardView `unavailable`
@@ -340,7 +340,7 @@ def test_the_captions_that_are_facts_survive():
     """The chatter replaces the spinner, never Dark Army's words."""
     assert '"Clearing all Done items…"' in _read(PANEL_DIR / "BoardView.swift")
     assert '"starting — waiting for the session to appear"' in _read(PANEL_DIR / "BoardCardView.swift")
-    assert '"refining — answer the interview in the terminal"' in _read(PANEL_DIR / "BoardCardView.swift")
+    assert '"refining — answer the interview in the terminal"' in _read(PANEL_DIR / "BoardModels.swift")
     # On the phone the two labels became the spoken sentence.
     catch_up = _read(PHONE_DIR / "CatchUpView.swift")
     assert 'spoken: "Loading decisions"' in catch_up

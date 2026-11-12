@@ -767,6 +767,11 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// an absent or malformed one decodes to nil rather than blanking the
     /// board.
     var batch: BatchMark?
+    /// The daemon's `batch_rank`: a 1-based place, as a string, written
+    /// beside `refine_state` for a refinement batch and beside `link_state`
+    /// for an implement batch. `""` for no batch, for an older daemon, and
+    /// once the plan attaches or the planning session ends.
+    var batchRank = ""
     /// The one line the tile draws for `batch`: `BATCH 2/3 · working`, or
     /// `""` where there is no batch. Composed from the daemon's three
     /// fields; nothing is counted here.
@@ -776,6 +781,19 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         // carries its mark: said in words, because its Start is refused.
         let state = batch.state == "left" ? "left the line" : batch.state
         return "BATCH \(batch.rank)/\(batch.size) \u{00B7} \(state)"
+    }
+    /// The first clause of the daemon's `BATCH_UNPLANNED_NOTE` with this
+    /// card's rank, while this Prep card is being refined as one of several.
+    /// Rank only: the daemon publishes no size for a refinement batch.
+    /// `""` for a single refinement, a card not refining, a card outside
+    /// Prep, an unreadable rank, or an older daemon. Never drawn beside
+    /// `batchLine`: the daemon's `batch` mark is absent on a refining card.
+    /// The phone's `batchPlanningLine`, byte for byte.
+    var batchPlanningLine: String {
+        guard isRefining, column == "prep",
+              let rank = Int(batchRank.trimmingCharacters(in: .whitespaces)),
+              rank > 0 else { return "" }
+        return "card \(rank) of a batch planning session"
     }
     /// Waiting its turn in a batch: its own Start is refused by the daemon
     /// until it leaves the batch.
@@ -908,6 +926,25 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// A refinement is underway (binding or bound). What draws "refining…" and
     /// withholds Refine.
     var isRefining: Bool { refineState == "dispatching" || refineState == "live" }
+    /// The one line for a refinement underway, read by the board tile
+    /// (`BoardCardView.liveState`) and the card window
+    /// (`BoardCardSheet.statusSection`) so the two cannot drift. Two
+    /// readings off the daemon's `refine_state` alone: `live` is a bound
+    /// session waiting on the interview; anything else — `dispatching`, or
+    /// `""` under the tile's optimistic press — is a session not yet seen.
+    /// The phone's card screen spells both inline
+    /// (`ios/BobPhone/CardDetailView.swift`); `test_card_window_refining_status.py`
+    /// pins the three copies equal.
+    static func refiningLine(state: String) -> String {
+        state == "live"
+            ? "refining — answer the interview in the terminal"
+            : "refining — waiting for the session to appear"
+    }
+    /// `""` unless the daemon says a refinement is underway (`isRefining`):
+    /// the card window's gate, snapshot only, no optimistic press.
+    var refiningLine: String {
+        isRefining ? Self.refiningLine(state: refineState) : ""
+    }
     /// Closed by the assistant that was doing it, rather than dragged across by
     /// hand.
     var isAgentClosed: Bool { !closedBy.isEmpty }
@@ -978,6 +1015,7 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case runFigures = "run_figures"
         case runHealth = "run_health"
         case batch
+        case batchRank = "batch_rank"
         case blockedBy = "blocked_by"
         case dependencies, dependents
         case dependencyLine = "dependency_line"
@@ -1114,6 +1152,7 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         // `maybe`, never `decode`: absent is no batch, and a malformed value
         // (`"batch": 3`) is nil rather than a thrown frame.
         batch = c.maybe(.batch)
+        batchRank = c.value(.batchRank, "")
         // The dependency five, each through the tolerant helper with an
         // empty default: an older daemon sends none of them, and a card with
         // no links sends none of the four derived ones either.
