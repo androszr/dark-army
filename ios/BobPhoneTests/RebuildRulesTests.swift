@@ -207,6 +207,29 @@ final class RebuildRulesTests: XCTestCase {
                       "once sent, a second sweep must not send it again")
     }
 
+    func testARetryOfAStaleRebuildIsSentNotClosedTooOld() {
+        let ledger = ReceiptLedger()
+        defer { ledger.forget() }
+        let sent = rebuildReceipt(ledger)
+        let later = sent.createdAt + ReceiptLedger.replayWindow + 60
+        XCTAssertEqual(ReceiptLedger.staleStop(for: sent, now: later),
+                       ReceiptLedger.tooOldLine, "the first press would close")
+        ledger.gaveUp(sent.id, why: ReceiptLedger.notReplayedLine)
+        ledger.retry(sent.id, now: later)
+        let again = ledger.receipts.first { $0.action == PhoneActions.rebuildApp }!
+        XCTAssertNotEqual(again.id, sent.id)
+        XCTAssertEqual(again.createdAt, later)
+        XCTAssertEqual(again.attempts, 0)
+        XCTAssertFalse(ReceiptLedger.neverReplays(again))
+        XCTAssertNil(ReceiptLedger.staleStop(for: again, now: later))
+        XCTAssertEqual(ReceiptLedger.nextSendable(in: ledger.receipts,
+                                                  pairingToken: "p", now: later)?.id,
+                       again.id, "the sweep would take it")
+        ledger.markSending(again.id)
+        let going = ledger.receipts.first { $0.id == again.id }!
+        XCTAssertTrue(ReceiptLedger.neverReplays(going))
+    }
+
     func testOtherVerbsAreNotAffected() {
         let ledger = ReceiptLedger()
         let other = ledger.open(action: PhoneActions.stopSession, scope: "s",

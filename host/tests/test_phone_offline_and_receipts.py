@@ -392,9 +392,12 @@ def test_a_resend_is_bounded_and_never_replays_what_can_be_checked():
     # The attempt is counted where the sender takes the record (`.queued`
     # or `.sent` → `.sending`), so the ceiling and the record agree.
     assert "receipts.markSending(receipt.id)" in body
-    assert "ReceiptLedger.replayWindow" in body
-    # The window give-up wears its own sentence, not the ceiling's count.
-    assert "ReceiptLedger.tooOldLine" in body
+    assert "ReceiptLedger.staleStop(for: receipt" in body
+    # The window give-up wears its own sentence, not the ceiling's count;
+    # both live in the one rule the sender asks.
+    rule = receipts.split("func staleStop(", 1)[1][:1200]
+    assert "replayWindow" in rule
+    assert "tooOldLine" in rule
 
 
 def test_the_cache_writes_off_the_main_actor_and_only_when_changed():

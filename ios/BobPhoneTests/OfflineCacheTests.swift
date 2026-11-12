@@ -336,6 +336,28 @@ final class OfflineCacheTests: XCTestCase {
         XCTAssertEqual(ledger.receipts.first?.state, .sent)
     }
 
+    /// A RETRY is a new press: its clock starts at the retry, and it joins
+    /// the back of the queue.
+    func testRetryRestampsTheClockAndGoesToTheBackOfTheQueue() {
+        let ledger = ReceiptLedger()
+        defer { ledger.forget() }
+        let a = ledger.open(action: "a", scope: "s", fields: [:],
+                            effect: .none, pairingToken: "p")
+        let b = ledger.open(action: "b", scope: "s", fields: [:],
+                            effect: .none, pairingToken: "p")
+        ledger.gaveUp(a.id)
+        let now = b.createdAt + 5
+        ledger.retry(a.id, now: now)
+        let fresh = ledger.receipts.first { $0.action == "a" }!
+        XCTAssertEqual(fresh.createdAt, now)
+        let rows = ReceiptLedger.queueRows(in: ledger.receipts, now: now)
+        XCTAssertLessThan(rows.firstIndex { $0.id == b.id }!,
+                          rows.firstIndex { $0.id == fresh.id }!)
+        XCTAssertEqual(ReceiptLedger.nextSendable(in: ledger.receipts,
+                                                  pairingToken: "p", now: now)?.id,
+                       b.id)
+    }
+
     /// A save's effect is written from the guard it sent, so the two can
     /// never disagree about which number proves the write.
     func testASaveIsJudgedByTheRevisionItGuardedAgainst() {
@@ -459,6 +481,33 @@ final class OfflineCacheTests: XCTestCase {
                        ReceiptLedger.tooOldLine)
         XCTAssertNotEqual(ReceiptLedger.tooOldLine, ReceiptLedger.gaveUpLine)
         XCTAssertEqual(ledger.outstanding.count, 1)
+    }
+
+    /// The sweep's clock stop: exclusive window, un-checkable stop first.
+    func testStaleStopIsTheSweepsClock() {
+        func made(_ action: String, _ effect: ReceiptEffect, face: Bool = false) -> Receipt {
+            var r = Receipt(id: UUID().uuidString, action: action, scope: "s",
+                            fields: [:], effect: effect, pairingToken: "p")
+            r.createdAt = 100
+            r.authorised = face
+            return r
+        }
+        let cases = [
+            made("a", .none),
+            made(PhoneActions.answerQuestion, .questionGone(sessionId: "s", questionId: "q")),
+            made("a", .cardGone(cardId: "c")),
+            made("a", .cardGone(cardId: "c"), face: true),
+            made("a", .none, face: true),
+        ]
+        for r in cases {
+            XCTAssertNil(ReceiptLedger.staleStop(for: r, now: 100 + ReceiptLedger.replayWindow))
+        }
+        let late = 100 + ReceiptLedger.replayWindow + 1
+        XCTAssertEqual(ReceiptLedger.staleStop(for: cases[0], now: late), ReceiptLedger.tooOldLine)
+        XCTAssertEqual(ReceiptLedger.staleStop(for: cases[1], now: late), ReceiptLedger.tooOldLine)
+        XCTAssertNil(ReceiptLedger.staleStop(for: cases[2], now: late))
+        XCTAssertEqual(ReceiptLedger.staleStop(for: cases[3], now: late), ReceiptLedger.faceNeededLine)
+        XCTAssertEqual(ReceiptLedger.staleStop(for: cases[4], now: late), ReceiptLedger.tooOldLine)
     }
 
     /// Finished business is bounded **in session**, not only at `load()`;
