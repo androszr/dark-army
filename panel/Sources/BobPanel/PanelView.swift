@@ -170,6 +170,9 @@ struct PanelView: View {
     /// that opens with a row already highlighted invites a press of Return that
     /// nobody aimed.
     @State private var selected: String?
+    /// The rail's Table | Map choice, remembered in the panel's own position
+    /// file (`PanelPlacement.fleetRailView`); the table until chosen otherwise.
+    @State private var railView = FleetRailView.fromStored(PanelPlacement.fleetRailView())
     /// The row a focus request put the selection on, and the sequence number of
     /// the request that did it. The id is what stops `selectTopAttentionIfNeeded`
     /// taking the selection straight back off a grid row we were *asked* to show
@@ -1850,6 +1853,14 @@ struct PanelView: View {
             VStack(spacing: 0) {
                 tabs
                 if tab == .agents { projectTabStrip }
+                if tab == .agents, tabSlices != nil {
+                    FleetRailSwitch(selection: Binding(
+                        get: { railView },
+                        set: { next in
+                            railView = next
+                            PanelPlacement.saveFleetRailView(next.rawValue)
+                        }))
+                }
                 if tab == .agents, offersAdhocTerminal {
                     AdhocTerminalButton {
                         adhocRefusal = ""
@@ -1908,6 +1919,8 @@ struct PanelView: View {
                 empty
             } else if processRows.isEmpty, !filter.isEmpty {
                 noMatches
+            } else if railView == .map, let slices = tabSlices {
+                fleetMapPane(slices.live)
             } else {
                 processSplit
             }
@@ -2141,6 +2154,35 @@ struct PanelView: View {
         }
     }
 
+    /// The Map in place of the table: the tab's live rows, the daemon's
+    /// activity section and the board's card ties. A portrait press is a row
+    /// press (`tapRow`).
+    private func fleetMapPane(_ live: [SectionRow]) -> some View {
+        FleetMapPane(agents: live,
+                     activity: client.snapshot.fleetActivity,
+                     board: client.snapshot.board,
+                     visible: client.visible,
+                     reduceMotion: reduceMotion,
+                     selected: selected,
+                     onSelect: { tapRow($0) })
+            .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// What pressing a row does, shared by the table row and the map's
+    /// portrait so the two can never disagree about aiming and reveals.
+    private func tapRow(_ row: SectionRow) {
+        actions.disarm()
+        // A second click on the selected row unselects it, which
+        // brings the board back (`RailLayout.selectionAfterTap`).
+        selected = RailLayout.selectionAfterTap(selected: selected,
+                                                tapped: row.id)
+        expanded = selected
+        // A click is the person choosing: no pending open aim and
+        // no card hold may override it.
+        aimPendingSinceShown = false
+        revealedForCard = false
+    }
+
     private func processRow(_ row: SectionRow) -> some View {
         let bound = client.snapshot.board.card(forSession: row.agent.sessionId)
         return ProcessRow(
@@ -2149,18 +2191,7 @@ struct PanelView: View {
             selected: selected == row.id,
             attention: inAttention(row),
             ticking: client.visible,
-            onSelect: {
-                actions.disarm()
-                // A second click on the selected row unselects it, which
-                // brings the board back (`RailLayout.selectionAfterTap`).
-                selected = RailLayout.selectionAfterTap(selected: selected,
-                                                        tapped: row.id)
-                expanded = selected
-                // A click is the person choosing: no pending open aim and
-                // no card hold may override it.
-                aimPendingSinceShown = false
-                revealedForCard = false
-            },
+            onSelect: { tapRow(row) },
             // The row's own `⌗` and `↗`: the detail header's two chips,
             // reachable without opening the detail — `⌗` keeps the board
             // in view, which is the point of pressing it from the list.

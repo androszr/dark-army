@@ -64,7 +64,8 @@ CTX. AGE is compact (`12s` / `5m` / `1h`) from `started_at`, never
 detail header's, reachable from the list: `⌗` reveals the session's card on
 the board (absent where the session is bound to no card), `↗` raises its
 terminal through `Triage.jump` (absent unless `isJumpable`); both slots are
-reserved on every row and in the header (`test_process_row_chips.py`). The message, the reply, the wrap-up and the
+reserved on every row and in the header (`test_process_row_chips.py`).
+**Map view:** `docs/fleet-map-contract.md`. The message, the reply, the wrap-up and the
 permission bar live in the `StdoutPane`, drawn by `AgentDetailPane` **in the
 board's place** for the selected row only. The detail leads with `AgentDetailHeader` (`‹ Board`, face, name, `project ·
 branch`, state, the `card ⌗` / `jump ↗` chips), which stays put on both
@@ -646,7 +647,7 @@ a second `TerminalPane` for the mission session drawn **only** on Comm —
 that session at a time and the pty's width keeps one owner. The reply prose
 is not drawn on the Mac: the transcript is on screen. Source of truth is
 `snapshot.mission` (`MissionSection`, `TerminalModels.swift`; absent carries,
-present-but-undecodable throws, `Snapshot.Section.mission` the twelfth case)
+present-but-undecodable throws, `Snapshot.Section.mission`)
 and `snapshot.agents.row(session:)`; `Agent.stub(sessionId:)` is what the
 pane is handed before the row lands. `CommRules` — the chips, `line(from:)`,
 `status(...)`, `canAsk`, `showsEnd`, `showsOpen` — is Foundation-only and

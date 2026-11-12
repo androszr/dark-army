@@ -364,9 +364,9 @@ async def test_an_older_phone_quoting_no_sections_gets_the_whole_picture(server)
     second = json.loads(second_raw)
     assert "sections_unchanged" not in second
     for k in api_mod._OMITTABLE_SECTIONS:
-        if k in srv.state():
+        if k in api_mod.phone_picture(srv.state()):
             assert k in second, k
-    today = set(srv.state()) | {"state_digest"}
+    today = set(api_mod.phone_picture(srv.state())) | {"state_digest"}
     assert set(second) == today | {"section_digests"}
 
 

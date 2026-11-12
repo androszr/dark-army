@@ -541,7 +541,7 @@ class RelaySocketConnector:
         if not any(d in self._sockets for d in self._armed):
             return
         try:
-            picture = self._api.state(done_review=True)
+            picture = api_server.phone_picture(self._api.state(done_review=True))
             whole, sections = api_server._state_digests(picture)
         except Exception:
             logger.warning("relay socket push failed", exc_info=True)

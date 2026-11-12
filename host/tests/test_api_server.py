@@ -1165,7 +1165,8 @@ async def test_a_stream_without_the_slim_query_carries_every_section(server):
 def test_the_omittable_sections_are_state_s_own_sections():
     """The list is auditable in one place, and it is exactly `state()`'s
     top level minus the clock and the two scalars."""
-    assert len(api_mod._OMITTABLE_SECTIONS) == 16
+    assert len(api_mod._OMITTABLE_SECTIONS) == 17
+    assert "fleet_activity" in api_mod._OMITTABLE_SECTIONS
     assert "review" in api_mod._OMITTABLE_SECTIONS
     assert "inbox" in api_mod._OMITTABLE_SECTIONS
     assert "security" in api_mod._OMITTABLE_SECTIONS
@@ -4441,3 +4442,21 @@ async def test_the_phone_stop_refuses_a_non_string_session_id(server):
     daemon.stop_session_recorded = _recorded_stop((True, "stopping"))
     status, _ctype, body = await srv._lan_run("stop_session", {"session_id": 5})
     assert status == 400
+
+
+@pytest.mark.asyncio
+async def test_fleet_activity_is_loopback_only(server):
+    """The map's section rides `/api/state` and never a sealed door."""
+    srv, daemon = server
+    daemon._note_fleet_call("tool_use", "PreToolUse", "s1", "Read")
+    status, raw = await fetch("/api/state")
+    assert status == 200
+    assert json.loads(raw)["fleet_activity"]["sessions"]["s1"]["calls"][0]["station"] == "files"
+    status, _, home = await srv._sealed_run("state", {}, "fixture",
+        actions=srv.LAN_ACTIONS, check_lease=False, record=False)
+    status2, _, away = await srv._remote_run("state", {}, "fixture")
+    assert status == status2 == 200
+    for body in (home, away):
+        answer = json.loads(body)
+        assert "fleet_activity" not in answer
+        assert "fleet_activity" not in answer["section_digests"]

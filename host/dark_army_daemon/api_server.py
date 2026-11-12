@@ -329,8 +329,17 @@ _OMITTABLE_SECTIONS = (
     "counts", "notifications", "agents", "signals", "mesh",
     "collaboration", "permissions",
     "board", "enrollment", "devices", "inbox", "security", "mission",
-    "power", "rebuild", "review",
+    "power", "rebuild", "review", "fleet_activity",
 )
+# Sections the Mac panel reads on the loopback door and no sealed door ever
+# carries. `phone_picture` is the one seam both phone sites call.
+_LOOPBACK_ONLY_SECTIONS = ("fleet_activity",)
+
+
+def phone_picture(state: dict) -> dict:
+    """`state` as the phone's sealed doors may see it: a shallow copy without
+    the loopback-only sections, taken before either digest is computed."""
+    return {k: v for k, v in state.items() if k not in _LOOPBACK_ONLY_SECTIONS}
 
 
 def _news(value, drop=_CLOCK_FIELDS):
@@ -898,6 +907,11 @@ class ApiServer:
             # digest and no run-folder path ride here.
             "review": self._daemon.review_snapshot()
             if hasattr(self._daemon, "review_snapshot") else {},
+            # The fleet activity map (Mac panel only): tool and station
+            # names and a sequence number, no clock. Loopback-only: the
+            # phone's two picture sites go through `phone_picture`.
+            "fleet_activity": self._daemon.fleet_activity_snapshot()
+            if hasattr(self._daemon, "fleet_activity_snapshot") else {},
             # The host Mac's power source for the phone's Fleet tab.
             # `available` is stated; no clock and no secret ride here.
             "power": self._daemon.power_snapshot()
@@ -4147,7 +4161,8 @@ class ApiServer:
         if prebuilt is not None:
             state, digest, section_digests = prebuilt
         else:
-            state = self.state(done_review=payload.get("done") == "review")
+            state = phone_picture(
+                self.state(done_review=payload.get("done") == "review"))
             digest, section_digests = _state_digests(state)
         if _valid_state_digest(payload.get("digest")) == digest:
             return 200, "application/json", json.dumps({
