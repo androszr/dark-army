@@ -1838,12 +1838,16 @@ def test_the_prompt_is_still_the_last_element_with_a_model():
 
 def test_the_fable_pins_are_on_the_menu():
     """Fable was alias-only; the two releases are pinnable by exact id, in the
-    family's alias-then-pins-newest-first shape (after "fable", 5-1 before 5)."""
+    family's alias-then-pins-newest-first shape (after "fable", 5-2, 5-1, 5).
+    No [1m] Fable pin: the build's model table grants the family none."""
     t = dispatch.MODELS["claude"]
+    assert "claude-fable-5-2" in t
     assert "claude-fable-5-1" in t
     assert "claude-fable-5" in t
-    assert t.index("fable") < t.index("claude-fable-5-1") < t.index(
-        "claude-fable-5")
+    assert t.index("fable") < t.index("claude-fable-5-2") < t.index(
+        "claude-fable-5-1") < t.index("claude-fable-5")
+    assert "claude-fable-5-2[1m]" not in t
+    assert "claude-fable-5-1[1m]" not in t
 
 
 def test_the_opus_5_5_pins_are_on_the_menu():
@@ -1871,6 +1875,9 @@ def test_the_sonnet_5_5_pins_are_on_the_menu():
 def test_a_fable_pin_rides_the_argv_verbatim():
     """A card pinned to Fable 5.1 starts on exactly that id, not the family's
     latest — pinned byte for byte like the other model-flag tests."""
+    assert dispatch.argv_for("claude", "claude", "do it",
+                             model="claude-fable-5-2") == [
+        "claude", "--model", "claude-fable-5-2", "do it"]
     assert dispatch.argv_for("claude", "claude", "do it",
                              model="claude-fable-5-1") == [
         "claude", "--model", "claude-fable-5-1", "do it"]

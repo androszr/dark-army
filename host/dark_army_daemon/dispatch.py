@@ -298,7 +298,7 @@ MODELS = {
                "sonnet", "claude-sonnet-5-5", "claude-sonnet-5-5[1m]",
                "claude-sonnet-5", "claude-sonnet-5[1m]",
                "claude-sonnet-4-6",
-               "fable", "claude-fable-5-1", "claude-fable-5",
+               "fable", "claude-fable-5-2", "claude-fable-5-1", "claude-fable-5",
                "haiku"),
     "codex": ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol",
               "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"),

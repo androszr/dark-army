@@ -34,6 +34,31 @@ def test_context_suffix_resolves_by_prefix():
     assert resolve_rate("claude-opus-4-8[1m]").input == 5.00
 
 
+def test_fable_5_2_has_its_own_exact_row():
+    """The 5-2 id is priced from its own $8/$40 entry, not the 5-1 or 5 row."""
+    assert "claude-fable-5-2" in pricing.RATES
+    rate = resolve_rate("claude-fable-5-2")
+    assert (rate.input, rate.output) == (8.00, 40.00)
+
+
+def test_datestamped_fable_5_2_resolves_through_its_own_row():
+    """Dict order is semantic: the 5-2 row must sit above "claude-fable-5-1"
+    and "claude-fable-5", or a 5-2 id would resolve through an older row."""
+    keys = list(pricing.RATES)
+    assert keys.index("claude-fable-5-2") < keys.index("claude-fable-5-1")
+    assert keys.index("claude-fable-5-2") < keys.index("claude-fable-5")
+    assert resolve_rate("claude-fable-5-2-20261101") is pricing.RATES[
+        "claude-fable-5-2"]
+
+
+def test_fable_5_2_cache_reads_are_priced_at_20_cents():
+    """Claude Code's model table: reads $0.20/MTok (0.025x of $8), writes
+    $10.00 (5m) and $16.00 (1h)."""
+    assert cost_usd("claude-fable-5-2", cache_read=1_000_000) == pytest.approx(0.20)
+    assert cost_usd("claude-fable-5-2", cache_write_5m=1_000_000) == pytest.approx(10.00)
+    assert cost_usd("claude-fable-5-2", cache_write_1h=1_000_000) == pytest.approx(16.00)
+
+
 def test_fable_5_1_has_its_own_exact_row():
     """The 5-1 id is priced from its own entry, not a prefix lookalike."""
     assert "claude-fable-5-1" in pricing.RATES
@@ -52,7 +77,7 @@ def test_datestamped_fable_5_1_resolves_through_its_own_row():
 
 
 def test_fable_family_alias_means_the_latest_release():
-    assert pricing.FAMILY_RATES["fable"] is pricing.RATES["claude-fable-5-1"]
+    assert pricing.FAMILY_RATES["fable"] is pricing.RATES["claude-fable-5-2"]
 
 
 def test_unknown_point_release_falls_back_to_family():

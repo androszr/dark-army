@@ -33,6 +33,8 @@ data-residency uplift). What those pages said that day, and did not say:
   "$3/$15 after 2026-08-31" row was corrected. Fable 5 and Mythos 5 read cache
   at $1/MTok (0.10x), not $0.25; Fable 5.1 and Mythos 5.1 do read at $0.25
   (0.025x); Opus 5.5 reads at $0.20 on $4 (0.05x).
+* Claude Code 2.1.322's own model table (2026-11-12): Fable 5.2 is $8/$40 with
+  cache reads at $0.20 (0.025x), tier `tier_8_40_cache_read_0_20`.
 * xAI: a request whose prompt reaches 200,000 tokens is billed at the long
   tier on every token. No cache-write price is published.
 * OpenAI: `gpt-5.6-sol` states its cutoff (short context is up to 272K input
@@ -60,13 +62,15 @@ logger = logging.getLogger("dark-army.pricing")
 PRICING_OVERRIDE_PATH = STATE_DIR / "pricing.json"
 
 # Multipliers on the input rate. The write multipliers hold for every Claude
-# model; the read multiplier is only the *default* — Fable/Mythos 5.1 override
-# it on their own rows ($0.25/MTok reads on a $10 input rate is 0.025x).
+# model; the read multiplier is only the *default* — Fable/Mythos 5.1 and Fable
+# 5.2 override it on their own rows ($0.25/MTok reads on a $10 input rate, and
+# $0.20/MTok on Fable 5.2's $8, are both 0.025x).
 CACHE_READ_MULTIPLIER = 0.10
 CACHE_WRITE_5M_MULTIPLIER = 1.25
 CACHE_WRITE_1H_MULTIPLIER = 2.00
 
 # Fable 5.1 / Mythos 5.1 cache reads: $0.25 per MTok on a $10.00 input rate.
+# Fable 5.2 reads at $0.20 per MTok on $8.00 — the same 0.025x.
 _FABLE_CACHE_READ = 0.025
 
 
@@ -83,7 +87,8 @@ class Rate:
     intro_output: Optional[float] = None
     intro_until: Optional[str] = None      # local date, YYYY-MM-DD, inclusive
     # Multiplier on the input rate for cache reads. 0.10 is the API's rule for
-    # most models; Fable/Mythos 5.1 price reads at $0.25/MTok (0.025x of $10).
+    # most models; Fable/Mythos 5.1 price reads at $0.25/MTok (0.025x of $10)
+    # and Fable 5.2 at $0.20/MTok (0.025x of $8).
     cache_read_multiplier: float = CACHE_READ_MULTIPLIER
     # Whose price list this row is. Claude's rows are the only ones the
     # legacy estimate (`history._price_row`) and the prefix and family tiers
@@ -115,8 +120,12 @@ class Rate:
 # and family tiers below, so this table only needs the canonical names.
 RATES: dict[str, Rate] = {
     # Order is load-bearing: resolve_rate's prefix tier takes the first
-    # startswith hit, so the 5-1 row must sit above "claude-fable-5" or a
-    # datestamped 5-1 id would resolve through the older row.
+    # startswith hit, so the 5-2 and 5-1 rows must sit above "claude-fable-5"
+    # or a datestamped 5-2 / 5-1 id would resolve through the older row.
+    # Fable 5.2: $8/$40, cache read $0.20, writes $10 (5m) / $16 (1h). Source:
+    # Claude Code 2.1.322 model table, tier_8_40_cache_read_0_20 (read
+    # 2026-11-12; the same table's 5-1 and Opus 5.5 tiers match the rows below).
+    "claude-fable-5-2": Rate(8.00, 40.00, cache_read_multiplier=_FABLE_CACHE_READ),
     "claude-fable-5-1": Rate(10.00, 50.00, cache_read_multiplier=_FABLE_CACHE_READ),
     # Fable 5 and Mythos 5 read cache at $1/MTok on $10 — the default 0.10x.
     # Only the 5.1 rows carry the $0.25 read (Anthropic's page, 2026-09-28).
@@ -188,7 +197,7 @@ _FOREIGN_PREFIXES = ("gpt", "grok", "o1", "o3", "o4", "codex")
 # coarse — it is better than nothing for an unrecognised point release, and it is
 # still reported as an estimate.
 FAMILY_RATES: dict[str, Rate] = {
-    "fable": RATES["claude-fable-5-1"],
+    "fable": RATES["claude-fable-5-2"],
     "mythos": RATES["claude-mythos-5"],
     "opus": RATES["claude-opus-4-8"],
     "sonnet": RATES["claude-sonnet-4-6"],
