@@ -719,12 +719,16 @@ def prompt_for(*, title: str, summary: str, tool: str, project: str,
     return body + _areas_block()
 
 
-def argv(executable: str, model: str = "", **fields) -> list[str]:
+def argv(executable: str, model: str = "", effort: str = "",
+         **fields) -> list[str]:
     """The command line, in one place so the test and the daemon cannot drift.
 
     `model` is the card-preparer slot of Dark Army's Agent models setting,
     resolved by the daemon (`_agent_model_for(root, helper, "card-preparer")`);
     empty keeps today's argv byte-identical (`HELPER_MODELS[tool]` / `MODEL`).
+    `effort` is the card-preparer effort cell, resolved by the daemon like
+    `model` (`_agent_effort_for(..., "card-preparer", model=...)`); the tool's
+    own flag follows the `--model` pair, and empty adds nothing.
 
     `executable` is the binary of `helper_tool(fields["tool"])`, resolved by
     the daemon; the shape of the line follows the same choice. For claude,
@@ -767,10 +771,12 @@ def argv(executable: str, model: str = "", **fields) -> list[str]:
         fields.get("brief_description") or card_preparer_brief.DESCRIPTION)
     brief_path = str(fields.get("brief_path") or "")
     model = str(model or "")
+    effort = str(effort or "")
     if tool == "codex":
         return [
             executable, "exec",
             "--model", model or HELPER_MODELS["codex"],
+            *(["-c", f"model_reasoning_effort={effort}"] if effort else []),
             "--ephemeral",
             "--ignore-user-config",
             "--skip-git-repo-check",
@@ -784,6 +790,7 @@ def argv(executable: str, model: str = "", **fields) -> list[str]:
         return [
             executable,
             "--model", model or HELPER_MODELS["grok"],
+            *(["--reasoning-effort", effort] if effort else []),
             "--output-format", "plain",
             "--no-subagents",
             "--disable-web-search",
@@ -795,6 +802,7 @@ def argv(executable: str, model: str = "", **fields) -> list[str]:
         executable,
         "-p", prompt,
         "--model", model or MODEL,
+        *(["--effort", effort] if effort else []),
         "--no-session-persistence",
         "--strict-mcp-config",
         "--setting-sources", "",

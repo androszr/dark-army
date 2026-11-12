@@ -278,18 +278,31 @@ def test_every_shipped_effort_cell_is_allowed_for_the_shipped_model():
 
 
 def test_the_codex_roles_ship_high_and_everything_else_ships_default():
-    assert m.SHIPPED_EFFORTS["codex"]["main"] == ""
-    for slot in m.EFFORT_SLOTS[1:]:
-        assert m.SHIPPED_EFFORTS["codex"][slot] == "high"
+    quiet = ("main", "card-preparer", "worker")
+    for slot in m.EFFORT_SLOTS:
+        assert m.SHIPPED_EFFORTS["codex"][slot] == (
+            "" if slot in quiet else "high"), slot
+    assert m.SHIPPED_EFFORTS["codex"]["planner"] == "high"
     for provider in ("claude", "grok"):
         assert set(m.SHIPPED_EFFORTS[provider].values()) == {""}
 
 
-def test_effort_slots_have_no_preparer_or_worker():
-    assert "card-preparer" not in m.EFFORT_SLOTS and "worker" not in m.EFFORT_SLOTS
-    slots = m.effort_slots_for(["planner", "worker", "card-preparer"])
-    assert slots == ["main", "planner"]
+def test_effort_slots_include_the_preparer_and_the_worker_only_where_drawable():
+    assert m.EFFORT_SLOTS[-2:] == ("card-preparer", "worker")
+    assert m.effort_slots_for(["planner", "card-preparer"]) == [
+        "main", "planner", "card-preparer"]
+    assert m.effort_slots_for(["planner", "worker", "card-preparer"]) == [
+        "main", "planner", "card-preparer"]
+    assert m.effort_slots_for(["planner"], worker=True) == [
+        "main", "planner", "worker"]
+    assert m.effort_slots_for((), worker=True) == ["main", "worker"]
     assert m.effort_slots_for([])[0] == "main"
+
+
+def test_the_new_effort_cells_are_judged_against_the_resolved_model():
+    assert not m.validate_effort("codex", "card-preparer", "max", model="gpt-5.5")
+    assert "max" in m.effort_options({})["codex"]["worker"]
+    assert "low" in m.effort_options({})["claude"]["card-preparer"]
 
 
 def test_validate_effort_default_inherit_and_levels():
@@ -298,7 +311,7 @@ def test_validate_effort_default_inherit_and_levels():
     assert not m.validate_effort("claude", "main", "ultra")
     assert not m.validate_effort("claude", "main", "inherit")
     assert m.validate_effort("claude", "main", "inherit", override=True)
-    assert not m.validate_effort("claude", "worker", "low")
+    assert m.validate_effort("claude", "worker", "low")
     assert not m.validate_effort("gemini", "main", "")
     assert not m.validate_effort("claude", "main", 3)
     assert not m.validate_effort("grok", "main", "max")
@@ -314,12 +327,12 @@ def test_validate_effort_is_judged_against_the_model_when_known():
 def test_allowed_efforts_follow_the_model():
     assert "max" in m.allowed_efforts("codex", "planner", "gpt-6-astra")
     assert "max" not in m.allowed_efforts("codex", "planner", "gpt-5.5")
-    assert m.allowed_efforts("codex", "card-preparer", "") == ()
+    assert m.allowed_efforts("codex", "bogus-slot", "") == ()
 
 
 def test_clean_efforts_drops_the_unusable_and_keeps_neighbours():
     out = m.clean_efforts({"claude": {"planner": "low", "main": "ultra",
-                                      "worker": "low"},
+                                      "nonesuch": "low"},
                            "gemini": {"main": "low"}, "grok": "x"})
     assert out == {"claude": {"planner": "low"}}
     assert m.clean_efforts({"claude": {"planner": "inherit"}}) == {}

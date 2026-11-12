@@ -163,6 +163,34 @@ def test_argv_with_an_empty_model_is_byte_identical(tool, exe):
     assert card_prepare.argv(exe, model=None, **kw) == card_prepare.argv(exe, **kw)
 
 
+@pytest.mark.parametrize("tool, exe, flag", [
+    ("claude", "/opt/claude", ["--effort", "low"]),
+    ("codex", "/opt/codex", ["-c", "model_reasoning_effort=low"]),
+    ("grok", "/opt/grok", ["--reasoning-effort", "low"]),
+])
+def test_argv_preparer_effort_lands_after_the_model_pair_and_nothing_else(
+        tool, exe, flag):
+    kw = dict(title="t", summary="s", tool=tool, project="p",
+              brief_path=_GROK_AGENT)
+    plain = card_prepare.argv(exe, **kw)
+    picked = card_prepare.argv(exe, effort="low", **kw)
+    at = picked.index("--model") + 2
+    assert picked[at:at + 2] == flag
+    if tool == "codex":
+        assert picked.index("-c") < picked.index("--")
+    assert picked[:at] + picked[at + 2:] == plain
+
+
+@pytest.mark.parametrize("tool, exe", [
+    ("claude", "/opt/claude"), ("codex", "/opt/codex"), ("grok", "/opt/grok"),
+])
+def test_argv_with_an_empty_effort_is_byte_identical(tool, exe):
+    kw = dict(title="t", summary="s", tool=tool, project="p",
+              brief_path=_GROK_AGENT)
+    assert card_prepare.argv(exe, effort="", **kw) == card_prepare.argv(exe, **kw)
+    assert card_prepare.argv(exe, effort=None, **kw) == card_prepare.argv(exe, **kw)
+
+
 def test_argv_with_the_shipped_luna_model_is_todays_codex_line():
     kw = dict(title="t", summary="s", tool="codex", project="p")
     assert card_prepare.argv("/opt/codex", model="gpt-6-luna", **kw) == (
@@ -1695,6 +1723,39 @@ async def test_a_claude_press_argv_carries_agents(tmp_path, monkeypatch):
     assert "--agents" in fake_exec.argv
     payload = json.loads(fake_exec.argv[fake_exec.argv.index("--agents") + 1])
     assert card_preparer_brief.NAME in payload
+
+
+@pytest.mark.asyncio
+async def test_a_claude_press_carries_the_preparer_effort(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    daemon, fake_exec = _prepare_daemon(
+        tmp_path, monkeypatch,
+        b"INSTRUCTIONS:\nDo it.\nSPECIALISTS:\nNONE\n")
+    daemon.set_agent_efforts({"claude": {"card-preparer": "low"}})
+    result, detail = await daemon._prepare_card_text_locked(
+        {"title": "t", "summary": "s", "tool": "claude", "project": "p",
+         "attachment_paths": []}, str(root))
+    assert result is not None, detail
+    at = fake_exec.argv.index("--effort")
+    assert fake_exec.argv[at:at + 2] == ["--effort", "low"]
+
+
+@pytest.mark.asyncio
+async def test_a_preparer_effort_the_real_model_rejects_is_absent(
+        tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    daemon, fake_exec = _prepare_daemon(
+        tmp_path, monkeypatch,
+        b"INSTRUCTIONS:\nDo it.\nSPECIALISTS:\nNONE\n")
+    daemon.set_agent_models({"codex": {"card-preparer": "gpt-5.5"}})
+    daemon.set_agent_efforts({"codex": {"card-preparer": "max"}})
+    result, detail = await daemon._prepare_card_text_locked(
+        {"title": "t", "summary": "s", "tool": "codex", "project": "p",
+         "attachment_paths": []}, str(root))
+    assert result is not None, detail
+    assert "-c" not in fake_exec.argv
 
 
 @pytest.mark.asyncio

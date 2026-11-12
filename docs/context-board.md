@@ -838,7 +838,9 @@ real columns and to what the prompt builders send.
   **A Default card's effort follows the same shape**: `agent_efforts` /
   `agent_efforts_by_root`, written by `_set_agent_effort`, resolved by
   `_agent_effort_for(root, provider, slot)` (Start reads the card's `effort`
-  first; `""` is no flag) at every launch site but the preparer.
+  first; `""` is no flag) at every launch site, the preparer included
+  (`_prepare_card_text_locked`, judged against `HELPER_MODELS` when the cell
+  is Default).
 
   **A card is never moved to Done by the daemon.** The bound session may
   declare it through `dark_army_close_card`, recorded with its author.

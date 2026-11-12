@@ -78,6 +78,12 @@ overrides it for one call. Dark Army's own checkout is never installed
 into, so there the file is the shipped table and `BOB_SHUNT_WORKER_MODEL` is
 the only way to choose another model.
 
+`workers.json` also carries an `efforts` object - one level per assistant,
+written from the Worker row's effort cell and absent when every cell is
+Default - which the wrappers pass to the worker as that assistant's effort
+flag. `BOB_SHUNT_WORKER_EFFORT` overrides it for one call, and in Dark Army's
+own checkout (never installed into) it is the only way to choose one.
+
 ## Reviewers are exempt
 
 A verifier, bug auditor, integration reviewer or security reviewer is never

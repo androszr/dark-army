@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import time
@@ -505,6 +506,38 @@ def test_install_writes_the_model_line_and_a_resync_rewrites_it(
 
     pack_install.resync_all(models_for=lambda r: None)
     assert "model:" not in brief.read_text(encoding="utf-8").split("---")[1]
+
+
+def test_install_writes_the_worker_effort_and_a_default_resync_takes_it_out(
+        tmp_path, monkeypatch):
+    from dark_army_daemon import agent_models
+    root = tmp_path / "proj"
+    root.mkdir()
+    monkeypatch.setattr(
+        "dark_army_daemon.paths.AGENT_PACK_PATH",
+        tmp_path / "agent-pack.json",
+    )
+    folder = _admit(monkeypatch, root)
+    models = agent_models.resolve({}, folder)
+    chosen = {"agent_efforts": {"claude": {"worker": "low"}}}
+    ok, detail, owned = pack_install.install_pack(
+        folder, "web", "xx", "sample-app", models=models,
+        efforts=agent_models.resolve_efforts(chosen, folder))
+    assert ok, detail
+    files = [root / ".claude/skills/shunt/workers.json",
+             root / ".agents/skills/shunt/workers.json"]
+    for path in files:
+        assert json.loads(path.read_text(encoding="utf-8"))["efforts"] == {
+            "claude": "low"}
+    pack_ledger.remember(
+        folder, profile="web", prefix="xx", project="sample-app",
+        settings_allow_owned=owned, last_result="ok")
+    pack_install.resync_all(
+        models_for=lambda r: models,
+        efforts_for=lambda r: agent_models.resolve_efforts({}, folder))
+    template = pack_render.workers_json(None)
+    for path in files:
+        assert path.read_bytes() == template
 
 
 def test_delivery_leads_install_inside_admitted_project(tmp_path, monkeypatch):

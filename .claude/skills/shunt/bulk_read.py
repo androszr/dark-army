@@ -8,7 +8,8 @@ Part of the shunt skill (SKILL.md beside this file). Stdlib only and
 nothing from Dark Army and needs Dark Army neither running nor installed.
 
 The helper is the project's own assistant CLI on its cheap model
-(`workers.json` beside this file, `BOB_SHUNT_WORKER_MODEL` for one call),
+(`workers.json` beside this file, `BOB_SHUNT_WORKER_MODEL` for one call)
+at the effort its `efforts` object names (`BOB_SHUNT_WORKER_EFFORT` for one call),
 run headless with the same flags Dark Army's Prepare helper uses so it can
 never become a session on somebody's screen. It is told to use no tools; the
 files ride inside the prompt in `<file path="...">` tags; only its answer is
@@ -116,6 +117,29 @@ def worker_model(provider, env):
     return SHIPPED_WORKERS[provider]
 
 
+def worker_effort(provider, env):
+    """The effort level for the worker, `""` for none. `workers.json` carries an
+    `efforts` object (one level per assistant) beside the model cells; a
+    malformed one adds no flag. `BOB_SHUNT_WORKER_EFFORT` wins for one call."""
+    override = str(env.get("BOB_SHUNT_WORKER_EFFORT") or "").strip()
+    if override:
+        return override
+    try:
+        with open(WORKERS_PATH, "r", encoding="utf-8") as fh:
+            table = json.load(fh)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(table, dict):
+        return ""
+    levels = table.get("efforts")
+    if not isinstance(levels, dict):
+        return ""
+    value = levels.get(provider)
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
 def worker_env(env):
     out = {}
     for key, value in env.items():
@@ -130,7 +154,7 @@ def worker_env(env):
     return out
 
 
-def worker_argv(provider, executable, model, prompt):
+def worker_argv(provider, executable, model, prompt, effort=""):
     """The helper's command line. Flag for flag the shape Dark Army's
     Prepare helper runs (`card_prepare.argv`), minus the brief flags it has
     no use for here; a parity test in Dark Army's own suite pins the two.
@@ -138,6 +162,7 @@ def worker_argv(provider, executable, model, prompt):
     if provider == "codex":
         return [executable, "exec",
                 "--model", model,
+                ] + (["-c", "model_reasoning_effort=" + effort] if effort else []) + [
                 "--ephemeral",
                 "--ignore-user-config",
                 "--skip-git-repo-check",
@@ -147,6 +172,7 @@ def worker_argv(provider, executable, model, prompt):
     if provider == "grok":
         return [executable,
                 "--model", model,
+                ] + (["--reasoning-effort", effort] if effort else []) + [
                 "--output-format", "plain",
                 "--no-subagents",
                 "--disable-web-search",
@@ -155,6 +181,7 @@ def worker_argv(provider, executable, model, prompt):
     return [executable,
             "-p", prompt,
             "--model", model,
+            ] + (["--effort", effort] if effort else []) + [
             "--no-session-persistence",
             "--strict-mcp-config",
             "--setting-sources", "",
@@ -274,6 +301,7 @@ def main(argv=None):
     provider = provider_from_env(env)
     sid = session_id_from_env(env, provider)
     model = worker_model(provider, env)
+    effort = worker_effort(provider, env)
     question = " ".join(args.question.split())
     if not question:
         print("bulk_read: --question is empty", file=sys.stderr)
@@ -299,7 +327,7 @@ def main(argv=None):
     cost = None
     try:
         proc = subprocess.run(
-            worker_argv(provider, executable, model, prompt),
+            worker_argv(provider, executable, model, prompt, effort),
             env=worker_env(env), stdin=subprocess.DEVNULL,
             capture_output=True, timeout=TIMEOUT_SECONDS, check=False)
     except subprocess.TimeoutExpired:

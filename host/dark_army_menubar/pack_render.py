@@ -686,6 +686,18 @@ def _effort_cell(efforts, provider: str, role: str):
     return str(row.get(role) or "")
 
 
+#: Roles whose effort cell drives a process's argv and never a file Dark Army
+#: writes: the card preparer's brief and shims keep yesterday's bytes (Codex's
+#: shipped `high` included) whatever the cell says.
+ARGV_ONLY_EFFORT_ROLES = ("card-preparer",)
+
+
+def _file_efforts(efforts, role: str):
+    """The effort table a role's brief or shim is rendered from: none for a
+    role whose cell is read at launch only (`ARGV_ONLY_EFFORT_ROLES`)."""
+    return None if role in ARGV_ONLY_EFFORT_ROLES else efforts
+
+
 def _effort_for(efforts, provider: str, role: str) -> str:
     """The level a companion file carries. Codex falls back to
     `SHIPPED_CODEX_EFFORT` where there is no table or no cell — so
@@ -718,11 +730,13 @@ def shims(mapping: dict[str, bytes], models=None,
         mapping[f".codex/agents/{name}.toml"] = codex_shim(
             name, fm, sandbox,
             model=_model_for(models, "codex", role),
-            effort=_effort_for(efforts, "codex", role)).encode("utf-8")
+            effort=_effort_for(_file_efforts(efforts, role), "codex", role)
+        ).encode("utf-8")
         mapping[f".grok/agents/{name}.md"] = grok_shim(
             name, fm, sandbox,
             model=_model_for(models, "grok", role),
-            effort=_effort_for(efforts, "grok", role)).encode("utf-8")
+            effort=_effort_for(_file_efforts(efforts, role), "grok", role)
+        ).encode("utf-8")
     return mapping
 
 
@@ -756,7 +770,8 @@ def pin_efforts(mapping: dict[str, bytes], efforts,
     for key, data in list(mapping.items()):
         if not key.startswith(folder) or not key.endswith(".md"):
             continue
-        level = _effort_cell(efforts, "claude", role_of(key, prefix))
+        role = role_of(key, prefix)
+        level = _effort_cell(_file_efforts(efforts, role), "claude", role)
         if not level:
             continue
         try:
@@ -850,18 +865,20 @@ def pin_own_models(mapping: dict[str, bytes], models,
         except UnicodeDecodeError:
             continue
         role = role_of(key, prefix)
+        efforts_here = _file_efforts(efforts, role)
         if key.startswith(".claude/agents/") and key.endswith(".md"):
             new = pin_model(text, _model_for(models, "claude", role))
-            level = _effort_cell(efforts, "claude", role)
+            level = _effort_cell(efforts_here, "claude", role)
             if level is not None:
                 new = pin_effort(new, level)
         elif key.startswith(".codex/agents/") and key.endswith(".toml"):
             new = pin_toml_model(text, _model_for(models, "codex", role))
-            if isinstance(efforts, dict):
-                new = pin_toml_effort(new, _effort_for(efforts, "codex", role))
+            if isinstance(efforts_here, dict):
+                new = pin_toml_effort(
+                    new, _effort_for(efforts_here, "codex", role))
         elif key.startswith(".grok/agents/") and key.endswith(".md"):
             new = pin_model(text, _model_for(models, "grok", role))
-            level = _effort_cell(efforts, "grok", role)
+            level = _effort_cell(efforts_here, "grok", role)
             if level is not None:
                 new = pin_effort(new, level)
         else:
@@ -874,6 +891,10 @@ def pin_own_models(mapping: dict[str, bytes], models,
 
 SHUNT_SKILL_KEY = ".claude/skills/shunt/SKILL.md"
 WORKERS_KEY = ".claude/skills/shunt/workers.json"
+#: The sibling object in `workers.json` that carries the worker's effort per
+#: provider. A sibling, never nested under a provider key: an older wrapper
+#: reads `str(table[provider])` as the model name.
+WORKERS_EFFORTS_KEY = "efforts"
 #: The worker per provider the pack ships in `workers.json` when no table
 #: says otherwise: `card_prepare.WORKER_MODELS`, spelled here without the
 #: import so the renderer stays a pure string module. `test_agent_pack_render`
@@ -891,26 +912,39 @@ def ships_shunt(source: Path | None = None) -> bool:
     return (root / "template" / SHUNT_SKILL_KEY).is_file()
 
 
-def workers_json(models) -> bytes:
+def workers_json(models, efforts=None) -> bytes:
     """The bytes of ``workers.json`` for a resolved table: each provider's
     `worker` cell, the shipped default where the cell is empty or absent.
     One line, sorted keys — the same shape the template file carries, so a
-    render with the shipped table is byte-identical to the template."""
+    render with the shipped table is byte-identical to the template.
+
+    The worker's effort rides a sibling ``efforts`` object, one level per
+    provider, only for non-empty cells and read with `_effort_cell` — never
+    `_effort_for`, whose Codex `high` fallback is a shim rule, not the
+    worker's (it ships Default). Absent when every cell is Default."""
     table = {}
     for provider, shipped in SHIPPED_WORKERS.items():
         chosen = _model_for(models, provider, "worker")
         table[provider] = chosen or shipped
+    levels = {}
+    for provider in SHIPPED_WORKERS:
+        level = _effort_cell(efforts, provider, "worker")
+        if level:
+            levels[provider] = level
+    if levels:
+        table[WORKERS_EFFORTS_KEY] = levels
     return (json.dumps(table, sort_keys=True) + "\n").encode("utf-8")
 
 
-def pin_worker_models(mapping: dict[str, bytes], models) -> dict[str, bytes]:
+def pin_worker_models(mapping: dict[str, bytes], models,
+                      efforts=None) -> dict[str, bytes]:
     """Rewrite the shunt skill's ``workers.json`` from the table's `worker`
     cells. With no table the template bytes stand; with no skill in the
     mapping nothing is written. Called from ``render`` **before**
     ``mirror_skills`` so the ``.agents`` twin is byte-identical."""
     if not isinstance(models, dict) or WORKERS_KEY not in mapping:
         return mapping
-    mapping[WORKERS_KEY] = workers_json(models)
+    mapping[WORKERS_KEY] = workers_json(models, efforts)
     return mapping
 
 
@@ -1260,7 +1294,7 @@ def render(
         raise PackRenderError(
             "unresolved placeholders: " + ", ".join(leftovers[:8])
         )
-    pin_worker_models(mapping, models)
+    pin_worker_models(mapping, models, efforts)
     mirror_skills(mapping)
     pin_models(mapping, models, prefix)
     pin_efforts(mapping, efforts, prefix)

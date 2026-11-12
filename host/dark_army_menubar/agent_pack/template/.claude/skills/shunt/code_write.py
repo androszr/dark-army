@@ -111,6 +111,29 @@ def worker_model(provider, env):
     return SHIPPED_WORKERS[provider]
 
 
+def worker_effort(provider, env):
+    """The effort level for the worker, `""` for none. `workers.json` carries an
+    `efforts` object (one level per assistant) beside the model cells; a
+    malformed one adds no flag. `BOB_SHUNT_WORKER_EFFORT` wins for one call."""
+    override = str(env.get("BOB_SHUNT_WORKER_EFFORT") or "").strip()
+    if override:
+        return override
+    try:
+        with open(WORKERS_PATH, "r", encoding="utf-8") as fh:
+            table = json.load(fh)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(table, dict):
+        return ""
+    levels = table.get("efforts")
+    if not isinstance(levels, dict):
+        return ""
+    value = levels.get(provider)
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
 def worker_env(env):
     out = {}
     for key, value in env.items():
@@ -125,13 +148,14 @@ def worker_env(env):
     return out
 
 
-def worker_argv(provider, executable, model, prompt):
+def worker_argv(provider, executable, model, prompt, effort=""):
     """Same shape as bulk_read.py's, which is Dark Army's Prepare helper's
     (`card_prepare.argv`) minus the brief flags. Read-only on every
     provider: the worker prints, this wrapper writes."""
     if provider == "codex":
         return [executable, "exec",
                 "--model", model,
+                ] + (["-c", "model_reasoning_effort=" + effort] if effort else []) + [
                 "--ephemeral",
                 "--ignore-user-config",
                 "--skip-git-repo-check",
@@ -141,6 +165,7 @@ def worker_argv(provider, executable, model, prompt):
     if provider == "grok":
         return [executable,
                 "--model", model,
+                ] + (["--reasoning-effort", effort] if effort else []) + [
                 "--output-format", "plain",
                 "--no-subagents",
                 "--disable-web-search",
@@ -149,6 +174,7 @@ def worker_argv(provider, executable, model, prompt):
     return [executable,
             "-p", prompt,
             "--model", model,
+            ] + (["--effort", effort] if effort else []) + [
             "--no-session-persistence",
             "--strict-mcp-config",
             "--setting-sources", "",
@@ -381,6 +407,7 @@ def _run_helper(args, spec, reference):
     provider = provider_from_env(env)
     sid = session_id_from_env(env, provider)
     model = worker_model(provider, env)
+    effort = worker_effort(provider, env)
     prompt = (INSTRUCTION + "\n\nSPEC: " + spec + "\n\nTARGET PATH: " + args.out
               + '\n\n<reference path="%s">\n%s\n</reference>' % (args.reference, reference))
     if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
@@ -397,7 +424,7 @@ def _run_helper(args, spec, reference):
     lines = 0
     proc = None
     try:
-        proc = run_helper(worker_argv(provider, executable, model, prompt),
+        proc = run_helper(worker_argv(provider, executable, model, prompt, effort),
                           worker_env(env))
     except subprocess.TimeoutExpired:
         print("code_write: the %s helper gave no answer in %ds" % (

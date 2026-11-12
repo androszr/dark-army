@@ -48,8 +48,10 @@ preferences beside the model ones, with the same three-valued meaning:
 missing key means the shipped level (`SHIPPED_EFFORTS`), `""` is Default (no
 flag, no brief line) and `INHERIT` is legal only in an override. The levels
 offered are `dispatch.efforts_for(provider, model)` for the slot's resolved
-model; only `EFFORT_SLOTS` carry one, because nothing reads an effort for the
-card preparer or the shunt worker and an inert control is refused.
+model; only `EFFORT_SLOTS` carry one. The card preparer's reaches
+`card_prepare.argv(effort=)` at Prepare; the shunt worker's is written into
+`workers.json`'s `efforts` object (`pack_render.WORKERS_EFFORTS_KEY`) and passed
+on by the wrappers. Both ship Default on every provider, Codex included.
 """
 
 from __future__ import annotations
@@ -119,8 +121,9 @@ SHIPPED: dict[str, dict[str, str]] = {
 }
 
 
-#: The slots an effort may be chosen for: `main` and the seven roles. The card
-#: preparer and the shunt worker get none (out of scope, no reader).
+#: The slots an effort may be chosen for: `main`, the seven roles, the card
+#: preparer (read by `card_prepare.argv(effort=)`) and the shunt worker (read
+#: from `workers.json`'s `efforts` object by the wrappers).
 EFFORT_SLOTS = (
     "main",
     "planner",
@@ -129,15 +132,21 @@ EFFORT_SLOTS = (
     "bug-auditor",
     "integration-reviewer",
     "security-reviewer",
+    "card-preparer",
+    "worker",
 )
 
 #: The shipped effort per cell. Claude and Grok ship Default everywhere; Codex
-#: ships `high` for every role (the level the Codex companion files carry
-#: today, `pack_render.SHIPPED_CODEX_EFFORT`) and Default for `main`, so an
-#: untouched install changes no byte on disk.
+#: ships `high` for every briefed role (the level the Codex companion files
+#: carry today, `pack_render.SHIPPED_CODEX_EFFORT`) and Default for `main`, the
+#: card preparer and the worker, so an untouched install changes no byte on
+#: disk and launches both helpers as before.
 SHIPPED_EFFORTS: dict[str, dict[str, str]] = {
     "claude": {slot: "" for slot in EFFORT_SLOTS},
-    "codex": {slot: ("" if slot == "main" else "high") for slot in EFFORT_SLOTS},
+    "codex": {
+        slot: ("" if slot in ("main", "card-preparer", "worker") else "high")
+        for slot in EFFORT_SLOTS
+    },
     "grok": {slot: "" for slot in EFFORT_SLOTS},
 }
 
@@ -437,10 +446,16 @@ def published_efforts_by_root(settings) -> dict:
     return {"efforts": efforts, "options": options}
 
 
-def effort_slots_for(roles: Iterable[str]) -> list[str]:
+def effort_slots_for(roles: Iterable[str], *, worker: bool = False) -> list[str]:
     """The drawable effort slots, in `EFFORT_SLOTS` order: `main` plus every
-    role the shipped pack writes a brief for. Never the preparer or worker."""
+    role the shipped pack writes a brief for (the card preparer among them),
+    plus `worker` only when the caller says the pack carries the shunt skill
+    (`pack_render.ships_shunt()`), `slots_for`'s rule."""
     present = set(roles or ())
+    if worker:
+        present.add("worker")
+    else:
+        present.discard("worker")
     return [slot for slot in EFFORT_SLOTS if slot == "main" or slot in present]
 
 
