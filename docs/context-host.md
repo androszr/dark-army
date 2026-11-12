@@ -538,7 +538,7 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     flag also gates. **One `claude -p` per session**, with four flags that
     stop the namer becoming a session on somebody's screen:
     `--no-session-persistence`, `--setting-sources ""` (**no hooks**),
-    `--strict-mcp-config`, `--model haiku`; the instruction rides **in the
+    `--strict-mcp-config`, `--model haiku` (CLI 2.1.293+ resolves it to `claude-haiku-5-5`); the instruction rides **in the
     prompt**, never `--system-prompt`. Decided on the snapshot thread
     (`_consider_title`), spawned on the loop (`_flush_session_titles`), one
     at a time, detached. **One attempt per session, ever** — a miss is

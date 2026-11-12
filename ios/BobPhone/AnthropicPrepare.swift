@@ -88,7 +88,8 @@ struct PrepareFailure: Error {
 enum AnthropicMessages {
     /// The one place this address is written in the whole of `ios/`.
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")
-    static let model = "claude-haiku-4-5-20251001"
+    // First-party id from the Anthropic model-overview page, read 2026-11-11.
+    static let model = "claude-haiku-5-5"
     static let version = "2023-06-01"
     static let maxTokens = 4096
     /// `card_prepare.TIMEOUT_SECONDS`.

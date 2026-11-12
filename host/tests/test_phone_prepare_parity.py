@@ -249,6 +249,15 @@ def test_the_prompt_is_the_macs_byte_for_byte(probe, fixture):
     assert got["prompt"] == expected
 
 
+def test_the_phone_prepares_on_the_menus_haiku_pin():
+    from dark_army_daemon import dispatch
+    text = (IOS / "AnthropicPrepare.swift").read_text()
+    found = re.findall(r'static let model = "([^"]+)"', text)
+    assert found == ["claude-haiku-5-5"]
+    assert found[0] in dispatch.MODELS["claude"]
+    assert "claude-haiku-4-5" not in text
+
+
 def test_the_key_never_rides_anything_the_phone_sends():
     """The Anthropic URL appears once, and nothing that talks to the Mac,
     the relay, the widget, the outbox or a saved file names the key store."""
