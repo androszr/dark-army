@@ -402,8 +402,7 @@ judged by the Start rule, and one armed-then-confirmed press sending
 `board_start_batch` synchronously, never queued, behind
 `start_batch_supported`. In full in `docs/phone-contract.md`.
 
-**The agent sheet swipes to the next agent in Needs you** (28 Sep 2026) —
-in full in `docs/phone-contract.md`.
+**The agent sheet swipes to the next agent in Needs you** and **The card sheet swipes to the next In progress card** (28 Sep 2026): `docs/phone-contract.md`.
 
 **A Prep or Backlog card swipes on the phone too**, with the "2 of 5"
 mark: `docs/phone-contract.md`.

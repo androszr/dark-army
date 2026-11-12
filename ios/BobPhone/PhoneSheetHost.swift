@@ -430,17 +430,71 @@ struct PhoneSheetFrame: View {
         return name + ", " + AgentSheetSwipe.spokenMark(position)
     }
 
-    private func neighbour(_ direction: AgentSheetSwipe.Direction) -> (Agent, Category)? {
-        guard case .agent(let agent, _) = router.top?.subject else { return nil }
-        guard let id = AgentSheetSwipe.neighbour(of: agent.sessionId, in: waitingOrder, direction) else {
+    /// The Board tab's own stored project choice, read here so the sheet sees
+    /// the row it was drawn under; the frame is presented from the same scene.
+    @SceneStorage("board.project") private var boardProjectChoice = ""
+
+    /// The choice resolved as `BoardView.activeProject` resolves it, on the
+    /// same inputs: a name the board no longer lists is ALL, never an empty row.
+    private var boardProject: String {
+        guard !boardProjectChoice.isEmpty else { return "" }
+        let board = client.snapshot.board
+        return FleetProjects.resolve(selected: boardProjectChoice,
+                                     in: BoardProjects.names(open: board.projects.map(\.name)),
+                                     heard: board.available)
+    }
+
+    /// The card ids the Board tab draws in the answering row, in drawn order,
+    /// under its project choice. The search line is not an input. Read at the
+    /// moment of use, never cached.
+    private var inProgressOrder: [String] {
+        let active = boardProject
+        return CardSheetSwipe.order(
+            client.snapshot.board.cards(in: PhoneSheetKind.answeringColumn)
+                .filter { BoardProjects.matches(project: $0.project, active: active) },
+            project: \.project, id: \.id)
+    }
+
+    /// What the open sheet can swipe through: a waiting agent, or a card in
+    /// the answering column (the seed's column, the fact the detent reads).
+    /// Nil for everything else, so the gesture and the actions are inert there.
+    private var swipeLane: (kind: PhoneSheetKind, current: String, order: [String])? {
+        switch router.top?.subject {
+        case .agent(let agent, _):
+            return (.agent, agent.sessionId, waitingOrder)
+        case .card(let card) where PhoneSheetKind.answers(.card, column: card.column):
+            return (.card, card.id, inProgressOrder)
+        default:
             return nil
         }
-        return PhoneInbox.uniqueAgent(session: id, agents: client.snapshot.agents)
+    }
+
+    private var swipeLabels: (next: String, previous: String)? {
+        switch swipeLane?.kind {
+        case .agent: return ("Next waiting agent", "Previous waiting agent")
+        case .card: return ("Next In progress card", "Previous In progress card")
+        default: return nil
+        }
+    }
+
+    private func neighbour(_ direction: AgentSheetSwipe.Direction) -> PhoneSheet? {
+        guard let lane = swipeLane,
+              let id = AgentSheetSwipe.neighbour(of: lane.current, in: lane.order, direction)
+        else { return nil }
+        switch lane.kind {
+        case .agent:
+            return PhoneInbox.uniqueAgent(session: id, agents: client.snapshot.agents)
+                .map { PhoneSheet.agent($0.0, $0.1) }
+        case .card:
+            return client.snapshot.board.cards.first { $0.id == id }.map(PhoneSheet.card)
+        default:
+            return nil
+        }
     }
 
     private func move(_ direction: AgentSheetSwipe.Direction) {
-        guard !router.terminalPresented, let (next, category) = neighbour(direction) else { return }
-        router.replaceTop(.agent(next, category))
+        guard !router.terminalPresented, let next = neighbour(direction) else { return }
+        router.replaceTop(next)
     }
 
     private var presentationBinding: Binding<PresentationDetent> {
@@ -501,11 +555,13 @@ struct PhoneSheetFrame: View {
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityLabel(spokenTitle(position))
                     .accessibilityActions {
-                        if neighbour(.next) != nil {
-                            DecryptButton("Next waiting agent", action: { move(.next) })
-                        }
-                        if neighbour(.previous) != nil {
-                            DecryptButton("Previous waiting agent", action: { move(.previous) })
+                        if let labels = swipeLabels {
+                            if neighbour(.next) != nil {
+                                DecryptButton(labels.next, action: { move(.next) })
+                            }
+                            if neighbour(.previous) != nil {
+                                DecryptButton(labels.previous, action: { move(.previous) })
+                            }
                         }
                     }
                 if let decryptFeedback {
