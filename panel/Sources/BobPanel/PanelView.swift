@@ -1176,6 +1176,8 @@ struct PanelView: View {
             if let row = detailRow {
                 let bound = client.snapshot.board
                     .card(forSession: row.agent.sessionId)
+                let flaggedCard = client.snapshot.board
+                    .manualCheckCard(forSession: row.agent.sessionId)
                 AgentDetailPane(
                     agent: row.agent,
                     category: row.category,
@@ -1187,6 +1189,14 @@ struct PanelView: View {
                     onShowCard: bound == nil ? nil
                         : { showCard(session: row.agent.sessionId) },
                     boardCard: bound,
+                    manualCheckCard: flaggedCard,
+                    onOpenManualCheck: flaggedCard.map { flagged in
+                        if flagged.manualCheckPath.isEmpty {
+                            return { showCard(card: flagged) }
+                        }
+                        let path = flagged.manualCheckPath
+                        return { board.onOpenManualCheck?(path) }
+                    },
                     onBack: { deselect() },
                     collaborationHelper: collaborationHelper,
                     onCollaborationSession: { provider, sid, helper in

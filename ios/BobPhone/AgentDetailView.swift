@@ -1042,7 +1042,11 @@ struct AgentDetailView: View {
         let report = agent.lastReport.trimmingCharacters(
             in: .whitespacesAndNewlines)
         if let parsed = agent.workReport, parsed.labelled, !report.isEmpty {
-            PhoneWorkReportBlock(parsed: parsed)
+            let flaggedCard = client.snapshot.board
+                .manualCheckCard(forSession: agent.sessionId)
+            PhoneWorkReportBlock(
+                parsed: parsed, flagged: flaggedCard != nil,
+                onOpenCheck: flaggedCard.map { c in { sheets.show(.card(c)) } })
         } else if !report.isEmpty, !latest.contains("## Work done") {
             VStack(alignment: .leading, spacing: 6) {
                 Text("# work done")
@@ -1550,6 +1554,11 @@ struct PhoneAgentScreenBar: View {
 /// wraps.
 struct PhoneWorkReportBlock: View {
     let parsed: WorkReport.Parsed
+    /// The session's own card carries a manual check (`Board.manualCheckCard`).
+    var flagged = false
+    /// Opens that card, where the check is drawn at the top. Absent: the
+    /// caption is plain text.
+    var onOpenCheck: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1562,10 +1571,7 @@ struct PhoneWorkReportBlock: View {
             }
             ForEach(WorkReport.sections(parsed), id: \.self) { section in
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(caption(section))
-                        .font(Theme.mono(11))
-                        .foregroundStyle(Theme.faint)
-                        .fixedSize(horizontal: false, vertical: true)
+                    captionView(section)
                     content(section)
                 }
             }
@@ -1576,8 +1582,32 @@ struct PhoneWorkReportBlock: View {
     private func caption(_ section: WorkReport.Section) -> String {
         section == .unchecked
             ? WorkReport.uncheckedCaption(count: WorkReport.total(parsed, .unchecked),
-                                          nothing: parsed.nothingUnchecked)
+                                          nothing: parsed.nothingUnchecked,
+                                          flagged: flagged)
             : section.caption
+    }
+
+    /// Unchecked's caption is a press when it names the card's check and
+    /// there is a way to open it; every other caption is plain text.
+    @ViewBuilder
+    private func captionView(_ section: WorkReport.Section) -> some View {
+        if section == .unchecked, let open = onOpenCheck,
+           WorkReport.showsFlag(count: WorkReport.total(parsed, .unchecked),
+                                nothing: parsed.nothingUnchecked, flagged: flagged) {
+            DecryptButton(action: open) {
+                Text(caption(section))
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.amber)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityHint("Opens the card and its manual check")
+        } else {
+            Text(caption(section))
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder

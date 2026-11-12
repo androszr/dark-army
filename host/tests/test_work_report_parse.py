@@ -279,6 +279,11 @@ def test_the_panel_and_phone_share_one_rule():
         assert len(region) >= 1500, f"parsed too little from the {name} copy"
         assert "static func rowLead(headline: String, base: String) -> String" in region
         assert "static func uncheckedCaption(count: Int, nothing: Bool) -> String" in region
+        assert ("static func uncheckedCaption(count: Int, nothing: Bool, flagged: Bool)"
+                " -> String") in region
+        assert ("static func flagged(cardSession: String, due: Bool, steps: String, "
+                "session: String) -> Bool") in region
+        assert '"flagged on the card"' in region
         assert '"Nothing unchecked — every check ran"' in region
     assert panel == phone, (
         "ios/BobPhone/WorkReport.swift has drifted from the panel's copy — "
@@ -317,6 +322,11 @@ struct In: Decodable {
     let nothing: Bool?
     let steps: [String]?
     let report: WorkReport.Parsed?
+    let flagged: Bool?
+    let cardSession: String?
+    let due: Bool?
+    let cardSteps: String?
+    let session: String?
 }
 let input = try! JSONDecoder().decode(In.self, from: FileHandle.standardInput.readDataToEndOfFile())
 var out: [String: Any] = [:]
@@ -326,6 +336,11 @@ case "rowLead":
 case "unchecked":
     out["caption"] = WorkReport.uncheckedCaption(count: input.count!, nothing: input.nothing!)
     out["nothing"] = WorkReport.nothingUnchecked
+case "flaggedCaption":
+    out["caption"] = WorkReport.uncheckedCaption(count: input.count!, nothing: input.nothing!, flagged: input.flagged!)
+    out["plain"] = WorkReport.uncheckedCaption(count: input.count!, nothing: input.nothing!)
+case "flagged":
+    out["flagged"] = WorkReport.flagged(cardSession: input.cardSession!, due: input.due!, steps: input.cardSteps!, session: input.session!)
 case "numbered":
     out["steps"] = WorkReport.numbered(input.steps!)
 case "more":
@@ -381,6 +396,34 @@ def test_uncheckedCaption_and_nothing_unchecked(probe):
     assert none["nothing"] == "Nothing unchecked — every check ran"
     assert probe({"mode": "unchecked", "count": 3, "nothing": False})["caption"] \
         == "UNCHECKED (3)"
+
+
+def test_flagged_caption_names_the_card(probe):
+    got = probe({"mode": "flaggedCaption", "count": 2, "nothing": False, "flagged": True})
+    assert got["caption"] == "UNCHECKED (2) \u00b7 flagged on the card"
+
+
+def test_an_unflagged_caption_is_todays(probe):
+    got = probe({"mode": "flaggedCaption", "count": 2, "nothing": False, "flagged": False})
+    assert got["caption"] == "UNCHECKED (2)" == got["plain"]
+
+
+def test_nothing_unchecked_never_says_flagged(probe):
+    for nothing in (True, False):
+        got = probe({"mode": "flaggedCaption", "count": 0, "nothing": nothing, "flagged": True})
+        assert got["caption"] == "UNCHECKED"
+    got = probe({"mode": "flaggedCaption", "count": 3, "nothing": True, "flagged": True})
+    assert got["caption"] == "UNCHECKED"
+
+
+def test_flagged_needs_steps_and_the_cards_own_session(probe):
+    base = {"mode": "flagged", "cardSession": "s", "due": True,
+            "cardSteps": "1. x", "session": "s"}
+    assert probe(base)["flagged"] is True
+    assert probe({**base, "due": False})["flagged"] is False
+    assert probe({**base, "cardSteps": "  "})["flagged"] is False
+    assert probe({**base, "cardSession": "t"})["flagged"] is False
+    assert probe({**base, "cardSession": "", "session": ""})["flagged"] is False
 
 
 def test_numbered_steps(probe):

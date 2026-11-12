@@ -138,8 +138,20 @@ final class CardSectionsTests: XCTestCase {
         XCTAssertEqual(CardSections.leads(for: .running), [])
         XCTAssertEqual(CardSections.leads(for: .manualCheck), [.manualCheck])
         XCTAssertEqual(CardSections.leads(for: .ended), [.report])
-        XCTAssertEqual(CardSections.leads(for: .done), [.closeSignature, .report])
+        XCTAssertEqual(CardSections.leads(for: .done), [.manualCheck, .closeSignature, .report])
         XCTAssertEqual(CardSections.pinned, [.status, .verbs, .queue, .dependencies])
+    }
+
+    /// A Done card with a check still open opens with the check first, right
+    /// after STATUS and before CLOSED BY; REPORT stays right after CLOSED BY.
+    func testADoneCardLeadsWithAnOpenCheck() {
+        let order = CardSections.order(for: .done)
+        XCTAssertEqual(order.firstIndex(of: .manualCheck), 1)
+        XCTAssertLessThan(order.firstIndex(of: .manualCheck)!,
+                          order.firstIndex(of: .closeSignature)!)
+        XCTAssertEqual(order.firstIndex(of: .report), order.firstIndex(of: .closeSignature)! + 1)
+        XCTAssertTrue(CardSections.isOpen(.manualCheck, stage: .done, opened: []))
+        XCTAssertFalse(CardSections.hidden(for: .done).contains(.manualCheck))
     }
 
     /// WAITS ON (24 Sep 2026) is in every order exactly once, right after

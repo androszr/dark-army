@@ -199,6 +199,14 @@ with its headline, parsing nothing. A row never does: it names what tapping
 it opens — the sheet's card line first (`AgentDetailView.cardLine`), the
 Mac's `ProcessRow.baseTitle` rule. An older Mac sends none
 and the raw report is drawn; no push (S3).
+When the report lists unchecked steps and the session's own card carries a check
+(`WorkReport.flagged`: the card's own `session_id`, never a refinement, the daemon's
+`manual_check_due`, and steps written) the Unchecked caption reads
+`UNCHECKED (n) · flagged on the card` (`WorkReport.uncheckedCaption(count:nothing:flagged:)`,
+the count kept; a "nothing unchecked" report never says it) and is a press: on the Mac it opens
+the Checks window on `manual_check_path` (the card itself where the flag has steps and no file),
+on the phone it opens that card over the agent sheet, Back returning. An unflagged
+report keeps today's caption.
 
 **A card opens with five things and one MORE row, in `CardSections`' order,
 and the phone re-derives none of it.** On a card in Prep, Backlog or Done
@@ -221,8 +229,8 @@ and pinned by `host/tests/test_card_sections.py`: everything else sits
 behind one `MORE · n` row (`CardSections.more`, `CardSections.shown`, the
 count from `Facts.hidden`), each hidden section a `PhoneCardFoldRow` of its
 own once MORE is open. **Three exceptions and only three** open by
-themselves (`CardSections.leads`): the check's steps on the manual-check
-stage, because the steps are the next action; the close note on a Done
+themselves (`CardSections.leads`): the check's steps while a check is open — on the manual-check stage and on a
+Done card still carrying one — because the steps are the next action; the close note on a Done
 card, because Reviewed is a judgment about that note; and a scout's
 `REPORT` on the ended and Done stages, because the report is what the card
 was for (on a build card the section has no content and draws nothing).

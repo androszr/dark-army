@@ -39,6 +39,10 @@ struct AgentDetailPane: View {
     /// Not `card` above — that one is the notification. `nil` where the
     /// session is on no card, and the header then draws no title line.
     var boardCard: BoardCard? = nil
+    /// The session's **own** card with a manual check due (never the bound-or-
+    /// refining card above) and the press that opens its check.
+    var manualCheckCard: BoardCard? = nil
+    var onOpenManualCheck: (() -> Void)? = nil
     var onBack: () -> Void = {}
     var collaborationHelper = ""
     var onCollaborationSession: (String, String, String) -> Void = { _, _, _ in }
@@ -133,6 +137,8 @@ struct AgentDetailPane: View {
             actions: actions,
             client: client,
             onReplyFocus: onReplyFocus,
+            uncheckedFlagged: manualCheckCard != nil,
+            onOpenCheck: onOpenManualCheck,
             messageHidden: messageHidden)
     }
 }
