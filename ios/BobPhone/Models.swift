@@ -1438,6 +1438,16 @@ struct Board: Decodable {
             ?? cards.first { $0.isRefining && $0.refineSessionId == id }
     }
 
+    /// The session's own card with a manual check due, for the Unchecked
+    /// caption: its own `sessionId` (never the refinement rung), steps written,
+    /// `manualCheckDue`. One rule, `WorkReport.flagged`, on both clients.
+    func manualCheckCard(forSession id: String) -> BoardCard? {
+        cards.first {
+            WorkReport.flagged(cardSession: $0.sessionId, due: $0.manualCheckDue,
+                               steps: $0.manualSteps, session: id)
+        }
+    }
+
     var outcomesSupported = false
     /// Whether this Mac serves the human knowledge reader. Absent means
     /// **false**: the Profile row is drawn absent rather than empty.

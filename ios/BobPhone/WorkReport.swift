@@ -132,6 +132,34 @@ enum WorkReport {
         return "\(Section.unchecked.caption) (\(count))"
     }
 
+    /// The words that follow Unchecked's count when the session's own card
+    /// carries a manual check.
+    static let flaggedNote = "flagged on the card"
+
+    /// Whether a card is the session's own flagged card: its own `session_id`
+    /// (never a refinement), the daemon's `manual_check_due`, and steps
+    /// written on it. The phone decodes `due` with no steps term, so the
+    /// steps are required here for both clients.
+    static func flagged(cardSession: String, due: Bool, steps: String, session: String) -> Bool {
+        !session.isEmpty && cardSession == session && due
+            && !steps.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Whether the Unchecked caption names the card: the report lists steps,
+    /// did not say nothing was left, and the card is flagged. The caption
+    /// reports the report, so a "nothing unchecked" report never says it.
+    static func showsFlag(count: Int, nothing: Bool, flagged: Bool) -> Bool {
+        flagged && !nothing && count > 0
+    }
+
+    /// Unchecked's caption with the card's flag: today's caption, plus
+    /// `· flagged on the card` when `showsFlag`.
+    static func uncheckedCaption(count: Int, nothing: Bool, flagged: Bool) -> String {
+        let base = uncheckedCaption(count: count, nothing: nothing)
+        guard showsFlag(count: count, nothing: nothing, flagged: flagged) else { return base }
+        return "\(base) · \(flaggedNote)"
+    }
+
     /// Steps as a person follows them: `1. …`, `2. …`.
     static func numbered(_ steps: [String]) -> [String] {
         steps.enumerated().map { "\($0.offset + 1). \($0.element)" }

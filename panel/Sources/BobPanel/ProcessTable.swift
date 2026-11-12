@@ -349,6 +349,10 @@ struct StdoutPane: View {
     @ObservedObject var actions: RowActions
     @ObservedObject var client: DaemonClient
     var onReplyFocus: (Bool) -> Void = { _ in }
+    /// The session's own card carries a manual check, and the press that
+    /// opens it; both are passed to the report's Unchecked caption.
+    var uncheckedFlagged = false
+    var onOpenCheck: (() -> Void)? = nil
     /// When true, skip the `# stdout` header and the last-message dump —
     /// the hosted terminal already is that document. The action bars
     /// (permission, questions, reply, wrap-up) still draw.
@@ -637,7 +641,8 @@ struct StdoutPane: View {
             report: agent.lastReport)
         if let parsed = agent.workReport, parsed.labelled,
            !agent.lastReport.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            WorkReportBlock(parsed: parsed)
+            WorkReportBlock(parsed: parsed, flagged: uncheckedFlagged,
+                            onOpenCheck: onOpenCheck)
         } else if !report.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Rectangle().fill(Theme.hair).frame(height: 1)

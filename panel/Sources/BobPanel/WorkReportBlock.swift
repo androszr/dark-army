@@ -11,6 +11,11 @@ import SwiftUI
 /// here: `StdoutPane` keeps the raw markdown block for it.
 struct WorkReportBlock: View {
     let parsed: WorkReport.Parsed
+    /// The session's own card carries a manual check (`Board.manualCheckCard`).
+    var flagged = false
+    /// Opens that check. Absent where nothing can be opened; the caption is
+    /// then plain text.
+    var onOpenCheck: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -23,9 +28,7 @@ struct WorkReportBlock: View {
             }
             ForEach(WorkReport.sections(parsed), id: \.self) { section in
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(caption(section))
-                        .font(Theme.mono(10))
-                        .foregroundStyle(Theme.faint)
+                    captionView(section)
                     content(section)
                 }
             }
@@ -36,8 +39,31 @@ struct WorkReportBlock: View {
     private func caption(_ section: WorkReport.Section) -> String {
         section == .unchecked
             ? WorkReport.uncheckedCaption(count: WorkReport.total(parsed, .unchecked),
-                                          nothing: parsed.nothingUnchecked)
+                                          nothing: parsed.nothingUnchecked,
+                                          flagged: flagged)
             : section.caption
+    }
+
+    /// Unchecked's caption is a press when it names the card's check and
+    /// there is a way to open it; every other caption is plain text.
+    @ViewBuilder
+    private func captionView(_ section: WorkReport.Section) -> some View {
+        if section == .unchecked, let open = onOpenCheck,
+           WorkReport.showsFlag(count: WorkReport.total(parsed, .unchecked),
+                                nothing: parsed.nothingUnchecked, flagged: flagged) {
+            Button(action: open) {
+                Text(caption(section))
+                    .font(Theme.mono(10))
+                    .foregroundStyle(Theme.amber)
+            }
+            .buttonStyle(.plain)
+            .clickable()
+            .accessibilityHint("Opens the manual check")
+        } else {
+            Text(caption(section))
+                .font(Theme.mono(10))
+                .foregroundStyle(Theme.faint)
+        }
     }
 
     @ViewBuilder

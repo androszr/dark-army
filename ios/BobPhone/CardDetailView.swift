@@ -3193,7 +3193,7 @@ enum CardSections {
                     .collaboration, .timeline, .attachments,
                     .documents, .danger]
         case .done:
-            return [.status, .closeSignature, .report, .verbs, .queue, .dependencies, .more,
+            return [.status, .manualCheck, .closeSignature, .report, .verbs, .queue, .dependencies, .more,
                     .objective, .workRecord, .changes, .run, .plan, .instructions, .crew,
                     .session, .thread, .editor, .otherVerbs, .collaboration,
                     .timeline, .attachments, .documents, .danger]
@@ -3201,9 +3201,9 @@ enum CardSections {
     }
 
     /// Open by default at this stage; the pinned four are implied. Three
-    /// exceptions to "everything behind MORE", and only three: a card waiting
-    /// on your check opens with the check's steps, because the steps are the
-    /// next action; a finished card opens with its close note, because
+    /// exceptions to "everything behind MORE", and only three: a card with
+    /// a check open — waiting on it, or Done with it still open — opens with
+    /// the check's steps, because the steps are the next action; a finished card opens with its close note, because
     /// Reviewed is a judgment about that note; and a scout that has come
     /// back — its run ended or the card Done — opens with its report,
     /// because the report is what the card was for. REPORT leads only on a
@@ -3216,7 +3216,7 @@ enum CardSections {
         case .running: return []
         case .manualCheck: return [.manualCheck]
         case .ended: return [.report]
-        case .done: return [.closeSignature, .report]
+        case .done: return [.manualCheck, .closeSignature, .report]
         }
     }
 

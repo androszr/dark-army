@@ -132,6 +132,46 @@ def test_neither_row_puts_the_headline_before_the_title(root):
     assert "cardLine" in table
 
 
+# --- the flagged caption: one rule, the session's own card ---------------------
+
+
+@pytest.mark.parametrize("root, name", [(PANEL, "BoardModels.swift"),
+                                         (PHONE, "Models.swift")])
+def test_both_boards_pick_the_flagged_card_through_the_shared_rule(root, name):
+    text = (root / name).read_text(encoding="utf-8")
+    assert text.count("func manualCheckCard(forSession") == 1
+    body = text[text.index("func manualCheckCard(forSession"):]
+    body = body[:body.index("\n    }\n")]
+    assert "WorkReport.flagged(" in body
+    # Never the refinement rung: a planning session does not own the check.
+    assert "refineSessionId" not in body
+
+
+def test_the_mac_press_opens_the_flagged_card_check():
+    view = (PANEL / "PanelView.swift").read_text(encoding="utf-8")
+    assert "manualCheckCard: flaggedCard" in view
+    assert "manualCheckCard(forSession:" in view
+    assert "board.onOpenManualCheck?(" in view
+    assert "showCard(card: flagged)" in view
+
+
+def test_the_phone_press_opens_the_flagged_card():
+    text = (PHONE / "AgentDetailView.swift").read_text(encoding="utf-8")
+    body = text[text.index("private func workReport(for agent: Agent"):]
+    body = body[:body.index("    /// The reply, on the Details tab")]
+    assert "manualCheckCard(forSession:" in body
+    assert "sheets.show(.card(" in body
+
+
+@pytest.mark.parametrize("path", [PANEL / "WorkReportBlock.swift",
+                                   PHONE / "AgentDetailView.swift"])
+def test_the_flag_words_come_from_the_shared_rule_alone(path):
+    text = path.read_text(encoding="utf-8")
+    assert "flagged on the card" not in text
+    assert "WorkReport.uncheckedCaption(" in text
+    assert "WorkReport.showsFlag(" in text
+
+
 @pytest.fixture
 def daemon(tmp_path, monkeypatch):
     from dark_army_daemon import codex_rollouts as cr

@@ -176,3 +176,45 @@ extension WorkReportPaneTests {
                        "a follow-up")
     }
 }
+
+/// The Unchecked caption names the session's own flagged card.
+extension WorkReportPaneTests {
+    func testTheFlaggedCaption() {
+        XCTAssertEqual(WorkReport.uncheckedCaption(count: 2, nothing: false, flagged: true),
+                       "UNCHECKED (2) \u{00B7} flagged on the card")
+        XCTAssertEqual(WorkReport.uncheckedCaption(count: 2, nothing: false, flagged: false),
+                       "UNCHECKED (2)")
+        XCTAssertEqual(WorkReport.uncheckedCaption(count: 2, nothing: false, flagged: false),
+                       WorkReport.uncheckedCaption(count: 2, nothing: false))
+        XCTAssertEqual(WorkReport.uncheckedCaption(count: 0, nothing: true, flagged: true),
+                       "UNCHECKED")
+        XCTAssertEqual(WorkReport.uncheckedCaption(count: 0, nothing: false, flagged: true),
+                       "UNCHECKED")
+    }
+
+    func testTheFlaggedCardIsTheSessionsOwn() {
+        var refining = BoardCard()
+        refining.id = "refining"
+        refining.refineSessionId = "S"
+        refining.refineState = "live"
+        refining.manualSteps = "1. look"
+        refining.manualCheckDue = true
+        var noSteps = BoardCard()
+        noSteps.id = "nosteps"
+        noSteps.sessionId = "S"
+        noSteps.manualCheckDue = true
+        var done = BoardCard()
+        done.id = "done"
+        done.sessionId = "S"
+        done.column = "done"
+        done.manualSteps = "1. look"
+        done.manualCheckDue = true
+        var board = Board()
+        board.available = true
+        board.cards = [refining, noSteps, done]
+        XCTAssertEqual(board.manualCheckCard(forSession: "S")?.id, "done")
+        board.cards = [refining, noSteps]
+        XCTAssertNil(board.manualCheckCard(forSession: "S"))
+        XCTAssertNil(board.manualCheckCard(forSession: ""))
+    }
+}
