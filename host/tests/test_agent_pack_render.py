@@ -704,6 +704,26 @@ def test_the_scout_checker_renders_mirrors_and_is_allowed(profile):
 
 
 @pytest.mark.parametrize("profile", pack_render.PROFILES)
+def test_the_security_audit_skill_renders_mirrors_and_is_allowed(profile):
+    mapping = _mapping(profile)
+    claude = [k for k in mapping if k.startswith(".claude/skills/security-audit/")]
+    assert len(claude) == 23
+    executable = pack_render.executable_keys(mapping)
+    for key in claude:
+        twin = ".agents" + key[len(".claude"):]
+        assert mapping[twin] == mapping[key], key
+        assert key not in executable and twin not in executable, key
+    manifest = ".agents/skills/security-audit/agents/openai.yaml"
+    assert mapping[manifest] == pack_render.openai_yaml(
+        mapping[".claude/skills/security-audit/SKILL.md"], "security-audit")
+    rows = pack_render.settings_allow_rows(mapping[pack_render.SETTINGS_KEY])
+    for validator in ("validate-findings", "validate-coverage-ledger"):
+        assert f"Bash(node .claude/skills/security-audit/upstream/{validator}.cjs:*)" in rows
+    assert not any(k.startswith((".claude/skills/security-audit-update",
+                                 ".agents/skills/security-audit-update")) for k in mapping)
+
+
+@pytest.mark.parametrize("profile", pack_render.PROFILES)
 def test_the_scout_skill_renders_on_both_trees_and_ship_keeps_an_alias(profile):
     mapping = _mapping(profile)
     for tree in (".claude", ".agents"):

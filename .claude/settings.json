@@ -19,7 +19,15 @@
       "Bash(cd vscode-extension && npm run build:*)",
       "Bash(python3 tools/ship_efficiency.py inventory:*)",
       "Bash(python3 .claude/skills/scout/scout_check.py:*)",
-      "Bash(python3 .claude/skills/ship/manual_check.py:*)"
+      "Bash(python3 .claude/skills/ship/manual_check.py:*)",
+      "Bash(node .claude/skills/security-audit/upstream/validate-findings.cjs:*)",
+      "Bash(node .claude/skills/security-audit/upstream/validate-coverage-ledger.cjs:*)",
+      "Bash(python3 tools/security_audit_upstream.py check)",
+      "Bash(python3 tools/security_audit_upstream.py pin --check)",
+      "Bash(python3 tools/security_audit_upstream.py fetch:*)",
+      "Bash(python3 tools/security_audit_upstream.py diff:*)",
+      "Bash(python3 tools/sync_security_audit_skill.py:*)",
+      "Bash(node --test host/dark_army_menubar/agent_pack/template/.claude/skills/security-audit/upstream/validate-findings.test.cjs host/dark_army_menubar/agent_pack/template/.claude/skills/security-audit/upstream/validate-coverage-ledger.test.cjs)"
     ],
     "deny": [
       "Read(~/.dark-army/api-token)",

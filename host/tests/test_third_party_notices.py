@@ -179,4 +179,18 @@ def test_the_ported_shader_is_credited():
     spec.loader.exec_module(generator)
     assert "ghostty-cursor-fx" in generator.PORTED
     assert "Copyright (c) 2026 AONIR" in generator.PORTED["ghostty-cursor-fx"]
-    assert raw.endswith("\n".join(generator.ported_section()) + "\n")
+    assert "\n".join(generator.ported_section()) in raw
+
+
+def test_the_vendored_skill_is_credited():
+    """Cloudflare's security-audit skill is vendored unedited: the page names
+    its repository under one `## Vendored skills` heading and the section is
+    byte-equal to what the generator emits (never an `## Upstream`)."""
+    raw = NOTICES.read_text(encoding="utf-8")
+    assert len(re.findall(r"^## Vendored skills$", raw, re.M)) == 1
+    assert "github.com/cloudflare/security-audit-skill" in raw
+    assert "Copyright (c) 2025-2026 Cloudflare, Inc." in raw
+    spec = importlib.util.spec_from_file_location("frozen_components", GENERATOR)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    assert raw.endswith("\n".join(generator.vendored_section()) + "\n")

@@ -22,6 +22,8 @@
       "Bash(python3 .claude/skills/shunt/exempt.py:*)",
       "Bash(python3 .claude/skills/scout/scout_check.py:*)",
       "Bash(python3 .claude/skills/ship/manual_check.py:*)",
+      "Bash(node .claude/skills/security-audit/upstream/validate-findings.cjs:*)",
+      "Bash(node .claude/skills/security-audit/upstream/validate-coverage-ledger.cjs:*)",
       "Bash(.venv/bin/pytest:*)",
       "Bash(swift build:*)",
       "Bash(swift test:*)",

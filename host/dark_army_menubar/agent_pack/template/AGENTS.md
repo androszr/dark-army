@@ -96,6 +96,7 @@ any of this.
 | `/ship <idea>` | interview → plan → preflight → Backlog card → `--plan` close-out | a card, no question |
 | `/ship implement <plan>` | implement → blind verify → bug scan → domain review → handoff | the `## Work done` report |
 | `/review [sha \| #pr \| branch]` | graph-aware graded review in plain language | a verdict, offered cards |
+| `/security-audit [scope]` | Cloudflare's audit — guidance by default, six phases on an explicit full-audit request; Dark Army's rules in the skill's `SKILL.md` | findings, offered cards |
 {{SKILL_ROWS}}
 
 Skills live in `.claude/skills/` (canonical) and are byte-copied to

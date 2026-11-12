@@ -17,3 +17,10 @@ pnpm / `pnpm ios:gen` / generated-Swift job and `testflight.yml` a
 `scripts/gen-swift-contracts.mjs` path from a web+iOS monorepo; both were
 removed here. `check-entitlements.py`, the keychain-group checks and the APNs
 read-back treat "no `aps-environment`, no keychain group" as consistent.
+
+`template/.claude/skills/security-audit/upstream/` is **not** from
+starter-pack. It is Cloudflare's `security-audit-skill`
+(https://github.com/cloudflare/security-audit-skill, MIT) at the commit
+`template/.claude/skills/security-audit/upstream-pin.json` names. A re-port of
+starter-pack must leave that folder, the pin and the adapter `SKILL.md` beside
+it alone.

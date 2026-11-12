@@ -262,6 +262,29 @@ after a confirmed press per project.
   block gains `/manual-check/` after `/scout/`, anchored; offer-once, so a
   project already offered `/scout/` receives it on its next launch resync.
   `docs/context.md`'s template names the folder in one table row.
+- **The security-audit skill ships pristine with an overlay** (10 Nov 2026,
+  the *Cloudflare security audit skill* plan). Cloudflare's
+  `security-audit-skill` (MIT) is vendored byte for byte at
+  `template/.claude/skills/security-audit/upstream/` (twenty skill files plus
+  its `LICENSE`); `upstream-pin.json` beside it records the commit and a
+  SHA-256 per file, and `SKILL.md` is Dark Army's adapter (roles, the
+  git-ignored `security-audit/run-<N>/` output folder, the Node check, the
+  board handoff through `dark_army_add_card`, the relation to the ship
+  review). Upstream bytes are never edited; `tools/security_audit_upstream.py`
+  is the only writer (`pin --check`, `check`, `fetch`, `diff`, `apply`) and
+  `tools/sync_security_audit_skill.py` keeps this checkout's two skill
+  trees in step, since the pack is never installed into Dark Army itself.
+  Two owned allow rows run the validators as `node <path>`
+  (`executable_keys` is unchanged, the files land 0644); the starter block
+  gains `/security-audit/` after `/manual-check/`; `THIRD_PARTY_NOTICES.md`
+  credits the repository under `## Vendored skills`; `PORTED-FROM.md` says
+  the folder is not from starter-pack. The update skill,
+  `.claude/skills/security-audit-update/`, is Dark Army-only and absent from
+  the template: the template inside Dark Army's checkout is the master, so
+  a project running it would change only a copy the next resync overwrites.
+  Pinned by `test_security_audit_skill.py`, `test_security_audit_upstream.py`,
+  `test_agent_pack_render.py`, `test_agent_pack_gitignore.py` and
+  `test_third_party_notices.py`.
 
 Pinned by `host/tests/test_agent_pack_*.py`.
 

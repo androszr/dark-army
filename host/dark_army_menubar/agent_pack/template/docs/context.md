@@ -25,6 +25,7 @@ delete the file and resync.
 | Plans | `plans/<YYYY-MM-DD>-<slug>.md` |
 | Scout reports | `scout/<YYYY-MM-DD>-<slug>/report.md` |
 | Manual checks | `manual-check/<YYYY-MM-DD>-<slug>/check.md` |
+| Security audits | `security-audit/run-<N>/` (git-ignored) |
 | Reference docs | <the docs a planner should read after this one> |
 
 **Every gate must pass before any handoff.** Run them in the order listed —
