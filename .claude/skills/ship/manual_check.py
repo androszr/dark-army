@@ -35,6 +35,8 @@ library and parses under Python 3.9:
   refuses a file under `manual-check/` that fails `check`, the Checks
   section is `scan` over every enrolled root, and the outcome press is
   `write_outcome`.
+* `scout_index` imports `fold` from here, so both daemon searches (the
+  Checks search and the scout report body search) fold one way.
 * Dark Army's own checkout runs a byte copy as
   `python3 .claude/skills/ship/manual_check.py <check.md>`.
 * The agent pack ships the same byte copy to every project it keeps in
@@ -54,6 +56,7 @@ import re
 import stat
 import sys
 import tempfile
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -537,14 +540,32 @@ def sort_key(entry: dict) -> tuple:
     return (stamp, str(entry.get("folder", "")))
 
 
+def fold(text: str) -> str:
+    """``text`` casefolded, with combining marks dropped (NFKD) where it is
+    not plain ASCII — `ai_title.py`'s recipe without its replacements, so
+    ``ł`` is left alone. ASCII takes the fast path: the per-character mark
+    filter is the slow part and most reports are ASCII."""
+    text = text or ""
+    if text.isascii():
+        return text.casefold()
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed
+                   if not unicodedata.combining(c)).casefold()
+
+
 def matches(entry: dict, query: str) -> bool:
-    """Casefolded substring over title, check, steps, outcome and card; an
-    empty query matches every entry."""
-    needle = str(query or "").strip().casefold()
-    if not needle:
+    """Substring over title, check, steps, outcome and card, case and
+    combining marks folded (`fold`), the rule `scout_index.search` shares;
+    an empty query matches every entry, a query of combining marks alone
+    matches none."""
+    raw = str(query or "").strip()
+    if not raw:
         return True
+    needle = fold(raw)
+    if not needle.strip():
+        return False  # combining marks alone: match nothing, as the scout search refuses it
     for key in ("title", "check", "steps_preview", "outcome", "card"):
-        if needle in str(entry.get(key, "")).casefold():
+        if needle in fold(str(entry.get(key, ""))):
             return True
     return False
 

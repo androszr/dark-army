@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from dark_army_daemon import scout_index, scout_report
+from dark_army_daemon import manual_check, scout_index, scout_report
 from dark_army_daemon.daemon_board import BoardVerbsMixin
 
 REPO = Path(__file__).resolve().parents[2]
@@ -326,6 +326,7 @@ def test_fold_casefolds_and_drops_combining_marks():
     # NFKD leaves ł alone; this plan does not special-case it.
     assert scout_index.fold("łódź") == "łodz"
     assert scout_index.fold("") == ""
+    assert scout_index.fold is manual_check.fold
 
 
 def test_search_finds_a_word_only_in_the_body_with_a_snippet(tree):
