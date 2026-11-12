@@ -68,7 +68,7 @@ reserved on every row and in the header (`test_process_row_chips.py`). The messa
 permission bar live in the `StdoutPane`, drawn by `AgentDetailPane` **in the
 board's place** for the selected row only. The detail leads with `AgentDetailHeader` (`‹ Board`, face, name, `project ·
 branch`, state, the `card ⌗` / `jump ↗` chips), which stays put on both
-tabs. **A session Dark Army started says so on its own row.** `origin.py` stamps
+tabs. Under the header, on both tabs, `MessageQueueBand` draws the row's `message_queue` verbatim (`docs/steering-queue.md`). **A session Dark Army started says so on its own row.** `origin.py` stamps
 `BOB_COMPANION_ORIGIN` into the terminal at the spawn, the hook carries it
 beside the enrolment key, and the row publishes `origin_by` / `origin_card` /
 `origin_line` — composed once by `origin.sentence()`, drawn **verbatim**,

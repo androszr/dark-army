@@ -194,6 +194,17 @@ def test_the_fence_covers_the_alerts_words_and_the_access_logs_secrets():
         assert name in bl.FORBIDDEN_KEYS, name
 
 
+def test_the_steering_detail_names_are_fenced_out_of_the_diary(tmp_path):
+    assert "message_queue" in bl.FORBIDDEN_KEYS
+    assert "excerpt" in bl.FORBIDDEN_KEYS
+    for name in ("message_queue", "excerpt"):
+        line = _line()
+        line["mac"] = dict(line["mac"], **{name: "x"})
+        ledger = _ledger(tmp_path)
+        assert ledger.append(line) is None
+        assert len(ledger) == 0
+
+
 def test_a_well_formed_line_lands_with_exactly_the_pinned_keys(tmp_path):
     ledger = _ledger(tmp_path)
     entry = ledger.append(_line())

@@ -65,6 +65,12 @@ struct AgentDetailPane: View {
                 DetailTabBar(tab: $tab)
                 Rectangle().fill(Theme.hair).frame(height: 1)
             }
+            // What waits to be typed and what was not delivered: the daemon's
+            // own list, on both tabs, drawn verbatim.
+            if let queue = agent.messageQueue, !queue.items.isEmpty {
+                MessageQueueBand(queue: queue)
+                Rectangle().fill(Theme.hair).frame(height: 1)
+            }
             if DetailTab.terminalAttached(hosted: agent.ownTerminal, tab: tab) {
                 VStack(spacing: 0) {
                     if showsActions {

@@ -226,6 +226,27 @@ class Entry:
     done_at: float = 0.0
 
 
+@dataclass(frozen=True)
+class EntryView:
+    """A read-only look at one entry for the agent detail. `text` is the
+    payload's words and is only ever turned into an excerpt for the kinds in
+    `EXCERPT_KINDS` (`detail_item`)."""
+    kind: str
+    source: str
+    session_id: str
+    created_at: float
+    running: bool
+    text: str = ""
+
+
+def _view(entry: Entry, running: bool) -> EntryView:
+    text = (entry.payload or {}).get("text")
+    return EntryView(
+        kind=entry.kind, source=entry.source, session_id=entry.session_id,
+        created_at=entry.created_at, running=running,
+        text=text if isinstance(text, str) else "")
+
+
 _RUNNING: contextvars.ContextVar = contextvars.ContextVar(
     "dark_army_steering_running", default=None)
 
@@ -244,9 +265,13 @@ class Lanes:
     RECENT = 16
 
     def __init__(self, run: Optional[Callable[[Entry], Awaitable]] = None,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 on_change: Optional[Callable[[], None]] = None):
         self.run = run
         self._clock = clock
+        #: Called on the loop after an entry joins, starts or finishes; never
+        #: awaited and never allowed to raise into a worker.
+        self._on_change = on_change
         self._queues: dict = {}
         self._workers: dict = {}
         self._holds: dict = {}
@@ -264,6 +289,36 @@ class Lanes:
         running = self._running.get(key)
         return queued + (1 if running is not None and running.write is None
                          else 0)
+
+    def _changed(self) -> None:
+        if self._on_change is None:
+            return
+        try:
+            self._on_change()
+        except Exception:
+            logger.debug("steering: on_change raised", exc_info=True)
+
+    def keys(self) -> tuple:
+        """Every lane key with something queued or running."""
+        found = list(self._queues)
+        found.extend(k for k in self._running if k not in self._queues)
+        return tuple(found)
+
+    def held(self, key: str) -> bool:
+        """The lane is paused until a deadline (a restart's settle pause)."""
+        return self._holds.get(key, 0.0) > self._clock()
+
+    def views(self, key: str) -> tuple:
+        """The lane's entries in order, the running one first, as frozen
+        `EntryView`s. Raw writes are left out: they carry no words and wait
+        for milliseconds. A copy; the lane is never handed out."""
+        out = []
+        running = self._running.get(key)
+        if running is not None and running.write is None:
+            out.append(_view(running, True))
+        out.extend(_view(e, False) for e in self._queues.get(key, ())
+                   if e.write is None)
+        return tuple(out)
 
     def full(self, key: str) -> bool:
         return self.pending(key) >= STEER_MAX_PENDING
@@ -305,6 +360,7 @@ class Lanes:
         if entry.id:
             self._by_id[entry.id] = entry
         self._ensure_worker(key)
+        self._changed()
         return entry.future
 
     def release(self, entry: Entry) -> None:
@@ -328,6 +384,7 @@ class Lanes:
         entry.ready = True
         if entry.gate is not None:
             entry.gate.set()
+        self._changed()
 
     def submit(self, key: str, entry: Entry, *, force: bool = False
                ) -> Optional[asyncio.Future]:
@@ -411,6 +468,7 @@ class Lanes:
                         continue
                 queue.popleft()
                 self._running[key] = entry
+                self._changed()
                 try:
                     await self._run_one(entry)
                 finally:
@@ -421,6 +479,7 @@ class Lanes:
                         recent = self._recent.setdefault(
                             key, deque(maxlen=self.RECENT))
                         recent.append(entry)
+                    self._changed()
         finally:
             _RUNNING.reset(token)
             if self._workers.get(key) is asyncio.current_task():
@@ -494,3 +553,98 @@ class Lanes:
             task.cancel()
         if pending:
             await asyncio.wait(pending)
+
+
+# --- the agent detail (`docs/steering-queue.md`, *What the agent detail shows*)
+
+DETAIL_MAX_ITEMS = 6
+DETAIL_EXCERPT_CHARS = 80
+DETAIL_WHY_CHARS = 200
+UNDELIVERED_PER_SESSION = 8
+UNDELIVERED_MAX_SESSIONS = 64
+#: How long a not-delivered entry stays on the row (memory only); the
+#: retention the store keeps its resolved rows for, imported so they agree.
+UNDELIVERED_SECONDS = STEER_RETENTION_SECONDS
+
+#: The only kinds whose words (clamped) ride the snapshot. `terminal_line`
+#: and `raw` can land in a password prompt, `answer` and `permission_key` are
+#: digits, the rest are fixed commands.
+EXCERPT_KINDS = frozenset({"reply", "card_message", "card_ask"})
+#: Left out of the list altogether: they wait milliseconds, and `raw` is one
+#: frame per keystroke.
+DETAIL_HIDDEN_KINDS = frozenset({"raw", "permission_key"})
+SOURCE_WORDS = {"phone": "the phone", "mac": "the Mac"}
+STATUS_WORDS = {
+    "typing": "being typed now",
+    "waiting": "waiting its turn",
+    "not_delivered": "not delivered",
+    "interrupted": "may only partly have landed \u2014 check the terminal",
+}
+#: The sentence a dropped entry resolves with (the tree's own).
+RESTART_WHY = STEER_NOT_DELIVERED_WHY
+
+
+def excerpt(text) -> str:
+    """One line of at most `DETAIL_EXCERPT_CHARS` characters: whitespace runs
+    collapsed, cut with an ellipsis. `""` for anything that is not text."""
+    if not isinstance(text, str):
+        return ""
+    line = " ".join(text.split())
+    if len(line) > DETAIL_EXCERPT_CHARS:
+        return line[:DETAIL_EXCERPT_CHARS - 1] + "\u2026"
+    return line
+
+
+def detail_item(*, kind, source, created_at, group, state, text="",
+                why="") -> dict:
+    """One list entry, every word composed here. Exactly
+    `{"group", "label", "status", "excerpt", "why"}`."""
+    noun = WORDS.get(kind, "a message")
+    noun = noun[:1].upper() + noun[1:]
+    origin = ("Dark Army" if kind == "autocompact"
+              else SOURCE_WORDS.get(source, "the Mac"))
+    try:
+        clock = time.strftime("%H:%M", time.localtime(float(created_at)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        clock = ""
+    label = f"{noun} from {origin}"
+    if clock:
+        label += f", {clock}"
+    status = STATUS_WORDS.get(
+        "not_delivered" if state in ("refused", "failed") else state,
+        STATUS_WORDS["not_delivered"])
+    why_line = " ".join(str(why or "").split())
+    if len(why_line) > DETAIL_WHY_CHARS:
+        why_line = why_line[:DETAIL_WHY_CHARS - 1] + "\u2026"
+    return {"group": str(group), "label": label, "status": status,
+            "excerpt": excerpt(text) if kind in EXCERPT_KINDS else "",
+            "why": why_line}
+
+
+def compose_detail(waiting: list, undelivered: list) -> Optional[dict]:
+    """The row's `message_queue`: waiting entries in lane order, then the
+    undelivered newest first, cut to `DETAIL_MAX_ITEMS`. `None` for nothing.
+    Exactly `{"headline", "items", "more_line"}`."""
+    if not waiting and not undelivered:
+        return None
+    items = list(waiting) + list(undelivered)
+    shown = items[:DETAIL_MAX_ITEMS]
+    parts = []
+    if waiting:
+        parts.append(f"{len(waiting)} waiting to be typed")
+    if undelivered:
+        parts.append(f"{len(undelivered)} not delivered")
+    rest = len(items) - len(shown)
+    return {"headline": " \u00b7 ".join(parts), "items": shown,
+            "more_line": f"and {rest} more" if rest > 0 else ""}
+
+
+def listable(views, held: bool) -> list:
+    """The views of one lane worth showing: none when a lone entry is being
+    typed or about to be (an ordinary reply, so the page never flickers on
+    one), everything once a second entry waits behind it or a restart's
+    settle pause holds the lane."""
+    shown = [v for v in views if v.kind not in DETAIL_HIDDEN_KINDS]
+    if len(shown) >= 2 or (shown and held):
+        return shown
+    return []

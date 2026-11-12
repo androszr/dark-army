@@ -26,7 +26,7 @@ caller never cancels the typing. A lane holds `STEER_MAX_PENDING` (8) entries;
 the ninth is refused with `STEER_FULL_REFUSAL`. At shutdown a waiting caller is told the truth: a recorded entry "will be typed after the restart if still fresh" (`STEER_RESTARTING_NOTE`), a memory-only one that nothing was typed, and the entry cut off mid-typing `STEER_INTERRUPTED_REFUSAL`. A body that awaits another verb
 on its own lane runs it inline (`running_key`), so there is no self-deadlock.
 The note reaches the Mac panel as a plain success (it drops a 200's detail);
-drawing waiting entries is a follow-up card.
+the agent detail lists them (see the section on the agent detail, below).
 
 ## Kinds
 
@@ -94,6 +94,50 @@ both typed.
 A v33 build opening a v34 file logs the newer-build line, reads every card, never
 stamps the version down and ignores the table. Its queued rows are judged by
 freshness on the next v34 launch, so they are dropped and said, never typed late.
+
+## What the agent detail shows
+
+Each agent row may carry **`message_queue`**, composed once per push on the loop
+by `SteeringMixin._message_queue_details` inside `_collect_agent_stubs` (so
+`Lanes` is never read from the executor) from `steering.compose_detail`:
+exactly `{"headline", "items", "more_line"}`, items exactly `{"group"
+("waiting" | "undelivered"), "label", "status", "excerpt", "why"}`. The daemon
+writes every word; the Mac's `MessageQueueBand` and the phone's
+`messageQueueBlock` draw it verbatim and derive nothing, so there is no byte-pinned
+twin (`test_message_queue_surfaces.py` pins placement and the absence of any
+client literal). The key is **absent** when there is nothing to show, an older
+client decodes it as `nil`, and a raising composition costs the field, never
+the fleet. Read-only: no cancel, retry or discard.
+
+- **Waiting** entries come off the lane (`Lanes.views`) in lane order: the head
+  being typed reads "being typed now", the rest "waiting its turn". A lane is
+  listed only when two or more listable entries are in it, or one waits out a
+  restart's settle pause (`steering.listable`), so an ordinary reply typed at
+  once never appears and the page never flickers on it. `raw` and
+  `permission_key` are never listed.
+- **Not delivered** entries are remembered **in memory only** for
+  `UNDELIVERED_SECONDS` (the store's retention, 900): one the body refused or
+  that failed, a replay dropped at its turn or by recovery (the tree's
+  `STEER_NOT_DELIVERED_WHY` is its reason), and one cut off mid-typing by a
+  restart ("may only partly have landed — check the terminal"). At most eight
+  per session and sixty-four sessions. The note is made **before**
+  `steer_resolve` blanks the stored words. `_forget_session` does not clear it,
+  so a tombstone row keeps it; a restart loses it (the diary line is the durable
+  record).
+- **Words.** A clamped excerpt (80 characters, one line) rides only for
+  `reply`, `card_message` and `card_ask`. A `terminal_line` can land in a
+  password prompt, so it and every other kind show the label alone ("A line from
+  the phone, 14:03"). No id, digest, mark, source token, `created_at` or full
+  text is on the field (`test_message_queue_detail.py`'s privacy walk), and
+  `message_queue` and `excerpt` sit in `buzz_ledger.FORBIDDEN_KEYS`.
+- **Amendment.** *The words are never in a snapshot* above is amended for
+  exactly this excerpt: it is the person's own message, in memory, the same
+  exposure as the sealed `conversation` read and every row's `last_text`.
+- **Push.** `Lanes(on_change=)` fires on a join, a start and a finish;
+  `_message_queue_changed` buys one `_schedule_agents_push` only when the shown
+  signature moved. The field holds no clock (`HH:MM` text), so it is neither a
+  `_CLOCK_FIELDS` nor a `_POLL_ECHO_FIELDS` member. Expiry of an undelivered
+  entry shows on the next push of anything, not by itself.
 
 ## Deliberately not queued
 

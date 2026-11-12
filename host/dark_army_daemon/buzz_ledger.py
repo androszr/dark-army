@@ -94,7 +94,9 @@ FORBIDDEN_KEYS = access_log.FORBIDDEN_KEYS + tuple(
                 "last_summary", "last_text", "last_report", "work_report",
                 "question",
                 "questions", "reply_options", "options", "input_preview",
-                "description", "cwd", "transcript_path", "project", "branch")
+                "description", "cwd", "transcript_path", "project", "branch",
+                "message_queue",
+                "excerpt")
     if k not in access_log.FORBIDDEN_KEYS)
 
 #: Exactly the keys a line carries — no more, no fewer.

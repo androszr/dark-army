@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from typing import Optional
 
 from . import steering
@@ -53,7 +54,9 @@ class SteeringMixin:
         lanes = self.__dict__.get("_steer_lanes")
         if lanes is None:
             lanes = self.__dict__.setdefault(
-                "_steer_lanes", steering.Lanes(self._steer_execute))
+                "_steer_lanes", steering.Lanes(
+                    self._steer_execute,
+                    on_change=self._message_queue_changed))
         return lanes
 
     def _steer_lane_key(self, session_id: str) -> str:
@@ -230,6 +233,8 @@ class SteeringMixin:
                                                     time.time()):
             # Freshness is judged at the moment of typing: a replay that
             # waited out the settle pause past two minutes is dropped.
+            self._steer_note_entry(entry, "not_delivered",
+                                   steering.RESTART_WHY)
             await self._steer_settle(entry, "not_delivered", False,
                                      steering.STEER_NOT_DELIVERED_WHY)
             await self._steer_surface_entry(entry, "not_delivered", "")
@@ -258,6 +263,9 @@ class SteeringMixin:
             state = "typed" if ok else "refused"
         await self._journal_result(
             intent, "typed" if ok else "refused", detail)
+        if not ok:
+            # Before the resolve blanks the words (`steer_resolve`).
+            self._steer_note_entry(entry, state, detail)
         await self._steer_settle(entry, state, ok, detail)
         if entry.replayed:
             if ok:
@@ -338,6 +346,135 @@ class SteeringMixin:
             logger.warning("steering: could not say a message was not "
                            "delivered", exc_info=True)
 
+    # --- the agent detail ----------------------------------------------------
+    #
+    # What waits and what was not delivered rides each agent row as
+    # `message_queue` (`docs/steering-queue.md`, *What the agent detail
+    # shows*). Everything here runs on the loop.
+
+    def _steer_note_entry(self, entry: steering.Entry, state: str,
+                          why: str) -> None:
+        self._steer_note_undelivered(
+            session_id=entry.session_id, kind=entry.kind,
+            source=entry.source, created_at=entry.created_at, state=state,
+            text=(entry.payload or {}).get("text"), why=why)
+
+    def _steer_note_row(self, row: dict, state: str, why: str) -> None:
+        self._steer_note_undelivered(
+            session_id=str(row.get("session_id") or ""),
+            kind=str(row.get("kind") or ""),
+            source=str(row.get("source") or "mac"),
+            created_at=row.get("created_at"), state=state,
+            text=(row.get("payload") or {}).get("text"), why=why)
+
+    def _steer_note_undelivered(self, *, session_id, kind, source, created_at,
+                                state, text, why, now=None) -> None:
+        """Remember, in memory only, a message that was not typed. Only the
+        composed item is kept: the excerpt, never the full text. Call it
+        before `steer_resolve` blanks the stored words."""
+        if kind in steering.DETAIL_HIDDEN_KINDS or not session_id:
+            return
+        try:
+            item = steering.detail_item(
+                kind=kind, source=source, created_at=created_at,
+                group="undelivered", state=state, text=text, why=why)
+            stamp = time.time() if now is None else float(now)
+            memory = self.__dict__.setdefault("_steer_undelivered", {})
+            memory.setdefault(
+                session_id,
+                deque(maxlen=steering.UNDELIVERED_PER_SESSION)
+            ).append((stamp, item))
+            while len(memory) > steering.UNDELIVERED_MAX_SESSIONS:
+                oldest = min(memory, key=lambda k: memory[k][-1][0])
+                del memory[oldest]
+        except Exception:
+            logger.debug("steering: could not note an undelivered entry",
+                         exc_info=True)
+            return
+        self._message_queue_changed()
+
+    def _steer_prune_undelivered(self, now: float) -> None:
+        memory = self.__dict__.get("_steer_undelivered")
+        if not memory:
+            return
+        for sid in list(memory):
+            kept = deque((t, i) for t, i in memory[sid]
+                         if now - t <= steering.UNDELIVERED_SECONDS)
+            if kept:
+                memory[sid] = deque(kept, maxlen=steering.UNDELIVERED_PER_SESSION)
+            else:
+                del memory[sid]
+
+    def _steer_waiting_by_lane(self) -> dict:
+        """lane key -> the list entries worth showing (`steering.listable`)."""
+        lanes = self.__dict__.get("_steer_lanes")
+        if lanes is None:
+            return {}
+        out = {}
+        for key in lanes.keys():
+            shown = steering.listable(lanes.views(key), lanes.held(key))
+            if shown:
+                out[key] = shown
+        return out
+
+    def _message_queue_details(self, stubs, now=None) -> dict:
+        """session id -> the composed `message_queue` for rows with
+        something to show. Loop only; the result is fresh plain dicts."""
+        stamp = time.time() if now is None else float(now)
+        self._steer_prune_undelivered(stamp)
+        waiting = self._steer_waiting_by_lane()
+        memory = self.__dict__.get("_steer_undelivered") or {}
+        if not waiting and not memory:
+            return {}
+        by_session = {}
+        pty_lanes = [k for k in waiting if k.startswith("pty:")]
+        for key, views in waiting.items():
+            if key.startswith("sid:"):
+                by_session.setdefault(key[4:], []).extend(views)
+        if pty_lanes:
+            for stub in stubs:
+                sid = stub.get("session_id")
+                if not sid:
+                    continue
+                key = self._steer_lane_key(sid)
+                if key in waiting and key.startswith("pty:"):
+                    by_session.setdefault(sid, []).extend(waiting[key])
+        details = {}
+        for sid in {*by_session, *memory}:
+            items = [
+                steering.detail_item(
+                    kind=v.kind, source=v.source, created_at=v.created_at,
+                    group="waiting",
+                    state="typing" if v.running else "waiting", text=v.text)
+                for v in by_session.get(sid, ())]
+            gone = [i for _t, i in sorted(
+                memory.get(sid, ()), key=lambda p: p[0], reverse=True)]
+            composed = steering.compose_detail(items, gone)
+            if composed is not None:
+                details[sid] = composed
+        return details
+
+    def _message_queue_changed(self) -> None:
+        """Lanes and the undelivered memory moved: buy one snapshot push when
+        what the page would show moved. Never raises, never awaits."""
+        try:
+            waiting = self._steer_waiting_by_lane()
+            memory = self.__dict__.get("_steer_undelivered") or {}
+            sig = (
+                tuple(sorted(
+                    (k, tuple((v.kind, v.created_at, v.running)
+                              for v in views))
+                    for k, views in waiting.items())),
+                tuple(sorted((sid, len(q), q[-1][0])
+                             for sid, q in memory.items() if q)))
+            if sig == self.__dict__.get("_message_queue_sig", ((), ())):
+                return
+            self.__dict__["_message_queue_sig"] = sig
+            self._schedule_agents_push()
+        except Exception:
+            logger.debug("steering: message queue change failed",
+                         exc_info=True)
+
     # --- restart -------------------------------------------------------------
 
     async def _steer_journal_state(self, row: dict) -> str:
@@ -396,6 +533,7 @@ class SteeringMixin:
                     "")
                 rep["finished"] += 1
             elif verdict == "interrupted":
+                self._steer_note_row(row, "interrupted", "")
                 await self._steer_surface(row, "interrupted")
                 await self._board_call(
                     "steer_resolve", ident, "interrupted", False,
@@ -407,6 +545,8 @@ class SteeringMixin:
                     steering.STEER_INTERRUPTED_REFUSAL)
                 rep["interrupted"] += 1
             elif verdict == "not_delivered":
+                self._steer_note_row(row, "not_delivered",
+                                     steering.RESTART_WHY)
                 await self._steer_surface(row, "not_delivered")
                 await self._board_call(
                     "steer_resolve", ident, "not_delivered", False,

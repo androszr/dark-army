@@ -259,6 +259,7 @@ phone gets the whole picture plus one key it ignores; a newer phone
 talking to an older Mac receives no `section_digests` and so quotes
 nothing. Pinned by `test_unchanged_state.py` and
 `test_phone_section_delta.py`.
+An agent row may carry `message_queue`, the daemon's composed list of that session's waiting and undelivered messages, with at most an 80-character excerpt of the person's own message for three kinds and no id, digest, mark or source token (`docs/steering-queue.md`, *What the agent detail shows*).
 
 ## `POST /api/upload` has its own body rule
 

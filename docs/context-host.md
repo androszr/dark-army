@@ -62,7 +62,7 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
 
 - **Action journal** — `docs/action-journal.md`.
 
-- **Steering queue** — everything typed into a session waits in that session's steering lane, journalled before it is typed and replayed after a restart only while fresh — `steering.py`, `board_steering_store.py`, `daemon_steering.py`; in full `docs/steering-queue.md`.
+- **Steering queue** — everything typed into a session waits in that session's steering lane, journalled before it is typed and replayed after a restart only while fresh — `steering.py`, `board_steering_store.py`, `daemon_steering.py`; what waits and what was not delivered rides each row as `message_queue`, composed on the loop in `_collect_agent_stubs`; in full `docs/steering-queue.md`.
 
 - **dark_army_daemon/** — Async Python daemon (asyncio): session state
   tracking with staleness eviction and subagent lifecycle tracking. The board

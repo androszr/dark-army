@@ -9286,7 +9286,18 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
         # names an unenrolled one is dropped.
         stubs = [st for st in stubs
                  if not st.get("cwd") or enrollment.root_enrolled(st["cwd"])]
+        # What waits to be typed into each session and what was not delivered
+        # (`docs/steering-queue.md`, *What the agent detail shows*): composed
+        # here, on the loop, so `Lanes` is never read from the executor. A
+        # raising read costs the field, never the fleet.
+        try:
+            details = self._message_queue_details(stubs)
+        except Exception:
+            logger.debug("message queue detail failed", exc_info=True)
+            details = {}
         for stub in stubs:
+            if (d := details.get(stub.get("session_id"))):
+                stub["message_queue"] = d
             stub.update(self._session_capabilities(stub))
             # The moment the row went quiet, as one absolute stamp beside the
             # age: `idle_seconds` is an age as of *this* build, and a client
