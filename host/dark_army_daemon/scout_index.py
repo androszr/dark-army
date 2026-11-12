@@ -27,8 +27,9 @@ first, at most `SEARCH_MAX_BODIES` bodies through `scout_report.read_text`
 ``unsearched`` and skipped, never clipped), stopping at `SEARCH_MAX_HITS`.
 Only `_split`'s body is searched: the H1 and the answer block are the
 index's and the client's instant filter's. Case and combining marks are
-folded (`fold`). A hit is a `row` plus a one-line ``snippet`` and its
-``match_line`` — never the text. Blocking, like `build`: one executor hop.
+folded by `manual_check.fold`, the one rule the Checks search shares. A
+hit is a `row` plus a one-line ``snippet`` and its ``match_line`` — never
+the text. Blocking, like `build`: one executor hop.
 
 `scout_report` (byte-pinned three ways, run under Python 3.9 in the pack)
 is **not** edited for this: the header split lives here and a test pins it
@@ -39,9 +40,9 @@ beyond the header keys, so the manual-check section can reuse the shapes.
 import os
 import re
 import stat
-import unicodedata
 
 from . import scout_report
+from .manual_check import fold
 
 #: A dated report folder: `YYYY-MM-DD-<slug>`.
 FOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[^/\n]+\Z")
@@ -238,19 +239,6 @@ def row(path: str, root: str, card, st, head_text: str, *,
 
 def _card_root(card: dict) -> str:
     return _normalise(str(card.get("root") or ""))
-
-
-def fold(text: str) -> str:
-    """``text`` casefolded, with combining marks dropped (NFKD) where it is
-    not plain ASCII — `ai_title.py`'s recipe without its replacements, so
-    ``ł`` is left alone. ASCII takes the fast path: the per-character mark
-    filter is the slow part and most reports are ASCII."""
-    text = text or ""
-    if text.isascii():
-        return text.casefold()
-    decomposed = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in decomposed
-                   if not unicodedata.combining(c)).casefold()
 
 
 def _candidates(roots, cards, refusal) -> tuple:

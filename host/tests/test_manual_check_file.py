@@ -201,6 +201,13 @@ def test_matches_is_casefolded_over_five_fields():
     assert mc.matches(entry, "")
 
 
+def test_matches_folds_accents():
+    assert mc.matches({"title": "Café"}, "cafe")
+    assert mc.matches({"steps_preview": "open zurich"}, "ZÜRICH")
+    assert not mc.matches({"title": "Café", "check": "x"}, "\u0301")
+    assert mc.matches({"title": "Café"}, "   ")
+
+
 # --- main ----------------------------------------------------------------------
 
 
