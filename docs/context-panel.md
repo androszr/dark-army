@@ -69,7 +69,7 @@ reserved on every row and in the header (`test_process_row_chips.py`).
 permission bar live in the `StdoutPane`, drawn by `AgentDetailPane` **in the
 board's place** for the selected row only. The detail leads with `AgentDetailHeader` (`‹ Board`, face, name, `project ·
 branch`, state, the `card ⌗` / `jump ↗` chips), which stays put on both
-tabs. **A session Dark Army started says so on its own row.** `origin.py` stamps
+tabs. Under the header, on both tabs, `MessageQueueBand` draws the row's `message_queue` verbatim (`docs/steering-queue.md`). **A session Dark Army started says so on its own row.** `origin.py` stamps
 `BOB_COMPANION_ORIGIN` into the terminal at the spawn, the hook carries it
 beside the enrolment key, and the row publishes `origin_by` / `origin_card` /
 `origin_line` — composed once by `origin.sentence()`, drawn **verbatim**,
@@ -346,7 +346,7 @@ session and a Codex identity mismatch are refused in
 `wrap_up_session`'s sibling for one failure: a Claude session whose current
 card is a `StopFailure` with `error_kind == "rate_limit"`. It types
 `LOW_PRIORITY_COMMAND` (`/low-priority`) onto the input line through
-`vscode_reveal.send_text` — a slash command, so never the channel — and only
+`session_io.send_text` — a slash command, so never the channel — and only
 once that has landed writes `state = "idle"` (re-stamping both event clocks)
 and drops the card; `dismiss_notification` alone would leave `error`, which
 `categorize` banks under `waiting`, so the row would stay in Needs you. Four

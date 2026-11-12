@@ -389,6 +389,10 @@ class RecoveryMixin:
     _recover_stop_session = _recover_keystroke_or_signal
     _recover_autocompact = _recover_keystroke_or_signal
     _recover_answer_burst = _recover_keystroke_or_signal
+    # The steering queue's entry (`docs/steering-queue.md`): the intent is
+    # written just before the words are typed, so an open one is never
+    # typed again. `recover_steering` then settles the queue's own row.
+    _recover_steer = _recover_keystroke_or_signal
 
     async def _seed_autocompact(self) -> None:
         """A session asked to compact just before a restart is not asked

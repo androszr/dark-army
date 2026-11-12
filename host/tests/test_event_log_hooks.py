@@ -491,6 +491,8 @@ def test_the_diarys_kind_tuple_is_unchanged_by_the_auto_start():
         # A step interrupted by a restart and not repeated
         # (`docs/action-journal.md`).
         "action_interrupted",
+        # The steering queue (`docs/steering-queue.md`).
+        "steer_not_delivered", "steer_replayed",
     )
 
 

@@ -292,7 +292,9 @@ def test_the_flush_does_not_import_the_channel(monkeypatch):
     import inspect
     from dark_army_daemon.daemon import BobDaemon
 
-    src = inspect.getsource(BobDaemon._flush_auto_compacts)
+    # The typing moved behind the steering lane (`docs/steering-queue.md`).
+    src = (inspect.getsource(BobDaemon._flush_auto_compacts)
+           + inspect.getsource(BobDaemon._auto_compact_now))
     assert "push_channel_event" not in src
     assert "channel_server" not in src
     assert "send_text" in src

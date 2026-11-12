@@ -163,7 +163,8 @@ def test_the_verb_does_not_reach_for_the_channel():
     import inspect
     from dark_army_daemon.daemon import BobDaemon
 
-    src = inspect.getsource(BobDaemon.wrap_up_session)
+    # The body moved behind the steering lane (`docs/steering-queue.md`).
+    src = inspect.getsource(BobDaemon._wrap_up_session_now)
     assert "push_channel_event" not in src
     assert "send_text" in src
 

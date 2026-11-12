@@ -455,6 +455,7 @@ SWIFT_ROOTS = ("panel/Sources/BobPanel", "ios/BobPhone", "ios/BobPhoneWidget", "
 ALLOWED_EXACT = {
     ("host/dark_army_daemon/channel_server.py", "bob"),   # LEGACY_NAME, the window's alias
     ("host/dark_army_daemon/daemon_board.py", "bob"),     # card_messages author
+    ("host/dark_army_daemon/daemon_steering.py", "bob"),  # card_messages author
 }
 #: Fragments that are themselves wire markers wherever they appear.
 _WIRE_FRAGMENTS = ('source="bob"',)

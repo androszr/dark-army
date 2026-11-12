@@ -536,6 +536,59 @@ struct SubagentRow: Decodable, Identifiable, Hashable {
     }
 }
 
+/// What waits to be typed into one agent and what Dark Army could not deliver,
+/// composed by the daemon (`message_queue` on the row) and drawn verbatim: no
+/// word here is written by a client. Every member decodes through `value`, so
+/// `{}` and a wrongly typed member give defaults and never throw out of
+/// `Agent.init`.
+struct MessageQueue: Decodable, Equatable {
+    struct Item: Decodable, Equatable, Hashable {
+        var group = ""
+        var label = ""
+        var status = ""
+        var excerpt = ""
+        var why = ""
+
+        /// Amber in the band; anything else, an unknown group included, is not.
+        var undelivered: Bool { group == "undelivered" }
+
+        enum CodingKeys: String, CodingKey {
+            case group, label, status, excerpt, why
+        }
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+            group = c.value(.group, "")
+            label = c.value(.label, "")
+            status = c.value(.status, "")
+            excerpt = c.value(.excerpt, "")
+            why = c.value(.why, "")
+        }
+    }
+
+    var headline = ""
+    var items: [Item] = []
+    var moreLine = ""
+
+    var hasUndelivered: Bool { items.contains { $0.undelivered } }
+
+    enum CodingKeys: String, CodingKey {
+        case headline, items
+        case moreLine = "more_line"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        headline = c.value(.headline, "")
+        items = c.value(.items, [])
+        moreLine = c.value(.moreLine, "")
+    }
+}
+
 struct Agent: Decodable, Identifiable, Equatable {
     var id: String { sessionId }
 
@@ -694,6 +747,9 @@ struct Agent: Decodable, Identifiable, Equatable {
     /// one-line `headline`. `nil` where there is no report or the daemon is
     /// older than the key; drawn through `WorkReport`, never re-parsed here.
     var workReport: WorkReport.Parsed?
+    /// The daemon's list of this session's waiting and not-delivered messages;
+    /// `nil` when there is none or the daemon is older than the key.
+    var messageQueue: MessageQueue?
     /// The finished list's own word for this row — `done`, `cut`, `lost`
     /// or `end` (`session_stats.finish_word`), published by the daemon on
     /// finished rows only and drawn verbatim. "done" was the one word every
@@ -739,6 +795,7 @@ struct Agent: Decodable, Identifiable, Equatable {
         case lastSummary = "last_summary"
         case lastReport = "last_report"
         case workReport = "work_report"
+        case messageQueue = "message_queue"
         case finishWord = "finish_word"
         case reviewReports = "review_reports"
         case reviewReportsOmitted = "review_reports_omitted"
@@ -814,6 +871,7 @@ struct Agent: Decodable, Identifiable, Equatable {
         lastSummary = c.value(.lastSummary, "")
         lastReport = c.value(.lastReport, "")
         workReport = c.maybe(.workReport)
+        messageQueue = c.maybe(.messageQueue)
         finishWord = c.value(.finishWord, "")
         reviewReports = c.value(.reviewReports, [])
         reviewReportsOmitted = c.value(.reviewReportsOmitted, 0)

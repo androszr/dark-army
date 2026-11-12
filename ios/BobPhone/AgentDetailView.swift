@@ -601,6 +601,7 @@ struct AgentDetailView: View {
                 .padding(.top, 4)
                 .padding(.bottom, 4)
                 journey
+                messageQueueBlock
                 if hasVerbs {
                     VStack(alignment: .leading, spacing: 10) {
                         verbs
@@ -613,6 +614,50 @@ struct AgentDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollDismissesKeyboard(.interactively)
+    }
+
+    /// What waits to be typed into this agent and what Dark Army could not
+    /// deliver: the Mac's own list (`message_queue`), every word composed there
+    /// and drawn here verbatim and in full, with no verb and no clock. The
+    /// colour is the only decision: amber for a not-delivered entry.
+    @ViewBuilder private var messageQueueBlock: some View {
+        if let queue = agent.messageQueue, !queue.items.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(queue.headline)
+                    .font(Theme.mono(12, weight: .medium))
+                    .foregroundStyle(queue.hasUndelivered ? Theme.attention : Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(Array(queue.items.enumerated()), id: \.offset) { _, item in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.label + " · " + item.status)
+                            .font(Theme.mono(12))
+                            .foregroundStyle(item.undelivered ? Theme.attention : Theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !item.excerpt.isEmpty {
+                            Text(item.excerpt)
+                                .font(Theme.prose(13))
+                                .foregroundStyle(Theme.dim)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if !item.why.isEmpty {
+                            Text(item.why)
+                                .font(Theme.prose(12))
+                                .foregroundStyle(Theme.attention)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                if !queue.moreLine.isEmpty {
+                    Text(queue.moreLine)
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     /// The journey rail, on a session working (or planning) a card: five

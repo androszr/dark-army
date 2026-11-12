@@ -402,8 +402,14 @@ class ReviewVerbsMixin:
                               for f in rec["findings"]
                               if f.get("index") in fix],
                     "decided_at": now}))
-            ok, why = await self._terminal_line_input(
-                handle, review_run.continue_line(rec, fix), session_id)
+            line = review_run.continue_line(rec, fix)
+            # Typed by the handle it recorded, in that terminal's steering
+            # lane and memory-only: a Continue is never replayed after a
+            # restart (`docs/steering-queue.md`).
+            ok, why = await self._steer(
+                "terminal_line", session_id, {}, key="pty:" + handle,
+                work=lambda: self._terminal_line_input(
+                    handle, line, session_id))
             if not ok:
                 return False, why
             if not self._review_set(run_id, expect_state="picks",

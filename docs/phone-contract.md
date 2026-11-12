@@ -652,7 +652,7 @@ older Mac gets the rail untimed. `CardJourneyTests`.
 **The tabs lead the agent sheet, and Main is the first.**
 Fleet opens `AgentScreen` (Main, Conversation, Details, Terminal when hosted)
 with `PhoneAgentScreenBar` at the top of the sheet. Main is the lead (still,
-name and status, card, every verb) as one scrolling page; every other tab
+name and status, card, every verb) as one scrolling page, drawing the row's `message_queue` between the journey rail and the verbs, verbatim and wrapped in full; every other tab
 keeps only the card's title under the bar (`AgentScreen.titleOnly`,
 `titleLine`) and scrolls the rest as one page — the conversation's turns,
 ask and answer buttons (`AnswerBox` `part: .choices`) included, opening at

@@ -19,7 +19,8 @@ inside `_sealed_run`. No lock is needed and none is taken; asserting that here
 is what keeps a later caller from reaching it off-thread.
 
 **Memory only, and the cost is stated.** A daemon restart forgets every
-receipt. What covers that window is the phone's own effect test — a receipt
+receipt (the steering verbs' marks outlive it as a digest in the steering
+queue, `docs/steering-queue.md`). What covers that window is the phone's own effect test — a receipt
 reaching `done` because the snapshot shows what the press did — which is
 `OutboxStore.alreadyLanded`'s argument one rung on: never resend what you can
 check.

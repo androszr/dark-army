@@ -64,7 +64,8 @@ from . import (access_log, agent_report, attachments, bearings, board,
                devices, enrollment, event_log, fleet_figures, grok_billing,
                image_preview,
                lan_hosts, limits, live_activity, manual_check, merges,
-               mission, relay, scout_index, srp, terminal_stream, vtgrid,
+               mission, relay, scout_index, srp, steering, terminal_stream,
+               vtgrid,
                work_record, workspace)
 from .paths import STATE_DIR, ensure_state_dir
 
@@ -4488,9 +4489,15 @@ class ApiServer:
                     logger.info("replayed action %s from device %s",
                                 action, device_id)
                     return replayed
-            status, ctype, body = await self._lan_run(
-                action, self._door_payload(action, payload, actions),
-                device_id=device_id)
+            # Tagged for the steering queue: a press from a sealed door is
+            # the phone's, and its one-time mark outlives a restart there as
+            # a digest (`docs/steering-queue.md`). The Mac door sets nothing.
+            with steering.calling(steering.Caller(
+                    source="phone",
+                    dedupe=steering.dedupe_digest(device_id, token))):
+                status, ctype, body = await self._lan_run(
+                    action, self._door_payload(action, payload, actions),
+                    device_id=device_id)
             if token and status in (200, 409):
                 # Both are final answers about this press; a person's RETRY
                 # mints a new token, so recording a refusal freezes nobody

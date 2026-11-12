@@ -371,4 +371,38 @@ extension DecodeToleranceTests {
         XCTAssertTrue(ragged.collaboration!.partial)
         XCTAssertFalse(ragged.collaboration!.nodes[0].known)
     }
+
+    // MARK: - message_queue (the agent's waiting and not-delivered messages)
+
+    func testAnAgentWithoutMessageQueueDecodesNil() throws {
+        XCTAssertNil(try decode(Agent.self, #"{"session_id": "s1"}"#).messageQueue)
+    }
+
+    func testAnEmptyMessageQueueObjectGivesNoItems() throws {
+        let a = try decode(Agent.self, #"{"session_id": "s1", "message_queue": {}}"#)
+        XCTAssertEqual(a.messageQueue?.items.count, 0)
+    }
+
+    func testAWronglyTypedMessageQueueMemberFallsBackAndAnUnknownGroupIsNotUndelivered() throws {
+        let a = try decode(Agent.self, #"{"session_id": "s1", "message_queue": {"items": [{"group": 5, "label": "x"}, {"group": "pigeon"}]}}"#)
+        XCTAssertEqual(a.messageQueue?.items.count, 2)
+        XCTAssertEqual(a.messageQueue?.items.first?.group, "")
+        XCTAssertEqual(a.messageQueue?.items.first?.label, "x")
+        XCTAssertEqual(a.messageQueue?.hasUndelivered, false)
+    }
+
+    func testAFullMessageQueueDecodesVerbatim() throws {
+        let a = try decode(Agent.self, #"""
+        {"session_id": "s1", "message_queue": {
+          "headline": "1 not delivered",
+          "items": [{"group": "undelivered", "label": "A message from the phone, 14:03",
+                     "status": "not delivered", "excerpt": "test message", "why": "No."}],
+          "more_line": "and 1 more"}}
+        """#)
+        let q = try XCTUnwrap(a.messageQueue)
+        XCTAssertEqual(q.headline, "1 not delivered")
+        XCTAssertEqual(q.items.first?.excerpt, "test message")
+        XCTAssertEqual(q.items.first?.undelivered, true)
+        XCTAssertEqual(q.moreLine, "and 1 more")
+    }
 }
