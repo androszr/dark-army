@@ -71,6 +71,9 @@ after a confirmed press per project.
   Claude brief and a Grok shim, `model_reasoning_effort` in the Codex shim,
   and Default removes the line. The Codex shims keep today's shipped level,
   `SHIPPED_CODEX_EFFORT` (`high`), unless somebody chooses otherwise. The
+  card preparer's and the shunt worker's effort cells ship Default on every
+  provider, Codex included; the preparer's reaches `card_prepare.argv(effort=)`
+  at Prepare and never a brief or shim (`ARGV_ONLY_EFFORT_ROLES`). The
   lines are written; the CLIs document reading them, and a real spawn
   confirms each (a manual check, outcome not yet recorded).
 - The master tree ships as `dark_army_menubar/agent_pack` through
@@ -101,6 +104,11 @@ after a confirmed press per project.
   `worker` cell of the resolved table (an empty cell writes the shipped
   default, `card_prepare.WORKER_MODELS`) **before** `mirror_skills`, so the
   twin is byte-identical; `render(models=None)` leaves the template bytes.
+  `workers.json` also carries `efforts` (`pack_render.WORKERS_EFFORTS_KEY`),
+  one level per provider from the `worker` effort cell, absent when every
+  cell is Default; the wrappers' `worker_effort` reads it and passes the
+  provider's effort flag, and `BOB_SHUNT_WORKER_EFFORT` overrides it for one
+  call.
   `settings.json` gains three owned `permissions.allow` rows
   (`Bash(python3 .claude/skills/shunt/{bulk_read,code_write,exempt}.py:*)`),
   replaced on resync by the owned-rows rule. The pack also owns narrow allow

@@ -618,3 +618,91 @@ def test_every_wrapper_carries_the_same_state_home_rule():
         start = text.index("def _state_home(env):")
         bodies.add(text[start:text.index("\n\n\n", start)])
     assert len(bodies) == 1
+
+
+# --- the worker's effort, through a copied skill folder --------------------------
+
+def _skill_copy(tmp_path, workers):
+    """The wrappers beside a `workers.json` of the test's choosing: the
+    `HERE`-relative read is the seam."""
+    folder = tmp_path / "skill"
+    folder.mkdir()
+    for script in (BULK, WRITE):
+        (folder / script.name).write_text(script.read_text(encoding="utf-8"))
+    (folder / "workers.json").write_text(json.dumps(workers))
+    return folder
+
+
+_EFFORT_FLAG = {
+    "claude": ["--effort", "low"],
+    "codex": ["-c", "model_reasoning_effort=low"],
+    "grok": ["--reasoning-effort", "low"],
+}
+
+
+def _invoke(stubs, folder, which, provider, env=None):
+    if which == "bulk_read.py":
+        args = ("--question", "where is x", "big.py")
+    else:
+        args = ("--spec", "two tests", "--reference", "ref_test.py",
+                "--out", "out_test.py")
+    return _run(stubs, folder / which, *args, provider=provider, env=env)
+
+
+@pytest.mark.parametrize("which", ["bulk_read.py", "code_write.py"])
+@pytest.mark.parametrize("provider", ["claude", "codex", "grok"])
+def test_worker_argv_with_a_worker_effort_is_the_prepare_helpers_minus_the_brief_flags(
+        stubs, tmp_path, provider, which):
+    workers = dict(card_prepare.WORKER_MODELS)
+    workers["efforts"] = {provider: "low"}
+    folder = _skill_copy(tmp_path, workers)
+    proc = _invoke(stubs, folder, which, provider)
+    assert proc.returncode == 0, proc.stderr
+    argv = _calls(stubs)[-1]["argv"]
+    fields = {"tool": provider, "title": "t", "summary": "s"}
+    if provider == "grok":
+        fields["brief_path"] = "/tmp/brief.md"
+    prepared = card_prepare.argv("/x/" + provider, model="m", effort="low", **fields)
+    at = prepared.index("--model") + 2
+    assert prepared[at:at + 2] == _EFFORT_FLAG[provider]
+    wrapper_at = argv.index("--model") + 2
+    assert argv[wrapper_at:wrapper_at + 2] == _EFFORT_FLAG[provider]
+    extra = {"--output-format"} if provider == "claude" else set()
+    assert _flags(argv) - extra == _flags(prepared) - BRIEF_FLAGS
+    if provider == "codex":
+        assert argv.index("-c") < argv.index("--")
+
+
+@pytest.mark.parametrize("which", ["bulk_read.py", "code_write.py"])
+def test_a_workers_file_without_efforts_adds_no_flag(stubs, tmp_path, which):
+    folder = _skill_copy(tmp_path, dict(card_prepare.WORKER_MODELS))
+    assert _invoke(stubs, folder, which, "claude").returncode == 0
+    argv = _calls(stubs)[-1]["argv"]
+    assert "--effort" not in argv
+    assert argv[argv.index("--model") + 1] == "haiku"
+
+
+@pytest.mark.parametrize("which", ["bulk_read.py", "code_write.py"])
+def test_the_effort_override_wins_for_one_call(stubs, tmp_path, which):
+    workers = dict(card_prepare.WORKER_MODELS)
+    workers["efforts"] = {"claude": "high"}
+    folder = _skill_copy(tmp_path, workers)
+    proc = _invoke(stubs, folder, which, "claude",
+                   env={"BOB_SHUNT_WORKER_EFFORT": "low"})
+    assert proc.returncode == 0, proc.stderr
+    argv = _calls(stubs)[-1]["argv"]
+    assert argv[argv.index("--effort") + 1] == "low"
+
+
+@pytest.mark.parametrize("which", ["bulk_read.py", "code_write.py"])
+@pytest.mark.parametrize("bad", ["low", {"claude": 3}, ["claude"], None])
+def test_a_malformed_efforts_value_adds_no_flag_and_keeps_the_model(
+        stubs, tmp_path, which, bad):
+    workers = dict(card_prepare.WORKER_MODELS)
+    workers["claude"] = "sonnet"
+    workers["efforts"] = bad
+    folder = _skill_copy(tmp_path, workers)
+    assert _invoke(stubs, folder, which, "claude").returncode == 0
+    argv = _calls(stubs)[-1]["argv"]
+    assert "--effort" not in argv
+    assert argv[argv.index("--model") + 1] == "sonnet"

@@ -207,6 +207,21 @@ def test_effort_pin_own_checkout_pins_the_effort_line_of_every_brief_and_shim(
     assert _effort_line(root / ".claude/agents/bc-verifier.md") == ""
 
 
+def test_a_chosen_worker_effort_leaves_the_own_checkout_workers_files_alone(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(dev_build, "find_repo_root", lambda: None)
+    root = _own_checkout(tmp_path)
+    settings = {**_settings(),
+                "agent_efforts": {"claude": {"worker": "low"},
+                                  "codex": {"worker": "medium"}}}
+    models = agent_models.resolve(settings, str(root))
+    efforts = agent_models.resolve_efforts(settings, str(root))
+    wrote = pack_install.pin_own_checkout(str(root), models, efforts)
+    for key in WORKERS_KEYS:
+        assert key not in wrote
+        assert (root / key).read_bytes() == pack_render.workers_json(None)
+
+
 def test_effort_a_none_table_touches_no_effort_line(tmp_path, monkeypatch):
     monkeypatch.setattr(dev_build, "find_repo_root", lambda: None)
     root = _own_checkout(tmp_path)

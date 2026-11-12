@@ -138,7 +138,8 @@ final class SettingsModelsTableTests: XCTestCase {
 
     // MARK: - The effort beside the model
 
-    /// `modelsRaw` plus the effort keys: levels only for `planner`.
+    /// `modelsRaw` plus the effort keys: levels for `planner`, the card
+    /// preparer and the shunt worker.
     private func effortSettings() -> DaemonClient.Settings {
         var raw = SettingsMenuModelTests.modelsRaw
         raw["agent_efforts"] = [
@@ -146,12 +147,15 @@ final class SettingsModelsTableTests: XCTestCase {
             "grok": ["planner": ""],
         ]
         raw["agent_efforts_by_root"] = ["/Users/me/proj": ["claude": ["planner": "max"]]]
+        let full = ["low", "medium", "high", "xhigh", "max"]
+        let grok = ["minimal", "low", "medium", "high", "xhigh"]
+        raw["agent_model_slots"] = ["main", "planner", "card-preparer", "worker"]
         raw["agent_effort_options"] = [
-            "claude": ["planner": ["low", "medium", "high", "xhigh", "max"]],
-            "codex": ["planner": ["low", "medium", "high", "xhigh", "max"]],
-            "grok": ["planner": ["minimal", "low", "medium", "high", "xhigh"]],
+            "claude": ["planner": full, "card-preparer": full, "worker": full],
+            "codex": ["planner": full, "card-preparer": full, "worker": full],
+            "grok": ["planner": grok, "card-preparer": grok, "worker": grok],
         ]
-        raw["agent_effort_slots"] = ["main", "planner"]
+        raw["agent_effort_slots"] = ["main", "planner", "card-preparer", "worker"]
         return DaemonClient.Settings(raw, base: DaemonClient.Settings())
     }
 
@@ -176,10 +180,13 @@ final class SettingsModelsTableTests: XCTestCase {
         let rows = Dictionary(uniqueKeysWithValues: effortMachineWide().rows.map { ($0.id, $0) })
         XCTAssertEqual(Set(rows["planner"]?.effortCells.keys ?? [:].keys),
                        Set(DaemonClient.AgentModels.providers))
-        // `main` is a drawable effort slot but lists no levels here, and the
-        // preparer is no effort slot at all.
+        // The card preparer and the shunt worker draw an effort cell through
+        // the same generic path; `main` lists no levels here, so none.
         XCTAssertTrue(rows["main"]?.effortCells.isEmpty ?? false)
-        XCTAssertTrue(rows["card-preparer"]?.effortCells.isEmpty ?? false)
+        for slot in ["card-preparer", "worker"] {
+            XCTAssertEqual(Set(rows[slot]?.effortCells.keys ?? [:].keys),
+                           Set(DaemonClient.AgentModels.providers), slot)
+        }
     }
 
     func testAnOlderMenuBarWithNoEffortKeysDrawsNoEffortCell() {
@@ -208,10 +215,11 @@ final class SettingsModelsTableTests: XCTestCase {
     }
 
     func testTheModelCellsAreUnchangedByTheEffortRows() {
-        let with = effortMachineWide()
+        // The effort fixture also lists the `worker` slot the plain one lacks.
+        let withRows = effortMachineWide().rows.filter { $0.id != "worker" }
         let without = machineWide()
-        XCTAssertEqual(with.rows.map(\.id), without.rows.map(\.id))
-        for (a, b) in zip(with.rows, without.rows) {
+        XCTAssertEqual(withRows.map(\.id), without.rows.map(\.id))
+        for (a, b) in zip(withRows, without.rows) {
             XCTAssertEqual(a.cells.mapValues { $0.choices.map(\.row.title) },
                            b.cells.mapValues { $0.choices.map(\.row.title) }, a.id)
             XCTAssertEqual(a.cells.mapValues { $0.selected?.row.title },

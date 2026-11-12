@@ -6589,13 +6589,18 @@ class BoardVerbsMixin:
         timeout = (card_prepare.TIMEOUT_WITH_ATTACHMENTS_SECONDS
                    if attached else card_prepare.TIMEOUT_SECONDS)
         proc = None
+        # The card-preparer slot for the helper that runs it; `""` keeps
+        # `HELPER_MODELS`' cheap default.
+        prep_model = self._agent_model_for(root, helper, "card-preparer")
         try:
             proc = await asyncio.create_subprocess_exec(
                 *card_prepare.argv(
                     executable,
-                    # The card-preparer slot for the helper that runs it;
-                    # `""` keeps `HELPER_MODELS`' cheap default.
-                    model=self._agent_model_for(root, helper, "card-preparer"),
+                    model=prep_model,
+                    # Judged against the model the helper will really run.
+                    effort=self._agent_effort_for(
+                        root, helper, "card-preparer",
+                        model=prep_model or card_prepare.HELPER_MODELS[helper]),
                     title=str(fields.get("title") or ""),
                     summary=str(fields.get("summary") or ""),
                     tool=str(fields.get("tool") or ""),
@@ -13004,7 +13009,8 @@ class BoardVerbsMixin:
         use, which the caller passes when a card named its own and which
         otherwise is the slot's own resolved model — so a hand-edited
         `preferences.json`, or a model change that no longer offers the stored
-        level, can never put an unoffered level on an argv.
+        level, can never put an unoffered level on an argv. Callers: every
+        launch site and Prepare (`_prepare_card_text_locked`).
         """
         provider = str(provider or "")
         slot = str(slot or "")

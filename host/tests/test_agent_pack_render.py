@@ -566,6 +566,46 @@ def test_the_template_workers_json_is_the_shipped_table_and_a_default_render_kee
     assert _mapping("web", models=_shipped())[pack_render.WORKERS_KEY] == template.read_bytes()
 
 
+def _worker_efforts(**levels):
+    from dark_army_daemon import agent_models
+    return agent_models.resolve_efforts(
+        {"agent_efforts": {p: {"worker": v} for p, v in levels.items()}},
+        "/tmp/sample")
+
+
+def test_workers_json_carries_efforts_for_the_non_empty_worker_cells_only():
+    efforts = _worker_efforts(claude="low", grok="high")
+    mapping = _mapping("both", models=_shipped(), efforts=efforts)
+    written = json.loads(mapping[pack_render.WORKERS_KEY])
+    assert written.pop(pack_render.WORKERS_EFFORTS_KEY) == {
+        "claude": "low", "grok": "high"}
+    from dark_army_daemon import card_prepare
+    assert written == card_prepare.WORKER_MODELS
+    assert mapping[".agents/skills/shunt/workers.json"] == mapping[pack_render.WORKERS_KEY]
+
+
+def test_workers_json_with_every_worker_cell_default_is_the_template_bytes():
+    template = (pack_render.vendor_dir() / "template" / pack_render.WORKERS_KEY).read_bytes()
+    assert _mapping("both", models=_shipped(), efforts=_efforts())[
+        pack_render.WORKERS_KEY] == template
+    assert _mapping("both", models=_shipped(), efforts=_worker_efforts(
+        claude=""))[pack_render.WORKERS_KEY] == template
+    assert pack_render.workers_json(None) == template
+    assert pack_render.workers_json(_shipped(), None) == template
+
+
+def test_an_untouched_codex_worker_writes_no_efforts_key_never_high():
+    mapping = _mapping("both", models=_shipped(), efforts=_efforts())
+    assert b"efforts" not in mapping[pack_render.WORKERS_KEY]
+    assert b"high" not in mapping[pack_render.WORKERS_KEY]
+
+
+def test_workers_json_without_a_model_table_keeps_the_template_whatever_efforts_say():
+    template = (pack_render.vendor_dir() / "template" / pack_render.WORKERS_KEY).read_bytes()
+    assert _mapping("both", efforts=_worker_efforts(claude="low"))[
+        pack_render.WORKERS_KEY] == template
+
+
 def test_workers_json_is_pinned_from_the_worker_cells_before_the_mirror():
     from dark_army_daemon import agent_models
     table = agent_models.resolve(
@@ -740,9 +780,19 @@ def test_effort_default_removes_the_line_in_all_three_files():
 
 def test_effort_shipped_codex_effort_is_the_agent_models_shipped_level():
     from dark_army_daemon import agent_models
-    for role in agent_models.EFFORT_SLOTS[1:]:
+    for role in agent_models.EFFORT_SLOTS[1:-2]:
         assert pack_render.SHIPPED_CODEX_EFFORT == (
             agent_models.SHIPPED_EFFORTS["codex"][role])
+
+
+def test_the_preparers_effort_cell_never_reaches_a_brief_or_shim():
+    plain = _mapping("both", models=_shipped())
+    table = {"claude": {"card-preparer": "low"}, "codex": {"card-preparer": "max"},
+             "grok": {"card-preparer": "high"}}
+    chosen = _mapping("both", models=_shipped(), efforts=table)
+    for key in plain:
+        if "card-preparer" in key:
+            assert chosen[key] == plain[key], key
 
 
 def test_effort_pin_effort_replaces_rather_than_adding_a_second_line():

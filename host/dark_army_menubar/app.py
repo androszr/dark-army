@@ -3422,7 +3422,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                 # resolved, the override map as stored, the levels per slot
                 # for that slot's *resolved* model (so a model press
                 # re-narrows the menu on the next push), and the drawable
-                # slots — never the card preparer or the worker.
+                # slots, the card preparer and (where the pack ships the skill) the worker.
                 "agent_efforts": agent_models.resolve_efforts_global(
                     self._settings),
                 "agent_efforts_by_root": _by_root_efforts["efforts"],
@@ -3433,7 +3433,8 @@ class BobCompanionApp(rumps.App, DaemonObserver):
                 # machine-wide options on the panel.
                 "agent_effort_options_by_root": _by_root_efforts["options"],
                 "agent_effort_slots": agent_models.effort_slots_for(
-                    pack_render.shipped_roles()),
+                    pack_render.shipped_roles(),
+                    worker=pack_render.ships_shunt()),
                 "agent_pack": {
                     "available": getattr(self, "_pack_root", None) is not None,
                     "projects": pack_ledger.published(),

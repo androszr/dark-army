@@ -3184,6 +3184,21 @@ def test_a_valid_agent_effort_press_saves_and_feeds_the_daemon(monkeypatch):
     assert resynced == [True]
 
 
+def test_a_worker_agent_effort_press_saves_feeds_and_resyncs(monkeypatch):
+    from dark_army_menubar import app as A
+    saved = []
+    monkeypatch.setattr(A, "save_preferences", lambda updates: saved.append(updates))
+    daemon = _EffortDaemon()
+    instance = _action_app(_daemon=daemon)
+    resynced = []
+    instance._resync_agent_packs = lambda: resynced.append(True)
+    _dispatch(instance, "set_agent_effort",
+              {"provider": "codex", "slot": "worker", "effort": "low"})
+    assert instance._settings["agent_efforts"] == {"codex": {"worker": "low"}}
+    assert daemon.globals == [{"codex": {"worker": "low"}}]
+    assert resynced == [True]
+
+
 def test_a_project_agent_effort_press_writes_the_override_map_and_inherit_removes(
         monkeypatch):
     from dark_army_menubar import app as A
@@ -3214,13 +3229,14 @@ def test_an_off_list_agent_effort_press_writes_nothing_and_calls_nothing(
     daemon = _EffortDaemon()
     instance = _action_app(_daemon=daemon)
     # codex/planner resolves to gpt-6-astra (has max); gpt-5.5 does not.
-    instance._settings["agent_models"] = {"codex": {"verifier": "gpt-5.5"}}
+    instance._settings["agent_models"] = {
+        "codex": {"verifier": "gpt-5.5", "card-preparer": "gpt-5.5"}}
     for value in (
         {"provider": "claude", "slot": "main", "effort": "ultra"},
         {"provider": "grok", "slot": "main", "effort": "max"},
         {"provider": "codex", "slot": "verifier", "effort": "max"},
-        {"provider": "claude", "slot": "card-preparer", "effort": "low"},
-        {"provider": "claude", "slot": "worker", "effort": "low"},
+        {"provider": "codex", "slot": "card-preparer", "effort": "max"},
+        {"provider": "codex", "slot": "worker", "effort": "ultra"},
         {"provider": "gemini", "slot": "main", "effort": ""},
         {"provider": "claude", "slot": "main", "effort": "inherit"},  # no root
         "not a dict",
@@ -3253,8 +3269,11 @@ def test_the_panel_context_carries_the_effort_tables_options_and_slots(
     assert "max" not in options["codex"]["verifier"]   # gpt-5.5 resolved
     assert set(options["claude"]) == set(agent_models.EFFORT_SLOTS)
     slots = settings["agent_effort_slots"]
-    assert slots == agent_models.effort_slots_for(pack_render.shipped_roles())
-    assert "card-preparer" not in slots and "worker" not in slots
+    assert slots == agent_models.effort_slots_for(
+        pack_render.shipped_roles(), worker=pack_render.ships_shunt())
+    assert "card-preparer" in slots
+    assert ("worker" in slots) == pack_render.ships_shunt()
+    assert "max" in options["codex"]["worker"]   # luna offers max
     assert slots[0] == "main"
 
 
