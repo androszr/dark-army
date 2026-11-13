@@ -203,8 +203,9 @@ stated in full, with its reasons, in the subject document named.
   nothing — with one kind-aware exception: a scout in Prep outlines START,
   because it has no plan to refine (`docs/context-panel.md`,
   `test_card_action_weight.py`).
-- **The daemon acts on a session in exactly three places** — `autocompact`,
-  `alerts`, the question burst — each decided on the executor and performed on
+- **The daemon acts on a session in exactly three places** — `autocompact`
+  (and `limit_resume`, by its rules), `alerts`, the question burst — each
+  decided on the executor and performed on
   the loop, and every eviction routes through `_forget_session`
   (`docs/session-state-contract.md`).
 - **Never commit, push, tag, install or release from an agent run** unless

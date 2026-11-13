@@ -59,6 +59,9 @@ extension DaemonClient {
         /// of raising a banner about it. Only ever reaches a session whose
         /// VS Code window can take the keystroke; otherwise the banner fires.
         var autoCompact = true
+        /// Whether Dark Army types `continue` at a session stopped by its
+        /// usage limit once the window has reset. Same reach as the compact.
+        var limitResume = true
         /// Whether Dark Army may start a session from a board card at all. The one
         /// switch here that removes a capability rather than changing what an
         /// existing one does — with it off, Start is absent from every card.
@@ -148,6 +151,7 @@ extension DaemonClient {
             if let v = raw["channel_command"] as? String { channelCommand = v }
             if let v = raw["typed_reply"] as? Bool { typedReply = v }
             if let v = raw["auto_compact"] as? Bool { autoCompact = v }
+            if let v = raw["limit_resume"] as? Bool { limitResume = v }
             if let v = raw["board_dispatch"] as? Bool { boardDispatch = v }
             if let v = raw["board_autostart"] as? Bool { boardAutostart = v }
             if let v = raw["board_parallel"] as? Int { boardParallel = v }

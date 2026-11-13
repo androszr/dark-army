@@ -27,6 +27,7 @@ ACTIONS = {
     "autocompact": {"type": NEVER},
     "answer_burst": {"type": NEVER},
     "steer": {"type": NEVER},
+    "limit_resume": {"type": NEVER},
 }
 
 #: An action that is not finished when a step resolved with one of these
@@ -66,6 +67,7 @@ INTERRUPTED_WORDS = {
     "autocompact": "asking a session to compact",
     "answer_burst": "typing an answer",
     "steer": "typing into it",
+    "limit_resume": "carrying a session on after its usage limit",
 }
 
 

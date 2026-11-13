@@ -119,6 +119,7 @@ final class SettingsMenuModelTests: XCTestCase {
             "—",
             "Session channel (new sessions)",
             "Compact full sessions",
+            "Resume after usage limit",
             "—",
             "Dark Army may start sessions",
             "Pipeline",

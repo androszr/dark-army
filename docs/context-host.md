@@ -756,6 +756,12 @@ A row kept after its tab vanished publishes `tab_gone` (*A Grok turn outlives it
   dialog before any of the tuples are trusted. Withholding a card
   (`_parked_reason`, `_finished_quietly`, `_mission_reply`) is not a fourth:
   none of them types, delivers or evicts.
+  `limit_resume.py` shares auto-compact's place and its rules — the same
+  split, the same steering lane, the same kill-line: it types `continue` at
+  a Claude session whose usage-limit card is still up once the reset the
+  card or the statusline named has passed (plus `MARGIN_SECONDS`), at most
+  `MAX_ATTEMPTS` times, and the row carries `limit_resume_at` until it does
+  (`set_limit_resume`, on by default; `test_limit_resume.py`).
 
 - **`<!-- dark-army-next: rebuild -->` offers a button, never a card**
   (`rebuild_offered`, `docs/session-state-contract.md`).

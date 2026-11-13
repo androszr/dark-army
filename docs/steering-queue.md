@@ -35,6 +35,7 @@ the agent detail lists them (see the section on the agent detail, below).
 | `reply`, `card_message`, `card_ask`, `terminal_line`, `wrap_up`, `low_priority` | yes | if fresh | the queue's `steer`/`type` |
 | `answer` | yes | never (the question on screen may have changed) | the burst's own `answer_burst` |
 | `autocompact` | no | never (the policy re-decides) | its own `autocompact` |
+| `limit_resume` | no | never (the policy re-decides) | its own `limit_resume` |
 | `permission_key` (Grok's digit), `raw` keys | no | never | none |
 
 The daemon's three acting places keep their contract: auto-compact is still

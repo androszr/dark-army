@@ -197,6 +197,19 @@ async def _autocompact(w: World, variant: str):
         await future
 
 
+async def _limit_resume(w: World, variant: str):
+    w.d._session_provider = lambda sid: "claude"
+    w.d._active_notifications["sess-1"] = {
+        "hook": "StopFailure", "error_kind": "rate_limit", "message": "x"}
+    w.d._limit_resume_queue = [("sess-1", 4242)]
+    lanes = w.d._steering_lanes()
+    futures, real = [], lanes.submit
+    lanes.submit = lambda *a, **k: futures.append(real(*a, **k)) or futures[-1]
+    await w.d._flush_limit_resumes()
+    for future in futures:
+        await future
+
+
 async def _answer_burst(w: World, variant: str):
     multi = variant == "multi"
     questions = [{"multi_select": multi}]
@@ -223,6 +236,7 @@ SCENARIOS = {
     "autocompact": _autocompact,
     "answer_burst": _answer_burst,
     "steer": _steer,
+    "limit_resume": _limit_resume,
 }
 
 #: (kind, variant) -> how many commits the scenario makes. A step added to an
@@ -239,6 +253,7 @@ POINTS = {
     ("answer_burst", "single"): 2,
     ("answer_burst", "multi"): 2,
     ("steer", "reply"): 4,
+    ("limit_resume", "once"): 2,
 }
 
 CASES = [(kind, variant, point)
@@ -401,6 +416,12 @@ def _kind_invariants(fresh, w, kind, variant, point, phase, step, cid):
         assert len(_diary(fresh, "action_interrupted")) == (
             1 if phase == "intent" else 0)
         assert not fresh.d._answering
+    elif kind == "limit_resume":
+        # Never typed again by recovery, and a restarted policy opens a
+        # fresh episode that waits rather than sends.
+        assert len(_diary(fresh, "action_interrupted")) == (
+            1 if phase == "intent" else 0)
+        assert fresh.d._limit_resume_queue == []
 
 
 def test_every_declared_action_has_a_crash_scenario():

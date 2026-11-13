@@ -139,7 +139,8 @@ final class SettingsSectionsTests: XCTestCase {
                        ["submenu:notifications", "submenu:panel-size", "submenu:terminal", "submenu:dictation"])
         let sessions = pages.first { $0.id == .sessions }!
         XCTAssertEqual(sessions.groups.first?.entries.map(\.id),
-                       ["toggle:set_channel", "toggle:set_auto_compact"])
+                       ["toggle:set_channel", "toggle:set_auto_compact",
+                        "toggle:set_limit_resume"])
     }
 
     func testTheFootIsTheKillSwitchRestartAndQuit() {

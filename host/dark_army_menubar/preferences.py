@@ -58,6 +58,12 @@ DEFAULTS = {
     # a session in Terminal.app, or an unreloaded 0.1.5 window, is never
     # touched, and the banner arrives exactly as it always did.
     "auto_compact": True,
+    # Type `continue` at a session stopped by its usage limit once the window
+    # has reset (limit_resume.py). On by default for autocompact's reason: it
+    # can only reach a session whose terminal Dark Army can type into, it
+    # waits for the reset the harness itself named, and it gives up after a
+    # few tries — the session then waits for its person as it always did.
+    "limit_resume": True,
     # Whether Dark Army may *start* a session from the Kanban board (dispatch.py).
     # On by default, and the argument for that is the arm-then-confirm: a card
     # only ever launches because somebody pressed Start twice on a card they

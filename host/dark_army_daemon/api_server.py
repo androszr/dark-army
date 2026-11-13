@@ -337,10 +337,66 @@ _OMITTABLE_SECTIONS = (
 _LOOPBACK_ONLY_SECTIONS = ("fleet_activity",)
 
 
+# What the phone's picture may weigh, counted the way the sealed envelope
+# carries it: the JSON embedded as a string, escapes doubled. The phone
+# refuses a frame that inflates to `relay.RELAY_FRAME_MAX_BYTES` or more, so
+# a picture past this budget would be a check-in the phone can never open —
+# `CARD_SYNC_MAX_BYTES`' argument, with headroom for the usage sibling and
+# the envelope's own fields.
+PHONE_PICTURE_MAX_BYTES = 780_000
+# The marker a slimmed board carries: how many finished cards were left out
+# to fit. A present key, never an absence (`_state_answer`'s rule).
+CARDS_WITHHELD_KEY = "cards_withheld"
+
+
+def _embedded_bytes(value) -> int:
+    """How many bytes `value` takes as JSON embedded in a JSON string."""
+    return len(json.dumps(json.dumps(value)).encode("utf-8"))
+
+
+def _board_within_budget(picture: dict) -> dict:
+    """`picture` with the oldest finished cards left out of the board until
+    it fits `PHONE_PICTURE_MAX_BYTES`.
+
+    Only Done cards are shed, oldest `done_at` first: every card that still
+    has a column to move through stays, and `counts` still says how many
+    are finished. The board says how many it left out. A picture that is
+    over budget with no finished card left to shed is returned as it is —
+    `relay.seal_frame` refuses it and the phone is told why."""
+    board_section = picture.get("board")
+    cards = board_section.get("cards") if isinstance(board_section, dict) \
+        else None
+    if not isinstance(cards, list) or not cards:
+        return picture
+    over = _embedded_bytes(picture) - PHONE_PICTURE_MAX_BYTES
+    if over <= 0:
+        return picture
+    done = sorted(
+        (c for c in cards
+         if isinstance(c, dict) and c.get("column_name") == "done"),
+        key=lambda c: float(c.get("done_at") or 0.0))
+    withheld: set[int] = set()
+    for card in done:
+        if over <= 0:
+            break
+        # A list entry costs its own JSON plus a two-byte separator, which
+        # is what the string quotes counted here stand in for.
+        over -= _embedded_bytes(card)
+        withheld.add(id(card))
+    if not withheld:
+        return picture
+    slim = dict(board_section,
+                cards=[c for c in cards if id(c) not in withheld])
+    slim[CARDS_WITHHELD_KEY] = len(withheld)
+    return dict(picture, board=slim)
+
+
 def phone_picture(state: dict) -> dict:
     """`state` as the phone's sealed doors may see it: a shallow copy without
-    the loopback-only sections, taken before either digest is computed."""
-    return {k: v for k, v in state.items() if k not in _LOOPBACK_ONLY_SECTIONS}
+    the loopback-only sections and with a board that fits the phone's frame
+    (`_board_within_budget`), taken before either digest is computed."""
+    return _board_within_budget(
+        {k: v for k, v in state.items() if k not in _LOOPBACK_ONLY_SECTIONS})
 
 
 def _news(value, drop=_CLOCK_FIELDS):

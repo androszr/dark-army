@@ -244,8 +244,15 @@ def seal_frame(key: bytes, direction: str, ctr: int, kind: str, body,
         "kind": str(kind),
         "body": body,
     }
-    payload = _deflate(
-        json.dumps(frame, separators=(",", ":")).encode("utf-8"))
+    plain = json.dumps(frame, separators=(",", ":")).encode("utf-8")
+    # The other end inflates under the same cap and refuses a frame that
+    # reaches it (`open_frame`, the phone's `inflate`): a frame that only
+    # fits once deflated is one nobody can open, so it is refused here too.
+    if len(plain) >= RELAY_FRAME_MAX_BYTES:
+        logger.warning("relay frame over the cap was not sealed "
+                       "(%d bytes before deflate)", len(plain))
+        return ""
+    payload = _deflate(plain)
     nonce = os.urandom(_NONCE_BYTES)
     sealed = ChaCha20Poly1305(direction_key(key, direction, ns=ns)).encrypt(
         nonce, payload, _aad(channel_id(key, ns=ns), direction, ns=ns))

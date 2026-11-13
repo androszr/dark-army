@@ -91,6 +91,7 @@ KINDS: dict = {
     "low_priority": Kind(True, True, "steer"),
     "answer": Kind(True, False, "own"),
     "autocompact": Kind(False, False, "own"),
+    "limit_resume": Kind(False, False, "own"),
     "permission_key": Kind(False, False, ""),
     "raw": Kind(False, False, ""),
 }
@@ -105,6 +106,7 @@ WORDS: dict = {
     "low_priority": "the low-priority switch",
     "answer": "an answer",
     "autocompact": "an auto-compact",
+    "limit_resume": "a continue after the usage limit",
     "permission_key": "a permission key",
     "raw": "keys",
 }
@@ -123,6 +125,7 @@ TYPING_SITES = frozenset({
     "_type_answer_burst",
     "_grok_permission_key_now",
     "_auto_compact_now",
+    "_limit_resume_now",
     "_terminal_raw_input",
     "_terminal_line_input",
     "_message_card_now",
@@ -601,7 +604,7 @@ def detail_item(*, kind, source, created_at, group, state, text="",
     `{"group", "label", "status", "excerpt", "why"}`."""
     noun = WORDS.get(kind, "a message")
     noun = noun[:1].upper() + noun[1:]
-    origin = ("Dark Army" if kind == "autocompact"
+    origin = ("Dark Army" if kind in ("autocompact", "limit_resume")
               else SOURCE_WORDS.get(source, "the Mac"))
     try:
         clock = time.strftime("%H:%M", time.localtime(float(created_at)))

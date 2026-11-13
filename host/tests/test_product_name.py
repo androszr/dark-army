@@ -637,6 +637,7 @@ EXPECTED_PREFERENCE_KEYS = {
     "channel_enabled",
     "typed_reply",
     "auto_compact",
+    "limit_resume",
     "board_dispatch",
     "board_autostart",
     "board_parallel",

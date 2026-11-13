@@ -37,7 +37,7 @@ already private; no new private file. A payload is ids, pids, roots, paths and
 columns: `event_log.FORBIDDEN_KEYS` is refused at any depth at write, and no
 prompt, argv, question text or answer is ever in one.
 
-## The five actions
+## The six actions
 
 | Kind | Steps (replay) | Where |
 |---|---|---|
@@ -46,6 +46,7 @@ prompt, argv, question text or answer is ever in one.
 | `stop_session` | `terminate` (never), `kill` (never) | `stop_session_recorded`, `_confirm_stop` |
 | `autocompact` | `type` (never) | `_flush_auto_compacts` |
 | `answer_burst` | `type` (never) | `_type_answer_burst` |
+| `limit_resume` | `type` (never) | `_flush_limit_resumes` |
 
 `stop_session` itself stays synchronous and unchanged; the API's two routes
 (desk and phone) await `stop_session_recorded`. A direct caller of
@@ -83,8 +84,11 @@ types no key, runs no git command and moves no card to Done.
   the folder is left for the next Start, which reuses it. `record` open records
   the folder if it is still one. The press's re-entry died with the process and
   is not resumed.
-- `stop_session`, `autocompact`, `answer_burst`: interrupted, never repeated, one
-  `action_interrupted` diary line. Resuming a lost SIGKILL escalation is out of
+- `stop_session`, `autocompact`, `answer_burst`, `limit_resume`: interrupted,
+  never repeated, one `action_interrupted` diary line. A `limit_resume` needs
+  no seed: a restarted policy opens a fresh episode, and a fresh episode never
+  types sooner than `limit_resume.MARGIN_SECONDS` after a future reset or
+  `UNKNOWN_RESET_RETRY_SECONDS` from now. Resuming a lost SIGKILL escalation is out of
   scope. For auto-compact, every `type` intent inside `SETTLE_SECONDS` (open or
   sent) seeds `AutoCompactPolicy.restore`, so a restarted policy answers HOLD
   rather than typing `/compact` again.

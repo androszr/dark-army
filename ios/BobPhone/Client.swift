@@ -2539,6 +2539,9 @@ final class PhoneClient: ObservableObject {
         let frame = await StateFrame.offMain(answer.body)
         guard record.token == self.record?.token else { return false }
         guard answer.failure.isEmpty else {
+            // A check-in the phone itself abandoned says nothing about the
+            // Mac: the screen keeps what it had, as the home walk does.
+            if answer.failure == RelayChannel.Trouble.cutShort { return false }
             if status != .unpaired {
                 status = .unreachable
                 lastError = answer.failure

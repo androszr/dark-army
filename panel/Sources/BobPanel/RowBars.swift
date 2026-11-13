@@ -290,6 +290,15 @@ struct LowPriorityBar: View {
     static let button = Verbs.lowPriority.label
     static let armedButton = Verbs.lowPriority.armedLabel
 
+    /// The unarmed sentence, naming the automatic resume when one is
+    /// scheduled so the person knows they need not do anything.
+    static func prompt(resumeAt: Double?) -> String {
+        guard let at = resumeAt else { return prompt }
+        let clock = Date(timeIntervalSince1970: at)
+            .formatted(date: .omitted, time: .shortened)
+        return "This session hit its usage limit. Dark Army will continue it at \(clock), or carry on in low priority now?"
+    }
+
     let agent: Agent
     @ObservedObject var actions: RowActions
     @ObservedObject var client: DaemonClient
@@ -300,7 +309,7 @@ struct LowPriorityBar: View {
         return VStack(spacing: 0) {
             Divider().opacity(0.6)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(armed ? Self.armedPrompt : Self.prompt)
+                Text(armed ? Self.armedPrompt : Self.prompt(resumeAt: agent.limitResumeAt))
                     .font(.system(size: 10.5))
                     .foregroundStyle(armed ? Color.red : Color.secondary)
                     .lineLimit(2)

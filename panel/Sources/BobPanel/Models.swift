@@ -663,6 +663,10 @@ struct Agent: Decodable, Identifiable, Equatable {
     /// older daemon decodes false — no button, never one that types into a
     /// terminal.
     var canLowPriority = false
+    /// When Dark Army will type `continue` at this rate-limited session — the
+    /// reset the limit named, plus a short margin (`limit_resume.py`). Nil when
+    /// nothing is scheduled; an older daemon sends none.
+    var limitResumeAt: Double?
     /// Whether this agent finished work that needs Dark Army rebuilt and
     /// restarted to take effect, said in its report's `dark-army-next` marker
     /// and judged by the daemon (own checkout, no later successful rebuild).
@@ -781,6 +785,7 @@ struct Agent: Decodable, Identifiable, Equatable {
         case canType = "can_type"
         case canClose = "can_close"
         case canLowPriority = "can_low_priority"
+        case limitResumeAt = "limit_resume_at"
         case rebuildOffered = "rebuild_offered"
         case canMessage = "can_message"
         case ownTerminal = "own_terminal"
@@ -850,6 +855,7 @@ struct Agent: Decodable, Identifiable, Equatable {
         canType = c.value(.canType, false)
         canClose = c.value(.canClose, false)
         canLowPriority = c.value(.canLowPriority, false)
+        limitResumeAt = c.maybe(.limitResumeAt)
         rebuildOffered = c.value(.rebuildOffered, false)
         canMessage = c.value(.canMessage, false)
         ownTerminal = c.value(.ownTerminal, false)

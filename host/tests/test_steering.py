@@ -25,10 +25,11 @@ def test_the_retention_is_the_phone_marks_own():
     assert steering.STEER_RETENTION_SECONDS == command_receipts.RECEIPT_SECONDS
 
 
-def test_the_kinds_are_exactly_the_ten_and_six_replay():
+def test_the_kinds_are_exactly_the_eleven_and_six_replay():
     assert list(steering.KINDS) == [
         "reply", "card_message", "card_ask", "terminal_line", "wrap_up",
-        "low_priority", "answer", "autocompact", "permission_key", "raw"]
+        "low_priority", "answer", "autocompact", "limit_resume",
+        "permission_key", "raw"]
     assert [k for k, v in steering.KINDS.items() if v.replay] == [
         "reply", "card_message", "card_ask", "terminal_line", "wrap_up",
         "low_priority"]

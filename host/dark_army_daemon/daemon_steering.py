@@ -40,7 +40,8 @@ STEER_BODIES = {
 }
 
 #: kind -> the action the verb journals itself (`journal == "own"`).
-OWN_ACTIONS = {"answer": "answer_burst", "autocompact": "autocompact"}
+OWN_ACTIONS = {"answer": "answer_burst", "autocompact": "autocompact",
+               "limit_resume": "limit_resume"}
 
 _CARD_KINDS = ("card_message", "card_ask")
 

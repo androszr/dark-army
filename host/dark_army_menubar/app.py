@@ -737,6 +737,9 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             # Only ever reaches a session whose window can take the keystroke,
             # so a session outside VS Code is never touched.
             "auto_compact": bool(prefs.get("auto_compact", True)),
+            # Carry a session on by typing `continue` once its usage limit
+            # has reset (limit_resume.py), instead of leaving it for you.
+            "limit_resume": bool(prefs.get("limit_resume", True)),
             # Reply by typing onto the session's own input line in VS Code,
             # so a session need not be started with the channel command to
             # be answered. Off for the MVP; see preferences.DEFAULTS.
@@ -926,6 +929,8 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             self._settings["notification_sound"]
         )
         self._daemon.auto_compact_enabled = bool(self._settings["auto_compact"])
+        self._daemon.limit_resume_enabled = bool(
+            self._settings.get("limit_resume", True))
         self._daemon.typed_reply_enabled = bool(
             self._settings.get("typed_reply", False))
         # Tell the daemon whether this Mac can rebuild and what the button
@@ -2241,6 +2246,16 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         if self._daemon:
             self._daemon.auto_compact_enabled = enabled
 
+    def _set_limit_resume(self, enabled: bool) -> None:
+        """Let Dark Army carry a rate-limited session on after the reset, or
+        leave it waiting for you. `_set_auto_compact`'s shape: the policy
+        reads the flag when it decides, and turning it off drops every
+        scheduled resume on the next snapshot."""
+        self._settings["limit_resume"] = enabled
+        save_preferences(updates={"limit_resume": enabled})
+        if self._daemon:
+            self._daemon.limit_resume_enabled = enabled
+
     def _set_typed_reply(self, enabled: bool) -> None:
         """Deliver replies by typing into the session's VS Code terminal, or
         go back to the channel alone.
@@ -3220,6 +3235,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         "set_notification_banners":   lambda app, v: app._set_banners(bool(v)),
         "set_channel":                lambda app, v: app._set_channel(bool(v)),
         "set_auto_compact":           lambda app, v: app._set_auto_compact(bool(v)),
+        "set_limit_resume":           lambda app, v: app._set_limit_resume(bool(v)),
         "set_typed_reply":            lambda app, v: app._set_typed_reply(bool(v)),
         "set_board_dispatch":         lambda app, v: app._set_board_dispatch(bool(v)),
         "set_board_own_terminal":     lambda app, v: app._set_board_own_terminal(bool(v)),

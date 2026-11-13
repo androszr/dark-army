@@ -120,6 +120,7 @@ enum SettingsMenuModel {
         "set_notification_banners",
         "set_channel",
         "set_auto_compact",
+        "set_limit_resume",
         "set_board_dispatch",
         "set_board_autostart",
         "set_board_own_terminal",
@@ -193,6 +194,13 @@ enum SettingsMenuModel {
                 + "terminal instead of asking you to. Needs the session to "
                 + "be in VS Code; if the compact does not land, the "
                 + "notification comes back."))
+        out.append(toggle(
+            "Resume after usage limit",
+            action: "set_limit_resume", isOn: s.limitResume,
+            tooltip: "When a session stops because it hit its usage limit, type "
+                + "continue into its terminal once the limit resets. Needs "
+                + "the session to be in a terminal Dark Army can type into; "
+                + "it gives up after three tries."))
 
         out.append(divider("after-session"))
 

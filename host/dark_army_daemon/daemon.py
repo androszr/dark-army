@@ -2045,6 +2045,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
         # the toggle runs on the AppKit thread, and the policy reads the flag at
         # the moment it decides rather than holding a copy of it.
         self.auto_compact_enabled: bool = True
+        # Typing `continue` at a session whose usage limit has reset
+        # (limit_resume.py). The same plain-attribute shape, read by the
+        # policy at the moment it decides.
+        self.limit_resume_enabled: bool = True
         # Reply by typing onto the session's own input line (`_reply_by_typing`)
         # rather than only through the channel. Same plain-attribute shape:
         # read on the loop at the moment of the reply and on the snapshot
@@ -2058,6 +2062,9 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
         # that can actually open a socket — the same split `_undelivered` uses,
         # for the same reason.
         self._compact_queue: list = []
+        # Rate-limited sessions whose window has reset, decided on the
+        # executor and typed at on the loop — the compacts' split exactly.
+        self._limit_resume_queue: list = []
 
         # Naming a session Claude Code no longer names (session_title.py). Same
         # executor-decides / loop-acts split as the compacts above — a title
@@ -10191,6 +10198,9 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
         # autocompact.py for why the channel cannot carry this, and why one
         # attempt is the whole budget.
         self._decide_auto_compacts(out)
+        # A session stopped by its usage limit is carried on once the window
+        # has reset (limit_resume.py); the row says when.
+        self._decide_limit_resumes(out)
 
         # Which of those signals has earned an interrupt. Kept separate from the
         # engine above because the two answer different questions at different
@@ -10628,6 +10638,135 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
             return True, ""
         logger.info("Auto-compact of %s did not land; "
                     "handing it back to alerts", sid[:12])
+        return False, "did not land"
+
+    def _decide_limit_resumes(self, snapshot: dict) -> None:
+        """Which rate-limited sessions Dark Army will carry on this tick.
+
+        Runs on the snapshot executor, beside `_decide_auto_compacts`, and
+        decides only: the typing is `_flush_limit_resumes`' on the loop. Every
+        row of a limited session is stamped `limit_resume_at` (an epoch, or
+        None) so the panel can say when it will happen. Claude only — the
+        limit and its `StopFailure` are Claude Code's — and never a background
+        session, which has no input line. Reading `_active_notifications` here
+        is the standing race `_prompts_by_session` documents; the flush
+        re-checks the card before it types.
+        """
+        from . import limit_resume
+
+        policy = self.__dict__.setdefault("_limit_resume",
+                                          limit_resume.LimitResumePolicy())
+        policy.enabled = bool(self.limit_resume_enabled)
+        now = time.time()
+        metrics = [m for msid, m in list(self._session_metrics.items())
+                   if isinstance(m, dict)
+                   and (self._session_provider(msid) or "claude") == "claude"]
+        live: set[str] = set()
+        for category, entries in snapshot.items():
+            if category in ("finished", "abandoned"):
+                continue
+            for entry in entries:
+                sid = entry.get("session_id") or ""
+                if (not sid or (entry.get("provider") or "claude") != "claude"
+                        or entry.get("kind") == "background"
+                        or self._session_provider(sid) not in (None, "", "claude")):
+                    continue
+                live.add(sid)
+                card = self._active_notifications.get(sid)
+                verdict = policy.consider(sid, card, metrics, now)
+                if verdict == limit_resume.SEND:
+                    pid = entry.get("pid")
+                    if pid and session_io.can_send_text(pid):
+                        policy.note_sent(sid, now)
+                        self._limit_resume_queue.append((sid, pid))
+                    else:
+                        policy.note_unreachable(sid, now)
+                entry["limit_resume_at"] = policy.due_at(sid)
+        policy.forget(live)
+
+    async def _flush_limit_resumes(self) -> None:
+        """Queue `continue` for every session the policy just decided on.
+
+        `_flush_auto_compacts`' shape: drained, and each one handed to the
+        session's steering lane without being awaited, so it is typed after
+        anything a person already has waiting there and never between the
+        halves of somebody's message (`docs/steering-queue.md`). A full lane,
+        a refusal or a send that did not land goes back to the policy as
+        unreachable, which undoes the attempt and tries again later.
+        """
+        if not self._limit_resume_queue:
+            return
+
+        pending, self._limit_resume_queue = self._limit_resume_queue, []
+        policy = self.__dict__.get("_limit_resume")
+        seen: set[str] = set()
+        for sid, pid in pending:
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            future = self._steer_nowait(
+                "limit_resume", sid,
+                lambda sid=sid, pid=pid: self._limit_resume_now(sid, pid))
+            if future is None:
+                if policy is not None:
+                    policy.note_unreachable(sid, time.time())
+                continue
+            if policy is not None:
+                future.add_done_callback(
+                    lambda fut, sid=sid:
+                        self._limit_resume_done(policy, sid, fut))
+
+    def _limit_resume_done(self, policy, sid: str, future) -> None:
+        """A lane entry for `continue` finished: a refusal, a failure or a
+        cancellation is an attempt that never reached the session."""
+        try:
+            landed = (not future.cancelled() and future.exception() is None
+                      and bool(future.result()[0]))
+        except Exception:
+            landed = False
+        if not landed:
+            policy.note_unreachable(sid, time.time())
+
+    async def _limit_resume_now(self, sid: str, pid) -> tuple:
+        """One session's `continue`, run in its steering lane at its turn.
+        `(sent, detail)`; a falsy answer is handed back to the policy by the
+        flush's done-callback.
+
+        Re-checked here because the lane is reached a tick later: the card
+        must still be the limit's (a person who typed first has already
+        carried the session on, and that counts as done), and no permission
+        dialog may own the input line — `sendText` ends in a newline the
+        dialog would read as confirm. Journalled before the keys, the
+        kill-line first so a half-written draft is discarded rather than
+        submitted."""
+        from . import limit_resume
+
+        if not limit_resume.is_limit_card(self._active_notifications.get(sid)):
+            return True, "the limit card is gone"
+        if sid in self._prompts_by_session():
+            logger.info("Limit resume of %s deferred: a permission prompt "
+                        "owns the input line", sid[:12])
+            return False, "a permission prompt owns the input line"
+        if not pid:
+            st = self._session_states.get(sid) or {}
+            pid = self._ensure_session_pid(sid, st) or self._roster_pid(sid)
+        result = None
+        intent = ""
+        if pid:
+            intent = await self._journal_intent(
+                await self._journal_begin("limit_resume", sid),
+                "limit_resume", sid, "type", {"session_id": sid})
+            result = await session_io.send_text(
+                pid, "", INPUT_LINE_CLEAR + limit_resume.RESUME_TEXT)
+        ok = bool(result and result.get("sent"))
+        await self._journal_result(intent, "sent" if ok else "not_landed")
+        if ok:
+            where = (result.get("terminalName") or result.get("matchedBy")
+                     or "terminal")
+            logger.info("Usage limit reset: carrying %s on via %s",
+                        sid[:12], where)
+            return True, ""
+        logger.info("Limit resume of %s did not land; will retry", sid[:12])
         return False, "did not land"
 
     def live_statusline_metrics(self) -> list[dict]:
@@ -12094,6 +12233,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
             await self._flush_auto_compacts()
         except Exception:
             logger.debug("auto-compact push failed", exc_info=True)
+        # The sessions whose usage limit has reset, carried on.
+        try:
+            await self._flush_limit_resumes()
+        except Exception:
+            logger.debug("limit resume push failed", exc_info=True)
         # And the names the snapshot asked for. Last on this path, and detached
         # once started: a session's name is the least urgent thing here, and the
         # only one that costs a subprocess.

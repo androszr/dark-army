@@ -393,6 +393,7 @@ class RecoveryMixin:
     # written just before the words are typed, so an open one is never
     # typed again. `recover_steering` then settles the queue's own row.
     _recover_steer = _recover_keystroke_or_signal
+    _recover_limit_resume = _recover_keystroke_or_signal
 
     async def _seed_autocompact(self) -> None:
         """A session asked to compact just before a restart is not asked

@@ -51,7 +51,8 @@ enum SettingsSearch {
         switch rowId {
         case SettingsMenuModel.killRowId:
             return "Kill switch"
-        case "toggle:set_channel", "toggle:set_auto_compact":
+        case "toggle:set_channel", "toggle:set_auto_compact",
+             "toggle:set_limit_resume":
             return "Sessions"
         case "toggle:set_board_dispatch", "toggle:set_board_close_terminal":
             return "Board"
