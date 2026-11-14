@@ -604,9 +604,10 @@ struct BoardView: View {
                     // A line shows the whole card in place first.
                     arm.disarm()
                     opened = card.id
-                case .sheet:
-                    swipeRefusal[card.id] = nil
-                    sheets.show(.card(card))
+                case .stay:
+                    // The opened card is read, not pressed: only VIEW
+                    // MORE goes on to its screen.
+                    break
                 }
             }) {
                 PhoneBoardCard(card: card,
@@ -628,8 +629,7 @@ struct BoardView: View {
                         .padding(.trailing, SignalTokens.Spacing.md)
                 }
             }
-            .accessibilityHint(isOpen ? "Opens the card's screen"
-                                      : "Shows the whole card in place")
+            .accessibilityHint(isOpen ? "" : "Shows the whole card in place")
             .accessibilityAction(named: "Open card screen") {
                 swipeRefusal[card.id] = nil
                 sheets.show(.card(card))
@@ -2048,8 +2048,8 @@ private struct OutboxRow: View {
 /// board to switch back to, so there is no preference and nothing stored.
 ///
 /// One card open at a time. A tap on a line opens it; a tap on the opened
-/// card goes on to its screen, the tap a card always had; its chevron
-/// closes it. Foundation only.
+/// card does nothing — VIEW MORE under it goes on to its screen; its
+/// chevron closes it. Foundation only.
 enum PhoneCardLine {
     enum Face: Equatable {
         /// The full card, outside the Board tab's rows.
@@ -2066,13 +2066,13 @@ enum PhoneCardLine {
     enum Press: Equatable {
         /// Show the whole card in place.
         case open
-        /// Go on to the card's screen.
-        case sheet
+        /// Nothing: the opened card is left as it is.
+        case stay
     }
 
     /// What a tap on `card` does, given the card open now.
     static func press(_ card: String, opened: String?) -> Press {
-        opened == card ? .sheet : .open
+        opened == card ? .stay : .open
     }
 
     /// What a person has to know before opening the card, most pressing

@@ -309,8 +309,8 @@ line grows — and the first of the card's marks with a count of the rest
 (DELETING, MANUAL CHECK, REVIEW, REFUSED, NOTICE, STARTING, REFINING,
 WORKING, QUEUED, WAITS). **There is no choice and nothing stored**: the
 phone has no standard board. A tap on a line draws that card in full in
-place, one at a time; a tap on the opened card goes on to its screen, and
-its chevron closes it. Select mode ticks lines; the swipe and the hold
+place, one at a time; a tap on the opened card does nothing (VIEW MORE
+under it is the one way on to its screen), and its chevron closes it. Select mode ticks lines; the swipe and the hold
 work on a line as they did on a tile. VoiceOver hears the whole card on a
 line and has `Open card screen` as an action. **A line carries its one
 verb as an icon** (14 Nov 2026) — the swipe's own rule,

@@ -188,12 +188,13 @@ final class BoardScrollTests: XCTestCase {
         return try! JSONDecoder().decode(BoardCard.self, from: data)
     }
 
-    /// A tap on a line opens it in place; a tap on the open card goes on to
-    /// its screen; a tap on another line moves the opening there.
-    func testATapOpensALineAndASecondTapReachesTheCardScreen() {
+    /// A tap on a line opens it in place; a tap on the open card leaves it
+    /// as it is (VIEW MORE is the way to its screen); a tap on another line
+    /// moves the opening there.
+    func testATapOpensALineAndATapOnTheOpenCardStays() {
         XCTAssertEqual(PhoneCardLine.press("a", opened: nil), .open)
         XCTAssertEqual(PhoneCardLine.press("a", opened: "b"), .open)
-        XCTAssertEqual(PhoneCardLine.press("a", opened: "a"), .sheet)
+        XCTAssertEqual(PhoneCardLine.press("a", opened: "a"), .stay)
         XCTAssertGreaterThanOrEqual(PhoneCardLine.minHeight, 44)
     }
 
