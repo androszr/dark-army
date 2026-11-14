@@ -227,6 +227,22 @@ final class BoardScrollTests: XCTestCase {
                        [.more])
     }
 
+    /// The opened card offers its assistant tiles while the assistant is
+    /// still the person's to choose: no session, not starting, not Done.
+    func testTheOpenedCardOffersTheAssistantUntilItRuns() {
+        var card = BoardCard()
+        card.column = "backlog"
+        XCTAssertTrue(PhoneCardLine.retools(card))
+        card.linkState = "dispatching"
+        XCTAssertFalse(PhoneCardLine.retools(card))
+        card.linkState = ""
+        card.sessionId = "s1"
+        XCTAssertFalse(PhoneCardLine.retools(card))
+        card.sessionId = ""
+        card.column = "done"
+        XCTAssertFalse(PhoneCardLine.retools(card))
+    }
+
     /// The marks, most pressing first, and none on a card with nothing to say.
     func testLineMarksAreOrderedByWhoseTurnItIs() {
         XCTAssertEqual(PhoneCardLine.marks(lineCard([:])), [])

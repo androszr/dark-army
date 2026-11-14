@@ -50,6 +50,9 @@ struct BoardView: View {
     /// The assistant just picked for every ticked card, held on the tile
     /// until the board names it on all of them (or a write is refused).
     @State private var pendingBatchTool: String? = nil
+    /// The assistant just picked under an opened card, by card id, held on
+    /// the tile until the board names it (or the write is refused).
+    @State private var pendingTool: [String: String] = [:]
     /// The Board's own project choice, `""` for `ALL` — Fleet's semantics
     /// (`@SceneStorage`, resolved through `FleetProjects.resolve`) under its
     /// own key, so narrowing one tab never narrows the other.
@@ -785,6 +788,19 @@ struct BoardView: View {
             selects: holdable)
         let out = client.queuedAction(for: card.id) != nil
         VStack(alignment: .leading, spacing: 6) {
+            // Which assistant runs it, the card screen's own tile row,
+            // while that is still the person's to choose.
+            if PhoneCardLine.retools(card), !board.tools.isEmpty {
+                let waiting = pendingTool[card.id].map { $0 != card.tool } ?? false
+                PhoneProviderSwitch(tools: board.tools,
+                                    installed: board.installed,
+                                    selected: waiting ? (pendingTool[card.id] ?? "") : card.tool,
+                                    sending: waiting,
+                                    pick: { setOpenedTool($0, for: card) })
+                    .onChange(of: card.tool) { _, now in
+                        if now == pendingTool[card.id] { pendingTool[card.id] = nil }
+                    }
+            }
             if actions.count > 1 {
                 HStack(spacing: 6) {
                     ForEach(actions.filter { $0 != .more }, id: \.self) { action in
@@ -829,6 +845,24 @@ struct BoardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.bottom, 6)
+    }
+
+    /// The card screen's `setTool`: one field, sent at once, the tile
+    /// moved on the tap and let go on a refusal.
+    private func setOpenedTool(_ tool: String, for card: BoardCard) {
+        if tool == card.tool { return }
+        arm.disarm()
+        swipeRefusal[card.id] = nil
+        pendingTool[card.id] = tool
+        Task { @MainActor in
+            let result = await client.enqueue(action: PhoneActions.boardUpdate,
+                                              fields: ["card_id": card.id, "tool": tool],
+                                              scope: card.id)
+            if !result.ok {
+                pendingTool[card.id] = nil
+                swipeRefusal[card.id] = result.detail
+            }
+        }
     }
 
     // MARK: - Swipe on Prep and Backlog cards
@@ -2067,6 +2101,14 @@ enum PhoneCardLine {
     static func armedLabel(_ label: String) -> String { label + "?" }
 
     static let moreLabel = "VIEW MORE"
+
+    /// Whether the opened card offers its assistant tiles: the card
+    /// screen's `canRetool` — no bound session, not being started, not
+    /// finished.
+    static func retools(_ card: BoardCard) -> Bool {
+        card.sessionId.isEmpty && card.linkState != "dispatching"
+            && card.column != "done"
+    }
     /// The opened card's way into select mode, the hold's own word.
     static let selectLabel = "Select"
     /// The drawn box of a line's verb, inside its 44pt touch target.

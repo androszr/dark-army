@@ -321,6 +321,10 @@ slots. **Under the opened card** sit every verb the Board can send
 (`PhoneCardLine.actions`: the verb, START beside Refine on a Prep card
 that may start as it stands, Delete, Select), each armed the same way,
 and **VIEW MORE**, which opens the card's screen, where the rest live.
+Above them, while the assistant is still the person's to choose
+(`PhoneCardLine.retools`, the card screen's `canRetool`), the card
+screen's own assistant tiles (`PhoneProviderSwitch`): a tap writes
+`tool` alone, at once.
 Pinned by `ios/BobPhoneTests/BoardSearchTests.swift`.
 
 ## Several Prep cards are refined from the phone at once
