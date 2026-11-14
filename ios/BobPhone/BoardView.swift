@@ -585,6 +585,11 @@ struct BoardView: View {
             let swipes = PhoneCardSwipe.rows.contains(card.column) && !leaving
             let primary = swipePrimary(for: card)
             let isOpen = opened == card.id
+            // The line's one verb, pressed without opening the card: what
+            // its button wears right now, and the room the line leaves it.
+            let verbWords = primary.flatMap { lineVerbWords($0, for: card) }
+            let verbSlot = PhoneCardLine.verbSlot(primary: primary != nil && !leaving,
+                                                  worded: verbWords != nil)
             let tile = DecryptButton(action: {
                 // A slid-aside card closes instead of opening.
                 if revealed == card.id {
@@ -605,11 +610,21 @@ struct BoardView: View {
                                notice: client.boardNotices[card.id] ?? "",
                                leaving: leaving,
                                live: liveStageNames(card),
-                               face: isOpen ? .opened : .line)
+                               face: isOpen ? .opened : .line,
+                               verbSlot: isOpen ? 0 : verbSlot)
                     .equatable()
             }
             .buttonStyle(.plain)
             .disabled(leaving)
+            // The line's verb: its own button over the room the line keeps
+            // clear, never a button inside the line's button.
+            .overlay(alignment: .trailing) {
+                if !isOpen, let primary, verbSlot > 0 {
+                    lineVerbButton(primary, for: card, words: verbWords)
+                        .frame(width: verbSlot)
+                        .padding(.trailing, SignalTokens.Spacing.md)
+                }
+            }
             .accessibilityHint(isOpen ? "Opens the card's screen"
                                       : "Shows the whole card in place")
             .accessibilityAction(named: "Open card screen") {
@@ -669,6 +684,9 @@ struct BoardView: View {
                                 }
                             }
                     })
+                    if isOpen {
+                        openedActions(for: card, primary: primary, holdable: holdable)
+                    }
                     swipeNote(for: card)
                 }
                 .onAppear { swipeNoteArrived(client.queueNote(for: card.id), for: card) }
@@ -680,10 +698,137 @@ struct BoardView: View {
                 .onChange(of: client.queueMark(for: card.id)) { _, mark in
                     if mark != nil { swipeRefusal[card.id] = nil }
                 }
+            } else if isOpen && !leaving {
+                VStack(alignment: .leading, spacing: 4) {
+                    tile
+                    openedActions(for: card, primary: nil, holdable: false)
+                }
             } else {
                 tile
             }
         }
+    }
+
+    // MARK: - Verbs on a line and under the opened card
+
+    /// The words the line's verb wears in place of its icon: the queue's
+    /// mark while the press is out, the question while it is armed.
+    private func lineVerbWords(_ primary: PhoneCardSwipe.Primary,
+                               for card: BoardCard) -> String? {
+        let label = swipeLabel(primary, for: card)
+        let plain = primary == .start ? PhoneCardSwipe.startLabel
+                                      : PhoneCardSwipe.refineLabel
+        if label != plain { return label }
+        let armed = primary == .start ? arm.start : arm.refine
+        return armed == card.id ? PhoneCardLine.armedLabel(plain) : nil
+    }
+
+    /// The line's verb, as an icon. **Armed, then sent**: a line is under
+    /// a scrolling thumb, and the swipe's reason for sending at once — the
+    /// slide was the first deliberate gesture — is not true of a touch.
+    private func lineVerbButton(_ primary: PhoneCardSwipe.Primary, for card: BoardCard,
+                                words: String?) -> some View {
+        DecryptButton(action: { pressArmed(primary, card) }) {
+            Group {
+                if let words {
+                    Text(words)
+                        .font(Theme.mono(11, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                } else {
+                    Image(systemName: PhoneCardLine.verbIcon(primary))
+                        .font(Theme.mono(13, weight: .semibold))
+                        .foregroundStyle(Theme.phosphor)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: PhoneCardLine.verbBoxHeight)
+            .overlay(Rectangle().strokeBorder(words == nil ? Theme.faint : Theme.accent,
+                                              lineWidth: 1))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(client.queuedAction(for: card.id) != nil)
+        .accessibilityLabel(words ?? swipeLabel(primary, for: card))
+    }
+
+    /// First press arms, the second sends, under the card screen's own
+    /// slots so one armed verb is live at a time.
+    private func pressArmed(_ primary: PhoneCardSwipe.Primary, _ card: BoardCard) {
+        let held = primary == .start ? arm.start : arm.refine
+        if held == card.id {
+            arm.disarm()
+            pressSwipe(primary, card)
+        } else {
+            arm.arm(primary == .start ? .start : .refine, id: card.id)
+        }
+    }
+
+    private func pressArmedDelete(_ card: BoardCard) {
+        if arm.deleteCard == card.id {
+            arm.disarm()
+            sendSwipeDelete(card)
+        } else {
+            arm.arm(.deleteCard, id: card.id)
+        }
+    }
+
+    /// Under the opened card: every verb the Board can send for it, then
+    /// the way on to the card's own screen, which holds the rest.
+    @ViewBuilder
+    private func openedActions(for card: BoardCard, primary: PhoneCardSwipe.Primary?,
+                               holdable: Bool) -> some View {
+        let actions = PhoneCardLine.actions(
+            primary: primary,
+            canStart: PhoneCardSwipe.canStart(card: card,
+                                              dispatchEnabled: board.dispatchEnabled),
+            deletes: PhoneCardSwipe.rows.contains(card.column),
+            selects: holdable)
+        let out = client.queuedAction(for: card.id) != nil
+        VStack(alignment: .leading, spacing: 6) {
+            if actions.count > 1 {
+                HStack(spacing: 6) {
+                    ForEach(actions.filter { $0 != .more }, id: \.self) { action in
+                        switch action {
+                        case .refine:
+                            DecryptButton(lineVerbWords(.refine, for: card)
+                                          ?? PhoneCardSwipe.refineLabel) {
+                                pressArmed(.refine, card)
+                            }
+                            .buttonStyle(AlarmOutline(size: 11))
+                            .disabled(out)
+                        case .start:
+                            DecryptButton(lineVerbWords(.start, for: card)
+                                          ?? PhoneCardSwipe.startLabel) {
+                                pressArmed(.start, card)
+                            }
+                            .buttonStyle(AlarmOutline(size: 11))
+                            .disabled(out)
+                        case .delete:
+                            DecryptButton(arm.deleteCard == card.id
+                                          ? PhoneCardLine.armedLabel(PhoneCardSwipe.deleteLabel)
+                                          : PhoneCardSwipe.deleteLabel) {
+                                pressArmedDelete(card)
+                            }
+                            .buttonStyle(AlarmOutline(color: SwipeInk.close, size: 11))
+                            .disabled(out)
+                            .accessibilityLabel(PhoneCardSwipe.deleteSpoken)
+                        case .select:
+                            DecryptButton(PhoneCardLine.selectLabel) { hold(card) }
+                                .buttonStyle(AlarmOutline(color: Theme.dim, size: 11))
+                        case .more:
+                            EmptyView()
+                        }
+                    }
+                }
+            }
+            DecryptButton(PhoneCardLine.moreLabel) {
+                swipeRefusal[card.id] = nil
+                sheets.show(.card(card))
+            }
+            .buttonStyle(AlarmOutline(color: Theme.phosphor, size: 11))
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.bottom, 6)
     }
 
     // MARK: - Swipe on Prep and Backlog cards
@@ -1459,6 +1604,9 @@ struct PhoneBoardCard: View {
     /// Tile, line or the one card opened among the lines (`PhoneCardLine`).
     /// The Board tab draws lines; `.tile` is the bare constructor's face.
     var face: PhoneCardLine.Face = .tile
+    /// The room a line keeps clear at its trailing edge for the board's
+    /// verb button; 0 draws the chevron there instead.
+    var verbSlot: CGFloat = 0
 
     /// The opened face's top-left corner, kept clear for the board's close
     /// button: the title starts after it.
@@ -1511,10 +1659,14 @@ struct PhoneBoardCard: View {
                     .layoutPriority(1)
             }
             if tick == nil {
-                Image(systemName: "chevron.right")
-                    .font(Theme.mono(10, weight: .semibold))
-                    .foregroundStyle(Theme.faint)
-                    .accessibilityHidden(true)
+                if verbSlot > 0 {
+                    Color.clear.frame(width: verbSlot, height: 1)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(Theme.mono(10, weight: .semibold))
+                        .foregroundStyle(Theme.faint)
+                        .accessibilityHidden(true)
+                }
             }
         }
         .padding(.horizontal, SignalTokens.Spacing.md)
@@ -1893,6 +2045,59 @@ enum PhoneCardLine {
     /// first; the line draws the first and counts the rest. The Mac's order
     /// (`BoardCardView.lineMarks`), with the phone's own two in front: a
     /// delete on its way out and the phone's notice about the card.
+    // MARK: Verbs
+
+    /// The width a line's verb takes: an icon, or — armed, or with its
+    /// press out — the word. None where the card has no verb to offer.
+    static let verbIconWidth: CGFloat = 44
+    static let verbWordWidth: CGFloat = 92
+    static func verbSlot(primary: Bool, worded: Bool) -> CGFloat {
+        guard primary else { return 0 }
+        return worded ? verbWordWidth : verbIconWidth
+    }
+
+    static func verbIcon(_ primary: PhoneCardSwipe.Primary) -> String {
+        switch primary {
+        case .start: return "play.fill"
+        case .refine: return "wand.and.stars"
+        }
+    }
+
+    /// The armed face of a verb: the same word as a question.
+    static func armedLabel(_ label: String) -> String { label + "?" }
+
+    static let moreLabel = "VIEW MORE"
+    /// The opened card's way into select mode, the hold's own word.
+    static let selectLabel = "Select"
+    /// The drawn box of a line's verb, inside its 44pt touch target.
+    static let verbBoxHeight: CGFloat = 32
+
+    /// What the opened card offers, in the order drawn: the line's verb,
+    /// START beside Refine where a Prep card may be started as it stands,
+    /// Delete and Select where the row has them, and always the way on to
+    /// the card's screen. In progress and Done answer from that screen.
+    enum Action: Equatable {
+        case refine, start, delete, select, more
+    }
+
+    static func actions(primary: PhoneCardSwipe.Primary?, canStart: Bool,
+                        deletes: Bool, selects: Bool) -> [Action] {
+        var out: [Action] = []
+        switch primary {
+        case .refine?:
+            out.append(.refine)
+            if canStart { out.append(.start) }
+        case .start?:
+            out.append(.start)
+        case nil:
+            break
+        }
+        if deletes { out.append(.delete) }
+        if selects { out.append(.select) }
+        out.append(.more)
+        return out
+    }
+
     static func marks(_ card: BoardCard, leaving: Bool = false,
                       noticed: Bool = false) -> [String] {
         var out: [String] = []

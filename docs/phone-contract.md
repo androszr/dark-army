@@ -312,8 +312,16 @@ phone has no standard board. A tap on a line draws that card in full in
 place, one at a time; a tap on the opened card goes on to its screen, and
 its chevron closes it. Select mode ticks lines; the swipe and the hold
 work on a line as they did on a tile. VoiceOver hears the whole card on a
-line and has `Open card screen` as an action. Pinned by
-`ios/BobPhoneTests/BoardSearchTests.swift`.
+line and has `Open card screen` as an action. **A line carries its one
+verb as an icon** (14 Nov 2026) — the swipe's own rule,
+`PhoneCardSwipe.primary`: Refine in Prep, START in Backlog, none in In
+progress and Done — and unlike the swipe it **arms, then sends**: the word
+with a question mark replaces the icon, under the card screen's `Arm`
+slots. **Under the opened card** sit every verb the Board can send
+(`PhoneCardLine.actions`: the verb, START beside Refine on a Prep card
+that may start as it stands, Delete, Select), each armed the same way,
+and **VIEW MORE**, which opens the card's screen, where the rest live.
+Pinned by `ios/BobPhoneTests/BoardSearchTests.swift`.
 
 ## Several Prep cards are refined from the phone at once
 

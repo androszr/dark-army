@@ -197,6 +197,36 @@ final class BoardScrollTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(PhoneCardLine.minHeight, 44)
     }
 
+    /// A line keeps room for its verb only where the card has one: an
+    /// icon, or the word once it is armed or its press is out.
+    func testALineKeepsRoomForItsVerb() {
+        XCTAssertEqual(PhoneCardLine.verbSlot(primary: false, worded: false), 0)
+        XCTAssertEqual(PhoneCardLine.verbSlot(primary: false, worded: true), 0)
+        XCTAssertEqual(PhoneCardLine.verbSlot(primary: true, worded: false),
+                       PhoneCardLine.verbIconWidth)
+        XCTAssertEqual(PhoneCardLine.verbSlot(primary: true, worded: true),
+                       PhoneCardLine.verbWordWidth)
+        XCTAssertEqual(PhoneCardLine.armedLabel("START"), "START?")
+        XCTAssertNotEqual(PhoneCardLine.verbIcon(.start), PhoneCardLine.verbIcon(.refine))
+    }
+
+    /// The opened card lists every verb the Board can send, then the way
+    /// on to the card's screen — which is all In progress and Done offer.
+    func testTheOpenedCardOffersEveryBoardVerbThenViewMore() {
+        XCTAssertEqual(PhoneCardLine.actions(primary: .refine, canStart: true,
+                                             deletes: true, selects: true),
+                       [.refine, .start, .delete, .select, .more])
+        XCTAssertEqual(PhoneCardLine.actions(primary: .refine, canStart: false,
+                                             deletes: true, selects: false),
+                       [.refine, .delete, .more])
+        XCTAssertEqual(PhoneCardLine.actions(primary: .start, canStart: true,
+                                             deletes: true, selects: false),
+                       [.start, .delete, .more])
+        XCTAssertEqual(PhoneCardLine.actions(primary: nil, canStart: false,
+                                             deletes: false, selects: false),
+                       [.more])
+    }
+
     /// The marks, most pressing first, and none on a card with nothing to say.
     func testLineMarksAreOrderedByWhoseTurnItIs() {
         XCTAssertEqual(PhoneCardLine.marks(lineCard([:])), [])
