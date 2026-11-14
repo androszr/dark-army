@@ -328,6 +328,10 @@ struct BoardView: View {
         searchFieldFocused = false
         state.query = CardToken.query(for: card)
         state.revealedCard = card.id
+        // In a compact row the revealed card stays open after the glow
+        // fades: a card that shut again 2.5s later moved everything under
+        // it, and its close chevron opened it instead.
+        state.openedLine = card.id
         // A fresh layout for the narrowed board (`revealEpoch`).
         revealEpoch &+= 1
         let id = card.id
@@ -923,39 +927,60 @@ struct BoardView: View {
     /// `.column`.
     private func rowTiles(_ column: BoardColumn) -> some View {
         let all = visible.cards(column)
+        // A compact row draws every card: a line is cheap to lay out, and
+        // a row held back at `rowTileCap` could not be read for what is
+        // worth starting, which is what the lines are for.
+        let compact = state.rowCompact(column)
         let (cards, held) = BoardVisible.shown(
-            all, column: column, expanded: state.expandedRows.contains(column),
+            all, column: column,
+            expanded: compact || state.expandedRows.contains(column),
             searching: !state.query.isEmpty)
         // With cards held back, the row's trailing gap drops before the first
         // of them — where the drop visibly lands — never after the last card
         // of the whole column, which is off the screen.
         let tailBefore = held > 0 ? all[cards.count].id : ""
         let targeted = state.dropTarget?.row == column
+        // The facts ride in the data, never only in the closure: the grid
+        // skips content whose data is unchanged (`BoardTileItem`), and so
+        // does `RowCardStack`, which is handed the same items for that
+        // reason.
+        let items = cards.map { card in
+            BoardTileItem(card: card,
+                          facts: BoardTileFacts(card: card, state: state,
+                                                chrome: feed.chrome),
+                          chrome: feed.chrome,
+                          face: BoardRowDensity.face(
+                              compact: compact, card: card.id,
+                              opened: state.openedLine,
+                              revealed: state.revealedCard))
+        }
         return VStack(alignment: .leading, spacing: 0) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: PanelMetrics.boardTileMin,
-                                                   maximum: PanelMetrics.boardColumn),
-                                         spacing: 12, alignment: .top)],
-                      alignment: .leading, spacing: 8) {
-                // The facts ride in the data, never only in the closure:
-                // the grid skips content whose data is unchanged
-                // (`BoardTileItem`).
-                ForEach(cards.map { card in
-                    BoardTileItem(card: card,
-                                  facts: BoardTileFacts(card: card, state: state,
-                                                        chrome: feed.chrome),
-                                  chrome: feed.chrome)
-                }) { item in
+            RowCardStack(compact: compact, items: items) {
+                ForEach(items) { item in
                     let card = item.card
                     HStack(alignment: .top, spacing: 0) {
-                        gapView(column, beforeId: card.id, axis: .vertical)
+                        // A compact row has no gap beside a card: a release
+                        // on a line lands before it (`.card`), which is the
+                        // placement the gap gives, and 48 gaps would put
+                        // the air back that the lines took out.
+                        if !compact {
+                            gapView(column, beforeId: card.id, axis: .vertical)
+                        }
                         BoardCardView(client: client, state: state,
                                       facts: item.facts,
                                       card: card,
                                       chrome: item.chrome,
                                       agent: agent(for: card),
                                       authorAgent: authorAgent(for: card),
-                                      refinerAgent: refinerAgent(for: card))
+                                      refinerAgent: refinerAgent(for: card),
+                                      face: item.face)
                             .equatable()
+                            // A line takes the row's width, and so does
+                            // the card opened among them: a tile capped at
+                            // a column's width left most of the row empty
+                            // beside it.
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, item.face == .opened ? 6 : 0)
                             // The payload is the card id, not the card: a
                             // drop is resolved against the *current*
                             // snapshot on the way in, so a card that moved
@@ -1517,6 +1542,37 @@ extension BoardView: Equatable {
 
 /// What the board's row stack is keyed on: the drawn folds, and the reveal
 /// count, so either one changing lays the rows out from scratch.
+/// What holds one row's cards: the adaptive tile grid, or — for a compact
+/// row — a stack of lines.
+///
+/// **Lazy either way.** A compact row is not held back at the tile cap,
+/// and Done is the whole finished column: a plain stack built every line
+/// of it at once, each with its drag, drop, hover and focus, the moment
+/// the row unfolded. Every line is `BoardCardView.lineHeight` tall, so
+/// what a lazy stack guesses for the lines it has not drawn is exact but
+/// for the one opened card.
+///
+/// **It holds the items it draws**, though only `content` reads them: a
+/// view whose one moving input is a closure is a view SwiftUI may judge
+/// unchanged, and then an opened line never draws its tile
+/// (`BoardRowDensityTests`, 13 Nov 2026).
+private struct RowCardStack<Content: View>: View {
+    let compact: Bool
+    let items: [BoardTileItem]
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if compact {
+            LazyVStack(alignment: .leading, spacing: 0) { content() }
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: PanelMetrics.boardTileMin,
+                                                   maximum: PanelMetrics.boardColumn),
+                                         spacing: 12, alignment: .top)],
+                      alignment: .leading, spacing: 8) { content() }
+        }
+    }
+}
+
 private struct RowStackIdentity: Hashable {
     let folds: [Bool]
     let revealEpoch: Int

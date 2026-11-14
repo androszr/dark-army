@@ -193,6 +193,11 @@ DEFAULTS = {
     # 0.1.24 only takes back the green look 0.1.23 wrote). The key is never
     # renamed: a rename reads as absent and resets the switch.
     "cyber_cursor": True,
+    # Whether the panel's board draws one line per card (Settings ▸ Board ▸
+    # Compact cards) or every card in full. **On** by default. A panel-only
+    # look: the board reads it off the context push and the daemon never
+    # reads it. The key is never renamed.
+    "board_compact": True,
     # Whether a card arriving in Done disposes the session's terminal tab.
     # Only the toggle ever writes this key, so every stored value is a
     # deliberate press and sticks.

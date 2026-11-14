@@ -121,6 +121,13 @@ final class BoardState: ObservableObject {
     /// `BoardRowFold`'s `flipped`, never the folded set itself. Seeded from
     /// the habit file beside `projectFilter`, saved on every toggle.
     @Published var rowFlips: Set<String>
+    /// Settings ▸ Board ▸ Compact cards (`BoardRowDensity`), as the panel
+    /// last heard it on the context push; `PanelView` keeps it current. On
+    /// until told otherwise, which is the preference's own default.
+    @Published var compactCards = true
+    /// The one card opened in place in a compact row, or nil. View state
+    /// for this window only: a fresh panel starts every line closed.
+    @Published var openedLine: String?
 
     init() {
         // Seed from the panel's own habit file. Deliberately *not* pruned
@@ -198,6 +205,19 @@ final class BoardState: ObservableObject {
         rowFlips = BoardRowFold.toggled(column.rawValue, flipped: rowFlips)
         PanelPlacement.saveBoardRowFlips(BoardRowFold.encode(rowFlips))
     }
+
+    /// Whether this row draws its cards as lines (`BoardRowDensity`).
+    func rowCompact(_ column: BoardColumn) -> Bool {
+        BoardRowDensity.compact(column.rawValue, enabled: compactCards)
+    }
+
+    /// A press on a card's line, or on its opened tile's chevron: open it
+    /// in place, or close it when it is the open one.
+    func toggleLine(_ id: String) {
+        disarm()
+        openedLine = BoardRowDensity.toggledOpen(id, opened: openedLine)
+    }
+
     /// Filter over title, summary and prompt. Empty is no filter. Changing
     /// it keeps a row's select mode and disarms, `projectFilter`'s rule.
     @Published var query = "" {

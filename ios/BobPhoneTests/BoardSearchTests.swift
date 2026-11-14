@@ -173,6 +173,48 @@ final class BoardScrollTests: XCTestCase {
         XCTAssertNotEqual(tile, PhoneBoardCard(card: base, leaving: true))
         XCTAssertNotEqual(tile, PhoneBoardCard(card: base, live: ["verifier"]))
         XCTAssertNotEqual(tile, PhoneBoardCard(card: base, tick: .open))
+        XCTAssertNotEqual(tile, PhoneBoardCard(card: base, face: .line))
+        XCTAssertNotEqual(PhoneBoardCard(card: base, face: .line),
+                          PhoneBoardCard(card: base, face: .opened))
         XCTAssertEqual(tile, PhoneBoardCard(card: base))
+    }
+
+    // MARK: one line per card (`PhoneCardLine`)
+
+    private func lineCard(_ fields: [String: Any]) -> BoardCard {
+        var json: [String: Any] = ["id": "c1", "column_name": "backlog"]
+        for (key, value) in fields { json[key] = value }
+        let data = try! JSONSerialization.data(withJSONObject: json)
+        return try! JSONDecoder().decode(BoardCard.self, from: data)
+    }
+
+    /// A tap on a line opens it in place; a tap on the open card goes on to
+    /// its screen; a tap on another line moves the opening there.
+    func testATapOpensALineAndASecondTapReachesTheCardScreen() {
+        XCTAssertEqual(PhoneCardLine.press("a", opened: nil), .open)
+        XCTAssertEqual(PhoneCardLine.press("a", opened: "b"), .open)
+        XCTAssertEqual(PhoneCardLine.press("a", opened: "a"), .sheet)
+        XCTAssertGreaterThanOrEqual(PhoneCardLine.minHeight, 44)
+    }
+
+    /// The marks, most pressing first, and none on a card with nothing to say.
+    func testLineMarksAreOrderedByWhoseTurnItIs() {
+        XCTAssertEqual(PhoneCardLine.marks(lineCard([:])), [])
+        let busy = lineCard(["manual_check_due": true, "dispatch_error": "no",
+                             "link_state": "dispatching", "refine_state": "live",
+                             "queue_state": "queued", "dependency_line": "Waits on x"])
+        XCTAssertEqual(PhoneCardLine.marks(busy, leaving: true, noticed: true),
+                       ["DELETING", "MANUAL CHECK", "REFUSED", "STARTING",
+                        "REFINING", "QUEUED", "WAITS"])
+        XCTAssertEqual(PhoneCardLine.marks(busy, noticed: true),
+                       ["MANUAL CHECK", "REFUSED", "NOTICE", "STARTING",
+                        "REFINING", "QUEUED", "WAITS"])
+        XCTAssertEqual(PhoneCardLine.marks(lineCard(["link_state": "live",
+                                                     "column_name": "in_progress"])),
+                       ["WORKING"])
+        // A Done card asserts nothing outstanding but a review.
+        let done = lineCard(["column_name": "done", "link_state": "live",
+                             "closed_by": "s1"])
+        XCTAssertEqual(PhoneCardLine.marks(done), ["REVIEW"])
     }
 }

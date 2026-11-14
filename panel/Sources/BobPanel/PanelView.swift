@@ -1123,6 +1123,11 @@ struct PanelView: View {
                 // Compared by identity, so a client frame that rebuilds this
                 // view does not re-run the board (`BoardView`'s `==`).
                 .equatable()
+                // Settings ▸ Board ▸ Compact cards, carried to the state the
+                // board observes: the board does not observe the client.
+                .onChange(of: client.context.settings.boardCompact, initial: true) { _, on in
+                    if board.compactCards != on { board.compactCards = on }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // On Comm the board keeps its structural place and
                 // merely narrows: padding, never an `HStack` move,

@@ -85,6 +85,10 @@ extension DaemonClient {
         /// default and when the key is absent (an older menu bar never sends
         /// it); the key is never renamed.
         var cyberCursor = true
+        /// Whether the board draws one line per card (`BoardRowDensity`).
+        /// On by default and when the key is absent (an older menu bar
+        /// never sends it); the key is never renamed.
+        var boardCompact = true
         /// Whether a card arriving in Done disposes the assistant's terminal
         /// tab. False by default — a pre-upgrade daemon omits the key
         /// entirely, and the toggle must render off rather than blank the
@@ -158,6 +162,7 @@ extension DaemonClient {
             if let v = raw["battery_buzz_percent"] as? Int { batteryBuzzPercent = v }
             if let v = raw["panel_scale"] as? Int { panelScale = v }
             if let v = raw["cyber_cursor"] as? Bool { cyberCursor = v }
+            if let v = raw["board_compact"] as? Bool { boardCompact = v }
             if let v = raw["board_close_terminal"] as? Bool { boardCloseTerminal = v }
             if let v = raw["board_own_terminal"] as? Bool { boardOwnTerminal = v }
             if let shortcut = raw["dictation_shortcut"] as? [String: Any] {

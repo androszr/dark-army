@@ -392,6 +392,20 @@ folded; flips from that default persist in `panel-position.json` as
 phone's `BoardView.swift` (`test_board_rows.py`); a search overrides a
 fold, and a folded heading takes a drop. Prep has **Refine** (dispatches a planning session); the plan that session attaches moves the card to Backlog, and every newly written card lands there. **A card outlines one verb, chosen by its column** (`CardActionWeight`): Refine in Prep, START in Backlog, Done in In progress, none in Done; every other verb is dim words, HERE included, and an absent primary promotes nothing — with one kind-aware exception: a scout in Prep outlines START, because it has no plan to refine.
 
+**The board draws one line per card** (13 Nov 2026, `BoardRowDensity`; the
+phone's is `PhoneCardLine`, with no choice), in all four rows: importance, title, the summary's start, marks
+(MANUAL CHECK, REVIEW, NEEDS YOU, ENDED, REFUSED, STARTING, REFINING,
+WORKING, QUEUED, WAITS), area, project, assistant, the jump chip to its
+session where one is jumpable, and the column's one
+outlined verb (`CardActionWeight`, behind the tile's own gates and arms).
+A click opens that card in place as the tile (`Face.opened`) across the
+row's width, **one at a time**; a revealed card draws opened; a double
+click still reaches the card window. A compact row has no `rowTileCap` and
+no gap views — a release on a line lands before it. **One choice for the
+whole board**, Settings ▸ Board ▸ Compact cards: `board_compact` (on, never
+renamed, panel-only, off `PHONE_PREFERENCES`), carried to
+`BoardState.compactCards` by `PanelView`.
+
 **The phone's Prep row has a select mode too** (25 Sep 2026): SELECT, a
 tick on every card whose own screen offers Refine (`PhoneRowSelection`),
 one armed-then-confirmed press sending

@@ -125,6 +125,7 @@ final class SettingsMenuModelTests: XCTestCase {
             "Pipeline",
             "Agent models",
             "Close the terminal when a card is done",
+            "Compact cards",
             "Panel size",
             "Hosted terminal",
             "Dictation",

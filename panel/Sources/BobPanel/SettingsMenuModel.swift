@@ -125,6 +125,7 @@ enum SettingsMenuModel {
         "set_board_autostart",
         "set_board_own_terminal",
         "set_board_close_terminal",
+        "set_board_compact",
         "set_cyber_cursor",
         "set_lan_access",
         "set_remote_access",
@@ -262,6 +263,17 @@ enum SettingsMenuModel {
                 + "outright — there is no undo. Where Dark Army cannot close it "
                 + "(an editor window on an older extension, or an assistant "
                 + "it has no handle on), the tab is left alone."))
+
+        // Compact or standard cards, one choice for the whole board
+        // (13 Nov 2026, `BoardRowDensity`). The key is never renamed; the
+        // action rides the stdin/stdout channel, no daemon table.
+        out.append(toggle(
+            "Compact cards",
+            action: "set_board_compact", isOn: s.boardCompact,
+            tooltip: "On, every card on the board is one line: its importance, "
+                + "title, the start of its summary and its one button. Click a "
+                + "line to open the whole card in place. Off is the standard "
+                + "board, every card drawn in full."))
 
         // The one size dial, back on 25 Sep 2026: the four steps exist and
         // were reachable only by hand-editing `panel_scale`. The key is never

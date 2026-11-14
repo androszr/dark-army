@@ -54,7 +54,8 @@ enum SettingsSearch {
         case "toggle:set_channel", "toggle:set_auto_compact",
              "toggle:set_limit_resume":
             return "Sessions"
-        case "toggle:set_board_dispatch", "toggle:set_board_close_terminal":
+        case "toggle:set_board_dispatch", "toggle:set_board_close_terminal",
+             "toggle:set_board_compact":
             return "Board"
         case "send:restart", "send:quit_app":
             return "This app"

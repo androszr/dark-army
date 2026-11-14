@@ -803,6 +803,9 @@ class BobCompanionApp(rumps.App, DaemonObserver):
             # The cyber cursor in the hosted terminal. On by default; the
             # daemon never reads it.
             "cyber_cursor": bool(prefs.get("cyber_cursor", True)),
+            # One line per card on the panel's board. On by default; the
+            # daemon never reads it.
+            "board_compact": bool(prefs.get("board_compact", True)),
             # Whether the phone listener is up. Off by default — see
             # preferences.DEFAULTS: this is the first time Dark Army's data leaves
             # loopback.
@@ -2446,6 +2449,16 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         self._settings["cyber_cursor"] = bool(enabled)
         save_preferences(updates={"cyber_cursor": bool(enabled)})
 
+    def _set_board_compact(self, enabled: bool) -> None:
+        """One line per card on the panel's board, or every card in full.
+
+        `_set_cyber_cursor`'s shape: a panel-only look with no daemon
+        attribute and no snapshot to republish; the dispatcher's context
+        push redraws the board and the settings window.
+        """
+        self._settings["board_compact"] = bool(enabled)
+        save_preferences(updates={"board_compact": bool(enabled)})
+
     def _set_board_parallel_root(self, value) -> None:
         """One project's own dial, set from the pipeline heading.
 
@@ -3247,6 +3260,7 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         "set_agent_effort":           lambda app, v: app._set_agent_effort(v),
         "set_panel_scale":            lambda app, v: app._set_panel_scale(int(v)),
         "set_cyber_cursor":           lambda app, v: app._set_cyber_cursor(bool(v)),
+        "set_board_compact":          lambda app, v: app._set_board_compact(bool(v)),
         "set_board_close_terminal":   lambda app, v: app._set_board_close_terminal(bool(v)),
         "set_lan_access":             lambda app, v: app._set_lan_access(bool(v)),
         "set_remote_access":          lambda app, v: app._set_remote_access(bool(v)),

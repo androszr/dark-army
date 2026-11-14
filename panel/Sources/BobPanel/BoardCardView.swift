@@ -41,6 +41,9 @@ struct BoardCardView: View {
     /// still lists it. `nil` while a refinement is merely dispatching — no
     /// session exists yet, so there is nothing a chip could aim at.
     let refinerAgent: FleetRow?
+    /// Tile, one line, or the tile a line opened into
+    /// (`BoardRowDensity.Face`). Tile unless the row is compact.
+    var face: BoardRowDensity.Face = .tile
 
     private var isArmed: Bool { facts.armed }
     private var isArmedHere: Bool { facts.armedHere }
@@ -60,6 +63,7 @@ struct BoardCardView: View {
         facts.refiningPressed || card.isRefining
     }
     @State private var jumpHover = false
+    @State private var lineHover = false
     /// Which jump chip holds the keyboard focus, keyed by its row and its
     /// words: a focused chip brightens as a hovered one does.
     @FocusState private var jumpFocus: String?
@@ -223,7 +227,314 @@ struct BoardCardView: View {
         Self.bodyEvaluations += 1
         if isArmed { Self.armedDrawn.insert(card.id) } else { Self.armedDrawn.remove(card.id) }
         #endif
-        return VStack(alignment: .leading, spacing: 6) {
+        return Group {
+            if face == .line { lineFace } else { tileFace }
+        }
+    }
+
+    // MARK: - The line
+
+    /// The card as one line, in a compact row (`BoardRowDensity`): what a
+    /// person reads to decide whether to open it — the importance number,
+    /// the title, as much of the summary as the width allows, whatever
+    /// stands between the card and its next step, where it belongs — and
+    /// the column's one outlined verb (`CardActionWeight`: Refine, START,
+    /// Done, none in Done), so that step does not need the card opened.
+    /// Everything else the tile says is one click away, on the tile.
+    ///
+    /// **One tap gesture, never a double tap beside it**: a tap that shares
+    /// a view with a double tap waits out the double-click interval, and a
+    /// list read by opening one line after another cannot afford that
+    /// pause. The press reads the click count instead (`pressLine`). And a
+    /// gesture rather than a `Button`, which would swallow the press the
+    /// row's `.draggable` needs.
+    private var lineFace: some View {
+        HStack(spacing: 8) {
+            Group {
+                HStack(spacing: 8) {
+                    lineLead
+                    Text(card.priority)
+                        .font(Theme.mono(11, weight: .semibold))
+                        .foregroundStyle(Theme.phosphor)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .frame(width: 24, alignment: .trailing)
+                    (Text(card.title)
+                        .font(Theme.prose(13, weight: .semibold))
+                        .foregroundColor(Theme.text)
+                     + Text(card.summary.isEmpty ? "" : "   " + card.summary)
+                        .font(Theme.prose(12))
+                        .foregroundColor(Theme.muted))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach(lineMarks, id: \.text) { mark in
+                        Text(mark.text)
+                            .font(Theme.mono(9, weight: .medium))
+                            .foregroundStyle(mark.color)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .overlay(Rectangle().strokeBorder(mark.color, lineWidth: 1))
+                            .fixedSize()
+                    }
+                    Text(card.area.isEmpty ? "" : Areas.name(card.area))
+                        .font(Theme.mono(9, weight: .medium))
+                        .foregroundStyle(Theme.phosphor)
+                        .lineLimit(1)
+                        .frame(width: 66, alignment: .leading)
+                    if facts.showsProjectChip {
+                        Text(card.project)
+                            .font(Theme.mono(10))
+                            .foregroundStyle(Theme.faint)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(width: 104, alignment: .leading)
+                    }
+                    Text(card.tool.isEmpty ? "assign\u{2026}" : card.tool)
+                        .font(Theme.mono(9, weight: .medium))
+                        .foregroundStyle(Theme.faint)
+                        .lineLimit(1)
+                        .frame(width: 52, alignment: .leading)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(lineSpoken)
+            .accessibilityHint(facts.selectingRow != nil
+                               ? "Ticks this card" : "Opens this card in place")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { pressLine() }
+            .accessibilityAction(named: "Open card") { openDetail() }
+            // One slot whether or not there is a session to jump to, so
+            // the columns before it line up down the row.
+            Group {
+                if let row = lineJumpTarget {
+                    jumpChip(to: row, help: isRefining
+                             ? "Jump to the session refining this card"
+                             : "Jump to the session working on this card")
+                }
+            }
+            .frame(width: 16)
+            if facts.selectingRow == nil { lineVerb }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: BoardCardView.lineHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(facts.dropTargeted ? Theme.phosphor.opacity(0.10)
+                    : (lineHover ? Theme.card : Color.clear))
+        .overlay(alignment: .top) {
+            // A release on a line lands before it; the bar says where.
+            if facts.dropTargeted {
+                Rectangle().fill(Theme.phosphor).frame(height: 2)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.hair.opacity(0.55)).frame(height: 1)
+        }
+        .onHover { lineHover = $0 }
+        .contentShape(Rectangle())
+        .onTapGesture { pressLine() }
+        .clickable()
+        // The keyboard's way in, the tile's own: Tabbed onto, the line
+        // opens on Return or Space.
+        .focusable(!keyboardSuppressed, interactions: .activate)
+        .reportsKeyboardFocus(keys: [.return, .space], onPress: { pressLine() })
+    }
+
+    /// The column's one verb on a line, the one `CardActionWeight` names
+    /// and the tile outlines, behind the tile's own gates: absent, never
+    /// inert. Done arms where it would clear a session (`doneButton`);
+    /// Refine never arms (`refineButton`).
+    @ViewBuilder
+    private var lineVerb: some View {
+        switch CardActionWeight.primary(column: card.column, kind: card.kind) {
+        case .start:
+            if canStart { lineStartButton }
+        case .refine:
+            if canRefine {
+                lineBox("Refine", armed: false, enabled: !isRefining) {
+                    state.disarm()
+                    refine()
+                }
+            }
+        case .done:
+            lineBox(isDoneArmed ? "Done & clear?" : "Done", armed: isDoneArmed) {
+                if doneClears && !isDoneArmed {
+                    state.armDone(card.id)
+                } else {
+                    state.disarm()
+                    move(to: .done)
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    /// START on a line: the tile's verb and its arm-then-confirm
+    /// (`startButton`), in a box that fits the line. The tile's filled
+    /// outline is taller than a line, and forty of them stacked read as
+    /// one green column rather than forty verbs; here it is the outline
+    /// alone, which is still the only outlined thing on the line.
+    private var lineStartButton: some View {
+        lineBox(isArmed ? (startsUnplanned ? "Start unplanned?" : "Really start?")
+                        : "START",
+                armed: isArmed, enabled: !isStarting) {
+            if isArmed {
+                state.disarm()
+                start(skipPlanGate: startsUnplanned)
+            } else {
+                state.arm(card.id)
+            }
+        }
+    }
+
+    /// A line's verb: the outline alone, orange while armed.
+    private func lineBox(_ title: String, armed: Bool, enabled: Bool = true,
+                         _ action: @escaping () -> Void) -> some View {
+        let ink = armed ? Color.orange : Theme.phosphor
+        return Button(action: action) {
+            Text(title)
+                .font(Theme.mono(10, weight: .bold))
+                .tracking(0.6)
+                .foregroundStyle(ink)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .overlay(Rectangle().strokeBorder(ink, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.5)
+        .disabled(!enabled)
+        .clickable(enabled)
+        .reportsKeyboardFocus()
+    }
+
+    /// The session a line's jump chip reaches: the tile's own choice
+    /// (`liveState`) — the refiner while the card is refining, otherwise
+    /// the session bound to it, and none on a Done card.
+    private var lineJumpTarget: Agent? {
+        let row = BoardCardView.lineJumpsToRefiner(refining: isRefining)
+            ? refinerAgent?.agent
+            : (card.column == BoardColumn.done.rawValue ? nil : agent?.agent)
+        guard let row, row.isJumpable else { return nil }
+        return row
+    }
+
+    /// Pure, so a test holds the rule: a refining card's jump is to its
+    /// refiner, never to a session an earlier run left bound.
+    static func lineJumpsToRefiner(refining: Bool) -> Bool { refining }
+
+    /// A line's height: one row of 13pt type with room to press.
+    static let lineHeight: CGFloat = 28
+
+    /// The line's first slot: the chevron that says it opens, or, while
+    /// this row is selecting, the card's tick. One width for both, so
+    /// entering select mode moves no title.
+    @ViewBuilder
+    private var lineLead: some View {
+        if facts.selectingRow != nil {
+            Image(systemName: facts.ticked ? "checkmark.square" : "square")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(facts.ticked ? Theme.phosphor : Theme.faint)
+                .opacity(facts.tickAdmitted ? 1 : 0.4)
+                .frame(width: 12)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .frame(width: 12)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// What a person has to know about this card before opening it, as
+    /// short marks: the tile says each in a sentence, the line only that
+    /// there is one to read. The session's state is read only while the
+    /// card is live — a Done card asserts nothing outstanding (`isLive`).
+    private var lineMarks: [(text: String, color: Color)] {
+        let bucket = isLive ? (agent?.bucket ?? "") : ""
+        return BoardCardView.lineMarks(
+            manualCheck: card.manualCheckDue, starting: isStarting,
+            queued: card.isQueued, waits: !card.dependencyLine.isEmpty,
+            refused: !facts.refusal.isEmpty || !card.dispatchError.isEmpty,
+            review: card.column == BoardColumn.done.rawValue && card.awaitsReview,
+            needsYou: bucket == "waiting",
+            ended: card.sessionEnded && card.column != BoardColumn.done.rawValue,
+            refining: isRefining,
+            working: bucket == "running"
+        ).map { word in
+            switch word {
+            case "MANUAL CHECK": return (word, Theme.amber)
+            case "REFUSED", "ENDED": return (word, Color.orange)
+            case "NEEDS YOU": return (word, Color.red)
+            case "REVIEW", "WORKING": return (word, Theme.phosphor)
+            default: return (word, Theme.dim)
+            }
+        }
+    }
+
+    /// The marks, in the order they are drawn: whose turn it is first,
+    /// then what went wrong, then what is happening, then what it waits
+    /// for. Pure, so a test holds it.
+    static func lineMarks(manualCheck: Bool, starting: Bool, queued: Bool,
+                          waits: Bool, refused: Bool, review: Bool = false,
+                          needsYou: Bool = false, ended: Bool = false,
+                          refining: Bool = false, working: Bool = false) -> [String] {
+        var out: [String] = []
+        if manualCheck { out.append("MANUAL CHECK") }
+        if review { out.append("REVIEW") }
+        if needsYou { out.append("NEEDS YOU") }
+        if ended { out.append("ENDED") }
+        if refused { out.append("REFUSED") }
+        if starting { out.append("STARTING") }
+        if refining { out.append("REFINING") }
+        if working { out.append("WORKING") }
+        if queued { out.append("QUEUED") }
+        if waits { out.append("WAITS") }
+        return out
+    }
+
+    /// The line for VoiceOver: the title, then what the eye reads beside it.
+    private var lineSpoken: String {
+        var parts = [card.title]
+        if !card.priority.isEmpty { parts.append("priority \(card.priority)") }
+        parts += lineMarks.map { $0.text.lowercased() }
+        if facts.selectingRow != nil {
+            parts.append(facts.ticked ? "selected" : "not selected")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// A press on the line. In select mode the line is the tick, the rule
+    /// the tile's title follows; otherwise it opens the card in place, and
+    /// the second click of a double click opens the card window.
+    private func pressLine() {
+        // Anything that is not the armed button is moving on.
+        state.disarm()
+        if facts.selectingRow != nil {
+            if facts.tickAdmitted { state.toggleRowSelection(card, chrome: chrome) }
+            return
+        }
+        switch BoardRowDensity.press(clickCount: BoardCardView.currentClickCount()) {
+        case .toggle: state.toggleLine(card.id)
+        case .window: openDetail()
+        }
+    }
+
+    /// The click count of the event being handled, 1 for a key press:
+    /// `clickCount` raises on an event that is not a mouse event.
+    static func currentClickCount() -> Int {
+        guard let event = NSApp.currentEvent,
+              event.type == .leftMouseUp || event.type == .leftMouseDown
+        else { return 1 }
+        return event.clickCount
+    }
+
+    // MARK: - The tile
+
+    private var tileFace: some View {
+        VStack(alignment: .leading, spacing: 6) {
             statusBanner
             if card.manualCheckDue {
                 // Above the title, because it is the first thing about this
@@ -246,6 +557,22 @@ struct BoardCardView: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 let titleTicks = facts.tickAdmitted
+                if face == .opened {
+                    // The way back to the line, where the line's own
+                    // chevron was. Never `pressLine`: in select mode that
+                    // ticks, and the opened card could not be closed.
+                    Button { state.toggleLine(card.id) } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Theme.phosphor)
+                            .frame(width: 16, height: 16)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .clickable()
+                    .reportsKeyboardFocus()
+                    .accessibilityLabel("Close back to one line")
+                }
                 Text(card.title)
                     .font(Theme.prose(14, weight: .semibold))
                     .foregroundStyle(Theme.text)
@@ -564,7 +891,13 @@ struct BoardCardView: View {
         // button is moving on, and moving on disarms. The gates are one object,
         // so this is the only place that has to say so.
         .onTapGesture(count: 2) { openDetail() }
-        .onTapGesture { state.disarm() }
+        .onTapGesture {
+            state.disarm()
+            // The second click of a double click that began on the line
+            // lands here, on the tile the first click opened, and the
+            // double tap above never saw the first.
+            if face == .opened, BoardCardView.currentClickCount() >= 2 { openDetail() }
+        }
         // The hand states the two gestures the card itself answers: pick it up
         // and drag it into a column, or double click it open. It goes dark with
         // `allowsHitTesting(!isDeleting)` above, so a card mid-deletion does not
@@ -1499,6 +1832,7 @@ private struct DimVerbFocus<Content: View>: View {
 extension BoardCardView: Equatable {
     static func == (a: BoardCardView, b: BoardCardView) -> Bool {
         a.card == b.card && a.chrome == b.chrome && a.facts == b.facts
+            && a.face == b.face
             && a.agent == b.agent && a.authorAgent == b.authorAgent
             && a.refinerAgent == b.refinerAgent
     }

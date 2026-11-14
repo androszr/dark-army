@@ -59,6 +59,9 @@ struct BoardView: View {
     /// open at a time (`docs/phone-contract.md`, *A Prep or Backlog card is
     /// swiped on the Board tab*).
     @State private var revealed: String?
+    /// The one card drawn in full among the lines (`PhoneCardLine`), or nil.
+    /// View state for this visit: a fresh Board tab starts every line closed.
+    @State private var opened: String?
     /// The receipt whose note a swiped card last drew, so a redraw reads a
     /// note once (`batchNoteSeen`'s pattern).
     @State private var swipeNoteSeen = ""
@@ -581,11 +584,19 @@ struct BoardView: View {
             let leaving = client.cardLeaving(card.id)
             let swipes = PhoneCardSwipe.rows.contains(card.column) && !leaving
             let primary = swipePrimary(for: card)
+            let isOpen = opened == card.id
             let tile = DecryptButton(action: {
                 // A slid-aside card closes instead of opening.
                 if revealed == card.id {
                     revealed = nil
-                } else {
+                    return
+                }
+                switch PhoneCardLine.press(card.id, opened: opened) {
+                case .open:
+                    // A line shows the whole card in place first.
+                    arm.disarm()
+                    opened = card.id
+                case .sheet:
                     swipeRefusal[card.id] = nil
                     sheets.show(.card(card))
                 }
@@ -593,11 +604,33 @@ struct BoardView: View {
                 PhoneBoardCard(card: card,
                                notice: client.boardNotices[card.id] ?? "",
                                leaving: leaving,
-                               live: liveStageNames(card))
+                               live: liveStageNames(card),
+                               face: isOpen ? .opened : .line)
                     .equatable()
             }
             .buttonStyle(.plain)
             .disabled(leaving)
+            .accessibilityHint(isOpen ? "Opens the card's screen"
+                                      : "Shows the whole card in place")
+            .accessibilityAction(named: "Open card screen") {
+                swipeRefusal[card.id] = nil
+                sheets.show(.card(card))
+            }
+            // The way back to the line, where the line's chevron was: its
+            // own button over the corner the opened face keeps clear.
+            .overlay(alignment: .topLeading) {
+                if isOpen {
+                    DecryptButton(action: { opened = nil }) {
+                        Image(systemName: "chevron.down")
+                            .font(Theme.mono(12, weight: .semibold))
+                            .foregroundStyle(Theme.phosphor)
+                            .frame(width: PhoneBoardCard.closeSlot, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close back to one line")
+                }
+            }
             // Beside the tap and the swipe's drag, never instead of them: a
             // finger that moves is a scroll or a swipe and the hold fails.
             .simultaneousGesture(LongPressGesture(minimumDuration: PhoneCardHold.minimumDuration, maximumDistance: PhoneCardHold.maximumDistance)
@@ -839,7 +872,8 @@ struct BoardView: View {
                            notice: client.boardNotices[card.id] ?? "",
                            leaving: leaving,
                            live: liveStageNames(card),
-                           tick: tick)
+                           tick: tick,
+                           face: .line)
                 .equatable()
         }
         .buttonStyle(.plain)
@@ -1422,8 +1456,87 @@ struct PhoneBoardCard: View {
     /// The select-mode box, `nil` outside select mode — every other
     /// constructor is unchanged and draws no box.
     var tick: PhoneRowSelection.Tick? = nil
+    /// Tile, line or the one card opened among the lines (`PhoneCardLine`).
+    /// The Board tab draws lines; `.tile` is the bare constructor's face.
+    var face: PhoneCardLine.Face = .tile
+
+    /// The opened face's top-left corner, kept clear for the board's close
+    /// button: the title starts after it.
+    static let closeSlot: CGFloat = 36
 
     var body: some View {
+        // One element whichever face is drawn, and the same sentence: a
+        // line hides nothing from VoiceOver that the full card says.
+        Group {
+            if face == .line { lineFace } else { tileFace }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken)
+    }
+
+    /// The card as one line: the importance number, the title in full,
+    /// and the first of its marks — whose turn it is, or what
+    /// stands in its way. Everything else is one tap away, in place.
+    private var lineFace: some View {
+        let marks = PhoneCardLine.marks(card, leaving: leaving, noticed: !notice.isEmpty)
+        return HStack(alignment: .center, spacing: 8) {
+            if let tick {
+                Text(Self.tickGlyph(tick))
+                    .font(Theme.mono(13, weight: .semibold))
+                    .foregroundStyle(Self.tickColour(tick))
+            }
+            if !card.priority.isEmpty {
+                Text(card.priority)
+                    .font(Theme.mono(12, weight: .semibold))
+                    .foregroundStyle(Theme.phosphor)
+                    .monospacedDigit()
+                    .frame(minWidth: 22, alignment: .trailing)
+            }
+            Text(card.title.isEmpty ? "untitled" : card.title)
+                .font(Theme.prose(15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                // In full, like every title on the phone: it wraps and the
+                // line grows, never an ellipsis (`phone-contract.md`).
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let mark = marks.first {
+                let ink = Self.markColour(mark)
+                Text(marks.count > 1 ? "\(mark) +\(marks.count - 1)" : mark)
+                    .font(Theme.mono(9, weight: .medium))
+                    .foregroundStyle(ink)
+                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .overlay(Rectangle().strokeBorder(ink, lineWidth: 1))
+                    // Its own width first: the title takes what is left.
+                    .layoutPriority(1)
+            }
+            if tick == nil {
+                Image(systemName: "chevron.right")
+                    .font(Theme.mono(10, weight: .semibold))
+                    .foregroundStyle(Theme.faint)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, SignalTokens.Spacing.md)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, minHeight: PhoneCardLine.minHeight, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Theme.cardRadius).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
+            .strokeBorder(Theme.line, lineWidth: 1))
+        .contentShape(Rectangle())
+        .opacity(leaving ? 0.45 : 1)
+    }
+
+    static func markColour(_ mark: String) -> Color {
+        switch mark {
+        case "MANUAL CHECK": return Theme.amber
+        case "REFUSED", "NOTICE": return .orange
+        case "REVIEW", "WORKING": return Theme.phosphor
+        default: return Theme.dim
+        }
+    }
+
+    private var tileFace: some View {
         VStack(alignment: .leading, spacing: 6) {
             if card.manualCheckDue {
                 // Above the title, because it is the first thing about this
@@ -1561,14 +1674,15 @@ struct PhoneBoardCard: View {
             .strokeBorder(Theme.line, lineWidth: 1))
         .contentShape(Rectangle())
         .opacity(leaving ? 0.45 : 1)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spoken)
     }
 
     private var titleLine: some View {
         Text(card.title.isEmpty ? "untitled" : card.title)
             .font(Theme.prose(17, weight: .semibold))
             .foregroundStyle(Theme.text)
+            // Room for the board's close button on the opened face.
+            .padding(.leading, face == .opened && !card.manualCheckDue && tick == nil
+                               ? Self.closeSlot - SignalTokens.Spacing.md : 0)
     }
 
     static func tickColour(_ tick: PhoneRowSelection.Tick) -> Color {
@@ -1737,6 +1851,62 @@ private struct OutboxRow: View {
 
     private var rowTitle: String {
         entry.title.isEmpty ? "untitled" : entry.title
+    }
+}
+
+// MARK: - PhoneCardLine
+
+/// The Board tab draws one line per card, in every row, and a tap shows
+/// that card in full in place — the Mac's compact board (`BoardRowDensity`,
+/// 13 Nov 2026) at phone measure. **No choice**: the phone has no standard
+/// board to switch back to, so there is no preference and nothing stored.
+///
+/// One card open at a time. A tap on a line opens it; a tap on the opened
+/// card goes on to its screen, the tap a card always had; its chevron
+/// closes it. Foundation only.
+enum PhoneCardLine {
+    enum Face: Equatable {
+        /// The full card, outside the Board tab's rows.
+        case tile
+        /// One line.
+        case line
+        /// The full card among the lines: the one a person opened.
+        case opened
+    }
+
+    /// A line's least height: a finger's target.
+    static let minHeight: CGFloat = 44
+
+    enum Press: Equatable {
+        /// Show the whole card in place.
+        case open
+        /// Go on to the card's screen.
+        case sheet
+    }
+
+    /// What a tap on `card` does, given the card open now.
+    static func press(_ card: String, opened: String?) -> Press {
+        opened == card ? .sheet : .open
+    }
+
+    /// What a person has to know before opening the card, most pressing
+    /// first; the line draws the first and counts the rest. The Mac's order
+    /// (`BoardCardView.lineMarks`), with the phone's own two in front: a
+    /// delete on its way out and the phone's notice about the card.
+    static func marks(_ card: BoardCard, leaving: Bool = false,
+                      noticed: Bool = false) -> [String] {
+        var out: [String] = []
+        if leaving { out.append("DELETING") }
+        if card.manualCheckDue { out.append("MANUAL CHECK") }
+        if card.column == "done" && card.awaitsReview { out.append("REVIEW") }
+        if !card.dispatchError.isEmpty { out.append("REFUSED") }
+        if noticed && !leaving { out.append("NOTICE") }
+        if card.linkState == "dispatching" { out.append("STARTING") }
+        if card.isRefining { out.append("REFINING") }
+        if card.linkState == "live" && card.column != "done" { out.append("WORKING") }
+        if card.isQueued { out.append("QUEUED") }
+        if !card.dependencyLine.isEmpty { out.append("WAITS") }
+        return out
     }
 }
 

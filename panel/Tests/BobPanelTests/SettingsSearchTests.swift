@@ -108,7 +108,8 @@ final class SettingsSearchTests: XCTestCase {
         XCTAssertTrue(sessions.entries.map(\.id).contains("toggle:set_auto_compact"))
         let board = grouped.first { $0.title == "Board" }!
         XCTAssertEqual(board.entries.map(\.id),
-                       ["toggle:set_board_dispatch", "toggle:set_board_close_terminal"])
+                       ["toggle:set_board_dispatch", "toggle:set_board_close_terminal",
+                        "toggle:set_board_compact"])
         XCTAssertEqual(grouped.filter { $0.title == "Board" }.count, 1)
     }
 

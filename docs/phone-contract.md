@@ -300,6 +300,21 @@ phone's write-back forgets it as a choice; the Mac still draws a stale tick
 so it can be cleared (`BoardProjects.names(open:)`, `Board.openProjectNames`;
 `test_phone_board_project_filter.py`, `ProjectSwitchTests`).
 
+## The Board tab draws one line per card
+
+Every row draws its cards as lines (14 Nov 2026, `PhoneCardLine` in
+`BoardView.swift`; the Mac's compact board, `BoardRowDensity`, at phone
+measure): the importance number, the title **in full** — it wraps, the
+line grows — and the first of the card's marks with a count of the rest
+(DELETING, MANUAL CHECK, REVIEW, REFUSED, NOTICE, STARTING, REFINING,
+WORKING, QUEUED, WAITS). **There is no choice and nothing stored**: the
+phone has no standard board. A tap on a line draws that card in full in
+place, one at a time; a tap on the opened card goes on to its screen, and
+its chevron closes it. Select mode ticks lines; the swipe and the hold
+work on a line as they did on a tile. VoiceOver hears the whole card on a
+line and has `Open card screen` as an action. Pinned by
+`ios/BobPhoneTests/BoardSearchTests.swift`.
+
 ## Several Prep cards are refined from the phone at once
 
 The Prep row carries the Mac's batch Refine (25 Sep 2026). Under its

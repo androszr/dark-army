@@ -79,5 +79,8 @@ struct BoardTileItem: Identifiable, Equatable {
     let card: BoardCard
     let facts: BoardTileFacts
     let chrome: BoardChrome
+    /// Tile, line or opened line (`BoardRowDensity.Face`). In the data for
+    /// the same reason the facts are: opening a line changes nothing else.
+    var face: BoardRowDensity.Face = .tile
     var id: String { card.id }
 }

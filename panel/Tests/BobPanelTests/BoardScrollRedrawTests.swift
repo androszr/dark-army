@@ -81,6 +81,10 @@ final class BoardScrollRedrawTests: XCTestCase {
         state.projectFilter = []
         state.query = ""
         state.rowFlips = []
+        // Tiles, the lazy grid these tests are about: the board draws lines
+        // by default (`BoardRowDensity`). Set where
+        // Settings sets it, on the context the panel carries to the board.
+        client.context.settings.boardCompact = false
         let host = NSHostingView(rootView: PanelView(client: client, keys: KeyRouter(),
                                                      focus: FocusRouter(), board: state))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
