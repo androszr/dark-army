@@ -390,7 +390,7 @@ overlay. Done starts
 folded; flips from that default persist in `panel-position.json` as
 `board_row_flips`. The rule is `BoardRowFold`, copied byte-equal into the
 phone's `BoardView.swift` (`test_board_rows.py`); a search overrides a
-fold, and a folded heading takes a drop. Prep has **Refine** (dispatches a planning session); the plan that session attaches moves the card to Backlog, and every newly written card lands there. **A card outlines one verb, chosen by its column** (`CardActionWeight`): Refine in Prep, START in Backlog, Done in In progress, none in Done; every other verb is dim words, HERE included, and an absent primary promotes nothing — with one kind-aware exception: a scout in Prep outlines START, because it has no plan to refine.
+fold, and a folded heading takes a drop. Prep has **Refine** (dispatches a planning session); the plan that session attaches moves the card to Backlog, and every newly written card lands there. **A card outlines one verb, chosen by its column** (`CardActionWeight`): Refine in Prep, START in Backlog, Done in In progress, Review & merge in Done where offered; every other verb is dim words, HERE included, and an absent primary promotes nothing — with one kind-aware exception: a scout in Prep outlines START, because it has no plan to refine.
 
 **The board draws one line per card** (13 Nov 2026, `BoardRowDensity`; the
 phone's is `PhoneCardLine`, with no choice), in all four rows: importance, title, the summary's start, marks

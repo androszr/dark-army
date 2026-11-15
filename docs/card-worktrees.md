@@ -722,6 +722,21 @@ lookup; the card reads *Review: SHIP* or *Review: STOP*, with "reviewed at an
 earlier version" in the Changes view when the branch moved since. A running
 review blocks `ask_card` on that card, as any consult does.
 
+**Review & merge** (`review_merge_card`, `board_review_merge`, 15 Nov 2026) is
+Run review plus a merge. The gate is Run review's with `open_ok=True`: open
+hand-check steps are accepted and the press records Passed (`record_manual_outcome`,
+else clears the steps); a Failed file still refuses. The Claude helper is
+Run review's (`purpose: "review_merge"`, stamp `card-review-merge`,
+`dispatch.review_merge_prompt`: fix every BLOCK and FIX on the card branch, run
+the tests, commit, answer `VERDICT: SHIP` or `STOP`). A SHIP records the verdict
+at the tip read then, arms `_review_merge_pending[cid] = {tip, session_id,
+since}` (replaced, memory only) and closes the helper's terminal with
+`close_session_terminal` (not `by_person`). `_flush_review_merge_pending`, on the
+agents push, calls `merge_card(expected_tip=tip)` once the busy gate passes; it
+drops with a `blocked` note when the tip moved, a merge refused or 15 minutes
+passed. The snapshot adds `review_merge_offered` and `review_merge_running`;
+`review_running` stays true, so MERGE, Fix and Run review wait.
+
 **The card says so.** Decoration (`_decorate_merge`) publishes `merge_state`
 (`merging` while the task runs), `merge_line` (composed on the daemon, with
 `HELPER_AT_WORK_SUFFIX` or `PRESS_AGAIN_SUFFIX` on a stop), `review_verdict`
@@ -807,4 +822,34 @@ nothing to merge, work done. `mergeable` needs a clean folder, a tip and no
 gate refusal. Rows are bounded by `MAX_ROWS` and `PAGE_MAX_BYTES`; `folder` is
 relative, so no absolute path rides the page. A card that landed within the last 24 hours (`MERGED_LISTED_SECONDS`) stays listed as Merged, with no git call and no tick, though its folder and branch are cleared; a row whose trunk, tip or count could not be read is `unreadable` ("Could not read", the failure words as its line, `ahead` -1, never mergeable). A recorded branch that no longer exists is not a failed read: with its merge commit on the trunk (`Merge card/<id8>:` or git's `Merge branch '<branch>'`, `merges.argv_landed`) the row is Merged, merged by hand (`LANDED_LINE`); otherwise it is `gone`, "Nothing left to merge". The phone groups rows by what can be done — Ready to merge, Needs a fix, Not ready yet, and a folded Already merged or gone — and gives every row a next step. A read asked for while one runs waits for ONE follow-up read shared by everyone who arrived meanwhile, so no page predates its caller's change and at most one thread waits on the lock. The phone ticks a row only where
 `mergeable` **and** `CardMerge.offered` hold over the live card
-(`WorktreeRows.tickable`). Orphan folders are never removed here.
+(`WorktreeRows.tickable`). **Already merged is never offered** (15 Nov 2026). `ahead == 0` with a
+readable tip is `nothing`, which is not in `worktree_list.MERGEABLE`: the row
+is never `mergeable` and the phone folds it under *Already merged or gone*
+(`WorktreeRows.group`, not the view). The read hands such a card to
+`_record_nothing_to_merge`, which — on the loop, card re-read, still Done,
+no merge state, no hold, branch tip equal to the one read — records it
+`merged` with `ALREADY_MERGED_NOTE`, the branch backfill's own path, so the
+card stops offering MERGE and Review & merge. The batch gate
+(`merge_cards`) refuses such a card in words (`NOTHING_TO_MERGE_REFUSAL`) and
+records it the same way. Rows carry `removable`.
+
+**DELETE a leftover folder** (`board_worktree_remove` on `BOARD_ACTIONS`, both
+phone tuples and `_LAN_BOARD`; marker `worktree_remove_writable`; keyed on
+`card_id`, or on `folder` + `project` label for a `no_card` folder; handled
+above the `card_id` check) is `remove_worktree`. Allowed for a Done card whose
+branch tip is part of the trunk (or whose branch is gone) and for a folder no
+card names; all decided again as it fires: path strictly under
+`<enrolled root>/.worktrees/` (`worktrees.inside`) and not a link, a leaf name
+only, git lists it as a work tree (a detached orphan's HEAD must be on the
+trunk), no live session inside, no merge, batch, helper, start-up, consult,
+spawn receipt or queued release (`_removal_busy`), no batch sibling still
+open, the card in Done and not running, the release's crew-output and pack-copy
+safeguards, then `_release_still_safe`. `git worktree remove` runs **without
+`--force`**; when git refuses the answer is `REMOVE_KEPT_REFUSAL` and the
+folder stays. Afterwards the branch goes only when contained in the trunk
+(`_merge_delete_branch`: old-value-guarded `update-ref -d`, nothing has it
+checked out), then `clear_worktree(branch=True)`; an orphan's branch is never
+touched. The phone draws DELETE on `removable` rows, armed on its own
+`Arm.Slot.worktreeRemove` and sent by `post`, then re-reads. The screen has the
+Board's project strip (`@SceneStorage("worktrees.project")`); hidden rows are
+neither drawn nor sent by the batch MERGE.

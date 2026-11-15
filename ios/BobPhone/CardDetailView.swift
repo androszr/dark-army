@@ -236,7 +236,7 @@ struct PhoneCardDetailView: View {
         case start, startHere, done, refine, delete, move, tool, model, effort
         case save, approve, message, startWhenPlanned
         case manualClear, manualOutcome, review, promote, dependencies
-        case merge, mergeFix, reviewRun
+        case merge, mergeFix, reviewRun, reviewMerge
     }
 
     /// The CHANGES page (`card_changes`), fetched when its fold row opens and
@@ -1332,8 +1332,19 @@ struct PhoneCardDetailView: View {
                                        daemonOffers: card.mergeOffered)
     }
 
+    /// Review & merge: the Mac's own `review_merge_offered` on a live Done
+    /// card — **also while a manual check is still open** — and `merge_writable`.
+    private var showsReviewMerge: Bool {
+        cardIsLive && board.mergeWritable
+            && CardMerge.reviewMergeOffered(
+                column: card.column, branch: card.worktreeBranch,
+                running: card.reviewMergeRunning || card.reviewRunning,
+                daemonOffers: card.reviewMergeOffered)
+    }
+
     private var mergeControlsShown: Bool {
-        showsMerge || showsMergeFix || showsReviewRun
+        showsMerge || showsMergeFix || showsReviewRun || showsReviewMerge
+            || (board.mergeWritable && card.column == "done" && card.reviewMergeRunning)
             || (board.mergeWritable && card.mergeState == "merging")
     }
 
@@ -1364,6 +1375,20 @@ struct PhoneCardDetailView: View {
                     : (arm.mergeFix != nil ? "Fix the merge, press again to confirm"
                                            : "Fix the merge"))
         }
+        if showsReviewMerge {
+            DecryptButton(reviewMergeLabel) { pressReviewMerge() }
+                .buttonStyle(AlarmOutline())
+                .disabled(sending)
+                .accessibilityLabel(pressed == .reviewMerge
+                    ? spokenMark
+                    : (arm.reviewMerge != nil
+                        ? "Review and merge, press again to confirm"
+                        : PhoneCardSwipe.reviewMergeSpoken))
+        } else if board.mergeWritable && card.column == "done" && card.reviewMergeRunning {
+            Text(PhoneCardSwipe.reviewMergeRunningLabel)
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.dim)
+        }
         if showsReviewRun {
             DecryptButton(pressed == .reviewRun ? mark : "RUN REVIEW") { pressReviewRun() }
                 .buttonStyle(AlarmOutline())
@@ -1376,6 +1401,13 @@ struct PhoneCardDetailView: View {
         if pressed == .merge { return mark }
         return CardMerge.mergeLabel(mergeState: card.mergeState,
                                     armed: arm.merge != nil)
+    }
+
+    private var reviewMergeLabel: String {
+        if pressed == .reviewMerge { return mark }
+        return arm.reviewMerge != nil
+            ? PhoneCardLine.armedLabel(PhoneCardSwipe.reviewMergeLabel)
+            : PhoneCardSwipe.reviewMergeLabel
     }
 
     private var fixLabel: String {
@@ -1407,6 +1439,20 @@ struct PhoneCardDetailView: View {
             }
         } else {
             arm.arm(.mergeFix, id: card.id)
+        }
+    }
+
+    /// Armed then confirmed: it ends in a merge onto main, and a card with
+    /// an open manual check is recorded Passed by the press.
+    private func pressReviewMerge() {
+        if arm.confirm(.reviewMerge, id: card.id) {
+            Task {
+                let result = await send(PhoneActions.boardReviewMerge,
+                                        ["card_id": card.id], as: .reviewMerge)
+                apply(result)
+            }
+        } else {
+            arm.arm(.reviewMerge, id: card.id)
         }
     }
 

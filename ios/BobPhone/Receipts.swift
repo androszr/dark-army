@@ -264,6 +264,7 @@ struct Receipt: Identifiable, Codable, Equatable {
         case PhoneActions.boardMerge: return "Merge a card into main"
         case PhoneActions.boardMergeFix: return "Fix a card's merge"
         case PhoneActions.boardReviewRun: return "Review a card's branch"
+        case PhoneActions.boardReviewMerge: return "Review and merge a card"
         case PhoneActions.reviewStart: return "Start a review"
         case PhoneActions.reviewContinue: return "Continue a review"
         case PhoneActions.reviewEnd: return "End a review"
@@ -1002,7 +1003,7 @@ final class ReceiptLedger: ObservableObject {
             // `PhoneClient.enqueue`, which can read the snapshot.
             return card.isEmpty ? .none
                 : .cardMergeState(cardId: card, before: "", line: "")
-        case PhoneActions.boardReviewRun:
+        case PhoneActions.boardReviewRun, PhoneActions.boardReviewMerge:
             return card.isEmpty ? .none
                 : .cardReviewRunning(cardId: card, verdict: "")
         case PhoneActions.boardUpdate:

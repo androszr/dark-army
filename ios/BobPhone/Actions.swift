@@ -208,6 +208,13 @@ enum PhoneActions {
     /// and puts SHIP or STOP on the card. One press, changes no files.
     /// Drawn only against a Mac whose board says `review_run_writable`.
     static let boardReviewRun = "board_review_run"
+    /// Route: `BobDaemon.review_merge_card` — on a Done card, an assistant
+    /// reviews the branch, fixes what it finds on the card branch and, on
+    /// SHIP, the Mac merges it onto main once the reviewer's terminal has
+    /// closed. Offered also while a manual check is still open (the press
+    /// is the person's "checked, passed"). Armed then confirmed. Drawn only
+    /// against a Mac whose card says `review_merge_offered`.
+    static let boardReviewMerge = "board_review_merge"
     /// Route: `BobDaemon.merge_cards` — land several finished cards on the
     /// local main line one after another, each through the single card's
     /// merge, nothing pushed. `card_ids` and `expected_tips` are comma-joined
@@ -216,6 +223,12 @@ enum PhoneActions {
     /// press or not at all. Drawn only against a Mac whose board says
     /// `merge_batch_writable`.
     static let boardMergeBatch = "board_merge_batch"
+    /// Route: `BobDaemon.remove_worktree` — delete one leftover card folder
+    /// (and its branch only when it is already on the main line). `card_id`,
+    /// or `folder` and `project` for a folder no card names. Armed then
+    /// confirmed, sent by `post` and never banked. Drawn only against a Mac
+    /// whose board says `worktree_remove_writable`.
+    static let boardWorktreeRemove = "board_worktree_remove"
     /// Route: `BobDaemon.start_review` — open the chosen assistant on the
     /// Mac to review what is not yet on the project's remote, with the
     /// ticked after-steps as the only authorised ones. `root`, `tool` and

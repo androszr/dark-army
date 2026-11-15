@@ -866,6 +866,10 @@ class BoardVerbsMixin:
             # after another*).
             "worktrees_supported": True,
             "merge_batch_writable": True,
+            # And a seventh: this daemon carries `board_worktree_remove`, so
+            # the Worktrees screen's DELETE is drawn *absent* against an
+            # older Mac (`docs/card-worktrees.md`).
+            "worktree_remove_writable": True,
             # And a sixth, on `queue_writable`'s argument once more: this
             # daemon knows the `start_when_planned` card column, and an
             # older one simply sends no key — which decodes false, so the
@@ -8143,6 +8147,10 @@ class BoardVerbsMixin:
                 # A review's answer: the verdict off its first line, with
                 # the branch version it judged.
                 await self._record_review_from_answer(cid, entry, text)
+            elif entry.get("purpose") == "review_merge":
+                # Review & merge: the verdict against the tip read now; a
+                # SHIP arms the pending merge and asks the terminal to close.
+                await self._review_merge_from_answer(cid, entry, text)
             await self._publish_board()
             return (await self._board_call("get", cid)), "answered"
 
@@ -11174,13 +11182,16 @@ class BoardVerbsMixin:
             memo[path] = (key, failed)
         return failed
 
-    def _merge_manual_refusal(self, card: dict, *, cached: bool = False) -> str:
+    def _merge_manual_refusal(self, card: dict, *, cached: bool = False,
+                              open_ok: bool = False) -> str:
         """The hand-check rung of the gate, read from the card and the check
         file **at the press**. **Executor.** Open steps refuse; so does a
         file whose `Status` is `failed` (recording an outcome clears the
         steps on Passed *and* Failed, so the outcome is only in the file).
-        A file the place rule no longer admits counts as settled."""
-        if str(card.get("manual_steps") or "").strip():
+        A file the place rule no longer admits counts as settled.
+        `open_ok` (Review & merge) accepts open steps: the press is the
+        person's "checked, passed". A Failed file still refuses."""
+        if not open_ok and str(card.get("manual_steps") or "").strip():
             return merges.MANUAL_OPEN_REFUSAL
         path = str(card.get("manual_check_path") or "")
         if path and self._manual_failed(path, cached=cached):
@@ -11188,7 +11199,8 @@ class BoardVerbsMixin:
         return ""
 
     def _merge_gate_sync(self, card, *, expected_tip: str = "",
-                         busy: bool = True, cached: bool = False) -> tuple:
+                         busy: bool = True, cached: bool = False,
+                         open_ok: bool = False) -> tuple:
         """`(refusal, root, branch, path)` — whether this Done card's branch
         may be reviewed, fixed or merged right now. **Blocking; executor
         only.** The refusal is the first rung that fails, in order: board,
@@ -11214,7 +11226,8 @@ class BoardVerbsMixin:
             return (merges.NO_BRANCH_REFUSAL,) + out
         if str(card.get("merge_state") or "") == "merged":
             return (merges.ALREADY_MERGED_REFUSAL,) + out
-        refusal = self._merge_manual_refusal(card, cached=cached)
+        refusal = self._merge_manual_refusal(card, cached=cached,
+                                             open_ok=open_ok)
         if refusal:
             return (refusal,) + out
         if not root or not enrollment.root_enrolled(root):
@@ -11262,6 +11275,23 @@ class BoardVerbsMixin:
             if found:
                 return candidate
         return ""
+
+    def _branch_contained_sync(self, root: str, branch: str) -> bool:
+        """Whether the branch's tip is already part of the trunk (nothing
+        ahead of it). **Executor.** False when anything cannot be read: the
+        fail-safe answer is "not contained", which only keeps an offer."""
+        trunk = self._merge_trunk_sync(root)
+        if not trunk or not branch:
+            return False
+        ok, out, _why = self._git_blocking(
+            merges.argv_tip(root, f"refs/heads/{branch}"), root)
+        tip = out.decode("utf-8", "replace").strip() if ok else ""
+        if not merges.is_tip(tip):
+            return False
+        contained, _o, _w = self._git_blocking(
+            worktrees.argv_is_ancestor(root, tip, f"refs/heads/{trunk}"),
+            root)
+        return bool(contained)
 
     async def _merge_trunk(self, root: str) -> str:
         loop = asyncio.get_running_loop()
@@ -11457,6 +11487,10 @@ class BoardVerbsMixin:
         # is never read as "absent".
         if expected_tip is not None and not merges.is_tip(expected_tip):
             return False, merges.TIP_CHANGED_REFUSAL, "", ""
+        if cid in (getattr(self, "_review_merge_pending", None) or {}):
+            # A Review & merge SHIP waits to merge this card itself; a
+            # second merge here would race it.
+            return False, merges.REVIEW_MERGE_PENDING_REFUSAL, "", ""
         card = await self._board_call("get", cid)
         loop = asyncio.get_running_loop()
         refusal, root, _branch, _path = await loop.run_in_executor(
@@ -11525,12 +11559,16 @@ class BoardVerbsMixin:
         skipped: list = []
         tips: dict = {}
         branches: dict = {}
+        recorded = False
         for cid, tip in pairs:
             cid = str(cid or "")
             card = await self._board_call("get", cid)
             title = str((card or {}).get("title") or cid[:8])
             if not merges.is_tip(tip):
                 skipped.append((title, merges.TIP_CHANGED_REFUSAL))
+                continue
+            if cid in (getattr(self, "_review_merge_pending", None) or {}):
+                skipped.append((title, merges.REVIEW_MERGE_PENDING_REFUSAL))
                 continue
             refusal, root, _b, _p = await loop.run_in_executor(
                 None, functools.partial(
@@ -11541,6 +11579,17 @@ class BoardVerbsMixin:
                 skipped.append((title, refusal))
                 continue
             branch = str((card or {}).get("worktree_branch") or "")
+            if branch and await loop.run_in_executor(
+                    None, self._branch_contained_sync, root, branch):
+                # Nothing ahead of the trunk: refused in words, and the card
+                # is recorded merged so it stops offering MERGE.
+                skipped.append((title, merges.NOTHING_TO_MERGE_REFUSAL))
+                if not str(card.get("merge_state") or ""):
+                    result = await self._board_call(
+                        "record_merge", cid, "merged",
+                        merges.ALREADY_MERGED_NOTE)
+                    recorded = recorded or bool(result and result[0])
+                continue
             key = (dispatch.normalise_root(str(root or "")), branch)
             if branch and key in branches:
                 skipped.append((title, merges.SHARED_BRANCH_REFUSAL.format(
@@ -11550,6 +11599,8 @@ class BoardVerbsMixin:
                 branches[key] = title
             started.append((cid, title))
             tips[cid] = str(tip)
+        if recorded:
+            await self._publish_board()
         if not started:
             return False, merges.batch_report([], skipped)
         # The gates awaited above: look again, then set with no await.
@@ -12037,7 +12088,8 @@ class BoardVerbsMixin:
             self._merge_helpers = {k: v for k, v in held.items()
                                    if k != str(card_id)}
 
-    async def _helper_gate(self, card_id: str, *, fix: bool) -> tuple:
+    async def _helper_gate(self, card_id: str, *, fix: bool,
+                           open_ok: bool = False) -> tuple:
         """`(refusal, card, root, branch, path)` for Fix and Run review:
         board open, the gate, the dispatch switch. Not under the lock yet."""
         if self._board is None:
@@ -12045,7 +12097,8 @@ class BoardVerbsMixin:
         card = await self._board_call("get", str(card_id or ""))
         loop = asyncio.get_running_loop()
         refusal, root, branch, path = await loop.run_in_executor(
-            None, functools.partial(self._merge_gate_sync, card))
+            None, functools.partial(self._merge_gate_sync, card,
+                                    open_ok=open_ok))
         if refusal:
             return refusal, card, root, branch, path
         if fix and str(card.get("merge_state") or "") \
@@ -12222,6 +12275,269 @@ class BoardVerbsMixin:
             if not spawned:
                 self._drop_hold(cid)
 
+    async def review_merge_card(self, card_id: str) -> tuple:
+        """The Review & merge press: one Claude helper reviews the card's
+        branch, repairs BLOCK and FIX findings on it and answers
+        `VERDICT: SHIP` or `VERDICT: STOP`; a SHIP merges once the helper's
+        terminal has closed (`_flush_review_merge_pending`). `(ok, detail)`.
+        The gate is Run review's, except that an open hand-check is accepted:
+        the press records it Passed (or clears the steps)."""
+        if str(card_id or "") in (getattr(self, "_review_merge_pending", None)
+                                  or {}):
+            return False, merges.REVIEW_MERGE_PENDING_REFUSAL
+        refusal, _card, _root, _branch, _path = await self._helper_gate(
+            card_id, fix=False, open_ok=True)
+        if refusal:
+            return False, refusal
+        async with self._dispatch_lock:
+            return await self._spawn_review_merge_locked(str(card_id))
+
+    async def _settle_open_check_for_review_merge(self, card: dict) -> tuple:
+        """The press as the person's "checked, passed". `(ok, refusal)`.
+        The steps alone are cleared (as Mark checked does) only when no check
+        file is named or the place rule does not admit it; any other refusal
+        of the outcome refuses the press in words."""
+        if not str(card.get("manual_steps") or "").strip():
+            return True, ""
+        cid = str(card.get("id") or "")
+        path = str(card.get("manual_check_path") or "")
+        if path:
+            ok, detail = await self.record_manual_outcome(
+                path, "passed", merges.REVIEW_MERGE_CHECK_PASSED_NOTE)
+            if ok:
+                return True, ""
+            if detail != board.MANUAL_CHECK_PLACE_REFUSAL:
+                return False, detail or merges.MANUAL_OPEN_REFUSAL
+        cleared, detail2 = await self.clear_manual_check(cid)
+        if cleared:
+            return True, ""
+        return False, detail2 or merges.MANUAL_OPEN_REFUSAL
+
+    async def _spawn_review_merge_locked(self, card_id: str) -> tuple:
+        refusal, card, root, branch, _path = await self._helper_gate(
+            card_id, fix=False, open_ok=True)
+        if refusal:
+            return False, refusal
+        cid = str(card.get("id") or "")
+        loop = asyncio.get_running_loop()
+        self._hold_folder(cid, root, str(card.get("project") or ""),
+                          "review")
+        spawned = False
+        try:
+            path, error = await self._merge_folder(card, root)
+            if error:
+                return False, error
+            trunk = await self._merge_trunk(root)
+            if not trunk:
+                return False, merges.NO_TRUNK_REFUSAL
+            tip = await self._merge_tip(root, f"refs/heads/{branch}")
+            if not tip:
+                return False, merges.NO_BRANCH_REFUSAL
+            prompt = dispatch.review_merge_prompt(
+                card, branch=branch, trunk=trunk, worktree=path)
+            roots = await loop.run_in_executor(None, self._known_project_roots)
+            in_flight = self._launch_inflight(
+                await self._board_call("cards") or [])
+            ok, detail = dispatch.helper_guard(
+                card, roots=roots, in_flight=in_flight, now=time.time(),
+                last_attempt=self._review_attempts.get(cid), key="consult",
+                tool="claude", prompt=prompt)
+            if not ok:
+                return False, detail
+            executable = await loop.run_in_executor(
+                None, dispatch.resolve_executable, "claude")
+            if not executable:
+                return False, dispatch.NOT_INSTALLED_REFUSAL.format(
+                    tool="claude")
+            argv = dispatch.argv_for(
+                "claude", executable, prompt,
+                model=self._agent_model_for(root, "claude", "main"),
+                effort=self._agent_effort_for(root, "claude", "main"))
+            name = ("review+merge: " + (card.get("title") or "card"))[:40]
+            baseline = self._live_session_ids()
+            spawner = (dispatch.spawn_local
+                       if self._uses_own_terminal(cid, None)
+                       else dispatch.spawn)
+            where = {"cwd": path} if path and path != root else {}
+            ok, spawn_detail, shell_pid = await spawner(
+                root, argv, name,
+                stamp=origin.stamp("card-review-merge", cid), **where)
+            if not ok:
+                return False, spawn_detail
+            spawned = True
+            now = time.time()
+            self._review_attempts[cid] = now
+            self._consults[cid] = {
+                "card_id": cid,
+                "project": card.get("project") or "",
+                "root": root,
+                "tool": "claude",
+                "baseline": baseline,
+                "started": now,
+                "session_id": "",
+                "shell_pid": shell_pid,
+                "purpose": "review_merge",
+                "tip": tip,
+            }
+            # Only a spawn that went through counts as the person's "checked,
+            # passed": a refused press never records the hand-check Passed.
+            # If the settle itself then fails the helper is already running,
+            # so nothing is closed: the press stays ok, the check stays open
+            # and the words ride the returned detail and the card's note.
+            settled, why = await self._settle_open_check_for_review_merge(
+                card)
+            if not settled:
+                spawn_detail = f"{spawn_detail} {why}".strip()
+                try:
+                    await self._board_call(
+                        "record_merge", cid, "blocked",
+                        merges.REVIEW_MERGE_REFUSED_NOTE.format(why))
+                except Exception:
+                    logger.debug("review+merge: could not record the note",
+                                 exc_info=True)
+            await self._publish_board()
+            logger.info("card %s: started a review and merge of %s",
+                        cid[:8], branch)
+            return True, spawn_detail
+        finally:
+            if not spawned:
+                self._drop_hold(cid)
+
+    async def _review_merge_from_answer(self, card_id: str, entry: dict,
+                                        text: str) -> None:
+        """A Review & merge helper's answer. The verdict is recorded against
+        the branch tip read **now** (the helper committed). A SHIP arms the
+        pending merge and asks the helper's terminal to close; a STOP arms
+        nothing."""
+        # The helper is bound (it answered through its own session), so the
+        # session-inside rung covers the folder from here; the spawn hold is
+        # done.
+        self._drop_hold(card_id)
+        verdict = merges.parse_verdict(text)
+        if not verdict:
+            return
+        card = await self._board_call("get", card_id)
+        if card is None:
+            return
+        branch = str(card.get("worktree_branch") or "")
+        root = dispatch.normalise_root(str(card.get("root") or ""))
+        tip = ""
+        if branch and root:
+            tip = await self._merge_tip(root, f"refs/heads/{branch}")
+        await self._board_call("record_review_verdict", card_id, verdict, tip)
+        self._log_card_event(card, "card_review_verdict", verdict=verdict)
+        if verdict != "ship" or not tip:
+            return
+        session_id = str((entry or {}).get("session_id") or "")
+        pending = dict(getattr(self, "_review_merge_pending", None) or {})
+        pending[card_id] = {"tip": tip, "session_id": session_id,
+                            "since": time.time()}
+        self._review_merge_pending = pending
+        if session_id:
+            try:
+                await self.close_session_terminal(session_id)
+            except Exception:
+                logger.debug("review+merge: closing the reviewer failed",
+                             exc_info=True)
+
+    def _drop_review_merge_pending(self, card_id: str) -> None:
+        pending = getattr(self, "_review_merge_pending", None) or {}
+        if card_id in pending:
+            self._review_merge_pending = {
+                k: v for k, v in pending.items() if k != card_id}
+
+    async def _review_merge_stop(self, card_id: str, note: str) -> None:
+        self._drop_review_merge_pending(card_id)
+        try:
+            row = await self._board_call("get", card_id)
+            if str((row or {}).get("merge_state") or "") == "merged":
+                return  # a merged card's state is never overwritten
+            await self._board_call("record_merge", card_id, "blocked", note)
+        except Exception:
+            logger.debug("review+merge: could not record the note",
+                         exc_info=True)
+
+    _REVIEW_MERGE_QUIET_REFUSALS = (merges.ALREADY_MERGED_REFUSAL,
+                                    merges.MERGE_RUNNING_REFUSAL,
+                                    merges.MERGE_QUEUED_REFUSAL)
+
+    async def _flush_review_merge_pending(self) -> None:
+        """The pending merges of Review & merge, from the agents push (no
+        thread of its own). A merge fires once, when the busy gate passes
+        and the branch is still at the reviewed tip; it drops, with words,
+        when the card left Done, the tip moved, a merge refused or the
+        reviewer's terminal stayed open for 15 minutes."""
+        pending = getattr(self, "_review_merge_pending", None) or {}
+        if not pending or self._board is None:
+            return
+        waiting = (merges.CARD_LIVE_REFUSAL, merges.PREPARING_REFUSAL,
+                   merges.REVIEW_RUNNING_REFUSAL,
+                   merges.SESSION_INSIDE_REFUSAL,
+                   merges.RELEASE_PENDING_REFUSAL,
+                   merges.PROJECT_MERGING_REFUSAL)
+        loop = asyncio.get_running_loop()
+        changed = False
+        for cid, entry in list(pending.items()):
+            tip = str(entry.get("tip") or "")
+            card = await self._board_call("get", cid)
+            if card is None or str(card.get("column_name") or "") != "done":
+                self._drop_review_merge_pending(cid)
+                changed = True
+                continue
+            # The tip first: the gate's own tip rung sits behind the busy
+            # ones, and a moved branch must not wait out the terminal.
+            now_tip = ""
+            bname = str(card.get("worktree_branch") or "")
+            broot = dispatch.normalise_root(str(card.get("root") or ""))
+            if bname and broot:
+                now_tip = await self._merge_tip(
+                    broot, f"refs/heads/{bname}")
+            refusal, root, branch, _path = await loop.run_in_executor(
+                None, functools.partial(self._merge_gate_sync, card,
+                                        expected_tip=tip))
+            if not now_tip:
+                # The read failed: that says nothing about the branch, so
+                # keep waiting (bounded) rather than call the tip moved.
+                if time.time() - float(entry.get("since") or 0.0) \
+                        > merges.REVIEW_MERGE_WAIT_SECONDS:
+                    await self._review_merge_stop(
+                        cid, merges.REVIEW_MERGE_TIP_UNREAD_NOTE)
+                    changed = True
+                continue
+            if now_tip != tip:
+                refusal = merges.TIP_CHANGED_REFUSAL
+            if refusal in self._REVIEW_MERGE_QUIET_REFUSALS:
+                # Settled, or the person's own merge is under way: nothing
+                # to write.
+                self._drop_review_merge_pending(cid)
+                changed = True
+                continue
+            if refusal == merges.TIP_CHANGED_REFUSAL:
+                await self._review_merge_stop(
+                    cid, merges.REVIEW_MERGE_TIP_MOVED_NOTE)
+                changed = True
+                continue
+            if refusal in waiting:
+                if time.time() - float(entry.get("since") or 0.0) \
+                        > merges.REVIEW_MERGE_WAIT_SECONDS:
+                    await self._review_merge_stop(
+                        cid, merges.REVIEW_MERGE_TIMEOUT_NOTE)
+                    changed = True
+                continue
+            if refusal:
+                await self._review_merge_stop(
+                    cid, merges.REVIEW_MERGE_REFUSED_NOTE.format(refusal))
+                changed = True
+                continue
+            self._drop_review_merge_pending(cid)
+            ok, detail = await self.merge_card(cid, expected_tip=tip)
+            if not ok and detail not in self._REVIEW_MERGE_QUIET_REFUSALS:
+                await self._review_merge_stop(
+                    cid, merges.REVIEW_MERGE_REFUSED_NOTE.format(detail))
+            changed = True
+        if changed:
+            await self._publish_board()
+
     async def _record_review_from_answer(self, card_id: str, entry: dict,
                                          text: str) -> None:
         """A retired review consult's answer: read the verdict off its first
@@ -12241,7 +12557,15 @@ class BoardVerbsMixin:
 
     def _review_running(self, card_id: str) -> bool:
         entry = self._consults.get(str(card_id))
-        return bool(entry and entry.get("purpose") == "review")
+        return bool(entry and entry.get("purpose") in ("review",
+                                                       "review_merge"))
+
+    def _review_merge_running(self, card_id: str) -> bool:
+        """The Review & merge consult runs, or its SHIP waits to merge."""
+        entry = self._consults.get(str(card_id))
+        return bool((entry and entry.get("purpose") == "review_merge")
+                    or str(card_id) in (
+                        getattr(self, "_review_merge_pending", None) or {}))
 
     def _merge_line(self, card: dict) -> str:
         """The sentence a card draws about its merge, or `""`. **Executor.**
@@ -12258,6 +12582,8 @@ class BoardVerbsMixin:
             total = int(batch.get("total") or len(queue))
             return merges.MERGE_QUEUED_NOTE.format(
                 total - len(queue) + queue.index(cid) + 1, total)
+        if cid in (getattr(self, "_review_merge_pending", None) or {}):
+            return merges.REVIEW_MERGE_WAITING_LINE
         state = str(card.get("merge_state") or "")
         note = str(card.get("merge_note") or "")
         if state not in merges.STATES or not state or not note:
@@ -12293,6 +12619,8 @@ class BoardVerbsMixin:
             out.pop("review_verdict", None)
         if self._review_running(cid):
             out["review_running"] = True
+        if self._review_merge_running(cid):
+            out["review_merge_running"] = True
         # The one fact every surface draws MERGE, Fix and Run review from:
         # the gate without its busy rungs (Done, a branch, not merged, the
         # hand-check settled — a Failed one reads from the check file,
@@ -12306,7 +12634,18 @@ class BoardVerbsMixin:
                 logger.debug("merge_offered could not be decided",
                              exc_info=True)
                 refusal = "unknown"
-            out["merge_offered"] = not refusal
+            waiting = cid in (getattr(self, "_review_merge_pending", None)
+                              or {})
+            out["merge_offered"] = not refusal and not waiting
+            # Review & merge is offered while a hand-check is still open too.
+            try:
+                offered = not self._merge_gate_sync(
+                    out, busy=False, cached=True, open_ok=True)[0]
+            except Exception:
+                logger.debug("review_merge_offered could not be decided",
+                             exc_info=True)
+                offered = False
+            out["review_merge_offered"] = offered and not waiting
 
     # -- Remembering the branch of a card finished before this existed --
 
@@ -12544,6 +12883,7 @@ class BoardVerbsMixin:
             page["reason"] = merges.BOARD_CLOSED_REFUSAL
             return page
         with self._worktrees_lock:
+            self._worktrees_nothing = []
             roots = [r for r in sorted(enrollment.enrolled_roots())
                      if r and self._git_checkout(r)]
             if not roots:
@@ -12685,6 +13025,12 @@ class BoardVerbsMixin:
             landed=landed, gone=gone and not landed)
         mergeable = not gate and not failed and not live and bool(tip) \
             and str(card.get("column_name") or "") == "done"
+        if status == "nothing" and tip and ahead_read and not failed:
+            # Contained in the trunk: never offered again. The read hands
+            # the card to `_record_nothing_to_merge`, which records it as
+            # merged the way the branch backfill does.
+            self._worktrees_nothing.append((str(card.get("id") or ""),
+                                            root, branch, tip))
         item = worktree_list.row(
             card_id=str(card.get("id") or ""),
             title=str(card.get("title") or ""),
@@ -12694,7 +13040,9 @@ class BoardVerbsMixin:
             word=word, line=line, ahead=ahead if ahead_read else -1,
             uncommitted=max(dirty, 0),
             mergeable=mergeable and not merging and not queued,
-            branch_tip=tip)
+            branch_tip=tip,
+            removable=not merging and not queued
+            and status in worktree_list.REMOVABLE)
         item["_updated"] = float(card.get("updated_at") or 0.0)
         return item
 
@@ -12768,7 +13116,293 @@ class BoardVerbsMixin:
 
     async def _worktrees_read(self) -> dict:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._worktrees_sync)
+        page = await loop.run_in_executor(None, self._worktrees_sync)
+        try:
+            await self._record_nothing_to_merge()
+        except Exception:
+            logger.debug("worktrees: could not record merged cards",
+                         exc_info=True)
+        return page
+
+    async def _record_nothing_to_merge(self) -> None:
+        """A Done card whose branch has nothing ahead of the trunk is merged
+        already: record it as `_backfill_branches` does
+        (`merges.ALREADY_MERGED_NOTE`), so the card stops offering MERGE and
+        Review & merge. Looked at again here, on the loop, with the card
+        re-read and the branch's tip compared with the one the read saw."""
+        found = list(getattr(self, "_worktrees_nothing", None) or [])
+        self._worktrees_nothing = []
+        changed = False
+        for cid, root, branch, tip in found:
+            card = await self._board_call("get", cid)
+            if not card or str(card.get("column_name") or "") != "done" \
+                    or str(card.get("merge_state") or "") \
+                    or str(card.get("worktree_branch") or "") != branch \
+                    or str(card.get("link_state") or "") in (
+                        "live", "dispatching") \
+                    or self._merge_hold(cid) \
+                    or cid in (getattr(self, "_worktree_preparing", None)
+                               or {}):
+                continue
+            now = await self._merge_tip(root, f"refs/heads/{branch}")
+            if now != tip:
+                continue
+            result = await self._board_call(
+                "record_merge", cid, "merged", merges.ALREADY_MERGED_NOTE)
+            changed = changed or bool(result and result[0])
+        if changed:
+            await self._publish_board()
+
+    # -- DELETE on the Worktrees screen: one leftover folder --
+
+    def _removal_root(self, project: str) -> str:
+        """The enrolled root whose label is `project`, or `""` when none or
+        several do. **Executor.** The page names a project by label only."""
+        labels = {}
+        for entry in enrollment.projects():
+            labels[dispatch.normalise_root(str(entry.get("root") or ""))] = \
+                str(entry.get("label") or "")
+        found = []
+        for root in sorted(enrollment.enrolled_roots()):
+            norm = dispatch.normalise_root(root)
+            label = labels.get(norm) or os.path.basename(
+                norm.rstrip(os.sep)) or "project"
+            if label == str(project or ""):
+                found.append(root)
+        return found[0] if len(found) == 1 else ""
+
+    def _removal_target(self, card, folder: str, project: str) -> tuple:
+        """`(refusal, root, path)` for a DELETE: where the folder is, and
+        that it is one of Dark Army's own. **Executor**, no git. The path is
+        strictly under `<enrolled root>/.worktrees/` (`worktrees.inside`)
+        and not a link."""
+        if card:
+            root = dispatch.normalise_root(str(card.get("root") or ""))
+            path = str(card.get("worktree_path") or "")
+            if path and folder and worktree_list.relative_folder(
+                    os.path.basename(os.path.normpath(path))) != folder:
+                return merges.REMOVE_NOT_FOUND_REFUSAL, root, ""
+        else:
+            root = self._removal_root(project)
+            prefix = worktrees.WORKTREES_DIR + "/"
+            name = str(folder or "")[len(prefix):] \
+                if str(folder or "").startswith(prefix) else ""
+            if not root or not name or name in (".", "..") \
+                    or os.sep in name or "/" in name or "\0" in name:
+                return merges.REMOVE_NOT_FOUND_REFUSAL, root, ""
+            path = os.path.join(root, worktrees.WORKTREES_DIR, name)
+        if not root or not enrollment.root_enrolled(root):
+            return merges.NOT_ENROLLED_REFUSAL, root, ""
+        if not self._git_checkout(root):
+            return merges.NOT_A_CHECKOUT_REFUSAL, root, ""
+        if path:
+            if os.path.islink(path):
+                return merges.REMOVE_LINK_REFUSAL, root, ""
+            if not worktrees.inside(root, path):
+                return merges.REMOVE_OUTSIDE_REFUSAL, root, ""
+        return "", root, path
+
+    def _removal_busy(self, cid: str) -> bool:
+        """Whether something holds the card's folder: a merge, a batch, a
+        helper, a start-up, a spawn receipt, a consult, a queued release."""
+        if cid and (self._merge_hold(cid)
+                    or cid in (getattr(self, "_worktree_preparing", None)
+                               or {})
+                    or cid in (getattr(self, "_spawn_shell_pids", None) or {})
+                    or cid in (getattr(self, "_spawn_pty_pids", None) or {})
+                    or cid in self._consults
+                    or cid in (getattr(self, "_worktree_release_queue", None)
+                               or [])
+                    or cid in (getattr(self, "_worktree_releasing", None)
+                               or set())):
+            return True
+        return False
+
+    async def remove_worktree(self, card_id: str = "", folder: str = "",
+                              project: str = "") -> tuple:
+        """DELETE on the Worktrees screen: remove one leftover folder.
+        `(ok, detail)`; the detail is a sentence either way.
+
+        Allowed for a Done card whose branch is already part of the trunk
+        (or gone), and for a `no_card` folder; everything is decided again
+        here, at the moment it fires: the path strictly under the enrolled
+        root's `.worktrees/` and not a link, no live session inside, no
+        merge, helper, start-up or release hold, the card (if any) in Done
+        and not running. `git worktree remove` runs **without `--force`**;
+        when git refuses, the folder stays and the words say why. The card's
+        branch is deleted afterwards only when it is fully part of the trunk,
+        by the merge's old-value-guarded `update-ref -d`."""
+        if self._board is None:
+            return False, merges.BOARD_CLOSED_REFUSAL
+        cid = str(card_id or "")
+        folder = str(folder or "")
+        card = None
+        if cid:
+            card = await self._board_call("get", cid)
+            if card is None:
+                return False, merges.NO_CARD_REFUSAL
+        elif not folder:
+            return False, merges.REMOVE_NOT_FOUND_REFUSAL
+        loop = asyncio.get_running_loop()
+        refusal, root, path = await loop.run_in_executor(
+            None, self._removal_target, card, folder, str(project or ""))
+        if refusal:
+            return False, refusal
+        key = os.path.realpath(path) if path else f"{root}\0{cid}"
+        if key in self._worktrees_removing:
+            return False, merges.REMOVE_INUSE_REFUSAL
+        self._worktrees_removing = self._worktrees_removing | {key}
+        try:
+            return await self._remove_worktree_run(card, cid, root, path)
+        finally:
+            self._worktrees_removing = self._worktrees_removing - {key}
+
+    async def _remove_worktree_run(self, card, cid: str, root: str,
+                                   path: str) -> tuple:
+        loop = asyncio.get_running_loop()
+        cards = await self._board_call("cards") or []
+        if card:
+            if str(card.get("column_name") or "") != "done" \
+                    or str(card.get("link_state") or "") in (
+                        "live", "dispatching"):
+                return False, merges.REMOVE_OPEN_REFUSAL
+            if self._removal_busy(cid):
+                return False, merges.REMOVE_INUSE_REFUSAL
+            still_open, sharing = self._worktree_shared(card, cards)
+            if still_open:
+                return False, merges.REMOVE_SHARED_REFUSAL
+        else:
+            sharing = []
+            target = os.path.realpath(path)
+            for other in cards:
+                oid = str(other.get("id") or "")
+                named = str(other.get("worktree_path") or "")
+                if named and os.path.realpath(named) == target:
+                    return False, merges.REMOVE_CARD_FOLDER_REFUSAL
+                derived = worktrees.worktree_dir(root, oid)
+                if os.path.realpath(derived) == target and (
+                        str(other.get("column_name") or "") != "done"
+                        or str(other.get("link_state") or "") in (
+                            "live", "dispatching")
+                        or self._removal_busy(oid)):
+                    return False, merges.REMOVE_INUSE_REFUSAL
+        trunk = await self._merge_trunk(root)
+        branch = str((card or {}).get("worktree_branch") or "")
+        tip = ""
+        if card:
+            if branch:
+                tip = await self._merge_tip(root, f"refs/heads/{branch}")
+                if tip:
+                    if not trunk:
+                        return False, merges.REMOVE_UNSURE_REFUSAL
+                    contained, _o, _w = await self._run_git(
+                        worktrees.argv_is_ancestor(
+                            root, tip, f"refs/heads/{trunk}"), root)
+                    if not contained:
+                        return False, merges.REMOVE_UNMERGED_REFUSAL
+                elif path and await loop.run_in_executor(
+                        None, os.path.isdir, path) \
+                        and str(card.get("merge_state") or "") != "merged":
+                    return False, merges.REMOVE_UNSURE_REFUSAL
+            else:
+                return False, (merges.REMOVE_UNSURE_REFUSAL if path
+                               else merges.REMOVE_NOTHING_REFUSAL)
+        have_folder = bool(path) and await loop.run_in_executor(
+            None, os.path.isdir, path)
+        if not have_folder and not card:
+            return False, merges.REMOVE_NOT_FOUND_REFUSAL
+        if have_folder:
+            refused = await self._remove_folder(card, cid, root, path, trunk)
+            if refused:
+                return False, refused
+        folders = [card] + sharing if card else []
+        for done in folders:
+            await self._board_call("clear_worktree",
+                                   str(done.get("id") or ""))
+        rel = worktree_list.relative_folder(
+            os.path.basename(os.path.normpath(path))) if path else \
+            (branch or "")
+        note = merges.REMOVED_NOTE.format(rel)
+        if card and branch:
+            gone = not tip
+            deleted = gone or await self._merge_delete_branch(
+                root, branch, tip, trunk)
+            if deleted:
+                if str(card.get("merge_state") or "") != "merged" and tip:
+                    await self._board_call(
+                        "record_merge", cid, "merged",
+                        merges.ALREADY_MERGED_NOTE)
+                for done in folders:
+                    await self._board_call("clear_worktree",
+                                           str(done.get("id") or ""),
+                                           branch=True)
+                if tip:
+                    note += merges.REMOVED_BRANCH_SUFFIX
+            else:
+                note += merges.REMOVED_BRANCH_KEPT_SUFFIX
+        await self._publish_board()
+        logger.info("worktrees: deleted %s (card %s)", rel, cid[:8])
+        return True, note
+
+    async def _remove_folder(self, card, cid: str, root: str, path: str,
+                             trunk: str) -> str:
+        """The folder half of DELETE: `""` once it is gone, else the words.
+        The release's own safeguards (crew output git ignores, carried pack
+        copies, a last look) and `git worktree remove` without `--force`."""
+        loop = asyncio.get_running_loop()
+        ok, listing, _why = await self._run_git(
+            worktrees.argv_worktree_list(root), root)
+        if not ok:
+            return merges.GIT_FAILED_REFUSAL.format("git could not list the "
+                                                    "work trees")
+        known = merges.parse_worktree_branches(
+            listing.decode("utf-8", "replace"))
+        here = os.path.realpath(path)
+        if here not in known:
+            return merges.REMOVE_NOT_A_TREE_REFUSAL
+        if not card and not known[here]:
+            # A detached orphan: its commits are on no branch, so they must
+            # be on the trunk or the folder is the only place they live.
+            head = await self._merge_tip(path, "HEAD")
+            contained = False
+            if head and trunk:
+                contained, _o, _w = await self._run_git(
+                    worktrees.argv_is_ancestor(
+                        root, head, f"refs/heads/{trunk}"), root)
+            if not contained:
+                return merges.REMOVE_UNMERGED_REFUSAL
+        if await loop.run_in_executor(None, self._session_inside, path):
+            return merges.REMOVE_INUSE_REFUSAL
+        read, crew, _why = await self._run_git(
+            worktrees.argv_crew_output(path), path)
+        if not read or (worktrees.holds_crew_output(crew)
+                        and not await loop.run_in_executor(
+                            None, _crew_output_is_copied, crew, path, root)):
+            return merges.REMOVE_CREW_REFUSAL
+        unmarked = await loop.run_in_executor(
+            None, self._unskip_edited_pack_copies, root, path,
+            self._pack_card_id(path))
+        if unmarked is None:
+            return merges.REMOVE_CREW_REFUSAL
+        # The last look, immediately before the remove.
+        if card:
+            verdict = await self._release_still_safe(cid, path, False)
+            if verdict != "ok":
+                return merges.REMOVE_INUSE_REFUSAL
+        elif await loop.run_in_executor(None, self._session_inside, path):
+            return merges.REMOVE_INUSE_REFUSAL
+        removed, _o, _why = await self._run_git(
+            worktrees.argv_worktree_remove(root, path), root,
+            timeout=worktrees.WORKTREE_ADD_TIMEOUT_SECONDS)
+        if not removed:
+            return merges.REMOVE_KEPT_REFUSAL
+        await loop.run_in_executor(None, trust_marks.unmark, path)
+        try:
+            os.unlink(worktrees.pack_manifest_path(
+                root, self._pack_card_id(path)))
+        except OSError:
+            pass  # no manifest was written, or it is already gone
+        return ""
 
     async def _worktrees_after(self, current) -> dict:
         try:

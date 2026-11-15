@@ -119,6 +119,60 @@ final class BoardMergeVerbTests: XCTestCase {
         XCTAssertNil(CardActionWeight.primary(column: "done"))
     }
 
+    // MARK: - Review & merge
+
+    /// Offered on a Done card with a branch on the daemon's fact alone, so an
+    /// open hand-check does not hide it (the person asked for that); hidden
+    /// while running, without the fact, off Done and with no branch.
+    func testReviewMergeIsOfferedAlsoWhileAHandCheckIsOpen() {
+        XCTAssertTrue(CardMerge.reviewMergeOffered(column: "done", branch: "card/x",
+                                                   running: false, daemonOffers: true))
+        XCTAssertFalse(CardMerge.reviewMergeOffered(column: "done", branch: "card/x",
+                                                    running: true, daemonOffers: true))
+        XCTAssertFalse(CardMerge.reviewMergeOffered(column: "done", branch: "card/x",
+                                                    running: false, daemonOffers: false))
+        XCTAssertFalse(CardMerge.reviewMergeOffered(column: "backlog", branch: "card/x",
+                                                    running: false, daemonOffers: true))
+        XCTAssertFalse(CardMerge.reviewMergeOffered(column: "done", branch: "",
+                                                    running: false, daemonOffers: true))
+    }
+
+    func testReviewMergeLabels() {
+        XCTAssertEqual(CardMerge.reviewMergeLabel(running: false, armed: false),
+                       "REVIEW & MERGE")
+        XCTAssertEqual(CardMerge.reviewMergeLabel(running: false, armed: true),
+                       "Review and merge into main?")
+        XCTAssertEqual(CardMerge.reviewMergeLabel(running: true, armed: true),
+                       "Reviewing…")
+    }
+
+    func testReviewMergeKeysDecodeTolerantly() throws {
+        let absent = try card(#"{"id":"a","column_name":"done"}"#)
+        XCTAssertFalse(absent.reviewMergeOffered)
+        XCTAssertFalse(absent.reviewMergeRunning)
+        let present = try card(#"{"id":"a","review_merge_offered":true,"review_merge_running":true}"#)
+        XCTAssertTrue(present.reviewMergeOffered)
+        XCTAssertTrue(present.reviewMergeRunning)
+        let malformed = try card(#"{"id":"a","title":"kept","review_merge_offered":"yes","review_merge_running":3}"#)
+        XCTAssertFalse(malformed.reviewMergeOffered)
+        XCTAssertFalse(malformed.reviewMergeRunning)
+        XCTAssertEqual(malformed.title, "kept")
+    }
+
+    @MainActor
+    func testArmingReviewMergeDropsEveryOtherArm() {
+        let state = BoardState()
+        state.armMerge("a")
+        state.armReviewMerge("a")
+        XCTAssertNil(state.mergeArmed)
+        XCTAssertEqual(state.reviewMergeArmed, "a")
+        state.armFix("a")
+        XCTAssertNil(state.reviewMergeArmed)
+        state.armReviewMerge("a")
+        state.disarm()
+        XCTAssertNil(state.reviewMergeArmed)
+    }
+
     // MARK: - The CHANGES section
 
     func testChangesIsInTheDoneAndEndedOrdersBehindMore() {

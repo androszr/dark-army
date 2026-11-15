@@ -616,6 +616,11 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// The daemon's one fact for MERGE, Fix and Run review: the gate without
     /// its busy rungs (`merge_offered`). Absent — an older daemon — is false.
     var mergeOffered = false
+    /// Review & merge (`review_merge_offered` / `review_merge_running`): the
+    /// gate with a still-open hand-check allowed, and the consult or its
+    /// waiting merge in flight. Absent — an older daemon — is false.
+    var reviewMergeOffered = false
+    var reviewMergeRunning = false
     var isScout: Bool { kind == "scout" }
     /// The number `cardOrder` sorts on. `""` and `"0"` fold together here
     /// exactly as `CAST(priority AS INTEGER)` folds them in
@@ -989,6 +994,8 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case reviewVerdict = "review_verdict"
         case reviewRunning = "review_running"
         case mergeOffered = "merge_offered"
+        case reviewMergeOffered = "review_merge_offered"
+        case reviewMergeRunning = "review_merge_running"
         case revision
         case refineState = "refine_state"
         case refineSessionId = "refine_session_id"
@@ -1086,6 +1093,8 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         reviewVerdict = c.value(.reviewVerdict, "")
         reviewRunning = c.value(.reviewRunning, false)
         mergeOffered = c.value(.mergeOffered, false)
+        reviewMergeOffered = c.value(.reviewMergeOffered, false)
+        reviewMergeRunning = c.value(.reviewMergeRunning, false)
         revision = c.value(.revision, 0)
         refineState = c.value(.refineState, "")
         refineSessionId = c.value(.refineSessionId, "")

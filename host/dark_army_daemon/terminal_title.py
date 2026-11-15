@@ -156,6 +156,7 @@ def compose(nickname: str, name: str, project: str = "") -> str:
 ORIGIN_PREFIX = {"card-refine": "refine: ", "card-consult": "ask: ",
                  "card-review": "review: ",
                  "card-merge-fix": "fix: ",
+                 "card-review-merge": "review+merge: ",
                  "review": "review: "}
 
 #: `daemon.UNNAMED_SESSION`, spelled here rather than imported: this module

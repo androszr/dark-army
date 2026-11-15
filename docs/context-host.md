@@ -429,7 +429,10 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     `<root>/.dark-army/key` (0600, in a 0700 folder whose own `.gitignore`
     is `*`, plus a `.dark-army/` line appended once to that project's
     `.gitignore` where it is a git repository) and records its **SHA-256 digest** — never the
-    key — in `~/.dark-army/enrollment.json` (`paths._PRIVATE_FILES`). It is an *enrolment and scoping* boundary, not authentication against a hostile local process: it stops an untrusted repository's agent using Dark Army's board as a lateral channel into other projects, not a local process that reads the key file.
+    key — in `~/.dark-army/enrollment.json` (`paths._PRIVATE_FILES`).
+    **Enrolling starts git** (`_start_git`, `_first_commit`): a root in no
+    work tree gets `git init -b main` (never nested) and, with no commit yet,
+    `Initial commit` (unsigned, no hooks, secrets left out); no git identity or a failure is a note, never a refusal. It is an *enrolment and scoping* boundary, not authentication against a hostile local process: it stops an untrusted repository's agent using Dark Army's board as a lateral channel into other projects, not a local process that reads the key file.
     Readers try `.dark-army/key`, then `.bob-companion/key`; `migrate_key_folders()`
     copies an old-only key on launch, never over a differing key.
 

@@ -1324,6 +1324,52 @@ def review_prompt(card: dict, *, branch: str, trunk: str, worktree: str) -> str:
     return "\n".join(parts)
 
 
+#: The Review & merge helper's lead: it reviews, repairs on the card branch
+#: and answers through the channel; the merge itself is Dark Army's.
+REVIEW_MERGE_PREAMBLE = (
+    "You are reviewing one Dark Army board card's branch, fixing what the "
+    "review finds, and handing it back ready to merge. You work only in the "
+    f"card's folder. Answer only through {CONSULT_ANSWER_TOOL}. File no "
+    "cards.\n\n"
+)
+
+
+def review_merge_prompt(card: dict, *, branch: str, trunk: str,
+                        worktree: str) -> str:
+    """The prompt the Review & merge helper opens with: the review routine,
+    every BLOCK and FIX repaired on the card branch, the project's tests,
+    commits, and a verdict on the first line of the one answer. The standing
+    orders repeat last."""
+    card = card or {}
+    title = str(card.get("title") or "").strip()
+    parts = [REVIEW_MERGE_PREAMBLE.rstrip(), ""]
+    if title:
+        parts.append("Card title: " + title)
+    parts.append("Card branch: " + str(branch))
+    parts.append("Folder (checked out on that branch): " + str(worktree))
+    parts.append("Main line: " + str(trunk))
+    parts.append("")
+    parts.append(
+        f"Orders: run the project's review routine (`/review {branch}`, in "
+        f".claude/skills/review/SKILL.md) in this folder, comparing the "
+        f"branch against {trunk}. Fix every BLOCK and FIX finding on the "
+        f"card branch ({branch}) in this folder. Run the tests the "
+        "project's CLAUDE.md names for what changed. Commit the fixes on the "
+        "card branch with real messages and leave the folder clean. Answer "
+        f"once, through {CONSULT_ANSWER_TOOL}: the first line of your answer "
+        "must be `VERDICT: SHIP` (everything fixed, tests pass, ready to "
+        "merge) or `VERDICT: STOP — <the reason in a few words>`, then a "
+        "short account of the findings and the fixes.")
+    parts.append("")
+    parts.append(
+        f"Standing orders, again: commit on {branch} only. Never switch to "
+        f"{trunk}, never `git reset --hard`, never touch the main checkout, "
+        f"never merge into {trunk}, never push, tag, install, release or "
+        "delete a branch. File no cards. Use no bob-tldr or bob-actions "
+        "blocks.")
+    return "\n".join(parts)
+
+
 async def spawn(root: str, argv: list, name: str, *, stamp: str = "",
                 cwd: str = "") -> tuple:
     """Ask the one VS Code window that owns `root` to open a terminal running

@@ -51,6 +51,7 @@ struct BoardCardView: View {
     private var isDoneArmed: Bool { facts.doneArmed }
     private var isMergeArmed: Bool { facts.mergeArmed }
     private var isFixArmed: Bool { facts.fixArmed }
+    private var isReviewMergeArmed: Bool { facts.reviewMergeArmed }
     private var isStarting: Bool { facts.starting }
     /// Confirmed Delete, not yet gone from a snapshot. Same rule as
     /// `RowActions.stopping`: the press has to change the screen immediately or
@@ -131,6 +132,18 @@ struct BoardCardView: View {
                                 reviewRunning: card.reviewRunning,
                                 manualDue: card.needsManualCheck,
                                 daemonOffers: card.mergeOffered)
+    }
+    /// Review & merge (`CardMerge.reviewMergeOffered`): offered on a Done
+    /// card with a branch **also while its hand-check is still open** — the
+    /// daemon's own `review_merge_offered` carries that rung. Running shows
+    /// dim `Reviewing…` words and no button.
+    private var reviewMergeShown: Bool {
+        CardMerge.reviewMergeOffered(column: card.column, branch: card.worktreeBranch,
+                                     running: card.reviewMergeRunning,
+                                     daemonOffers: card.reviewMergeOffered)
+    }
+    private var reviewMergeRunningShown: Bool {
+        card.column == BoardColumn.done.rawValue && card.reviewMergeRunning
     }
     private var isMerging: Bool {
         card.column == BoardColumn.done.rawValue && card.mergeState == "merging"
@@ -346,9 +359,20 @@ struct BoardCardView: View {
     /// Refine never arms (`refineButton`).
     @ViewBuilder
     private var lineVerb: some View {
-        switch CardActionWeight.primary(column: card.column, kind: card.kind) {
+        switch CardActionWeight.primary(column: card.column, kind: card.kind,
+                                        reviewMergeOffered: reviewMergeShown) {
         case .start:
             if canStart { lineStartButton }
+        case .reviewMerge:
+            lineBox(CardMerge.reviewMergeLabel(running: false, armed: isReviewMergeArmed),
+                    armed: isReviewMergeArmed) {
+                if isReviewMergeArmed {
+                    state.disarm()
+                    reviewAndMerge()
+                } else {
+                    state.armReviewMerge(card.id)
+                }
+            }
         case .refine:
             if canRefine {
                 lineBox("Refine", armed: false, enabled: !isRefining) {
@@ -366,7 +390,14 @@ struct BoardCardView: View {
                 }
             }
         default:
-            EmptyView()
+            if reviewMergeRunningShown {
+                Text(CardMerge.reviewMergeLabel(running: true, armed: false))
+                    .font(Theme.mono(10))
+                    .foregroundStyle(Theme.dim)
+                    .lineLimit(1)
+            } else {
+                EmptyView()
+            }
         }
     }
 
@@ -1278,7 +1309,8 @@ struct BoardCardView: View {
     private var actions: some View {
         if (BoardColumn(rawValue: card.column) ?? .backlog) == .prep {
             prepActions
-        } else if mergeOffered || fixOffered || reviewOffered || isMerging {
+        } else if mergeOffered || fixOffered || reviewOffered || isMerging
+                    || reviewMergeShown || reviewMergeRunningShown {
             // A Done card with a branch to land: the merge verbs take a
             // line of their own beneath the usual ones, or the row wraps
             // mid-word (`prepActions`' reason).
@@ -1291,12 +1323,19 @@ struct BoardCardView: View {
         }
     }
 
-    /// MERGE (armed, then confirmed), Fix (armed, then confirmed) and Run
-    /// review (one press), all dim words: `CardActionWeight` names no verb
-    /// for Done, and an absent primary promotes nothing.
+    /// Review & merge (outlined where offered: `CardActionWeight`'s Done
+    /// verb), MERGE (armed, then confirmed), Fix (armed, then confirmed) and
+    /// Run review (one press), the last three dim words. An absent primary
+    /// promotes nothing.
     @ViewBuilder
     private var mergeActions: some View {
         HStack(spacing: 8) {
+            if reviewMergeShown {
+                reviewMergeButton
+            } else if reviewMergeRunningShown {
+                Text(CardMerge.reviewMergeLabel(running: true, armed: false))
+                    .foregroundStyle(Theme.dim)
+            }
             if mergeOffered {
                 dimVerb(CardMerge.mergeLabel(mergeState: card.mergeState,
                                              armed: isMergeArmed),
@@ -1331,6 +1370,20 @@ struct BoardCardView: View {
             Spacer(minLength: 0)
         }
         .font(Theme.mono(10))
+    }
+
+    /// REVIEW & MERGE: armed, then confirmed — it ends in a merge onto main.
+    private var reviewMergeButton: some View {
+        weighted(.reviewMerge, armed: isReviewMergeArmed) {
+            Button(CardMerge.reviewMergeLabel(running: false, armed: isReviewMergeArmed)) {
+                if isReviewMergeArmed {
+                    state.disarm()
+                    reviewAndMerge()
+                } else {
+                    state.armReviewMerge(card.id)
+                }
+            }
+        }
     }
 
     /// A dim word that is really a button, `weighted`'s dim branch for a
@@ -1621,7 +1674,8 @@ struct BoardCardView: View {
                                          armed: Bool = false,
                                          enabled: Bool = true,
                                          @ViewBuilder _ button: () -> Content) -> some View {
-        if CardActionWeight.isPrimary(verb, column: card.column, kind: card.kind) {
+        if CardActionWeight.isPrimary(verb, column: card.column, kind: card.kind,
+                                      reviewMergeOffered: reviewMergeShown) {
             button()
                 .buttonStyle(AlarmOutline(filled: true))
                 .disabled(!enabled)
@@ -1759,6 +1813,18 @@ struct BoardCardView: View {
         state.refusals[card.id] = ""
         Task { @MainActor in
             let result = await client.boardMergeFix(card.id)
+            if !result.ok { state.refusals[card.id] = result.detail }
+            await client.refresh()
+        }
+    }
+
+    /// Review & merge, confirmed: the daemon reviews the branch, fixes what it
+    /// finds on the card branch and merges once the reviewer's terminal
+    /// closes. A refusal in words is all that comes back here.
+    private func reviewAndMerge() {
+        state.refusals[card.id] = ""
+        Task { @MainActor in
+            let result = await client.boardReviewMerge(card.id)
             if !result.ok { state.refusals[card.id] = result.detail }
             await client.refresh()
         }

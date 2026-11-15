@@ -152,6 +152,33 @@ out["tips"] = WorktreeRows.tips(for: ["c", "b"], entries: [
     WorktreeRows.Entry(id: "a", branchTip: "ta", mergeable: true),
     WorktreeRows.Entry(id: "b", branchTip: "tb", mergeable: true),
     WorktreeRows.Entry(id: "c", branchTip: "tc", mergeable: true)])
+out["nothing_tick"] = WorktreeRows.tickable(
+    rowMergeable: true, branchTip: "ab", card: WorktreeRows.CardFacts(
+        column: "done", branch: "card/x", mergeState: "", manualDue: false,
+        mergeOffered: true), mergeWritable: true, status: "nothing")
+out["done_tick"] = WorktreeRows.tickable(
+    rowMergeable: true, branchTip: "ab", card: WorktreeRows.CardFacts(
+        column: "done", branch: "card/x", mergeState: "", manualDue: false,
+        mergeOffered: true), mergeWritable: true, status: "done")
+func word(_ g: WorktreeRows.Group) -> String { "\(g)" }
+out["g_nothing_ticked"] = word(WorktreeRows.group(status: "nothing", tickable: true))
+out["g_nothing"] = word(WorktreeRows.group(status: "nothing", tickable: false))
+out["g_merged"] = word(WorktreeRows.group(status: "merged", tickable: false))
+out["g_gone"] = word(WorktreeRows.group(status: "gone", tickable: false))
+out["g_no_card"] = word(WorktreeRows.group(status: "no_card", tickable: false))
+out["g_done"] = word(WorktreeRows.group(status: "done", tickable: true))
+out["g_conflict"] = word(WorktreeRows.group(status: "conflict", tickable: false))
+out["g_working"] = word(WorktreeRows.group(status: "working", tickable: false))
+out["names"] = WorktreeRows.projectNames(["b", "", "a", "b"])
+out["match_all"] = WorktreeRows.matches(project: "x", active: "")
+out["match_same"] = WorktreeRows.matches(project: "x", active: "x")
+out["match_other"] = WorktreeRows.matches(project: "y", active: "x")
+out["counts"] = WorktreeRows.counts(["a", "b", "a"])
+out["rm_nothing"] = WorktreeRows.removable(rowRemovable: true, status: "nothing", writable: true)
+out["rm_done"] = WorktreeRows.removable(rowRemovable: true, status: "done", writable: true)
+out["rm_old_mac"] = WorktreeRows.removable(rowRemovable: true, status: "merged", writable: false)
+out["rm_not_offered"] = WorktreeRows.removable(rowRemovable: false, status: "merged", writable: true)
+out["rm_words"] = [WorktreeRows.removeVerb(armed: false), WorktreeRows.removeVerb(armed: true)]
 out["verb"] = WorktreeRows.verb(count: 2)
 out["armed"] = WorktreeRows.armedVerb(count: 3)
 out["max"] = WorktreeRows.maximum
@@ -209,6 +236,23 @@ def test_the_tick_rule_run_under_swiftc(tmp_path):
     assert got["verb"] == "MERGE 2"
     assert got["armed"] == "Merge 3 into main?"
     assert got["max"] == 8
+    # An already-merged branch is never ticked and never "ready".
+    assert got["nothing_tick"] is False and got["done_tick"] is True
+    assert got["g_nothing_ticked"] == "finished"
+    for name in ("g_nothing", "g_merged", "g_gone", "g_no_card"):
+        assert got[name] == "finished", name
+    assert got["g_done"] == "ready" and got["g_conflict"] == "attention"
+    assert got["g_working"] == "notReady"
+    # The project filter.
+    assert got["names"] == ["a", "b"]
+    assert got["match_all"] is True and got["match_same"] is True
+    assert got["match_other"] is False
+    assert got["counts"] == {"a": 2, "b": 1}
+    # DELETE.
+    assert got["rm_nothing"] is True
+    assert got["rm_done"] is False and got["rm_old_mac"] is False
+    assert got["rm_not_offered"] is False
+    assert got["rm_words"] == ["DELETE", "Delete this folder?"]
     assert got["key_open"] != got["key_done"]
 
 
@@ -229,3 +273,38 @@ def test_the_press_reply_and_detail_line_are_conditional():
     assert "pressReply" in view and "if showsMerge { mergeBar }" in view
     assert "!detailLine(row).isEmpty" in view
     assert "row.ahead >= 0" in view
+
+
+def test_the_project_filter_is_the_boards_pattern_and_scopes_the_batch():
+    view = _code(_read("WorktreesView.swift"))
+    assert '@SceneStorage("worktrees.project")' in view
+    assert "PhoneProjectStrip(" in view
+    assert "FleetProjects.resolve(" in view
+    # The batch ticks and sends the visible rows only.
+    assert "listed: rows.map(\\.id)" in view
+    assert "let count = orderedTicked.count" in view
+    assert "WorktreeRows.matches(project:" in view
+    assert "ticked = []" in view
+
+
+def test_delete_is_posted_never_banked_armed_then_confirmed():
+    view = _code(_read("WorktreesView.swift"))
+    assert "action: PhoneActions.boardWorktreeRemove" in view
+    assert "enqueue(action: PhoneActions.boardWorktreeRemove" not in view
+    assert "arm.confirm(.worktreeRemove" in view
+    assert "arm.arm(.worktreeRemove" in view
+    assert "board.worktreeRemoveWritable" in view
+    assert '"folder": row.folder' in view and '"project": row.project' in view
+    actions = _read("Actions.swift")
+    assert 'static let boardWorktreeRemove = "board_worktree_remove"' in actions
+    assert "board_worktree_remove" in api_server.ApiServer.LAN_ACTIONS
+    assert "board_worktree_remove" in api_server.ApiServer.REMOTE_ACTIONS
+    models = _read("Models.swift")
+    assert 'case worktreeRemoveWritable = "worktree_remove_writable"' in models
+    assert 'case ahead, uncommitted, mergeable, removable' in models
+
+
+def test_the_grouping_is_the_pure_rule_not_the_views():
+    view = _code(_read("WorktreesView.swift"))
+    assert "WorktreeRows.group(status:" in view
+    assert "private enum Bucket" not in view

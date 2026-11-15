@@ -47,6 +47,22 @@ enum CardMerge {
             && !manualDue
     }
 
+    /// Review & merge: a Done card with a recorded branch, no review-and-merge
+    /// running or waiting, and the daemon's own fact (`review_merge_offered`:
+    /// the gate with the hand-check open steps allowed, so it is offered
+    /// **while a manual check is still needed** too). Absent key reads false.
+    static func reviewMergeOffered(column: String, branch: String,
+                                   running: Bool, daemonOffers: Bool) -> Bool {
+        daemonOffers && column == "done" && !branch.isEmpty && !running
+    }
+
+    /// Review & merge's words: dim `Reviewing…` while it runs (no button),
+    /// the confirming question once armed (it ends in a merge onto main).
+    static func reviewMergeLabel(running: Bool, armed: Bool) -> String {
+        if running { return "Reviewing…" }
+        return armed ? "Review and merge into main?" : "REVIEW & MERGE"
+    }
+
     /// The MERGE button's words: inert `MERGING…` while the daemon works,
     /// the confirming question once armed.
     static func mergeLabel(mergeState: String, armed: Bool) -> String {

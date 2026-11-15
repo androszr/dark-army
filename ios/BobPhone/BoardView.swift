@@ -704,7 +704,23 @@ struct BoardView: View {
             } else if isOpen && !leaving {
                 VStack(alignment: .leading, spacing: 4) {
                     tile
-                    openedActions(for: card, primary: nil, holdable: false)
+                    openedActions(for: card, primary: primary, holdable: false)
+                    if card.column == "done" { swipeNote(for: card) }
+                }
+                .onAppear { swipeNoteArrived(client.queueNote(for: card.id), for: card) }
+                .onChange(of: client.queueNote(for: card.id)) { _, queued in
+                    swipeNoteArrived(queued, for: card)
+                }
+            } else if card.column == "done" {
+                // A Done line's Review & merge answers on the line too: a
+                // refusal in the Mac's words, under it.
+                VStack(alignment: .leading, spacing: 4) {
+                    tile
+                    swipeNote(for: card)
+                }
+                .onAppear { swipeNoteArrived(client.queueNote(for: card.id), for: card) }
+                .onChange(of: client.queueNote(for: card.id)) { _, queued in
+                    swipeNoteArrived(queued, for: card)
                 }
             } else {
                 tile
@@ -719,10 +735,14 @@ struct BoardView: View {
     private func lineVerbWords(_ primary: PhoneCardSwipe.Primary,
                                for card: BoardCard) -> String? {
         let label = swipeLabel(primary, for: card)
-        let plain = primary == .start ? PhoneCardSwipe.startLabel
-                                      : PhoneCardSwipe.refineLabel
+        let plain: String
+        let armed: String?
+        switch primary {
+        case .start: plain = PhoneCardSwipe.startLabel; armed = arm.start
+        case .refine: plain = PhoneCardSwipe.refineLabel; armed = arm.refine
+        case .reviewMerge: plain = PhoneCardSwipe.reviewMergeShort; armed = arm.reviewMerge
+        }
         if label != plain { return label }
-        let armed = primary == .start ? arm.start : arm.refine
         return armed == card.id ? PhoneCardLine.armedLabel(plain) : nil
     }
 
@@ -757,12 +777,18 @@ struct BoardView: View {
     /// First press arms, the second sends, under the card screen's own
     /// slots so one armed verb is live at a time.
     private func pressArmed(_ primary: PhoneCardSwipe.Primary, _ card: BoardCard) {
-        let held = primary == .start ? arm.start : arm.refine
+        let held: String?
+        let kind: Arm.Slot
+        switch primary {
+        case .start: held = arm.start; kind = .start
+        case .refine: held = arm.refine; kind = .refine
+        case .reviewMerge: held = arm.reviewMerge; kind = .reviewMerge
+        }
         if held == card.id {
             arm.disarm()
             pressSwipe(primary, card)
         } else {
-            arm.arm(primary == .start ? .start : .refine, id: card.id)
+            arm.arm(kind, id: card.id)
         }
     }
 
@@ -828,6 +854,14 @@ struct BoardView: View {
                             .buttonStyle(AlarmOutline(color: SwipeInk.close, size: 11))
                             .disabled(out)
                             .accessibilityLabel(PhoneCardSwipe.deleteSpoken)
+                        case .reviewMerge:
+                            DecryptButton(lineVerbWords(.reviewMerge, for: card)
+                                          ?? PhoneCardSwipe.reviewMergeLabel) {
+                                pressArmed(.reviewMerge, card)
+                            }
+                            .buttonStyle(AlarmOutline(size: 11))
+                            .disabled(out)
+                            .accessibilityLabel(PhoneCardSwipe.reviewMergeSpoken)
                         case .select:
                             DecryptButton(PhoneCardLine.selectLabel) { hold(card) }
                                 .buttonStyle(AlarmOutline(color: Theme.dim, size: 11))
@@ -876,7 +910,19 @@ struct BoardView: View {
             canRefine: PhoneRowSelection.tickable("prep", card: card,
                                                   dispatchEnabled: board.dispatchEnabled),
             canStart: PhoneCardSwipe.canStart(card: card,
-                                              dispatchEnabled: board.dispatchEnabled))
+                                              dispatchEnabled: board.dispatchEnabled),
+            reviewMerge: showsReviewMerge(card))
+    }
+
+    /// Review & merge on a Done card's line and opened card: the Mac takes
+    /// the verb (`merge_writable`) and says this card offers it. A manual
+    /// check still open does not hide it.
+    private func showsReviewMerge(_ card: BoardCard) -> Bool {
+        board.mergeWritable
+            && CardMerge.reviewMergeOffered(
+                column: card.column, branch: card.worktreeBranch,
+                running: card.reviewMergeRunning || card.reviewRunning,
+                daemonOffers: card.reviewMergeOffered)
     }
 
     private func swipeLabel(_ primary: PhoneCardSwipe.Primary, for card: BoardCard) -> String {
@@ -893,6 +939,12 @@ struct BoardView: View {
                 return mark
             }
             return PhoneCardSwipe.refineLabel
+        case .reviewMerge:
+            if client.queuedAction(for: card.id) == PhoneActions.boardReviewMerge,
+               let mark = client.queueMark(for: card.id) {
+                return mark
+            }
+            return PhoneCardSwipe.reviewMergeShort
         }
     }
 
@@ -900,6 +952,7 @@ struct BoardView: View {
         switch primary {
         case .start: pressSwipeStart(card)
         case .refine: pressSwipeRefine(card)
+        case .reviewMerge: pressSwipeReviewMerge(card)
         }
     }
 
@@ -969,6 +1022,18 @@ struct BoardView: View {
         swipeRefusal[card.id] = nil
         Task {
             let result = await client.enqueue(action: PhoneActions.boardRefine,
+                                              fields: ["card_id": card.id], scope: card.id)
+            if !result.ok { swipeRefusal[card.id] = result.detail }
+        }
+    }
+
+    /// Review & merge from the line or the opened card: already armed by
+    /// `pressArmed`, so this is the send. The Mac re-checks the folder, the
+    /// hand-check and the branch at the press and answers in its own words.
+    private func pressSwipeReviewMerge(_ card: BoardCard) {
+        swipeRefusal[card.id] = nil
+        Task {
+            let result = await client.enqueue(action: PhoneActions.boardReviewMerge,
                                               fields: ["card_id": card.id], scope: card.id)
             if !result.ok { swipeRefusal[card.id] = result.detail }
         }
@@ -2094,6 +2159,7 @@ enum PhoneCardLine {
         switch primary {
         case .start: return "play.fill"
         case .refine: return "wand.and.stars"
+        case .reviewMerge: return "arrow.triangle.merge"
         }
     }
 
@@ -2119,7 +2185,7 @@ enum PhoneCardLine {
     /// Delete and Select where the row has them, and always the way on to
     /// the card's screen. In progress and Done answer from that screen.
     enum Action: Equatable {
-        case refine, start, delete, select, more
+        case refine, start, reviewMerge, delete, select, more
     }
 
     static func actions(primary: PhoneCardSwipe.Primary?, canStart: Bool,
@@ -2131,6 +2197,8 @@ enum PhoneCardLine {
             if canStart { out.append(.start) }
         case .start?:
             out.append(.start)
+        case .reviewMerge?:
+            out.append(.reviewMerge)
         case nil:
             break
         }

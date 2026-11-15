@@ -74,7 +74,8 @@ def test_the_verbs_have_receipts_and_notes():
     actions = _read(PHONE / "Actions.swift")
     for verb, wire in (("boardMerge", "board_merge"),
                        ("boardMergeFix", "board_merge_fix"),
-                       ("boardReviewRun", "board_review_run")):
+                       ("boardReviewRun", "board_review_run"),
+                       ("boardReviewMerge", "board_review_merge")):
         assert f'static let {verb} = "{wire}"' in actions, verb
     receipts = _read(PHONE / "Receipts.swift")
     assert "case cardMergeState(cardId: String, before: String, line: String)" in receipts

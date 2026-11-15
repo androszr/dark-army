@@ -38,14 +38,73 @@ enum WorktreeRows {
     /// Whether a row can be ticked: the Mac honours the press, the daemon
     /// calls the row mergeable with a tip to echo, the card is still on the
     /// board and `CardMerge.offered` says MERGE would show.
+    ///
+    /// A row the Mac calls `nothing` / `merged` / `gone` / `no_card` is never
+    /// ticked, whatever else it says: its branch has nothing ahead of main
+    /// (an older Mac offered those as mergeable).
     static func tickable(rowMergeable: Bool, branchTip: String,
-                         card: CardFacts?, mergeWritable: Bool) -> Bool {
+                         card: CardFacts?, mergeWritable: Bool,
+                         status: String = "") -> Bool {
         guard mergeWritable, rowMergeable, !branchTip.isEmpty,
+              !finishedStatuses.contains(status),
               let card else { return false }
         return CardMerge.offered(column: card.column, branch: card.branch,
                                  mergeState: card.mergeState,
                                  manualDue: card.manualDue,
                                  daemonOffers: card.mergeOffered)
+    }
+
+    /// The statuses with nothing left to merge: the folded group.
+    static let finishedStatuses: Set<String> = ["merged", "gone", "no_card", "nothing"]
+
+    /// What a person can do with a row, which is how the screen groups it.
+    enum Group: CaseIterable {
+        case ready, attention, notReady, finished
+    }
+
+    /// The one grouping rule. A row with nothing ahead of main (`nothing`)
+    /// is finished, whatever its `mergeable` says, so it can never sit
+    /// under READY TO MERGE.
+    static func group(status: String, tickable: Bool) -> Group {
+        if finishedStatuses.contains(status) { return .finished }
+        if tickable { return .ready }
+        switch status {
+        case "conflict", "checks_failed", "blocked", "unreadable": return .attention
+        default: return .notReady
+        }
+    }
+
+    /// The project chips: the rows' own project labels, unique, non-empty,
+    /// sorted (`FleetProjects.names`' rule).
+    static func projectNames(_ projects: [String]) -> [String] {
+        Array(Set(projects.filter { !$0.isEmpty })).sorted()
+    }
+
+    /// `""` is ALL and matches every row, an unnamed project included.
+    static func matches(project: String, active: String) -> Bool {
+        active.isEmpty || project == active
+    }
+
+    /// Rows per project label, for the chips' numbers.
+    static func counts(_ projects: [String]) -> [String: Int] {
+        projects.reduce(into: [:]) { $0[$1, default: 0] += 1 }
+    }
+
+    /// Every row hidden by the filter.
+    static func filterLine(project: String) -> String {
+        "no \(project) worktrees · ALL shows every project"
+    }
+
+    /// Whether DELETE is drawn: the Mac honours the press, says this row's
+    /// folder or branch may go (`removable`) and the status is one with
+    /// nothing left to merge.
+    static func removable(rowRemovable: Bool, status: String, writable: Bool) -> Bool {
+        writable && rowRemovable && finishedStatuses.contains(status)
+    }
+
+    /// DELETE's words, and the confirming question once armed.
+    static func removeVerb(armed: Bool) -> String {
+        armed ? "Delete this folder?" : "DELETE"
     }
 
     /// The ticked ids in the list's own order — the order the Mac merges in.

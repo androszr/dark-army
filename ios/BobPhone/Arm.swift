@@ -38,6 +38,9 @@ final class Arm: ObservableObject {
         /// an arm for one can never confirm the other or any verb above.
         case merge
         case mergeFix
+        /// Review & merge on a Done card: it ends in a merge onto main, so it
+        /// is armed then confirmed, in its own slot.
+        case reviewMerge
         /// End on the Comm tab: closes Mission Control's terminal.
         case missionEnd
         /// The Prep row's batch Refine on the Board tab. Its own slot, so a
@@ -63,6 +66,10 @@ final class Arm: ObservableObject {
         /// on the joined ordered id list, so a tick changed between the two
         /// presses re-arms rather than fires.
         case mergeBatch
+        /// DELETE on a Worktrees row: removes one leftover folder. Its own
+        /// slot, armed on the row's id, so nothing else armed on the screen
+        /// can confirm it and a MERGE tick can never fire it.
+        case worktreeRemove
     }
 
     @Published private(set) var start: String?
@@ -81,6 +88,7 @@ final class Arm: ObservableObject {
     @Published private(set) var review: String?
     @Published private(set) var merge: String?
     @Published private(set) var mergeFix: String?
+    @Published private(set) var reviewMerge: String?
     @Published private(set) var missionEnd: String?
     @Published private(set) var refineBatch: String?
     @Published private(set) var startBatch: String?
@@ -88,6 +96,7 @@ final class Arm: ObservableObject {
     @Published private(set) var reviewContinue: String?
     @Published private(set) var reviewEnd: String?
     @Published private(set) var mergeBatch: String?
+    @Published private(set) var worktreeRemove: String?
 
     /// Card detail hangs plan-gate pending flags here so a timeout cannot
     /// leave `skip_plan_gate` armed for the next Menu tap.
@@ -113,6 +122,7 @@ final class Arm: ObservableObject {
         review = nil
         merge = nil
         mergeFix = nil
+        reviewMerge = nil
         missionEnd = nil
         refineBatch = nil
         startBatch = nil
@@ -120,6 +130,7 @@ final class Arm: ObservableObject {
         reviewContinue = nil
         reviewEnd = nil
         mergeBatch = nil
+        worktreeRemove = nil
         switch slot {
         case .start: start = id
         case .startHere: startHere = id
@@ -137,6 +148,7 @@ final class Arm: ObservableObject {
         case .review: review = id
         case .merge: merge = id
         case .mergeFix: mergeFix = id
+        case .reviewMerge: reviewMerge = id
         case .missionEnd: missionEnd = id
         case .refineBatch: refineBatch = id
         case .startBatch: startBatch = id
@@ -144,6 +156,7 @@ final class Arm: ObservableObject {
         case .reviewContinue: reviewContinue = id
         case .reviewEnd: reviewEnd = id
         case .mergeBatch: mergeBatch = id
+        case .worktreeRemove: worktreeRemove = id
         }
         timeoutTask = Task { [weak self] in
             let nanos = UInt64(Self.timeoutSeconds * 1_000_000_000)
@@ -182,6 +195,7 @@ final class Arm: ObservableObject {
         case .review: armed = review
         case .merge: armed = merge
         case .mergeFix: armed = mergeFix
+        case .reviewMerge: armed = reviewMerge
         case .missionEnd: armed = missionEnd
         case .refineBatch: armed = refineBatch
         case .startBatch: armed = startBatch
@@ -189,6 +203,7 @@ final class Arm: ObservableObject {
         case .reviewContinue: armed = reviewContinue
         case .reviewEnd: armed = reviewEnd
         case .mergeBatch: armed = mergeBatch
+        case .worktreeRemove: armed = worktreeRemove
         }
         guard let armedId = armed, id.isEmpty || armedId == id else {
             return false
@@ -216,6 +231,7 @@ final class Arm: ObservableObject {
         review = nil
         merge = nil
         mergeFix = nil
+        reviewMerge = nil
         missionEnd = nil
         refineBatch = nil
         startBatch = nil
@@ -223,6 +239,7 @@ final class Arm: ObservableObject {
         reviewContinue = nil
         reviewEnd = nil
         mergeBatch = nil
+        worktreeRemove = nil
         onDisarm?()
     }
 }

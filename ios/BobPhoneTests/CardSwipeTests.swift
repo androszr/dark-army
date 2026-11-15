@@ -47,6 +47,74 @@ final class CardSwipeTests: XCTestCase {
         XCTAssertEqual(PhoneCardSwipe.rows, ["prep", "backlog"])
     }
 
+    // MARK: Review & merge on a Done card
+
+    func testReviewMergeIsTheDoneLinesVerbWhereTheMacOffersIt() {
+        XCTAssertEqual(PhoneCardSwipe.primary(column: "done", canRefine: false,
+                                              canStart: false, reviewMerge: true),
+                       .reviewMerge)
+        XCTAssertNil(PhoneCardSwipe.primary(column: "done", canRefine: false,
+                                            canStart: false, reviewMerge: false))
+        // Only Done reads the flag.
+        XCTAssertNil(PhoneCardSwipe.primary(column: "in_progress", canRefine: false,
+                                            canStart: false, reviewMerge: true))
+        XCTAssertEqual(PhoneCardSwipe.primary(column: "backlog", canRefine: false,
+                                              canStart: true, reviewMerge: true), .start)
+    }
+
+    func testReviewMergeIsOfferedAlsoWhileAManualCheckIsOpen() {
+        let open = card(["column_name": "done", "worktree_branch": "card/x",
+                         "review_merge_offered": true,
+                         "manual_steps": "1. Open it.", "manual_check_due": true])
+        XCTAssertTrue(open.reviewMergeOffered)
+        XCTAssertFalse(open.manualSteps.isEmpty)
+        XCTAssertTrue(CardMerge.reviewMergeOffered(
+            column: open.column, branch: open.worktreeBranch,
+            running: open.reviewMergeRunning,
+            daemonOffers: open.reviewMergeOffered))
+    }
+
+    func testReviewMergeHidesWhereTheMacDoesNotOfferOrItIsAtWork() {
+        func offered(column: String = "done", branch: String = "card/x",
+                     running: Bool = false, offers: Bool = true) -> Bool {
+            CardMerge.reviewMergeOffered(column: column, branch: branch,
+                                         running: running, daemonOffers: offers)
+        }
+        XCTAssertTrue(offered())
+        XCTAssertFalse(offered(offers: false))      // an older Mac, or a Failed check
+        XCTAssertFalse(offered(column: "in_progress"))
+        XCTAssertFalse(offered(branch: ""))
+        XCTAssertFalse(offered(running: true))
+    }
+
+    func testReviewMergeKeysDecodeTolerantly() {
+        let bare = card([:])
+        XCTAssertFalse(bare.reviewMergeOffered)
+        XCTAssertFalse(bare.reviewMergeRunning)
+        let live = card(["review_merge_offered": true, "review_merge_running": true])
+        XCTAssertTrue(live.reviewMergeOffered)
+        XCTAssertTrue(live.reviewMergeRunning)
+    }
+
+    func testTheOpenedDoneCardListsReviewMergeThenViewMore() {
+        XCTAssertEqual(PhoneCardLine.actions(primary: .reviewMerge, canStart: false,
+                                             deletes: false, selects: false),
+                       [.reviewMerge, .more])
+        XCTAssertNotEqual(PhoneCardLine.verbIcon(.reviewMerge),
+                          PhoneCardLine.verbIcon(.start))
+    }
+
+    func testReviewMergeWireNameAndReceiptWords() {
+        XCTAssertEqual(PhoneActions.boardReviewMerge, "board_review_merge")
+        let receipt = try! JSONDecoder().decode(
+            Receipt.self, from: Data(#"{"id":"t1","action":"board_review_merge"}"#.utf8))
+        XCTAssertEqual(receipt.wording, "Review and merge a card")
+        XCTAssertEqual(PhoneCardSwipe.reviewMergeLabel, "REVIEW & MERGE")
+        XCTAssertEqual(PhoneCardSwipe.reviewMergeShort, "Review & merge")
+        XCTAssertEqual(PhoneCardSwipe.reviewMergeSpoken, "Review and merge")
+        XCTAssertEqual(PhoneCardSwipe.reviewMergeRunningLabel, "Reviewing…")
+    }
+
     func testTheLabelsAreTheCardScreensWords() {
         XCTAssertEqual(PhoneCardSwipe.startLabel, "START")
         XCTAssertEqual(PhoneCardSwipe.refineLabel, "Refine")

@@ -34,9 +34,9 @@ HELPER = "private func weighted<Content: View>("
 
 #: Every static the rule declares.
 STATICS = (
-    "enum Verb: String { case refine, start, startHere, done }",
-    'static func primary(column: String, kind: String = "") -> Verb?',
-    'static func isPrimary(_ verb: Verb, column: String, kind: String = "") -> Bool',
+    "enum Verb: String { case refine, start, startHere, done, reviewMerge }",
+    'static func primary(column: String, kind: String = "", reviewMergeOffered: Bool = false) -> Verb?',
+    'static func isPrimary(_ verb: Verb, column: String, kind: String = "", reviewMergeOffered: Bool = false) -> Bool',
 )
 
 #: The table, as the plan states it: column → the verb outlined there.
@@ -98,7 +98,7 @@ def test_the_rule_is_pure_and_names_its_statics():
     """Foundation only and no `BoardColumn`: the phone compiles the same
     block with no such type in reach."""
     src = _read(RULE)
-    block = _code(_block(src, ENUM))
+    block = _squashed(_block(src, ENUM))
     for needle in STATICS:
         assert needle in block, needle
     assert "import SwiftUI" not in _code(src)
@@ -163,7 +163,8 @@ def test_the_panel_face_has_one_outline_site():
     helper = _block(code, HELPER)
     assert ".buttonStyle(AlarmOutline" in helper
     assert ".buttonStyle(.plain)" in helper
-    assert "CardActionWeight.isPrimary(verb, column: card.column, kind: card.kind)" in helper
+    assert ("CardActionWeight.isPrimary(verb, column: card.column, kind: card.kind, "
+            "reviewMergeOffered: reviewMergeShown)") in " ".join(helper.split())
     # Each branch carries its own tracking area; the call sites add none.
     assert helper.count(".clickable(enabled)") == 2
     for name, call in (
@@ -171,6 +172,7 @@ def test_the_panel_face_has_one_outline_site():
         ("startHereButton", "weighted(.startHere,"),
         ("refineButton", "weighted(.refine,"),
         ("doneButton", "weighted(.done,"),
+        ("reviewMergeButton", "weighted(.reviewMerge,"),
     ):
         block = _block(code, f"private var {name}: some View {{")
         assert call in block, name
@@ -181,6 +183,8 @@ def test_the_panel_face_has_one_outline_site():
     delete = _block(code, "private var deleteButton: some View {")
     assert ".buttonStyle(.plain)" in delete
     assert "Color.red" in delete
+    # Review & merge is the Done column's primary where the card offers it.
+    assert "reviewMergeOffered: reviewMergeShown" in code
     # `small` disarms before it acts, so no arm-then-confirm verb is built on it.
     assert 'small("Done")' not in code
     assert 'small("START")' not in code

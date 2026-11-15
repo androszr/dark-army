@@ -42,12 +42,25 @@ enum PhoneCardSwipe {
     enum Primary: Equatable {
         case refine
         case start
+        /// A Done card's Review & merge (`board_review_merge`).
+        case reviewMerge
     }
 
+    /// Whether a Done card offers Review & merge is `CardMerge.reviewMergeOffered`
+    /// (the Mac's own fact; a manual check still open does not hide it).
+    static let reviewMergeLabel = "REVIEW & MERGE"
+    static let reviewMergeShort = "Review & merge"
+    static let reviewMergeSpoken = "Review and merge"
+    static let reviewMergeRunningLabel = "Reviewing…"
+
     /// Prep: Refine when the card may be refined, else Start when it may be
-    /// started; Backlog: Start when it may be started; nil elsewhere.
-    static func primary(column: String, canRefine: Bool, canStart: Bool) -> Primary? {
+    /// started; Backlog: Start when it may be started; Done: Review & merge where
+    /// the Mac offers it; nil elsewhere.
+    static func primary(column: String, canRefine: Bool, canStart: Bool,
+                        reviewMerge: Bool = false) -> Primary? {
         switch column {
+        case "done":
+            return reviewMerge ? .reviewMerge : nil
         case "prep":
             if canRefine { return .refine }
             return canStart ? .start : nil

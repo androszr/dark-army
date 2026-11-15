@@ -67,6 +67,7 @@ ENV_KEY_RE = re.compile(r"\ABOB_COMPANION_ORIGIN\Z")
 KINDS = ("card-start", "card-refine", "card-consult",
          "card-review",
          "card-merge-fix",
+         "card-review-merge",
          "adhoc", "mission",
          "review")
 
@@ -168,6 +169,7 @@ _VERBS = {
     "card-consult": "to answer a question about",
     "card-review": "to review",
     "card-merge-fix": "to fix the merge of",
+    "card-review-merge": "to review and merge",
 }
 
 #: The kinds that name no card at all, and so are a whole sentence rather than

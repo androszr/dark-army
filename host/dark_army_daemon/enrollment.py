@@ -51,6 +51,7 @@ import json
 import logging
 import os
 import secrets
+import subprocess
 import time
 from pathlib import Path
 
@@ -425,6 +426,142 @@ def _write_key_file(path: Path, key: str) -> None:
         os.close(fd)
 
 
+#: Returned by `_run_git` when git ran past its bound: a tuple whose return
+#: code is None, so every `[0] != 0` check reads it as a failure and
+#: `_timed_out` tells it from "git did not run" (None) and a real exit.
+_TIMEOUT = (None, "", "timed out")
+
+#: Files the first commit leaves out (pathspec globs and the same names for
+#: the note): a secret in a fresh project must not be published by an
+#: automatic `git add -A`.
+_SECRET_GLOBS = (".env", ".env.*", "*.pem", "*.key", "id_rsa*",
+                 "id_ed25519*", "*.p12", "*.keystore")
+
+
+def _run_git(root: Path, args: list, timeout: float = 8.0):
+    """One bounded git call: `(returncode, stdout, stderr)`; None when git
+    cannot be run at all; `_TIMEOUT` when it ran past `timeout`. Argv list,
+    never a shell, the prompt-proof env."""
+    from . import work_record
+    try:
+        done = subprocess.run(
+            work_record._git(str(root)) + list(args),
+            capture_output=True, text=True, timeout=timeout,
+            env=work_record.git_env(), check=False)
+    except subprocess.TimeoutExpired:
+        return _TIMEOUT
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.returncode, done.stdout or "", done.stderr or ""
+
+
+def _timed_out(result) -> bool:
+    return result is not None and result[0] is None
+
+
+def _run_git_writing(root: Path, args: list, timeout: float = 60.0):
+    """`_run_git` for a call that takes `.git/index.lock` (add, commit). A
+    timeout kills git mid-write and can leave the lock behind, which would
+    wedge the person's next git command: remove it, but only when it did not
+    exist before this call (never a lock somebody else holds)."""
+    lock = ""
+    where = _run_git(root, ["rev-parse", "--git-path", "index.lock"])
+    if where is not None and where[0] == 0 and where[1].strip():
+        lock = where[1].strip()
+        if not os.path.isabs(lock):
+            lock = os.path.join(str(root), lock)
+    existed = bool(lock) and os.path.lexists(lock)
+    result = _run_git(root, args, timeout=timeout)
+    if _timed_out(result) and lock and not existed:
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass  # not there, or not ours to remove: nothing more to do
+    return result
+
+
+def _why(result, fallback: str, seconds: float = 60.0) -> str:
+    """The last line git said, or the reason it said nothing."""
+    if result is None:
+        return "git did not run"
+    if _timed_out(result):
+        return f"git timed out after {int(seconds)} seconds"
+    return ((result[2] or result[1]).strip().splitlines() or [fallback])[-1]
+
+
+def _start_git(root: Path) -> str:
+    """`git init -b main` where `root` is inside no work tree. Returns a note.
+
+    A folder inside another repository's work tree is left alone: never nest.
+    Failure never fails the enrolment.
+    """
+    probe = _run_git(root, ["rev-parse", "--is-inside-work-tree"])
+    if probe is None or _timed_out(probe):
+        return ""
+    if probe[0] == 0 and probe[1].strip() == "true":
+        return ""
+    made = _run_git(root, ["init", "-b", "main"])
+    if made is None or made[0] != 0:
+        return "could not start git here (" + _why(made, "git init failed", 8.0) + ")"
+    return "git started"
+
+
+def _left_out(root: Path) -> list:
+    """The untracked, not-ignored files `_SECRET_GLOBS` keep out of the first
+    commit, as repository-relative names."""
+    import fnmatch
+    listed = _run_git(root, ["ls-files", "-o", "--exclude-standard", "-z"])
+    if listed is None or listed[0] != 0:
+        return []
+    return [name for name in listed[1].split("\0") if name and any(
+        fnmatch.fnmatchcase(os.path.basename(name), glob)
+        for glob in _SECRET_GLOBS)]
+
+
+def _first_commit(root: Path) -> str:
+    """The first commit, where `root` tops a work tree that has none. A note.
+
+    No identity configured means no commit (we never invent one); the note
+    says so. Refuses when the project's own key files are not ignored, leaves
+    common secret files out, and runs after the key and `.gitignore` are
+    written. Signing and hooks are off: an unattended commit must not prompt.
+    """
+    top = _run_git(root, ["rev-parse", "--show-toplevel"])
+    if top is None or top[0] != 0:
+        return ""
+    if os.path.realpath(top[1].strip()) != os.path.realpath(str(root)):
+        return ""
+    head = _run_git(root, ["rev-parse", "--verify", "-q", "HEAD"])
+    if head is None or head[0] == 0:
+        return ""
+    for field in ("user.name", "user.email"):
+        got = _run_git(root, ["config", field])
+        if got is None or got[0] != 0 or not got[1].strip():
+            return ("no first commit made (git has no name and email set; "
+                    "run git config user.name and user.email)")
+    for rel in (KEY_RELATIVE, ".bob-companion/key"):
+        if not os.path.lexists(os.path.join(str(root), rel)):
+            continue
+        ignored = _run_git(root, ["check-ignore", "-q", "--", str(rel)])
+        if ignored is None or ignored[0] != 0:
+            return (f"no first commit made ({rel} is not ignored by git, so "
+                    "the key could be committed)")
+    left = _left_out(root)
+    spec = ["."] + [f":(exclude,glob)**/{glob}" for glob in _SECRET_GLOBS]
+    added = _run_git_writing(root, ["add", "-A", "--"] + spec)
+    if added is None or added[0] != 0:
+        return "could not make the first commit: " + _why(added, "git add failed")
+    made = _run_git_writing(root, [
+        "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify",
+        "-m", "Initial commit"])
+    if made is None or made[0] != 0:
+        return "could not make the first commit: " + _why(made, "git commit failed")
+    if left:
+        shown = ", ".join(left[:5]) + (" and more" if len(left) > 5 else "")
+        return f"first commit made (left out as secrets: {shown})"
+    return "first commit made"
+
+
 def enroll(root: str) -> tuple:
     """Put a key inside `root` and record it. `(ok, message)`.
 
@@ -476,7 +613,17 @@ def enroll(root: str) -> tuple:
     if not key:
         return False, "could not write the key file"
 
-    note = _append_gitignore(here)
+    notes = []
+    git_note = _start_git(here)
+    if git_note:
+        notes.append(git_note)
+    gi_note = _append_gitignore(here)
+    if gi_note:
+        notes.append(gi_note)
+    commit_note = _first_commit(here)
+    if commit_note:
+        notes.append(commit_note)
+    note = " — ".join(notes)
     entries.append({
         "root": str(here),
         "digest": digest(key),

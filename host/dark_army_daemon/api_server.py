@@ -3479,12 +3479,20 @@ class ApiServer:
                      "board_merge_fix",
                      # Starting an assistant that reviews the branch.
                      "board_review_run",
+                     # Review, repair on the card branch, then merge once the
+                     # reviewer says SHIP and its terminal has closed.
+                     "board_review_merge",
                      # Landing several finished cards on the local main line
                      # one after another, through the single card's merge.
                      # Keyed on `card_ids` and `expected_tips`, handled
                      # before the card_id check. On both phone tuples — see
                      # `LAN_ACTIONS`.
-                     "board_merge_batch")
+                     "board_merge_batch",
+                     # Deleting one leftover card folder from the phone's
+                     # Worktrees screen. Keyed on `card_id` or on `folder`
+                     # and `project`, handled before the card_id check. On
+                     # both phone tuples — see `LAN_ACTIONS`.
+                     "board_worktree_remove")
 
     #: The phone writes, and the whole set of them. Named here rather than
     #: matched with a prefix: a prefix test would enrol whatever a future
@@ -3663,6 +3671,11 @@ class ApiServer:
         # is refused outright when board_dispatch is off. Keyed on card_id.
         # No parenthesis in this block.
         "board_review_run",
+        # Review & merge on a Done card: one assistant reviews, repairs on
+        # the card branch and answers SHIP or STOP; a SHIP merges once its
+        # terminal has closed. Behind board_dispatch and the launch guards;
+        # keyed on card_id. No parenthesis in this block.
+        "board_review_merge",
         # Landing several finished cards on the local main line one after
         # another, from the phone at home. It is board_merge repeated one
         # card at a time under the same gate, armed and then confirmed on
@@ -3670,6 +3683,14 @@ class ApiServer:
         # card_ids and expected_tips, handled above the card_id check. No
         # parenthesis in this block.
         "board_merge_batch",
+        # Deleting one leftover card folder, from the Worktrees screen at
+        # home. Allowed only for a merged or gone card, a card with nothing
+        # to merge or a folder no card names, decided again by the daemon at
+        # the moment it fires, with git refusing anything unsaved. Armed and
+        # then confirmed on the phone, it pushes nothing. Keyed on card_id,
+        # or on folder and project, handled above the card_id check. No
+        # parenthesis in this block.
+        "board_worktree_remove",
     )
 
     #: The phone writes **from away**, and the whole set of them. It starts
@@ -3837,11 +3858,20 @@ class ApiServer:
         # assistant that only reads and reports a verdict. No parenthesis
         # in this block.
         "board_review_run",
+        # Away as well as at home, and its own decision: it starts one
+        # assistant that reviews, repairs on the card branch and, on SHIP,
+        # merges once its terminal has closed. No parenthesis in this block.
+        "board_review_merge",
         # Away as well as at home, and its own decision: it is board_merge
         # repeated one card at a time under the same gate, armed and then
         # confirmed, riding the phone's lease, Face ID and the receipt
         # token, and it pushes nothing. No parenthesis in this block.
         "board_merge_batch",
+        # Away as well as at home, and its own decision: it removes one
+        # leftover card folder that the daemon finds merged or gone, with
+        # git refusing anything unsaved, riding the phone's lease, Face ID
+        # and the receipt token. No parenthesis in this block.
+        "board_worktree_remove",
         # Away as well as at home, and its own decision: it builds the
         # Mac's working tree as it stands and restarts Dark Army, which the
         # person asked for from away. Away it rides the lease, the app's
@@ -3877,9 +3907,13 @@ class ApiServer:
         "board_merge",
         "board_merge_fix",
         "board_review_run",
+        "board_review_merge",
         # Keyed on `card_ids` and `expected_tips`, handled above the
         # `card_id` check.
         "board_merge_batch",
+        # Keyed on `card_id`, or on `folder` and `project`, handled above
+        # the `card_id` check.
+        "board_worktree_remove",
     })
 
     async def _lan_run(self, action: str, payload: dict,
@@ -5840,6 +5874,19 @@ class ApiServer:
             ok, detail = await self._daemon.merge_cards(pairs)
             body = json.dumps({"ok": ok, "detail": detail}).encode()
             return (200 if ok else 409), "application/json", body
+        if action == "board_worktree_remove":
+            # One leftover folder from the Worktrees screen: keyed on
+            # `card_id`, or on `folder` and `project` for a folder no card
+            # names, so handled **above** the `no card_id` line. Every rule
+            # is the daemon's, decided again as it fires.
+            folder = str(payload.get("folder") or "")[:400]
+            project = str(payload.get("project") or "")[:400]
+            if not card_id and not folder:
+                return 400, "application/json", b'{"error":"no folder"}'
+            ok, detail = await self._daemon.remove_worktree(
+                card_id, folder, project)
+            body = json.dumps({"ok": ok, "detail": detail}).encode()
+            return (200 if ok else 409), "application/json", body
         if not card_id:
             return 400, "application/json", b'{"error":"no card_id"}'
         if action == "board_promote":
@@ -6018,7 +6065,8 @@ class ApiServer:
     #: The three presses on a Done card's branch, by the part of the action's
     #: name after `board_` -> the daemon method each runs.
     _MERGE_PRESSES = {"merge": "merge_card", "merge_fix": "fix_merge_card",
-                      "review_run": "run_card_review"}
+                      "review_run": "run_card_review",
+                      "review_merge": "review_merge_card"}
 
     #: Ranges the Done archive offers. Days, or None for everything on record.
     BOARD_RANGES = {"30d": 30, "90d": 90, "all": None}

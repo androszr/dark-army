@@ -39,6 +39,9 @@ ARM_SLOTS = (
     "manualClear",
     "merge",
     "mergeFix",
+    # Review & merge on a Done card (15 Nov 2026): its own slot, so a MERGE
+    # armed elsewhere can never confirm a review-and-merge, nor the reverse.
+    "reviewMerge",
     # Passed / Failed on a card flagged with a check file (25 Sep 2026, the
     # manual check folder plan): its own slot, so a Mark checked arm can
     # never confirm an outcome.
@@ -57,6 +60,7 @@ ARM_SLOTS = (
     # The Worktrees screen's batch MERGE (3 Oct 2026): its own slot, so a
     # MERGE armed on a card screen can never confirm a batch, nor the reverse.
     "mergeBatch",
+    "worktreeRemove",
     # Continue and End on a Review run (docs/review-runs.md): their own
     # slots, armed on the run id, so no other arm can confirm either.
     "reviewContinue",

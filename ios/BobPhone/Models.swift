@@ -1732,6 +1732,10 @@ struct Board: Decodable {
     /// an older Mac is **false**: the tile is dim and MERGE is drawn absent.
     var worktreesSupported = false
     var mergeBatchWritable = false
+    /// Whether this Mac honours `board_worktree_remove` (the Worktrees
+    /// screen's DELETE). Absent from an older Mac is **false**: DELETE is
+    /// drawn absent.
+    var worktreeRemoveWritable = false
     /// Whether the next Start opens Dark Army's own terminal. START HERE
     /// is drawn only while this is off, so the two buttons cannot do the
     /// same thing. Absent from an older Mac is **false**.
@@ -1813,6 +1817,7 @@ struct Board: Decodable {
         case reviewRunWritable = "review_run_writable"
         case worktreesSupported = "worktrees_supported"
         case mergeBatchWritable = "merge_batch_writable"
+        case worktreeRemoveWritable = "worktree_remove_writable"
         case reviewSectionWritable = "review_section_writable"
         case ownTerminalEnabled = "own_terminal_enabled"
         case ownTerminalSpawnSupported = "own_terminal_spawn_supported"
@@ -1881,6 +1886,7 @@ struct Board: Decodable {
         reviewRunWritable = c.value(.reviewRunWritable, false)
         worktreesSupported = c.value(.worktreesSupported, false)
         mergeBatchWritable = c.value(.mergeBatchWritable, false)
+        worktreeRemoveWritable = c.value(.worktreeRemoveWritable, false)
         reviewSectionWritable = c.value(.reviewSectionWritable, false)
         ownTerminalEnabled = c.value(.ownTerminalEnabled, false)
         ownTerminalSpawnSupported = c.value(.ownTerminalSpawnSupported, false)
@@ -2421,6 +2427,9 @@ struct WorktreeRow: Decodable, Equatable, Identifiable {
     var uncommitted = 0
     var mergeable = false
     var branchTip = ""
+    /// The Mac says this folder or branch may be deleted (`removable`).
+    /// Absent from an older Mac is false: no DELETE.
+    var removable = false
 
     /// A folder with no card has no id: its folder names it.
     /// Two projects may share a label, so the page's position joins it.
@@ -2431,7 +2440,7 @@ struct WorktreeRow: Decodable, Equatable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case title, project, column, branch, folder, status, word, line
-        case ahead, uncommitted, mergeable
+        case ahead, uncommitted, mergeable, removable
         case cardId = "card_id"
         case branchTip = "branch_tip"
     }
@@ -2453,6 +2462,7 @@ struct WorktreeRow: Decodable, Equatable, Identifiable {
         uncommitted = c.value(.uncommitted, 0)
         mergeable = c.value(.mergeable, false)
         branchTip = c.value(.branchTip, "")
+        removable = c.value(.removable, false)
     }
 }
 
@@ -2659,6 +2669,11 @@ struct BoardCard: Decodable, Identifiable, Equatable {
     /// The Mac's one fact for MERGE, Fix and Run review (`merge_offered`);
     /// absent from an older Mac is false.
     var mergeOffered = false
+    /// Review & merge (`review_merge_offered`): offered on a Done card with a
+    /// branch, also while a manual check is open; and whether it, or the
+    /// merge it armed, is at work (`review_merge_running`). Absent is false.
+    var reviewMergeOffered = false
+    var reviewMergeRunning = false
     /// The daemon decides which cards have lost their session.
     var needsYou = false
     /// Mission Control asked for this card to be started (the daemon's
@@ -2869,6 +2884,8 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         case reviewVerdict = "review_verdict"
         case reviewRunning = "review_running"
         case mergeOffered = "merge_offered"
+        case reviewMergeOffered = "review_merge_offered"
+        case reviewMergeRunning = "review_merge_running"
         case needsYou = "needs_you"
         case startAskId = "start_ask_id"
         case startAskedAt = "start_asked_at"
@@ -2929,6 +2946,8 @@ struct BoardCard: Decodable, Identifiable, Equatable {
         reviewVerdict = c.value(.reviewVerdict, "")
         reviewRunning = c.value(.reviewRunning, false)
         mergeOffered = c.value(.mergeOffered, false)
+        reviewMergeOffered = c.value(.reviewMergeOffered, false)
+        reviewMergeRunning = c.value(.reviewMergeRunning, false)
         manualSteps = c.value(.manualSteps, "")
         manualCheckPath = c.value(.manualCheckPath, "")
         needsYou = c.value(.needsYou, false)

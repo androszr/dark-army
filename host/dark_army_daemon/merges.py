@@ -107,6 +107,24 @@ FOLDER_KEPT_SUFFIX = (" Dark Army kept the card's folder because something in "
 REVIEW_RUNNING_LINE = "Review running…"
 #: `.format("SHIP" | "STOP")`.
 REVIEW_LINE = "Review: {0}"
+#: Review & merge: the reviewer said SHIP and the merge waits for its
+#: terminal to close.
+REVIEW_MERGE_WAITING_LINE = ("Reviewed SHIP — merging once the reviewer's "
+                             "terminal closes.")
+REVIEW_MERGE_PENDING_REFUSAL = ("A Review & merge of this card is already "
+                                "waiting to merge.")
+REVIEW_MERGE_TIP_MOVED_NOTE = ("Review & merge stopped: the card's branch "
+                               "changed after the review, so nothing was "
+                               "merged. Press MERGE or Review & merge again.")
+REVIEW_MERGE_TIMEOUT_NOTE = ("Review & merge stopped: the reviewer's terminal "
+                             "is still open — close it and press MERGE.")
+REVIEW_MERGE_TIP_UNREAD_NOTE = ("Review & merge stopped: Dark Army could not "
+                                "read the card's branch, so nothing was "
+                                "merged. Press MERGE when it can.")
+REVIEW_MERGE_REFUSED_NOTE = "Review & merge stopped: {0}"
+REVIEW_MERGE_CHECK_PASSED_NOTE = "Passed by Review & merge"
+#: Seconds a SHIP waits for the reviewer's terminal to close.
+REVIEW_MERGE_WAIT_SECONDS = 900.0
 REVIEW_STALE_SUFFIX = " — reviewed at an earlier version"
 
 # One refusal per way a press can be turned away. Each is plain words a
@@ -143,6 +161,43 @@ BATCH_RUNNING_REFUSAL = ("A batch of merges is already running — press "
                          "again when it has finished.")
 BATCH_TOO_MANY_REFUSAL = "Merge at most 8 cards at a time."
 BATCH_EMPTY_REFUSAL = "No cards were chosen to merge."
+#: A branch with nothing ahead of the trunk: not offered, not merged again.
+NOTHING_TO_MERGE_REFUSAL = ("Main already has everything on this branch, so "
+                            "there is nothing to merge.")
+#: The Worktrees screen's DELETE (`remove_worktree`), each one sentence.
+REMOVE_NOT_FOUND_REFUSAL = "Dark Army found no such folder to delete."
+REMOVE_OUTSIDE_REFUSAL = ("That folder is not one of Dark Army's own card "
+                          "folders, so it was left alone.")
+REMOVE_LINK_REFUSAL = ("That folder is a link to somewhere else, so Dark "
+                       "Army left it alone.")
+REMOVE_OPEN_REFUSAL = ("This card is not finished — only a card in Done can "
+                       "have its folder deleted.")
+REMOVE_UNMERGED_REFUSAL = ("This card's branch still has work the main line "
+                           "lacks — merge it first. Nothing was deleted.")
+REMOVE_UNSURE_REFUSAL = ("Dark Army could not tell whether this folder's work "
+                         "is safe on the main line, so it left it.")
+REMOVE_INUSE_REFUSAL = ("Something is using this folder right now (a session, "
+                        "a merge, a helper or a start-up) — try again when it "
+                        "has finished.")
+REMOVE_SHARED_REFUSAL = ("Another card still works in this folder, so it was "
+                         "left alone.")
+REMOVE_CARD_FOLDER_REFUSAL = ("A card on the board still names this folder, "
+                              "so it was left alone.")
+REMOVE_CREW_REFUSAL = ("This folder holds a report, plan or check the crew "
+                       "wrote there that git would not warn about, so Dark "
+                       "Army left it.")
+REMOVE_NOT_A_TREE_REFUSAL = ("Git does not know this folder as a work tree, "
+                             "so Dark Army left it — delete it by hand if you "
+                             "do not need it.")
+REMOVE_KEPT_REFUSAL = ("Git would not remove this folder — it most likely "
+                       "holds files that were changed or added and not "
+                       "committed. Dark Army left it as it was; save or "
+                       "throw those away yourself, then press DELETE again.")
+REMOVE_NOTHING_REFUSAL = "This card has no folder or branch left to delete."
+#: `.format(folder)`, then the branch's fate.
+REMOVED_NOTE = "Deleted {0}."
+REMOVED_BRANCH_SUFFIX = " Its branch was already on the main line and went too."
+REMOVED_BRANCH_KEPT_SUFFIX = " Its branch was kept."
 #: How long a batch waits for another merge of the project: above the
 #: merge, check and fast-forward bounds together.
 BATCH_WAIT_SECONDS = 2400.0

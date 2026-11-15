@@ -326,6 +326,8 @@ final class BoardState: ObservableObject {
     /// daemon re-checks everything at the press.
     @Published var mergeArmed: String?
     @Published var fixArmed: String?
+    /// Review & merge pressed once and awaiting the confirm (it ends in a merge).
+    @Published var reviewMergeArmed: String?
     /// The store-wide Done clear is deliberately three presses: intent, first
     /// confirmation, final confirmation. Count and exact membership ride
     /// together through every stage and are re-checked in SQLite.
@@ -444,6 +446,7 @@ final class BoardState: ObservableObject {
         doneArmed = nil
         mergeArmed = nil
         fixArmed = nil
+        reviewMergeArmed = nil
         rowBatchArmed = false
         resetClearDoneGate()
     }
@@ -455,6 +458,7 @@ final class BoardState: ObservableObject {
         doneArmed = nil
         mergeArmed = nil
         fixArmed = nil
+        reviewMergeArmed = nil
         rowBatchArmed = false
         resetClearDoneGate()
     }
@@ -466,6 +470,7 @@ final class BoardState: ObservableObject {
         doneArmed = nil
         mergeArmed = nil
         fixArmed = nil
+        reviewMergeArmed = nil
         resetClearDoneGate()
     }
 
@@ -476,6 +481,7 @@ final class BoardState: ObservableObject {
         deleteArmed = nil
         mergeArmed = nil
         fixArmed = nil
+        reviewMergeArmed = nil
         resetClearDoneGate()
     }
 
@@ -487,6 +493,7 @@ final class BoardState: ObservableObject {
         deleteArmed = nil
         doneArmed = nil
         fixArmed = nil
+        reviewMergeArmed = nil
         rowBatchArmed = false
         resetClearDoneGate()
     }
@@ -499,6 +506,20 @@ final class BoardState: ObservableObject {
         deleteArmed = nil
         doneArmed = nil
         mergeArmed = nil
+        reviewMergeArmed = nil
+        rowBatchArmed = false
+        resetClearDoneGate()
+    }
+
+    /// Arm Review & merge on one card; any other armed verb is dropped.
+    func armReviewMerge(_ id: String?) {
+        reviewMergeArmed = id
+        armed = nil
+        armedHere = nil
+        deleteArmed = nil
+        doneArmed = nil
+        mergeArmed = nil
+        fixArmed = nil
         rowBatchArmed = false
         resetClearDoneGate()
     }
@@ -513,6 +534,7 @@ final class BoardState: ObservableObject {
         doneArmed = nil
         mergeArmed = nil
         fixArmed = nil
+        reviewMergeArmed = nil
         resetClearDoneGate()
     }
 

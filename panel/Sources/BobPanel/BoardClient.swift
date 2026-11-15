@@ -414,6 +414,13 @@ extension DaemonClient {
         await post(["action": "board_review_run", "card_id": cardId])
     }
 
+    /// Review the card's branch, fix what the review finds on the card branch
+    /// and merge it onto main once the reviewer's terminal closes. Armed, then
+    /// confirmed, by the caller; a still-open hand-check counts as passed.
+    func boardReviewMerge(_ cardId: String) async -> ActionResult {
+        await post(["action": "board_review_merge", "card_id": cardId])
+    }
+
     /// A Done card's branch against the main line — commits and files with
     /// counts. Fetched when the CHANGES section opens, never on a poll.
     /// `workRecord`'s shape: percent-encode, nil on any transport or decode

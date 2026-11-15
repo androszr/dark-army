@@ -20,7 +20,7 @@ Exactly one step is labelled *Current step* until all three are *Done*; the
 rest are *Next*. The words are the accessibility labels
 (`Step.accessibleLabel`, "Done: Enrol a folder"); colour is never the only
 signal. Under the current step is one instruction: step 1 explains that
-enrolling writes a private key file into the folder and offers **Enrol a
+enrolling writes a private key file into the folder (and starts git there, with a first commit, when the folder has none) and offers **Enrol a
 folder…** (the settings window's own `NSOpenPanel`, through
 `SettingsActions.enrolChosenFolder`; a cancel is inert, a refusal is drawn
 in the daemon's words, a success ticks nothing itself — the next snapshot

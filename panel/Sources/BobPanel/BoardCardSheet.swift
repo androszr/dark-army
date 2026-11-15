@@ -2051,13 +2051,22 @@ struct BoardCardSheet: View {
     /// card (`CardMerge`, the rule the tile and the phone read too). The
     /// daemon decides the rest at the press.
     private func mergeControls(_ live: BoardCard) -> Bool {
-        mergeOffered(live)
+        reviewMergeOffered(live) || live.reviewMergeRunning
+            || mergeOffered(live)
             || CardMerge.fixOffered(mergeState: live.mergeState,
                                     daemonOffers: live.mergeOffered)
             || CardMerge.reviewOffered(column: live.column, branch: live.worktreeBranch,
                                        reviewRunning: live.reviewRunning,
                                        manualDue: live.needsManualCheck,
                                        daemonOffers: live.mergeOffered)
+    }
+
+    /// Review & merge: offered on a Done card with a branch, also while its
+    /// hand-check is still open (the daemon's `review_merge_offered`).
+    private func reviewMergeOffered(_ live: BoardCard) -> Bool {
+        CardMerge.reviewMergeOffered(column: live.column, branch: live.worktreeBranch,
+                                     running: live.reviewMergeRunning,
+                                     daemonOffers: live.reviewMergeOffered)
     }
 
     /// MERGE is offered where the rule says so, which includes the daemon's
@@ -2076,6 +2085,25 @@ struct BoardCardSheet: View {
     @ViewBuilder
     private func mergeVerbs(_ live: BoardCard) -> some View {
         HStack(spacing: 10) {
+            if reviewMergeOffered(live) {
+                let armed = state.reviewMergeArmed == live.id
+                Button(CardMerge.reviewMergeLabel(running: false, armed: armed)) {
+                    if armed {
+                        state.disarm()
+                        reviewAndMerge(live)
+                    } else {
+                        state.armReviewMerge(live.id)
+                    }
+                }
+                .buttonStyle(.plain)
+                .controlSize(.small)
+                .foregroundStyle(armed ? Color.orange : Theme.phosphor)
+                .clickable()
+            } else if live.reviewMergeRunning {
+                Text(CardMerge.reviewMergeLabel(running: true, armed: false))
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.faint)
+            }
             if mergeOffered(live) {
                 let armed = state.mergeArmed == live.id
                 Button(CardMerge.mergeLabel(mergeState: live.mergeState, armed: armed)) {
@@ -2148,6 +2176,16 @@ struct BoardCardSheet: View {
         }
     }
 
+    private func reviewAndMerge(_ live: BoardCard) {
+        state.refusals[live.id] = ""
+        Task { @MainActor in
+            let result = await client.boardReviewMerge(live.id)
+            if !result.ok { state.refusals[live.id] = result.detail }
+            await client.refresh()
+            await loadChanges()
+        }
+    }
+
     private func runReview(_ live: BoardCard) {
         state.refusals[live.id] = ""
         Task { @MainActor in
@@ -2170,7 +2208,7 @@ struct BoardCardSheet: View {
     /// per frame, and never while the section is closed.
     private var changesFetchKey: String {
         guard changesOpen, let live else { return "closed" }
-        return "\(live.id)-\(live.mergeState)-\(live.reviewVerdict)-\(live.reviewRunning)"
+        return "\(live.id)-\(live.mergeState)-\(live.reviewVerdict)-\(live.reviewRunning)-\(live.reviewMergeRunning)"
     }
 
     private func loadChanges() async {

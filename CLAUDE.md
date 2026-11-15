@@ -198,8 +198,8 @@ stated in full, with its reasons, in the subject document named.
   pair's pinning test is named beside it in `docs/context-panel.md`.
 - **A card outlines one verb, chosen by its column** (`CardActionWeight`,
   the board tile's rule; the phone's card screen does not read it yet):
-  Refine in Prep, START in Backlog, Done in In progress, none in Done; every
-  other verb is dim words, HERE included, and an absent primary promotes
+  Refine in Prep, START in Backlog, Done in In progress, Review & merge in
+  Done where offered; every other verb is dim words, HERE included, and an absent primary promotes
   nothing — with one kind-aware exception: a scout in Prep outlines START,
   because it has no plan to refine (`docs/context-panel.md`,
   `test_card_action_weight.py`).

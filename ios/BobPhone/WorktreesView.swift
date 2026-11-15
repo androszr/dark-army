@@ -34,10 +34,24 @@ struct WorktreesView: View {
     /// The finished group (merged, gone, no card) is folded by default: it
     /// holds nothing to do.
     @State private var showFinished = false
+    /// The project choice, `""` for ALL — the Board tab's pattern
+    /// (`@SceneStorage`, resolved through `FleetProjects.resolve`) under its
+    /// own key, so narrowing one tab never narrows the other.
+    @SceneStorage("worktrees.project") private var project = ""
+    /// DELETE's refusals, drawn under the row they came from.
+    @State private var rowNotes: [String: String] = [:]
+    @State private var removing: Set<String> = []
 
     private var board: Board { client.snapshot.board }
 
-    private var rows: [WorktreeRow] { page.rows }
+    /// Every row the Mac listed, before the project filter.
+    private var allRows: [WorktreeRow] { page.rows }
+
+    /// The rows drawn, ticked and merged: the filter's survivors only.
+    private var rows: [WorktreeRow] {
+        let active = activeProject
+        return allRows.filter { WorktreeRows.matches(project: $0.project, active: active) }
+    }
 
     private func card(for row: WorktreeRow) -> BoardCard? {
         guard !row.cardId.isEmpty else { return nil }
@@ -54,7 +68,8 @@ struct WorktreesView: View {
         }
         return WorktreeRows.tickable(rowMergeable: row.mergeable,
                                      branchTip: row.branchTip, card: facts,
-                                     mergeWritable: board.mergeWritable)
+                                     mergeWritable: board.mergeWritable,
+                                     status: row.status)
     }
 
     private var entries: [WorktreeRows.Entry] {
@@ -70,49 +85,47 @@ struct WorktreesView: View {
         WorktreeRows.fetchKey(
             cards: board.cards.map { (id: $0.id, column: $0.column, mergeState: $0.mergeState,
                                       mergeLine: $0.mergeLine) },
-            listed: rows.map(\.cardId).filter { !$0.isEmpty })
+            listed: allRows.map(\.cardId).filter { !$0.isEmpty })
     }
 
+    // MARK: project filter
+
+    /// The chips: the projects the page lists, not the board's open windows
+    /// — a folder left behind belongs to a project whatever is open.
     private var projects: [String] {
-        var seen: [String] = []
-        for row in rows where !seen.contains(row.project) { seen.append(row.project) }
-        return seen
+        WorktreeRows.projectNames(allRows.map(\.project))
     }
 
-    /// What a person can do with a row, which is how the screen groups it.
-    private enum Bucket: CaseIterable {
-        case ready, attention, notReady, finished
+    /// The stored choice resolved against the names on screen, on read as
+    /// well as on write-back (the Board tab's `activeProject`).
+    private var activeProject: String {
+        guard !project.isEmpty else { return project }
+        return FleetProjects.resolve(selected: project, in: projects,
+                                     heard: loaded && page.available)
+    }
 
-        var heading: String {
-            switch self {
-            case .ready: return "READY TO MERGE"
-            case .attention: return "NEEDS A FIX"
-            case .notReady: return "NOT READY YET"
-            case .finished: return "ALREADY MERGED OR GONE"
-            }
-        }
-
-        var blurb: String {
-            switch self {
-            case .ready: return "Tick the ones you want on main."
-            case .attention: return "A merge stopped. Fix it, then merge again."
-            case .notReady: return "Still being worked on, or waiting on something."
-            case .finished: return "Nothing to do here."
-            }
+    private var projectStrip: some View {
+        PhoneProjectStrip(names: projects, active: activeProject,
+                          total: allRows.count,
+                          counts: WorktreeRows.counts(allRows.map(\.project)),
+                          noun: (one: "worktree", many: "worktrees")) {
+            project = $0
+            ticked = []
+            arm.disarm()
         }
     }
 
-    private func bucket(_ row: WorktreeRow) -> Bucket {
-        if isTickable(row) { return .ready }
-        switch row.status {
-        case "conflict", "checks_failed", "blocked", "unreadable": return .attention
-        case "merged", "gone", "no_card": return .finished
-        default: return .notReady
-        }
+    private func bucket(_ row: WorktreeRow) -> WorktreeRows.Group {
+        WorktreeRows.group(status: row.status, tickable: isTickable(row))
     }
 
-    private func rows(in bucket: Bucket) -> [WorktreeRow] {
+    private func rows(in bucket: WorktreeRows.Group) -> [WorktreeRow] {
         rows.filter { self.bucket($0) == bucket }
+    }
+
+    private func canRemove(_ row: WorktreeRow) -> Bool {
+        WorktreeRows.removable(rowRemovable: row.removable, status: row.status,
+                               writable: board.worktreeRemoveWritable)
     }
 
     /// The one sentence under the prompt that says what this screen is for
@@ -150,7 +163,9 @@ struct WorktreesView: View {
             return "→ Open the card to see what stopped it."
         case "unreadable":
             return "→ Pull down to read again. If it stays, open the card."
-        case "done", "nothing":
+        case "nothing":
+            return "→ Main already has it, so there is nothing to merge."
+        case "done":
             return "→ Open the card. Something must be settled first."
         default:
             return ""
@@ -183,9 +198,16 @@ struct WorktreesView: View {
                         .foregroundStyle(Theme.dim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if !projects.isEmpty || !activeProject.isEmpty {
+                    projectStrip
+                        .padding(.horizontal, -12)
+                }
+                if !activeProject.isEmpty && rows.isEmpty && loaded {
+                    CommentLine(text: WorktreeRows.filterLine(project: activeProject))
+                }
                 if showsMerge { mergeBar }
                 pressReply
-                ForEach(Bucket.allCases, id: \.self) { bucket in
+                ForEach(WorktreeRows.Group.allCases, id: \.self) { bucket in
                     bucketSection(bucket)
                 }
                 if page.truncated {
@@ -202,6 +224,12 @@ struct WorktreesView: View {
         .refreshable { await load() }
         .task(id: fetchKey) { request() }
         .onChange(of: client.snapshot.board.cards) { _, _ in prune() }
+        // Fleet's write-back: forget a project that has gone from the page.
+        .onChange(of: projects) { _, names in
+            let next = FleetProjects.resolve(selected: project, in: names,
+                                             heard: loaded && page.available)
+            if next != project { project = next }
+        }
         .onDisappear {
             arm.disarm()
             readTask?.cancel()
@@ -230,7 +258,7 @@ struct WorktreesView: View {
     // MARK: rows
 
     @ViewBuilder
-    private func bucketSection(_ bucket: Bucket) -> some View {
+    private func bucketSection(_ bucket: WorktreeRows.Group) -> some View {
         let members = rows(in: bucket)
         if !members.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
@@ -328,10 +356,64 @@ struct WorktreesView: View {
                         .accessibilityLabel("Open the card \(live.title)")
                     if showsFix(live) { fixButton(live) }
                 }
+                if canRemove(row) { removeButton(row) }
             }
             if let live = card(for: row) { fixNote(live) }
+            if let note = rowNotes[row.id], !note.isEmpty {
+                Text(note)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.vertical, 4)
+    }
+
+    // MARK: DELETE (a leftover folder)
+
+    private func removeButton(_ row: WorktreeRow) -> some View {
+        let armed = arm.worktreeRemove == row.id
+        let words = removing.contains(row.id) ? "DELETING…"
+                                              : WorktreeRows.removeVerb(armed: armed)
+        return DecryptButton(words) { pressRemove(row) }
+            .font(Theme.mono(11, weight: .semibold))
+            .foregroundStyle(armed ? Theme.alarm : Theme.phosphor)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(removing.contains(row.id))
+            .accessibilityLabel(armed ? "Really delete this folder?" : "Delete this folder")
+    }
+
+    /// Armed on the first press, sent on the second, in its own slot keyed on
+    /// the row. Sent by `post`, never banked: it happens at the press or not
+    /// at all, and the Mac decides again as it fires.
+    private func pressRemove(_ row: WorktreeRow) {
+        if arm.confirm(.worktreeRemove, id: row.id) {
+            Task { @MainActor in await sendRemove(row) }
+        } else {
+            rowNotes[row.id] = nil
+            arm.arm(.worktreeRemove, id: row.id)
+        }
+    }
+
+    private func sendRemove(_ row: WorktreeRow) async {
+        removing.insert(row.id)
+        rowNotes[row.id] = nil
+        report = ""
+        refusal = ""
+        let result = await client.post(
+            action: PhoneActions.boardWorktreeRemove,
+            fields: ["card_id": row.cardId, "folder": row.folder,
+                     "project": row.project],
+            scope: "worktree:" + row.id)
+        removing.remove(row.id)
+        if result.ok {
+            report = result.detail
+            await load()
+        } else {
+            rowNotes[row.id] = result.detail
+        }
     }
 
     private func detailLine(_ row: WorktreeRow) -> String {
@@ -442,7 +524,7 @@ struct WorktreesView: View {
     }
 
     private var mergeBar: some View {
-        let count = ticked.count
+        let count = orderedTicked.count
         let armed = arm.mergeBatch != nil
         let tooMany = count > WorktreeRows.maximum
         let words = sending ? "MERGING…"
@@ -554,5 +636,27 @@ struct WorktreesView: View {
     private func load() async {
         request()
         await readTask?.value
+    }
+}
+
+/// The words over each group. The grouping itself is `WorktreeRows.group`,
+/// the pure rule the host pins and the XCTest table runs.
+private extension WorktreeRows.Group {
+    var heading: String {
+        switch self {
+        case .ready: return "READY TO MERGE"
+        case .attention: return "NEEDS A FIX"
+        case .notReady: return "NOT READY YET"
+        case .finished: return "ALREADY MERGED OR GONE"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .ready: return "Tick the ones you want on main."
+        case .attention: return "A merge stopped. Fix it, then merge again."
+        case .notReady: return "Still being worked on, or waiting on something."
+        case .finished: return "Nothing to merge here. Delete a folder left behind once you are sure."
+        }
     }
 }

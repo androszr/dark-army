@@ -2640,7 +2640,8 @@ def test_an_unauthorised_loopback_board_message_is_not_routed():
 
 # --- review and merge: the three verbs on both phone tuples --------------------
 
-_MERGE_VERBS = ("board_merge", "board_merge_fix", "board_review_run")
+_MERGE_VERBS = ("board_merge", "board_merge_fix", "board_review_run",
+                "board_review_merge")
 
 
 def test_merge_and_review_verbs_are_on_both_phone_tuples():
@@ -2696,6 +2697,12 @@ async def test_a_sealed_board_merge_reaches_merge_card_with_expected_tip():
     daemon.merge_card = merge
     daemon.fix_merge_card = fix
     daemon.run_card_review = review
+
+    async def review_merge(card_id):
+        seen.append(("review_merge", card_id))
+        return True, "started"
+
+    daemon.review_merge_card = review_merge
     srv = ApiServer(daemon, port=0)
     run = lambda payload, **kw: srv._sealed_run(  # noqa: E731
         "action", payload, "phone", actions=ApiServer.LAN_ACTIONS,
@@ -2711,10 +2718,14 @@ async def test_a_sealed_board_merge_reaches_merge_card_with_expected_tip():
     status, _, _body = await run({"action": "board_review_run",
                                   "card_id": "c4"})
     assert status == 200
+    status, _, _body = await run({"action": "board_review_merge",
+                                  "card_id": "c5"})
+    assert status == 200
     status, _, body = await run({"action": "board_merge"})
     assert status == 400
     assert seen == [("merge", "c1", {"expected_tip": "a" * 40}),
-                    ("merge", "c2", {}), ("fix", "c3"), ("review", "c4")]
+                    ("merge", "c2", {}), ("fix", "c3"), ("review", "c4"),
+                    ("review_merge", "c5")]
 
 
 @pytest.mark.asyncio

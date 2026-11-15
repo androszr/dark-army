@@ -1652,6 +1652,9 @@ async def test_dispatch_re_checks_enrolment_at_the_moment_of_the_press(
 
     root = tmp_path / "proj"
     root.mkdir()
+    # This test is about the ledger, not git: enrolment would otherwise make
+    # the folder a repository and the start would take the worktree path.
+    monkeypatch.setattr(enrollment, "_start_git", lambda r: "")
     assert enrollment.enroll(str(root))[0]
     real_root = os.path.realpath(str(root))
 

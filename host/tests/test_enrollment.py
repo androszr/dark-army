@@ -115,7 +115,10 @@ def test_enroll_twice_adds_one_gitignore_line(tmp_path):
     assert (root / enrollment.KEY_RELATIVE).read_text() == first
 
 
-def test_enroll_writes_no_gitignore_outside_a_repository(tmp_path):
+def test_enroll_writes_no_gitignore_when_git_cannot_start(tmp_path, monkeypatch):
+    # Enrolment now starts git in a plain folder (test_enrollment_git.py); with
+    # git unrunnable the folder stays a non-repository and gets no .gitignore.
+    monkeypatch.setattr(enrollment, "_start_git", lambda root: "")
     root = _project(tmp_path, git=False)
     ok, detail = enrollment.enroll(str(root))
     assert ok
@@ -244,11 +247,12 @@ def test_enroll_writes_the_key_under_dark_army_with_a_self_ignoring_file(tmp_pat
     assert not (root / ".bob-companion").exists()
 
 
-def test_the_self_ignoring_folder_stays_out_of_git_status(tmp_path):
+def test_the_self_ignoring_folder_stays_out_of_git_status(tmp_path, monkeypatch):
     """The rule the launch-time move leans on: with no line in the project's
     own `.gitignore`, the folder's `*` alone keeps git from seeing it."""
     import shutil
     import subprocess
+    monkeypatch.setattr(enrollment, "_first_commit", lambda root: "")
     git = shutil.which("git")
     if git is None:
         pytest.skip("git is not installed")

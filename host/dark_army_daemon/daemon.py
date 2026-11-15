@@ -2221,6 +2221,10 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
         self._merge_helpers: dict = {}
         self._merge_attempts: dict = {}
         self._review_attempts: dict = {}
+        # Review & merge: card id -> `{"tip", "session_id", "since"}`, a SHIP
+        # waiting for the reviewer's terminal to close; replaced, never
+        # mutated; memory only (a restart forgets it).
+        self._review_merge_pending: dict = {}
         self._branch_backfill_seen: set = set()
         self._branch_backfill_queue: list = []
         self._changes_lock = threading.Lock()
@@ -2231,6 +2235,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
         # `_worktrees_lock` serialises the on-demand Worktrees read.
         self._merge_batch: dict = {}
         self._worktrees_lock = threading.Lock()
+        # Cards the last Worktrees read found with nothing ahead of the
+        # trunk; the read records them merged (`_record_nothing_to_merge`).
+        self._worktrees_nothing: list = []
+        # Folders a DELETE is working on now (`remove_worktree`).
+        self._worktrees_removing: set = set()
         # Which model each agent and helper runs on: the machine-wide table
         # (`agent_models`, `{provider: {slot: model}}`) and the per-project
         # override map (`agent_models_by_root`, keyed on the canonical root),
@@ -12265,6 +12274,12 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
             await self._flush_branch_backfill()
         except Exception:
             logger.debug("branch backfill failed to start", exc_info=True)
+        # And a Review & merge whose reviewer said SHIP: it fires once the
+        # reviewer's terminal has closed. No thread of its own.
+        try:
+            await self._flush_review_merge_pending()
+        except Exception:
+            logger.debug("review+merge pending check failed", exc_info=True)
         # After the snapshot, not before: an alert names a session, and a surface
         # told to reveal one it has not been shown yet has nothing to reveal.
         self._deliver_alerts()

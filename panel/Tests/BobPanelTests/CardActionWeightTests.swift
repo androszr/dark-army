@@ -9,7 +9,7 @@ import XCTest
 final class CardActionWeightTests: XCTestCase {
 
     private let columns = ["prep", "backlog", "in_progress", "done"]
-    private let verbs: [CardActionWeight.Verb] = [.refine, .start, .startHere, .done]
+    private let verbs: [CardActionWeight.Verb] = [.refine, .start, .startHere, .done, .reviewMerge]
 
     /// Refine in Prep, START in Backlog, Done in In progress, none in Done.
     func testTheTable() {
@@ -44,6 +44,23 @@ final class CardActionWeightTests: XCTestCase {
                 if primary { trues += 1 }
             }
             XCTAssertEqual(trues, column == "done" ? 0 : 1, column)
+        }
+    }
+
+    /// Done outlines Review & merge when the card offers it, and nothing
+    /// otherwise; no other column ever does.
+    func testDoneOutlinesReviewAndMergeOnlyWhereOffered() {
+        XCTAssertEqual(CardActionWeight.primary(column: "done", reviewMergeOffered: true),
+                       .reviewMerge)
+        XCTAssertNil(CardActionWeight.primary(column: "done", reviewMergeOffered: false))
+        XCTAssertTrue(CardActionWeight.isPrimary(.reviewMerge, column: "done",
+                                                 reviewMergeOffered: true))
+        XCTAssertFalse(CardActionWeight.isPrimary(.done, column: "done",
+                                                  reviewMergeOffered: true))
+        for column in ["prep", "backlog", "in_progress", "", "bogus"] {
+            XCTAssertNotEqual(CardActionWeight.primary(column: column,
+                                                       reviewMergeOffered: true),
+                              .reviewMerge, column)
         }
     }
 

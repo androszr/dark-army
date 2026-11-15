@@ -232,7 +232,8 @@ def test_the_tile_sends_the_three_verbs_and_arms_merge_and_fix_in_their_own_slot
 def test_the_action_weight_rule_is_untouched():
     weight = _read(PANEL / "CardActionWeight.swift")
     assert "case merge" not in weight
-    assert "enum Verb: String { case refine, start, startHere, done }" in weight
+    # Review & merge (15 Nov 2026) is the one Done verb, only where offered.
+    assert "enum Verb: String { case refine, start, startHere, done, reviewMerge }" in weight
 
 
 def test_the_phone_arms_merge_and_fix_and_sends_through_the_queue():

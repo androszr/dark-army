@@ -111,6 +111,7 @@ def test_status_rows_one_per_status(setup):
     assert re.fullmatch(r"[0-9a-f]{40}", done["branch_tip"])
     assert done["mergeable"] is True and done["word"] == "Work done"
     assert rows["same"]["status"] == "nothing"
+    assert rows["same"]["mergeable"] is False
     assert rows["clash"]["status"] == "conflict"
     assert rows["clash"]["line"].startswith("Conflict in a.txt.")
     assert rows["clash"]["mergeable"] is True

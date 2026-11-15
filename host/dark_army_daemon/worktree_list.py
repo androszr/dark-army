@@ -35,7 +35,7 @@ STATUS_WORDS = {
 #: The closed key set of one row.
 ROW_KEYS = ("card_id", "title", "project", "column", "branch", "folder",
             "status", "word", "line", "ahead", "uncommitted", "mergeable",
-            "branch_tip")
+            "branch_tip", "removable")
 
 #: How long a card that landed stays listed as Merged after its folder and
 #: branch are gone (`docs/card-worktrees.md`).
@@ -46,9 +46,10 @@ MAX_ROWS = 80
 PAGE_MAX_BYTES = 300_000
 
 NO_CARD_LINE = ("A folder under .worktrees that no card on the board names. "
-                "Dark Army leaves it alone.")
+                "Dark Army never merges it; delete it if it is left behind.")
 RUNNING_LINE = "The card is still running."
-NOTHING_LINE = "Main already has everything on this branch."
+NOTHING_LINE = ("Main already has everything on this branch — nothing to "
+                "merge.")
 #: A card whose recorded branch is gone and whose merge commit is on main:
 #: merged by hand (`git merge`), outside Dark Army's own merge.
 LANDED_LINE = "Merged into main outside Dark Army; its branch is gone."
@@ -57,9 +58,16 @@ LANDED_LINE = "Merged into main outside Dark Army; its branch is gone."
 GONE_LINE = "Its branch and folder are gone, so there is nothing to merge."
 
 #: The statuses a person may tick (with no gate refusal and a clean folder).
-MERGEABLE = ("done", "nothing", "conflict", "checks_failed", "blocked")
+#: `nothing` is not among them: a branch with nothing ahead of the trunk is
+#: already merged and is never offered again.
+MERGEABLE = ("done", "conflict", "checks_failed", "blocked")
 
-_RANK = {"unreadable": 2, "done": 0, "nothing": 0, "conflict": 0, "checks_failed": 0,
+#: The statuses whose folder a person may delete (`BobDaemon.remove_worktree`
+#: decides again at the moment it fires): merged, gone, nothing to merge and
+#: an orphan folder.
+REMOVABLE = ("merged", "gone", "nothing", "no_card")
+
+_RANK = {"unreadable": 2, "done": 0, "nothing": 3, "conflict": 0, "checks_failed": 0,
          "blocked": 0, "waiting": 0, "queued": 1, "merging": 1,
          "working": 2, "merged": 3, "gone": 3, "no_card": 4}
 
@@ -119,9 +127,11 @@ def row(*, card_id: str = "", title: str = "", project: str = "",
         column: str = "", branch: str = "", folder: str = "",
         status: str = "", word: str = "", line: str = "", ahead: int = 0,
         uncommitted: int = 0, mergeable: bool = False,
-        branch_tip: str = "") -> dict:
+        branch_tip: str = "", removable: bool = False) -> dict:
     """One closed row. `mergeable` is only ever true for a status in
-    `MERGEABLE`, a clean folder and a tip the page can echo."""
+    `MERGEABLE`, a clean folder and a tip the page can echo; `removable`
+    only for a status in `REMOVABLE` with a folder or a branch to delete
+    (the verb decides again when it fires)."""
     ok = bool(mergeable) and status in MERGEABLE and int(uncommitted) == 0
     return {
         "card_id": str(card_id), "title": str(title), "project": str(project),
@@ -130,13 +140,16 @@ def row(*, card_id: str = "", title: str = "", project: str = "",
         "ahead": max(-1, int(ahead)),  # -1: not read
         "uncommitted": max(0, int(uncommitted)),
         "mergeable": ok, "branch_tip": str(branch_tip),
+        "removable": bool(removable) and status in REMOVABLE
+        and bool(folder or branch),
     }
 
 
 def orphan_row(project: str, folder: str) -> dict:
     """A directory under `.worktrees/` no card names: read-only."""
     return row(project=project, folder=folder, status="no_card",
-               word=STATUS_WORDS["no_card"], line=NO_CARD_LINE)
+               word=STATUS_WORDS["no_card"], line=NO_CARD_LINE,
+               removable=True)
 
 
 def relative_folder(name: str) -> str:
