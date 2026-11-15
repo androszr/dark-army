@@ -170,7 +170,10 @@ def test_each_view_posts_through_one_scoped_helper(path):
     assert len(posts) == 1, f"{path.name} posts from {len(posts)} places"
     assert "client.post(" not in text.replace(rebuild, ""), (
         f"{path.name} still awaits a press")
-    assert "scope: agent.sessionId" in text, (
+    # The agent screen's helper takes a card scope for the card's own press
+    # (Review & merge); the session stays the default every other verb gets.
+    assert ("scope: agent.sessionId" in text
+            or "scope: card ?? agent.sessionId" in text), (
         f"{path.name}'s send helper lost the session scope — a permission "
         "verdict's fields carry only request_id, so without the scope that "
         "write keys on the bare verb and locks nothing")

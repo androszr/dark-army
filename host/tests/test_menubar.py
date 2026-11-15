@@ -156,6 +156,20 @@ def test_on_board_change_falls_back_to_ready():
     assert app._todo_count == 4
 
 
+def test_on_board_change_counts_open_projects_only():
+    """The to-do figure is the open projects' Prep + Backlog; an empty
+    `open_counts` (no window open, or an older daemon) counts the store."""
+    from dark_army_menubar.app import BobCompanionApp
+    app = _bare_app()
+    BobCompanionApp.on_board_change(app, {
+        "counts": {"prep": 120, "backlog": 9},
+        "open_counts": {"prep": 4, "backlog": 2}})
+    assert app._todo_count == 6
+    BobCompanionApp.on_board_change(app, {
+        "counts": {"prep": 120, "backlog": 9}, "open_counts": {}})
+    assert app._todo_count == 129
+
+
 def test_on_board_change_prefers_backlog_over_ready():
     from dark_army_menubar.app import BobCompanionApp
     app = _bare_app()

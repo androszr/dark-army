@@ -183,6 +183,13 @@ def with_ready_alias(counts: dict) -> dict:
     return out
 
 
+#: The daemon's bookkeeping columns a held Done copy can go stale against,
+#: none of which steps `revision` (`BoardStore._done_view_token`).
+_DONE_VIEW_BOOKKEEPING = ("worktree_path", "worktree_branch", "merge_state",
+                          "merge_note", "review_verdict", "review_tip",
+                          "manual_steps")
+
+
 def review_only(state: dict) -> dict:
     """The board section with the withheld Done cards removed.
 
@@ -2221,6 +2228,26 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
                 out[name] = int(row["n"])
         return out
 
+    def counts_in(self, projects) -> dict:
+        """`counts`, restricted to cards filed against one of `projects` —
+        the board's open projects, published as the snapshot's
+        `open_counts`. Every column present even at zero, `counts`' rule."""
+        out = {c: 0 for c in COLUMNS}
+        names = sorted({str(p) for p in (projects or ()) if p})
+        if not names:
+            return out
+        marks = ",".join("?" for _ in names)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT column_name, COUNT(*) AS n FROM cards "
+                f"WHERE project IN ({marks}) GROUP BY column_name",
+                names).fetchall()
+        for row in rows:
+            name = row["column_name"]
+            if name in out:
+                out[name] = int(row["n"])
+        return out
+
     @staticmethod
     def _done_scope_token(ids) -> str:
         """SHA-256 over an unambiguous sequence of UTF-8 card ids.
@@ -2252,7 +2279,10 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
     def _done_view_token(rows) -> str:
         """SHA-256 over what a *held copy* of the Done column can go stale
         against: which cards are finished, what revision each is at, and
-        whether each still wants a person's eye.
+        whether each still wants a person's eye — and the daemon's own
+        bookkeeping on it that `revision` never counts (its folder and
+        branch, its merge and review records, its hand-check steps), or a
+        held copy keeps offering MERGE on a card merged since.
 
         Deliberately **not** an extension of the membership digest above.
         `clear_done`'s contract is exact membership, and a content-sensitive
@@ -2267,9 +2297,12 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
         digest = hashlib.sha256()
         for row in rows:
             wants_review = bool(row["closed_by"]) and row["reviewed_at"] is None
+            keys = row.keys()
+            kept = [str(row[k] or "") for k in _DONE_VIEW_BOOKKEEPING
+                    if k in keys]
             for part in (str(row["id"]),
                          str(int(row["revision"] or 0)),
-                         "1" if wants_review else "0"):
+                         "1" if wants_review else "0", *kept):
                 encoded = part.encode("utf-8")
                 digest.update(len(encoded).to_bytes(8, "big"))
                 digest.update(encoded)
@@ -2287,7 +2320,8 @@ class BoardStore(KnowledgeStoreMixin, LifecycleStoreMixin, OutcomeStoreMixin,
         with self._lock:
             count, clear_token = self._done_scope_locked()
             rows = self._conn.execute(
-                "SELECT id, revision, closed_by, reviewed_at FROM cards"
+                "SELECT id, revision, closed_by, reviewed_at, "
+                + ", ".join(_DONE_VIEW_BOOKKEEPING) + " FROM cards"
                 " WHERE column_name = 'done' ORDER BY id").fetchall()
             return count, clear_token, self._done_view_token(rows)
 

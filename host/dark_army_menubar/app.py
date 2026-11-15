@@ -1060,7 +1060,11 @@ class BobCompanionApp(rumps.App, DaemonObserver):
         ICON_TICK_REST at rest (only a count change in `on_activity_change`
         pokes the strip at once). Nothing here touches AppKit, so nothing
         here has to hop."""
-        counts = (board or {}).get("counts") or {}
+        # Open projects only (`open_counts`): a project whose VS Code window
+        # is closed is not waiting on anybody here. Empty — no window open, or
+        # a daemon one generation behind — falls back to the whole store.
+        counts = ((board or {}).get("open_counts")
+                  or (board or {}).get("counts") or {})
         raw = counts.get("backlog")
         if raw is None:
             raw = counts.get("ready")

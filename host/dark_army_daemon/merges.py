@@ -133,6 +133,11 @@ CLOSING_FINISHED_TIMEOUT_NOTE = ("Stopped: the card's finished assistant did "
                                  "not close — close its terminal and press "
                                  "again.")
 CLOSING_FINISHED_REFUSED_NOTE = "Stopped: {0}"
+#: Review & merge pressed on several cards of one project: Dark Army starts
+#: one helper per project at a time, so the others wait their turn.
+REVIEW_MERGE_QUEUED_NOTE = ("Waiting its turn — another assistant in this "
+                            "project is starting; the review follows.")
+REVIEW_MERGE_QUEUED_LINE = "Review & merge waiting its turn to start…"
 #: Seconds a press waits for the finished assistant's terminal to close.
 CLOSING_FINISHED_WAIT_SECONDS = 120.0
 #: Seconds a SHIP waits for the reviewer's terminal to close.

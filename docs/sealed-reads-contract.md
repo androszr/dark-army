@@ -162,7 +162,7 @@ here turns any part of that answer into an omission.
 thing `clear_done` ever compares — a content-sensitive token there would
 refuse a Clear Done because somebody retitled a finished card.
 `done_view_token` is what a *held* copy can go stale against: membership,
-any revised column, and a review. `BoardStore.done_tokens()` reads both
+any revised column, a review and merge work (`_done_view_now`). `BoardStore.done_tokens()` reads both
 under one lock, so they can never disagree about which cards exist.
 
 ## `bearings` is a sealed read

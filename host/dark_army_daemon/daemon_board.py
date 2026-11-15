@@ -568,6 +568,7 @@ class BoardVerbsMixin:
                     # fourth column — COLUMNS stays three names.
                     "counts": board.with_ready_alias(
                         {c: 0 for c in board.COLUMNS}),
+                    "open_counts": {},
                     "dispatch_enabled": False, "autostart_enabled": False,
                     "prepare_enabled": False,
                     # Present even with the board shut, for `counts`' reason:
@@ -601,6 +602,7 @@ class BoardVerbsMixin:
         try:
             done_count, done_clear_token, done_view_token = \
                 self._board.done_tokens()
+            done_view_token = self._done_view_now(done_view_token)
             cards = [c for c in self._board.cards() if c.get("column_name") != "done"]
             # A close nobody has acknowledged must never age out of the live
             # board: `done_since` is windowed at 24 h, and a card an assistant
@@ -720,10 +722,19 @@ class BoardVerbsMixin:
             # Publish its count and exact-membership token from the same store
             # read so the two confirmation fields can never disagree.
             counts["done"] = done_count
+            # The same tally over the projects with an open window only — what
+            # every board heading, ALL chip and the menu bar's to-do count
+            # say. Empty when no window is open, and a client reads empty as
+            # "count everything": a window list that blinks empty for a
+            # moment must never zero the board.
+            projects = self._board_projects()
+            open_names = [p["name"] for p in projects if p.get("name")]
+            open_counts = (board.with_ready_alias(self._board.counts_in(open_names))
+                           if open_names else {})
         except Exception:
             logger.warning("could not read the board", exc_info=True)
             return dict(self._board_state) or {"generated_at": time.time(),
-                                               "cards": [], "counts": {},
+                                               "cards": [], "counts": {}, "open_counts": {},
                                                "dispatch_enabled": False,
                                                "prepare_enabled": False,
                                                "autostart_enabled": False,
@@ -744,6 +755,7 @@ class BoardVerbsMixin:
             "generated_at": time.time(),
             "cards": cards,
             "counts": counts,
+            "open_counts": open_counts,
             "done_clear_token": done_clear_token,
             # What a *held* copy of the Done column can go stale against —
             # membership, any revised column, and a review. Beside the
@@ -806,7 +818,7 @@ class BoardVerbsMixin:
             # guess, because the guard refuses a root it does not recognise —
             # and a folder typed by hand is refused at the moment somebody
             # presses Start, which is the worst place to learn it was wrong.
-            "projects": self._board_projects(),
+            "projects": projects,
         }
 
     def _pipeline_writable(self) -> dict:
@@ -1511,6 +1523,7 @@ class BoardVerbsMixin:
                     "done_clear_token": "", "done_view_token": "",
                     "reason": "the board is not open"}
         count, clear_token, view_token = self._board.done_tokens()
+        view_token = self._done_view_now(view_token)
         rows = self._board.done_since(0.0, int(limit))
         more = len(rows) >= int(limit)
         # One reading each for the whole fetch — the frame's own rule, for
@@ -12294,9 +12307,12 @@ class BoardVerbsMixin:
         if str(card_id or "") in (getattr(self, "_review_merge_pending", None)
                                   or {}):
             return False, merges.REVIEW_MERGE_PENDING_REFUSAL
-        if str(card_id or "") in (getattr(self, "_card_press_waiting", None)
-                                  or {}):
-            return True, merges.CLOSING_FINISHED_NOTE
+        held = (getattr(self, "_card_press_waiting", None) or {}).get(
+            str(card_id or ""))
+        if held and close_finished:
+            return True, (merges.REVIEW_MERGE_QUEUED_NOTE
+                          if held.get("why") == "queued"
+                          else merges.CLOSING_FINISHED_NOTE)
         refusal, _card, _root, _branch, _path = await self._helper_gate(
             card_id, fix=False, open_ok=True)
         if refusal:
@@ -12307,7 +12323,27 @@ class BoardVerbsMixin:
                     return closed
             return False, refusal
         async with self._dispatch_lock:
-            return await self._spawn_review_merge_locked(str(card_id))
+            ok, detail = await self._spawn_review_merge_locked(str(card_id))
+        if not ok and dispatch.is_transient(detail):
+            # One helper per project starts at a time: pressed on several
+            # cards at once, the others wait their turn rather than refuse.
+            return self._queue_review_merge(str(card_id), detail)
+        return ok, detail
+
+    def _queue_review_merge(self, card_id: str, detail: str) -> tuple:
+        """Hold a Review & merge refused only for *this instant*; the agents
+        push presses it again (`_flush_card_press_waiting`). The first
+        hold's time is kept, so the wait is bounded by
+        `REVIEW_MERGE_WAIT_SECONDS`, after which the refusal stands."""
+        waiting = dict(getattr(self, "_card_press_waiting", None) or {})
+        since = float((waiting.get(card_id) or {}).get("since")
+                      or time.time())
+        if time.time() - since > merges.REVIEW_MERGE_WAIT_SECONDS:
+            return False, detail
+        waiting[card_id] = {"verb": "review_merge", "tip": "",
+                            "since": since, "why": "queued"}
+        self._card_press_waiting = waiting
+        return True, merges.REVIEW_MERGE_QUEUED_NOTE
 
     # The busy rungs a finished-but-open assistant trips.
     _FINISHED_HOLD_REFUSALS = (merges.CARD_LIVE_REFUSAL,
@@ -12434,9 +12470,9 @@ class BoardVerbsMixin:
                         cid, merges.CLOSING_FINISHED_TIMEOUT_NOTE)
                     changed = True
                 continue
-            self._drop_card_press_waiting(cid)
             changed = True
             if refusal in self._REVIEW_MERGE_QUIET_REFUSALS:
+                self._drop_card_press_waiting(cid)
                 continue
             if refusal:
                 await self._card_press_stop(
@@ -12445,7 +12481,11 @@ class BoardVerbsMixin:
             if verb == "review_merge":
                 ok, detail = await self.review_merge_card(
                     cid, close_finished=False)
+                if ok and detail == merges.REVIEW_MERGE_QUEUED_NOTE:
+                    continue  # still waiting its turn; held again
+                self._drop_card_press_waiting(cid)
             else:
+                self._drop_card_press_waiting(cid)
                 ok, detail = await self.merge_card(
                     cid, expected_tip=(str(entry.get("tip") or "") or None),
                     close_finished=False)
@@ -12528,6 +12568,14 @@ class BoardVerbsMixin:
             if not ok:
                 return False, spawn_detail
             spawned = True
+            if str(card.get("merge_state") or "") == "blocked":
+                # A fresh start: an earlier stop's words no longer describe
+                # the card while its new review runs.
+                try:
+                    await self._board_call("record_merge", cid, "", "")
+                except Exception:
+                    logger.debug("review+merge: could not clear the note",
+                                 exc_info=True)
             now = time.time()
             self._review_attempts[cid] = now
             self._consults[cid] = {
@@ -12718,6 +12766,32 @@ class BoardVerbsMixin:
 
     # -- The card says so --
 
+    def _done_view_now(self, store_token: str) -> str:
+        """The store's Done view token with the daemon's in-memory merge
+        work folded in — merging, queued in a batch, a review running, a
+        Review & merge waiting — which a Done card draws and no column
+        records. The frame and the archive page both stamp this one, so a
+        held copy refetches when any of it moves and never otherwise."""
+        if not store_token:
+            return store_token
+        parts = [store_token]
+        parts += sorted("m:" + str(k) for k in
+                        (getattr(self, "_merging", None) or {}))
+        parts += sorted("q:" + str(k) for k in
+                        ((getattr(self, "_merge_batch", None) or {})
+                         .get("queue") or []))
+        parts += sorted("p:" + str(k) for k in
+                        (getattr(self, "_review_merge_pending", None) or {}))
+        parts += sorted(f"w:{k}:{(v or {}).get('why') or ''}" for k, v in
+                        (getattr(self, "_card_press_waiting", None)
+                         or {}).items())
+        parts += sorted(f"c:{k}:{(v or {}).get('purpose') or ''}"
+                        for k, v in (getattr(self, "_consults", None)
+                                     or {}).items())
+        if len(parts) == 1:
+            return store_token
+        return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
     def _review_running(self, card_id: str) -> bool:
         entry = self._consults.get(str(card_id))
         return bool(entry and entry.get("purpose") in ("review",
@@ -12750,8 +12824,11 @@ class BoardVerbsMixin:
                 total - len(queue) + queue.index(cid) + 1, total)
         if cid in (getattr(self, "_review_merge_pending", None) or {}):
             return merges.REVIEW_MERGE_WAITING_LINE
-        if cid in (getattr(self, "_card_press_waiting", None) or {}):
-            return merges.CLOSING_FINISHED_LINE
+        held = (getattr(self, "_card_press_waiting", None) or {}).get(cid)
+        if held:
+            return (merges.REVIEW_MERGE_QUEUED_LINE
+                    if held.get("why") == "queued"
+                    else merges.CLOSING_FINISHED_LINE)
         state = str(card.get("merge_state") or "")
         note = str(card.get("merge_note") or "")
         if state not in merges.STATES or not state or not note:

@@ -134,3 +134,25 @@ def test_the_touched_phone_files_parse_under_swiftc(name):
     done = subprocess.run([swiftc, "-parse", str(PHONE / f"{name}.swift")],
                           capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
+
+
+def test_the_assistant_screen_offers_review_and_merge_on_its_done_card():
+    """The assistant's own screen offers Review & merge exactly where the card
+    screen does: its bound card, the shared rule, the Mac's offer and the
+    write, armed then confirmed, sent as the card's press."""
+    text = _read(PHONE / "AgentDetailView.swift")
+    block = text[text.index("private var reviewMergeCard: BoardCard?"):]
+    block = block[:block.index("private var reviewMergeRunningHere")]
+    for needle in ("card.sessionId == agent.sessionId",
+                   "board.mergeWritable",
+                   "CardMerge.reviewMergeOffered(",
+                   "daemonOffers: card.reviewMergeOffered"):
+        assert needle in block, needle
+    press = text[text.index("private func pressReviewMerge(_ card: BoardCard)"):]
+    press = press[:press.index("\n    }\n")]
+    assert "arm.confirm(.reviewMerge, id: card.id)" in press
+    assert "PhoneActions.boardReviewMerge" in press
+    assert "card: card.id" in press
+    assert "scope: card ?? agent.sessionId" in text
+    quiet = text[text.index("private var quietVerbs: some View"):]
+    assert quiet.index("reviewMergeCard") < quiet.index("agent.canClose")

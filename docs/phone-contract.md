@@ -133,7 +133,8 @@ never the last turn. The frame puts its detent in the content's environment
 (`phoneSheetDetent`, a `SheetDetent?`) and the lead's still is 40pt at half
 height and 96pt dragged up or outside a sheet (`AgentSheetLead.stillSize`).
 Permission asks, notification cards and the low-priority offer keep their
-full shape; Close, Hide, Stop and Delete share one row of small buttons, each
+full shape; Review & merge (on the session's own Done card, the card screen's
+rule), Close, Hide, Stop and Delete share one row of small buttons, each
 armed before it fires, Close's sentence drawn only while it is armed or in
 play. The rules are Foundation-only in `AgentSheetLead.swift`, run under
 `swiftc` by `host/tests/test_phone_sheet_lead.py` and on the phone job by

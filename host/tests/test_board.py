@@ -245,6 +245,19 @@ def test_counts_match_the_rows(store):
                               "in_progress": 2, "done": 1}
 
 
+def test_counts_in_counts_only_the_named_projects(store):
+    """The open-projects tally behind `open_counts`: a closed project's
+    cards are not counted, every column is named, and no names is zeros."""
+    _card(store, project="open")
+    _card(store, project="open", column_name="in_progress")
+    _card(store, project="closed")
+    _card(store, project="closed", column_name="done")
+    assert store.counts_in(["open"]) == {"prep": 1, "backlog": 0,
+                                         "in_progress": 1, "done": 0}
+    assert store.counts_in(["open", "closed"])["done"] == 1
+    assert store.counts_in([]) == {c: 0 for c in COLUMNS}
+
+
 def test_counts_name_every_column_even_at_zero(store):
     """A surface reading `counts["backlog"]` must never have to handle a
     KeyError — the menu-bar strip does exactly that."""

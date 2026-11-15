@@ -562,3 +562,111 @@ async def test_a_terminal_that_never_closes_stops_in_words(
     row = store.get(card["id"])
     assert row["merge_state"] == "blocked"
     assert row["merge_note"] == merges.CLOSING_FINISHED_TIMEOUT_NOTE
+
+
+@pytest.mark.asyncio
+async def test_three_presses_in_one_project_each_start_in_turn(
+        daemon, repo, monkeypatch):
+    """The 15 Nov report: three Review & merge presses, one review ran and
+    another stopped on "another card in this project is already starting".
+    Each now waits its turn and starts once the one before has bound."""
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, repo, opened)
+    closed = _stub_close(d, monkeypatch)
+    cards = [await _done_card(d, store, repo, title=f"card {n}",
+                              file=f"f{n}.txt") for n in range(3)]
+    rows = []
+    for n, card in enumerate(cards):
+        sid = f"own-{n}"
+        store.update(card["id"], {"link_state": "live", "session_id": sid},
+                     bump=False)
+        rows.append({"session_id": sid, "cwd": card["worktree_path"]})
+    d._agents_snapshot_cache = {"sleeping": rows}
+    for card in cards:
+        assert (await d.review_merge_card(card["id"]))[0] is True
+    assert sorted(closed) == ["own-0", "own-1", "own-2"]
+    for card in cards:
+        store.update(card["id"], {"link_state": "ended"}, bump=False)
+    d._agents_snapshot_cache = {}
+    started: list = []
+    for _round in range(3):
+        await d._flush_card_press_waiting()
+        # The helper that just started binds, freeing the project.
+        for cid, entry in d._consults.items():
+            if not entry.get("session_id"):
+                entry["session_id"] = f"bound-{cid[:4]}"
+                started.append(cid)
+    assert len(opened) == 3
+    assert sorted(started) == sorted(c["id"] for c in cards)
+    assert not d._card_press_waiting
+    for card in cards:
+        assert store.get(card["id"])["merge_state"] in ("", None)
+
+
+@pytest.mark.asyncio
+async def test_a_queued_review_says_so_and_gives_up_after_the_limit(
+        daemon, repo, monkeypatch):
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, repo, opened)
+    first = await _done_card(d, store, repo, title="one", file="a.txt")
+    second = await _done_card(d, store, repo, title="two", file="b.txt")
+    assert (await d.review_merge_card(first["id"]))[0] is True
+    ok, detail = await d.review_merge_card(second["id"])
+    assert (ok, detail) == (True, merges.REVIEW_MERGE_QUEUED_NOTE)
+    snap = _snap(d, store, second["id"])
+    assert snap["merge_line"] == merges.REVIEW_MERGE_QUEUED_LINE
+    assert snap["review_merge_running"] is True
+    d._card_press_waiting[second["id"]]["since"] = (
+        time.time() - merges.REVIEW_MERGE_WAIT_SECONDS - 1)
+    await d._flush_card_press_waiting()
+    assert not d._card_press_waiting
+    assert store.get(second["id"])["merge_state"] == "blocked"
+    assert len(opened) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_done_view_token_moves_with_merge_work(
+        daemon, repo, monkeypatch):
+    """The 15 Nov phone report: merged cards still drew the merge icon,
+    because the phone's held Done column refetches only when the view token
+    moves, and a merge (no revision step) never moved it."""
+    d, store = daemon
+    _stub_spawn(d, monkeypatch, repo, [])
+    card = await _done_card(d, store, repo)
+    cid = card["id"]
+
+    def token():
+        return d._done_view_now(store.done_tokens()[2])
+
+    t0 = token()
+    store.record_merge(cid, "merged", "Merged.")
+    t1 = token()
+    assert t1 != t0
+    store.clear_worktree(cid, branch=True)
+    t2 = token()
+    assert t2 != t1
+    d._card_press_waiting = {cid: {"verb": "review_merge", "why": "queued"}}
+    t3 = token()
+    assert t3 != t2
+    d._card_press_waiting = {}
+    assert token() == t2
+    # The frame and the archive page stamp the same token, or a phone
+    # would refetch the archive on every frame.
+    d._card_press_waiting = {cid: {"verb": "merge"}}
+    assert d._build_board_state()["done_view_token"] \
+        == d.done_archive_cards()["done_view_token"] == token()
+
+
+@pytest.mark.asyncio
+async def test_a_new_review_merge_clears_an_earlier_stop(
+        daemon, repo, monkeypatch):
+    d, store = daemon
+    _stub_spawn(d, monkeypatch, repo, [])
+    card = await _done_card(d, store, repo)
+    store.record_merge(card["id"], "blocked", "Stopped: something earlier")
+    ok, _detail = await d.review_merge_card(card["id"])
+    assert ok
+    assert store.get(card["id"])["merge_state"] == ""
+    assert "merge_line" not in _snap(d, store, card["id"])

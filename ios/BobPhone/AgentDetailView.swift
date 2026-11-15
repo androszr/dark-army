@@ -169,6 +169,10 @@ struct AgentDetailView: View {
     /// from before a move is never shown after it; the stage times stay.
     @State private var journeyHeldKey = ""
     @State private var journeyFetchedAt = Date.distantPast
+    /// The card a Review & merge press from this screen went out for, held
+    /// until the Mac's own words about it arrive on the card's scope — the
+    /// press is the card's, not the session's, so `takeNote` never sees it.
+    @State private var reviewMergeSentFor: String?
 
     private var agent: Agent {
         let a = client.snapshot.agents
@@ -345,6 +349,15 @@ struct AgentDetailView: View {
         }
         .onChange(of: outAction) { _, _ in
             leaveDeletedDetail()
+        }
+        .onChange(of: client.queueNote(for: reviewMergeSentFor ?? "")) { _, queued in
+            // A refused Review & merge from this screen: the Mac answers on
+            // the card's scope, and this screen drew the press, so it draws
+            // (and reads) the answer under the actions.
+            guard let queued, let id = reviewMergeSentFor else { return }
+            note = queued.text
+            client.readQueueNote(for: id)
+            reviewMergeSentFor = nil
         }
         .onChange(of: client.queueNote(for: agent.sessionId)) { _, queued in
             // The Mac's own words about the last press from this screen,
@@ -1123,6 +1136,7 @@ struct AgentDetailView: View {
             || agent.canLowPriority || agent.canClose || agent.canHide
             || (agent.rebuildOffered && client.snapshot.rebuild.available)
             || agent.canStop || liveCategory == .abandoned
+            || reviewMergeShown
     }
 
     /// Every press on this agent except the reply: first what an ask needs
@@ -1198,9 +1212,66 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Whether any of Close, Hide, Stop and Delete is offered.
+    /// Whether any of Review & merge, Close, Hide, Stop and Delete is offered.
     private var hasQuietVerbs: Bool {
         agent.canClose || agent.canHide || agent.canStop || liveCategory == .abandoned
+            || reviewMergeShown
+    }
+
+    /// This session's own Done card — bound to it, never a card it is only
+    /// planning — when the Mac offers Review & merge on it: the card
+    /// screen's rule (`CardMerge.reviewMergeOffered`, the Mac's
+    /// `review_merge_offered`, `merge_writable`), so the assistant's screen
+    /// offers it exactly where the card's own screen does. The Mac closes a
+    /// finished assistant itself before the review starts.
+    private var reviewMergeCard: BoardCard? {
+        guard let card = boardCard, card.sessionId == agent.sessionId,
+              client.snapshot.board.mergeWritable,
+              CardMerge.reviewMergeOffered(
+                  column: card.column, branch: card.worktreeBranch,
+                  running: card.reviewMergeRunning || card.reviewRunning,
+                  daemonOffers: card.reviewMergeOffered)
+        else { return nil }
+        return card
+    }
+
+    /// The same card while its review and merge runs: the dim words stand
+    /// where the button was, as on the card screen.
+    private var reviewMergeRunningHere: Bool {
+        guard let card = boardCard, card.sessionId == agent.sessionId else { return false }
+        return client.snapshot.board.mergeWritable && card.column == "done"
+            && card.reviewMergeRunning
+    }
+
+    private var reviewMergeShown: Bool {
+        reviewMergeCard != nil || reviewMergeRunningHere
+    }
+
+    private func reviewMergeLabel(_ card: BoardCard) -> String {
+        if client.queuedAction(for: card.id) == PhoneActions.boardReviewMerge,
+           let mark = client.queueMark(for: card.id) {
+            return mark
+        }
+        return arm.reviewMerge != nil
+            ? PhoneCardLine.armedLabel(PhoneCardSwipe.reviewMergeLabel)
+            : PhoneCardSwipe.reviewMergeLabel
+    }
+
+    /// Armed then confirmed, in its own slot on the card's id: it ends in a
+    /// merge onto main. The press is the card's (scope `card.id`), the same
+    /// one the card screen and the Board tab send.
+    private func pressReviewMerge(_ card: BoardCard) {
+        if arm.confirm(.reviewMerge, id: card.id) {
+            reviewMergeSentFor = card.id
+            Task {
+                if !(await send(PhoneActions.boardReviewMerge,
+                                ["card_id": card.id], card: card.id)) {
+                    reviewMergeSentFor = nil
+                }
+            }
+        } else {
+            arm.arm(.reviewMerge, id: card.id)
+        }
     }
 
     /// Close, Hide, Stop and Delete as one row of small buttons, each still
@@ -1212,6 +1283,19 @@ struct AgentDetailView: View {
         if hasQuietVerbs {
             VStack(alignment: .leading, spacing: 8) {
                 AdaptiveStack(stacked: dynamicTypeSize.isAccessibilitySize, spacing: 8) {
+                    if let card = reviewMergeCard {
+                        DecryptButton(reviewMergeLabel(card)) { pressReviewMerge(card) }
+                            .buttonStyle(AlarmOutline(size: 12))
+                            .disabled(busy)
+                            .accessibilityLabel(arm.reviewMerge != nil
+                                ? "Review and merge, press again to confirm"
+                                : PhoneCardSwipe.reviewMergeSpoken)
+                            .accessibilityHint("Reviews this card's work and merges it into main")
+                    } else if reviewMergeRunningHere {
+                        Text(PhoneCardSwipe.reviewMergeRunningLabel)
+                            .font(Theme.mono(12))
+                            .foregroundStyle(Theme.dim)
+                    }
                     if agent.canClose {
                         DecryptButton(closeLabel) {
                             // The extra field is the assertion that a human
@@ -1496,9 +1580,13 @@ struct AgentDetailView: View {
     /// the press is written down and will go in turn; the Mac's own later
     /// words arrive through `queueNote(for:)`.
     @discardableResult
-    private func send(_ action: String, _ fields: [String: String]) async -> Bool {
+    /// `card` scopes a press that is the card's rather than the session's
+    /// (Review & merge), so it queues and wears its mark where the card
+    /// screen and the Board tab look for it.
+    private func send(_ action: String, _ fields: [String: String],
+                      card: String? = nil) async -> Bool {
         let result = await client.enqueue(action: action, fields: fields,
-                                          scope: agent.sessionId)
+                                          scope: card ?? agent.sessionId)
         if result.ok {
             note = ""
             return true

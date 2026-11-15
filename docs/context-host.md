@@ -267,8 +267,8 @@ the conservative fallback (`docs/agent-context.json`). `board.py`,
     news slot (`_last_review_board_news`), never `_last_section_news`: the two
     go stale at different moments. **Two tokens ride the board and are not
     interchangeable** — `done_clear_token` is exact membership and the only
-    thing `clear_done` compares; `done_view_token` also moves on a revision
-    and on a review, which is what tells a held copy it is stale.
+    thing `clear_done` compares; `done_view_token` also moves on a revision,
+    a review and merge work, which is what tells a held copy it is stale.
     `BoardStore.done_tokens()` reads both under one lock. A client that never
     sends the query keeps today's whole Done preview, so no older screen can
     lose its finished column.

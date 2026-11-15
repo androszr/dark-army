@@ -80,6 +80,8 @@ numbers change (`_strip_key` / `_strip_level`). The usage stack is **one**
 rung: its rows share one track width, so dropping a provider's row buys height
 and no width. The full reading (two faces with counts, a to-do count of 132,
 three providers) measures about 177pt, well inside the budget.
+The to-do count is Prep + Backlog over projects with an open VS Code
+window (the board's `open_counts`); with none open it counts the store.
 
 The rungs are named `StripRung` fields, not positional booleans. The strip
 measures itself and steps down because macOS never says when neighbours crowd
