@@ -11519,7 +11519,8 @@ class BoardVerbsMixin:
             raise
         return True, merges.MERGING_NOTE, root, token
 
-    async def merge_card(self, card_id: str, expected_tip=None) -> tuple:
+    async def merge_card(self, card_id: str, expected_tip=None, *,
+                         close_finished: bool = True) -> tuple:
         """The MERGE press. `(ok, detail)` — answers at once with
         `merges.MERGING_NOTE` and works in the background (the panel's POST
         times out at five seconds).
@@ -11528,10 +11529,17 @@ class BoardVerbsMixin:
         the gate (`_merge_gate_sync`) taken here and the folder, the main
         checkout and the trunk's tip re-checked by the task at the moment
         each is touched. `expected_tip` is the phone's current-state echo
-        (absent: no guard)."""
+        (absent: no guard). A card whose own assistant has finished but
+        still sits in its terminal has that terminal closed and the press
+        runs again once it has gone (`_close_finished_then_wait`)."""
         ok, detail, root, token = await self._merge_start(
             card_id, expected_tip)
         if not ok:
+            if close_finished and detail in self._FINISHED_HOLD_REFUSALS:
+                closed = await self._close_finished_then_wait(
+                    str(card_id or ""), "merge", str(expected_tip or ""))
+                if closed is not None:
+                    return closed
             return False, detail
         task = asyncio.ensure_future(self._merge_card_task(
             str(card_id or ""), root, token, str(expected_tip or "")))
@@ -12275,7 +12283,8 @@ class BoardVerbsMixin:
             if not spawned:
                 self._drop_hold(cid)
 
-    async def review_merge_card(self, card_id: str) -> tuple:
+    async def review_merge_card(self, card_id: str, *,
+                                close_finished: bool = True) -> tuple:
         """The Review & merge press: one Claude helper reviews the card's
         branch, repairs BLOCK and FIX findings on it and answers
         `VERDICT: SHIP` or `VERDICT: STOP`; a SHIP merges once the helper's
@@ -12285,12 +12294,166 @@ class BoardVerbsMixin:
         if str(card_id or "") in (getattr(self, "_review_merge_pending", None)
                                   or {}):
             return False, merges.REVIEW_MERGE_PENDING_REFUSAL
+        if str(card_id or "") in (getattr(self, "_card_press_waiting", None)
+                                  or {}):
+            return True, merges.CLOSING_FINISHED_NOTE
         refusal, _card, _root, _branch, _path = await self._helper_gate(
             card_id, fix=False, open_ok=True)
         if refusal:
+            if close_finished and refusal in self._FINISHED_HOLD_REFUSALS:
+                closed = await self._close_finished_then_wait(
+                    str(card_id or ""), "review_merge", "")
+                if closed is not None:
+                    return closed
             return False, refusal
         async with self._dispatch_lock:
             return await self._spawn_review_merge_locked(str(card_id))
+
+    # The busy rungs a finished-but-open assistant trips.
+    _FINISHED_HOLD_REFUSALS = (merges.CARD_LIVE_REFUSAL,
+                               merges.SESSION_INSIDE_REFUSAL)
+    # The rungs that mean "still going away": keep waiting.
+    _FINISHED_GOING_REFUSALS = (merges.CARD_LIVE_REFUSAL,
+                                merges.SESSION_INSIDE_REFUSAL,
+                                merges.RELEASE_PENDING_REFUSAL,
+                                merges.PREPARING_REFUSAL)
+
+    def _finished_card_sessions_sync(self, card) -> list:
+        """The live sessions holding this Done card that have **finished**:
+        the card's own session and any live session in its folder, every
+        one of them in the sleeping or finished bucket. **Executor.** `[]`
+        when there is none, or when any of them is still working or waiting
+        on a person, or a launch is under way — the press then refuses as
+        before. Read off the cached agents snapshot; the close re-checks."""
+        if not isinstance(card, dict) \
+                or str(card.get("column_name") or "") != "done" \
+                or str(card.get("link_state") or "") == "dispatching":
+            return []
+        cid = str(card.get("id") or "")
+        if cid in (getattr(self, "_spawn_shell_pids", None) or {}) \
+                or cid in (getattr(self, "_spawn_pty_pids", None) or {}) \
+                or cid in self._consults:
+            return []
+        snapshot = getattr(self, "_agents_snapshot_cache", None) or {}
+        if not isinstance(snapshot, dict):
+            return []
+        live = self._board_live_ids(snapshot)
+        own = str(card.get("session_id") or "")
+        path = str(card.get("worktree_path") or "")
+        base = os.path.realpath(path).rstrip(os.sep) if path else ""
+        found: list = []
+        for bucket, group in snapshot.items():
+            if not isinstance(group, list):
+                continue
+            for row in group:
+                if not isinstance(row, dict):
+                    continue
+                sid = str(row.get("session_id") or "")
+                if not sid or sid not in live:
+                    continue
+                cwd = str(row.get("cwd") or "")
+                where = os.path.realpath(cwd) if cwd else ""
+                inside = bool(base and where and (
+                    where == base or where.startswith(base + os.sep)))
+                if sid != own and not inside:
+                    continue
+                if bucket not in ("sleeping", "finished"):
+                    return []
+                if sid not in found:
+                    found.append(sid)
+        return found
+
+    async def _close_finished_then_wait(self, card_id: str, verb: str,
+                                        tip: str):
+        """A press turned away only because the card's own assistant has
+        finished but still sits in its terminal: close that terminal (the
+        ordinary close, which re-checks identity and refuses an open
+        permission prompt) and run the press again once it has gone
+        (`_flush_card_press_waiting`). `(ok, detail)`, or None when the
+        hold is not a finished assistant — the caller refuses as before."""
+        card = await self._board_call("get", card_id)
+        loop = asyncio.get_running_loop()
+        sids = await loop.run_in_executor(
+            None, self._finished_card_sessions_sync, card)
+        if not sids:
+            return None
+        for sid in sids:
+            ok, detail = await self.close_session_terminal(sid)
+            if not ok:
+                return False, detail
+        waiting = dict(getattr(self, "_card_press_waiting", None) or {})
+        waiting[card_id] = {"verb": verb, "tip": tip, "since": time.time()}
+        self._card_press_waiting = waiting
+        logger.info("card %s: closed its finished assistant before %s",
+                    card_id[:8], verb)
+        await self._publish_board()
+        return True, merges.CLOSING_FINISHED_NOTE
+
+    def _drop_card_press_waiting(self, card_id: str) -> None:
+        waiting = getattr(self, "_card_press_waiting", None) or {}
+        if card_id in waiting:
+            self._card_press_waiting = {
+                k: v for k, v in waiting.items() if k != card_id}
+
+    async def _card_press_stop(self, card_id: str, note: str) -> None:
+        self._drop_card_press_waiting(card_id)
+        try:
+            row = await self._board_call("get", card_id)
+            if str((row or {}).get("merge_state") or "") == "merged":
+                return
+            await self._board_call("record_merge", card_id, "blocked", note)
+        except Exception:
+            logger.debug("waiting press: could not record the note",
+                         exc_info=True)
+
+    async def _flush_card_press_waiting(self) -> None:
+        """The presses that closed a finished assistant first, from the
+        agents push (no thread of its own). Each runs once the hold has
+        gone; it drops, with words, when the card left Done, another rung
+        refuses, or the terminal stayed open past
+        `CLOSING_FINISHED_WAIT_SECONDS`."""
+        waiting = getattr(self, "_card_press_waiting", None) or {}
+        if not waiting or self._board is None:
+            return
+        loop = asyncio.get_running_loop()
+        changed = False
+        for cid, entry in list(waiting.items()):
+            verb = str(entry.get("verb") or "")
+            card = await self._board_call("get", cid)
+            if card is None or str(card.get("column_name") or "") != "done":
+                self._drop_card_press_waiting(cid)
+                changed = True
+                continue
+            refusal, _root, _branch, _path = await loop.run_in_executor(
+                None, functools.partial(self._merge_gate_sync, card,
+                                        open_ok=(verb == "review_merge")))
+            if refusal in self._FINISHED_GOING_REFUSALS:
+                if time.time() - float(entry.get("since") or 0.0) \
+                        > merges.CLOSING_FINISHED_WAIT_SECONDS:
+                    await self._card_press_stop(
+                        cid, merges.CLOSING_FINISHED_TIMEOUT_NOTE)
+                    changed = True
+                continue
+            self._drop_card_press_waiting(cid)
+            changed = True
+            if refusal in self._REVIEW_MERGE_QUIET_REFUSALS:
+                continue
+            if refusal:
+                await self._card_press_stop(
+                    cid, merges.CLOSING_FINISHED_REFUSED_NOTE.format(refusal))
+                continue
+            if verb == "review_merge":
+                ok, detail = await self.review_merge_card(
+                    cid, close_finished=False)
+            else:
+                ok, detail = await self.merge_card(
+                    cid, expected_tip=(str(entry.get("tip") or "") or None),
+                    close_finished=False)
+            if not ok and detail not in self._REVIEW_MERGE_QUIET_REFUSALS:
+                await self._card_press_stop(
+                    cid, merges.CLOSING_FINISHED_REFUSED_NOTE.format(detail))
+        if changed:
+            await self._publish_board()
 
     async def _settle_open_check_for_review_merge(self, card: dict) -> tuple:
         """The press as the person's "checked, passed". `(ok, refusal)`.
@@ -12563,9 +12726,12 @@ class BoardVerbsMixin:
     def _review_merge_running(self, card_id: str) -> bool:
         """The Review & merge consult runs, or its SHIP waits to merge."""
         entry = self._consults.get(str(card_id))
+        press = (getattr(self, "_card_press_waiting", None) or {}).get(
+            str(card_id)) or {}
         return bool((entry and entry.get("purpose") == "review_merge")
                     or str(card_id) in (
-                        getattr(self, "_review_merge_pending", None) or {}))
+                        getattr(self, "_review_merge_pending", None) or {})
+                    or press.get("verb") == "review_merge")
 
     def _merge_line(self, card: dict) -> str:
         """The sentence a card draws about its merge, or `""`. **Executor.**
@@ -12584,6 +12750,8 @@ class BoardVerbsMixin:
                 total - len(queue) + queue.index(cid) + 1, total)
         if cid in (getattr(self, "_review_merge_pending", None) or {}):
             return merges.REVIEW_MERGE_WAITING_LINE
+        if cid in (getattr(self, "_card_press_waiting", None) or {}):
+            return merges.CLOSING_FINISHED_LINE
         state = str(card.get("merge_state") or "")
         note = str(card.get("merge_note") or "")
         if state not in merges.STATES or not state or not note:
@@ -12635,7 +12803,8 @@ class BoardVerbsMixin:
                              exc_info=True)
                 refusal = "unknown"
             waiting = cid in (getattr(self, "_review_merge_pending", None)
-                              or {})
+                              or {}) or cid in (
+                getattr(self, "_card_press_waiting", None) or {})
             out["merge_offered"] = not refusal and not waiting
             # Review & merge is offered while a hand-check is still open too.
             try:

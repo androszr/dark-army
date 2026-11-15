@@ -737,6 +737,14 @@ drops with a `blocked` note when the tip moved, a merge refused or 15 minutes
 passed. The snapshot adds `review_merge_offered` and `review_merge_running`;
 `review_running` stays true, so MERGE, Fix and Run review wait.
 
+**A finished assistant still open.** When MERGE or Review & merge is refused
+only on `CARD_LIVE_REFUSAL` or `SESSION_INSIDE_REFUSAL`, and every session holding
+the card (its own, or a live one in its folder) sits in `sleeping` or `finished`,
+the press closes those terminals (`close_session_terminal`, not `by_person`) and
+arms `_card_press_waiting[cid]`. `_flush_card_press_waiting`, on the agents push,
+re-runs the press once the hold has gone, or stops with a `blocked` note after
+`CLOSING_FINISHED_WAIT_SECONDS`. A running or waiting session is never closed.
+
 **The card says so.** Decoration (`_decorate_merge`) publishes `merge_state`
 (`merging` while the task runs), `merge_line` (composed on the daemon, with
 `HELPER_AT_WORK_SUFFIX` or `PRESS_AGAIN_SUFFIX` on a stop), `review_verdict`

@@ -2225,6 +2225,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
         # waiting for the reviewer's terminal to close; replaced, never
         # mutated; memory only (a restart forgets it).
         self._review_merge_pending: dict = {}
+        # A Review & merge or MERGE press that found the card's own
+        # finished assistant still idle in its terminal: card id ->
+        # `{"verb", "since", "tip"}`; the press closed that terminal and
+        # runs again once it has gone. Replaced, never mutated; memory only.
+        self._card_press_waiting: dict = {}
         self._branch_backfill_seen: set = set()
         self._branch_backfill_queue: list = []
         self._changes_lock = threading.Lock()
@@ -12280,6 +12285,11 @@ class BobDaemon(BoardVerbsMixin, ReviewVerbsMixin, RecoveryMixin,
             await self._flush_review_merge_pending()
         except Exception:
             logger.debug("review+merge pending check failed", exc_info=True)
+        # And a press that closed the card's finished assistant first.
+        try:
+            await self._flush_card_press_waiting()
+        except Exception:
+            logger.debug("waiting card press check failed", exc_info=True)
         # After the snapshot, not before: an alert names a session, and a surface
         # told to reveal one it has not been shown yet has nothing to reveal.
         self._deliver_alerts()

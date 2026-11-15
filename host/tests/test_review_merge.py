@@ -439,3 +439,126 @@ async def test_an_unreadable_tip_keeps_waiting_until_the_limit(
     row = store.get(cid)
     assert row["merge_note"] == merges.REVIEW_MERGE_TIP_UNREAD_NOTE
     assert row["merge_note"] != merges.REVIEW_MERGE_TIP_MOVED_NOTE
+
+
+# -- The card's own assistant finished but still sits in its terminal --
+
+def _sitting(d, store, card, bucket="sleeping", sid="own-1"):
+    """The card's finished assistant still open in its folder."""
+    store.update(card["id"], {"link_state": "live", "session_id": sid},
+                 bump=False)
+    row = {"session_id": sid, "cwd": card["worktree_path"]}
+    if bucket == "finished":
+        row["alive"] = True
+    d._agents_snapshot_cache = {bucket: [row]}
+    return store.get(card["id"])
+
+
+def _gone(d, store, card):
+    store.update(card["id"], {"link_state": "ended"}, bump=False)
+    d._agents_snapshot_cache = {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bucket", ["sleeping", "finished"])
+async def test_review_merge_closes_a_finished_assistant_then_starts(
+        daemon, repo, monkeypatch, bucket):
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, repo, opened)
+    closed = _stub_close(d, monkeypatch)
+    card = await _done_card(d, store, repo)
+    _sitting(d, store, card, bucket)
+    ok, detail = await d.review_merge_card(card["id"])
+    assert (ok, detail) == (True, merges.CLOSING_FINISHED_NOTE)
+    assert closed == ["own-1"] and opened == []
+    snap = _snap(d, store, card["id"])
+    assert snap["review_merge_running"] is True
+    assert snap["merge_line"] == merges.CLOSING_FINISHED_LINE
+    assert snap["review_merge_offered"] is False
+    # A second press while it closes changes nothing.
+    assert (await d.review_merge_card(card["id"]))[1] \
+        == merges.CLOSING_FINISHED_NOTE
+    assert closed == ["own-1"]
+    # Still open: nothing starts.
+    await d._flush_card_press_waiting()
+    assert opened == [] and card["id"] in d._card_press_waiting
+    # Gone: the review starts once.
+    _gone(d, store, card)
+    await d._flush_card_press_waiting()
+    assert len(opened) == 1
+    assert d._consults[card["id"]]["purpose"] == "review_merge"
+    assert card["id"] not in d._card_press_waiting
+    await d._flush_card_press_waiting()
+    assert len(opened) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bucket", ["running", "waiting"])
+async def test_a_working_assistant_is_never_closed(
+        daemon, repo, monkeypatch, bucket):
+    d, store = daemon
+    opened: list = []
+    _stub_spawn(d, monkeypatch, repo, opened)
+    closed = _stub_close(d, monkeypatch)
+    card = await _done_card(d, store, repo)
+    _sitting(d, store, card, bucket)
+    assert await d.review_merge_card(card["id"]) \
+        == (False, merges.CARD_LIVE_REFUSAL)
+    assert await d.merge_card(card["id"]) \
+        == (False, merges.CARD_LIVE_REFUSAL)
+    assert closed == [] and opened == []
+    assert not d._card_press_waiting
+
+
+@pytest.mark.asyncio
+async def test_a_refused_close_refuses_the_press_in_its_words(
+        daemon, repo, monkeypatch):
+    d, store = daemon
+    card = await _done_card(d, store, repo)
+    _sitting(d, store, card)
+
+    async def refuse(session_id, **kw):
+        return False, "It is asking a permission question."
+
+    monkeypatch.setattr(d, "close_session_terminal", refuse)
+    assert await d.review_merge_card(card["id"]) \
+        == (False, "It is asking a permission question.")
+    assert not d._card_press_waiting
+
+
+@pytest.mark.asyncio
+async def test_merge_closes_a_finished_assistant_then_merges(
+        daemon, repo, monkeypatch):
+    d, store = daemon
+    closed = _stub_close(d, monkeypatch)
+    card = await _done_card(d, store, repo)
+    _sitting(d, store, card)
+    ok, detail = await d.merge_card(card["id"])
+    assert (ok, detail) == (True, merges.CLOSING_FINISHED_NOTE)
+    assert closed == ["own-1"]
+    snap = _snap(d, store, card["id"])
+    assert snap["merge_offered"] is False
+    assert "review_merge_running" not in snap
+    _gone(d, store, card)
+    await d._flush_card_press_waiting()
+    await _settle(d)
+    assert store.get(card["id"])["merge_state"] == "merged"
+    assert not d._card_press_waiting
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_that_never_closes_stops_in_words(
+        daemon, repo, monkeypatch):
+    d, store = daemon
+    _stub_close(d, monkeypatch)
+    card = await _done_card(d, store, repo)
+    _sitting(d, store, card)
+    await d.review_merge_card(card["id"])
+    d._card_press_waiting[card["id"]]["since"] = (
+        time.time() - merges.CLOSING_FINISHED_WAIT_SECONDS - 1)
+    await d._flush_card_press_waiting()
+    assert not d._card_press_waiting
+    row = store.get(card["id"])
+    assert row["merge_state"] == "blocked"
+    assert row["merge_note"] == merges.CLOSING_FINISHED_TIMEOUT_NOTE

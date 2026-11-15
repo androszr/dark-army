@@ -123,6 +123,18 @@ REVIEW_MERGE_TIP_UNREAD_NOTE = ("Review & merge stopped: Dark Army could not "
                                 "merged. Press MERGE when it can.")
 REVIEW_MERGE_REFUSED_NOTE = "Review & merge stopped: {0}"
 REVIEW_MERGE_CHECK_PASSED_NOTE = "Passed by Review & merge"
+#: The card's own assistant finished but still sits in its terminal: the
+#: press closes that terminal and carries on once it has gone.
+CLOSING_FINISHED_NOTE = ("Closing the card's finished assistant — this "
+                         "carries on once its terminal has closed.")
+CLOSING_FINISHED_LINE = ("Closing the card's finished assistant, then "
+                         "carrying on…")
+CLOSING_FINISHED_TIMEOUT_NOTE = ("Stopped: the card's finished assistant did "
+                                 "not close — close its terminal and press "
+                                 "again.")
+CLOSING_FINISHED_REFUSED_NOTE = "Stopped: {0}"
+#: Seconds a press waits for the finished assistant's terminal to close.
+CLOSING_FINISHED_WAIT_SECONDS = 120.0
 #: Seconds a SHIP waits for the reviewer's terminal to close.
 REVIEW_MERGE_WAIT_SECONDS = 900.0
 REVIEW_STALE_SUFFIX = " — reviewed at an earlier version"
